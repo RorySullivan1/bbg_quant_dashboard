@@ -3,17 +3,19 @@ from __future__ import annotations
 import html
 import traceback
 from datetime import date
+from typing import Callable
 
 import bqplot as bq
 import ipywidgets as W
 import numpy as np
 import pandas as pd
+from ipydatagrid import DataGrid, TextRenderer
 
 from .bql_client import default_window, fetch_prices
 from .commentary import build_commentary
-from .config import LOGO_PATH, LOOKBACK_YEARS
+from .config import LOGO_PATH, LOOKBACK_YEARS, SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
 from .data import apply_filters, load_metadata, unique_values
-from .stats import corr_matrix, cum_perf, daily_returns, sharpe_zscore
+from .stats import corr_matrix, cum_perf, daily_returns, perf_table, sharpe_zscore
 
 
 LINE_COLORS = [
@@ -21,6 +23,13 @@ LINE_COLORS = [
     "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
     "#bcbd22", "#17becf",
 ]
+
+
+SHARPE_WINDOW_LABEL = (
+    f"{SHARPE_WINDOW // TRADING_DAYS_PER_YEAR}Y"
+    if SHARPE_WINDOW % TRADING_DAYS_PER_YEAR == 0
+    else f"{SHARPE_WINDOW}d"
+)
 
 
 BANNER_HTML = (
@@ -46,43 +55,62 @@ def _banner() -> W.HBox:
     )
 
 
-def _multi(label: str, options: list[str]) -> W.SelectMultiple:
-    return W.SelectMultiple(
-        options=options,
-        description=label,
-        rows=4,
-        layout=W.Layout(width="100%"),
-        style={"description_width": "90px"},
+def _checkbox_group(
+    label: str, options: list[str]
+) -> tuple[W.VBox, Callable[[], list[str]], list[W.Checkbox]]:
+    checks = {
+        opt: W.Checkbox(
+            value=False,
+            description=opt,
+            indent=False,
+            layout=W.Layout(width="100%", margin="0"),
+        )
+        for opt in options
+    }
+    header = W.HTML(
+        f"<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
     )
+    box = W.VBox(
+        [header, *checks.values()],
+        layout=W.Layout(
+            width="100%",
+            padding="4px 6px",
+            border="1px solid #e5e7eb",
+            margin="0 0 6px 0",
+        ),
+    )
+    return box, (lambda: [v for v, cb in checks.items() if cb.value]), list(checks.values())
 
 
 def build_app() -> W.VBox:
     meta = load_metadata()
 
-    asset_w = _multi("Asset Class", unique_values(meta, "asset_class"))
-    cat_w = _multi("Category", unique_values(meta, "category"))
-    theme_w = _multi("Theme", unique_values(meta, "theme"))
-    sol_w = _multi("Solution", unique_values(meta, "solution"))
-    ret_w = _multi("Return Type", unique_values(meta, "return_type"))
+    asset_box, asset_get, asset_checks = _checkbox_group("Asset Class", unique_values(meta, "asset_class"))
+    cat_box, cat_get, cat_checks = _checkbox_group("Category", unique_values(meta, "category"))
+    theme_box, theme_get, theme_checks = _checkbox_group("Theme", unique_values(meta, "theme"))
+    sol_box, sol_get, sol_checks = _checkbox_group("Solution", unique_values(meta, "solution"))
+    ret_box, ret_get, ret_checks = _checkbox_group("Return Type", unique_values(meta, "return_type"))
 
     live_min = W.DatePicker(
         description="Live ≥",
         layout=W.Layout(width="100%"),
-        style={"description_width": "90px"},
+        style={"description_width": "60px"},
     )
     live_max = W.DatePicker(
         description="Live ≤",
         layout=W.Layout(width="100%"),
-        style={"description_width": "90px"},
+        style={"description_width": "60px"},
     )
 
+    search_w = W.Text(
+        placeholder="Search ticker or name…",
+        layout=W.Layout(width="100%"),
+    )
     ticker_w = W.SelectMultiple(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        description="Tickers",
         rows=8,
         layout=W.Layout(width="100%"),
-        style={"description_width": "90px"},
     )
 
     apply_btn = W.Button(
@@ -91,15 +119,21 @@ def build_app() -> W.VBox:
         layout=W.Layout(width="100%"),
     )
 
+    ticker_label = W.HTML(
+        "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
+    )
     filter_box = W.VBox(
         [
-            asset_w, cat_w, theme_w, sol_w, ret_w,
-            live_min, live_max, ticker_w, apply_btn,
+            asset_box, cat_box, theme_box, sol_box, ret_box,
+            live_min, live_max,
+            ticker_label, search_w, ticker_w,
+            apply_btn,
         ],
         layout=W.Layout(width="100%", padding="8px"),
     )
 
-    line_fig, line_x, line_y, line_marks_container = _line_chart()
+    line_fig, line_x, line_y, _ = _line_chart()
+    perf_grid = _perf_grid()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     bar_fig, bar_x, bar_y, bar_mark = _bar_chart()
     commentary_w = W.HTML(_render_commentary(["Click Apply to load."]))
@@ -108,8 +142,8 @@ def build_app() -> W.VBox:
         [filter_box],
         layout=W.Layout(width="30%", border="1px solid #ddd"),
     )
-    chart_col = W.Box(
-        [line_fig],
+    chart_col = W.VBox(
+        [line_fig, perf_grid],
         layout=W.Layout(width="70%", padding="8px"),
     )
     row1 = W.HBox(
@@ -133,19 +167,36 @@ def build_app() -> W.VBox:
     def _on_filter_change(_change=None):
         filtered = apply_filters(
             meta,
-            asset_classes=list(asset_w.value),
-            categories=list(cat_w.value),
-            themes=list(theme_w.value),
-            solutions=list(sol_w.value),
-            return_types=list(ret_w.value),
+            asset_classes=asset_get(),
+            categories=cat_get(),
+            themes=theme_get(),
+            solutions=sol_get(),
+            return_types=ret_get(),
             live_date_min=live_min.value,
             live_date_max=live_max.value,
         )
-        ticker_w.options = _ticker_options(filtered)
-        keep = tuple(t for t in ticker_w.value if t in filtered["ticker"].values)
-        ticker_w.value = keep
+        query = (search_w.value or "").strip().lower()
+        if query:
+            mask = (
+                filtered["ticker"].str.lower().str.contains(query, regex=False)
+                | filtered["name"].str.lower().str.contains(query, regex=False)
+            )
+            visible = filtered.loc[mask]
+        else:
+            visible = filtered
 
-    for w in (asset_w, cat_w, theme_w, sol_w, ret_w, live_min, live_max):
+        selected = list(ticker_w.value)
+        # Keep selected tickers in the option list so the user doesn't lose
+        # them while typing or narrowing filters.
+        keep_selected = filtered.loc[filtered["ticker"].isin(selected)]
+        combined = pd.concat([visible, keep_selected]).drop_duplicates(subset="ticker")
+        combined = combined.sort_values("ticker").reset_index(drop=True)
+        ticker_w.options = _ticker_options(combined)
+        ticker_w.value = tuple(t for t in selected if t in combined["ticker"].values)
+
+    for cb in (*asset_checks, *cat_checks, *theme_checks, *sol_checks, *ret_checks):
+        cb.observe(_on_filter_change, names="value")
+    for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
 
     def _recompute(_btn=None):
@@ -167,8 +218,10 @@ def build_app() -> W.VBox:
             perf = cum_perf(prices)
             sz = sharpe_zscore(rets)
             cm = corr_matrix(rets)
+            pt = perf_table(prices)
 
-            _update_line(line_fig, line_x, line_y, line_marks_container, perf)
+            _update_line(line_fig, line_x, line_y, perf)
+            _update_perf_grid(perf_grid, pt)
             _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
             _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
 
@@ -181,7 +234,7 @@ def build_app() -> W.VBox:
     apply_btn.on_click(_recompute)
 
     app = W.VBox(
-        [_banner(), row1, row2, commentary_box],
+        [_banner(), commentary_box, row1, row2],
         layout=W.Layout(width="100%"),
     )
 
@@ -201,7 +254,7 @@ def _line_chart():
     fig = bq.Figure(
         axes=[ax_x, ax_y],
         marks=[],
-        title="Cumulative Performance",
+        title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
         legend_location="top-left",
         layout=W.Layout(width="100%", height="380px"),
         fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
@@ -209,11 +262,10 @@ def _line_chart():
     return fig, x_sc, y_sc, fig
 
 
-def _update_line(fig, x_sc, y_sc, _container, perf: pd.DataFrame):
+def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame):
     if perf.empty:
         fig.marks = []
         return
-    colors = LINE_COLORS
     marks = []
     for i, col in enumerate(perf.columns):
         series = perf[col].dropna()
@@ -222,12 +274,46 @@ def _update_line(fig, x_sc, y_sc, _container, perf: pd.DataFrame):
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[colors[i % len(colors)]],
+                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
                 labels=[col],
                 display_legend=True,
             )
         )
     fig.marks = marks
+    # bqplot retains the prior scale bounds when marks are wholesale replaced,
+    # so refit the axes to the new visible range with a small padding.
+    y_min = float(np.nanmin(perf.values))
+    y_max = float(np.nanmax(perf.values))
+    pad = (y_max - y_min) * 0.02 or 1.0
+    y_sc.min = y_min - pad
+    y_sc.max = y_max + pad
+    x_sc.min = perf.index.min().to_pydatetime()
+    x_sc.max = perf.index.max().to_pydatetime()
+
+
+def _perf_grid() -> DataGrid:
+    grid = DataGrid(
+        pd.DataFrame(),
+        base_row_size=28,
+        base_column_size=82,
+        base_row_header_size=120,
+        layout=W.Layout(width="100%", height="220px"),
+        default_renderer=TextRenderer(format=".2%"),
+    )
+    return grid
+
+
+def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame) -> None:
+    if pt.empty:
+        grid.data = pd.DataFrame()
+        return
+    display = pt.copy()
+    # ipydatagrid wants string-only labels for MultiIndex columns
+    display.columns = pd.MultiIndex.from_tuples(
+        [(str(a), str(b)) for a, b in display.columns]
+    )
+    display.index.name = "Ticker"
+    grid.data = display
 
 
 def _heatmap():
@@ -247,7 +333,7 @@ def _heatmap():
     fig = bq.Figure(
         marks=[data],
         axes=[ax_x, ax_y, ax_c],
-        title="Correlation",
+        title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
         layout=W.Layout(width="100%", height="360px"),
         fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 70},
     )
@@ -277,7 +363,7 @@ def _bar_chart():
     fig = bq.Figure(
         marks=[bar],
         axes=[ax_x, ax_y],
-        title="Rolling Sharpe (z-score vs own history)",
+        title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score vs prior {SHARPE_WINDOW_LABEL}",
         layout=W.Layout(width="100%", height="360px"),
         fig_margin={"top": 40, "bottom": 70, "left": 60, "right": 20},
     )

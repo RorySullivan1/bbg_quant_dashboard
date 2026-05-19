@@ -5,10 +5,15 @@ Repo memory for future Claude sessions. Read this before editing.
 ## Project purpose
 
 A Bloomberg BQuant App that lets clients browse an index catalog: filter by
-metadata, look up tickers, and view performance, correlation, and a rolling
-Sharpe-ratio z-score over a 3-year lookback. Metadata is stored locally in
-`data/indices.json`; time-series prices are pulled from BQL at runtime. The UI
-is built with `ipywidgets` + `bqplot` and is deployable via Voila.
+metadata, look up tickers, and view performance, correlation, and a 1-year
+rolling Sharpe-ratio z-score over a 5-year lookback. Metadata is stored
+locally in `data/indexdb.json`; time-series prices are pulled from BQL at
+runtime. The UI is built with `ipywidgets`, `bqplot`, and `ipydatagrid`, and
+is deployable via Voila.
+
+The screen layout is: banner → commentary block → 30/70 row (filters + line
+chart with performance datagrid underneath) → 50/50 row (correlation heatmap
++ Sharpe z-score bar chart).
 
 ## Run instructions
 
@@ -32,9 +37,9 @@ dashboard always renders end-to-end.
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end)` — BQL when available, mock otherwise. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore`, `perf_table` (1/3/5Y return, vol, Sharpe, max DD). |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout.       |
-| `src/layout.py`       | `build_app()` — banner + 30/70 row + 50/50 row + commentary block.     |
+| `src/layout.py`       | `build_app()` — banner + commentary + 30/70 row (checkbox filters + searchable ticker box + line chart + perf grid) + 50/50 row (heatmap + bar chart). |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 
 ## Data contract — `data/indexdb.json`
@@ -86,13 +91,21 @@ live paths return the same shape.
 
 ## Conventions
 
-- **Recompute only on "Apply"**. Metadata filter widgets just narrow the
-  ticker dropdown; they do not fetch prices. Only the Apply button calls BQL.
+- **Recompute only on "Apply"**. Metadata checkbox groups, the ticker search
+  box, and the date pickers all only narrow the ticker dropdown; they do not
+  fetch prices. Only the Apply button calls BQL.
 - **All compute lives in `src/`**; the notebook stays a one-liner.
 - **Stats are over the currently selected tickers** (the multi-select), not
   the full filter set.
-- **Lookback is fixed** at `LOOKBACK_YEARS` in `src/config.py`. There's no UI
-  date picker for the chart range.
+- **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
+  rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
+  `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
+- **Y-axis refit on every recompute**: `_update_line` explicitly resets
+  `y_sc.min` / `y_sc.max` (and the x-scale) after replacing marks, because
+  bqplot otherwise keeps the prior scale bounds.
+- **Selected tickers stay visible** in the dropdown even when the metadata
+  filters or search box would otherwise hide them — so the user doesn't lose
+  selection state while typing.
 - **Recompute errors surface in the commentary block** as a styled traceback,
   rather than leaving the charts silently empty. See `_render_error` in
   `src/layout.py`.
@@ -108,9 +121,12 @@ build_app()
 ```
 
 renders the full dashboard without a Bloomberg session. Verify by:
-- Toggling the metadata `SelectMultiple` widgets — the ticker dropdown should
-  shrink to the intersection.
-- Clicking Apply with 2+ tickers — line chart, heatmap, bar chart, and
-  commentary should all refresh together.
+- Ticking a checkbox under any filter group — the ticker dropdown shrinks to
+  the intersection.
+- Typing in the ticker search box — the dropdown narrows to substring
+  matches on ticker or name; already-selected tickers stay visible.
+- Clicking Apply with 2+ tickers — line chart, perf grid, heatmap, bar
+  chart, and commentary should all refresh together; the line chart's
+  y-axis should rescale to the new data range.
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
