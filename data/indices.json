@@ -1,0 +1,137 @@
+[
+  {
+    "ticker": "SPX Index",
+    "name": "S&P 500",
+    "asset_class": "Equity",
+    "category": "Broad Market",
+    "family": "S&P",
+    "theme": "Core Beta",
+    "live_date": "1957-03-04"
+  },
+  {
+    "ticker": "NDX Index",
+    "name": "Nasdaq 100",
+    "asset_class": "Equity",
+    "category": "Broad Market",
+    "family": "Nasdaq",
+    "theme": "Growth",
+    "live_date": "1985-01-31"
+  },
+  {
+    "ticker": "RTY Index",
+    "name": "Russell 2000",
+    "asset_class": "Equity",
+    "category": "Small Cap",
+    "family": "Russell",
+    "theme": "Small Cap",
+    "live_date": "1984-01-01"
+  },
+  {
+    "ticker": "SX5E Index",
+    "name": "EURO STOXX 50",
+    "asset_class": "Equity",
+    "category": "Broad Market",
+    "family": "STOXX",
+    "theme": "Core Beta",
+    "live_date": "1998-02-26"
+  },
+  {
+    "ticker": "S5INFT Index",
+    "name": "S&P 500 Information Technology",
+    "asset_class": "Equity",
+    "category": "Sector",
+    "family": "S&P",
+    "theme": "Technology",
+    "live_date": "1989-09-11"
+  },
+  {
+    "ticker": "S5ENRS Index",
+    "name": "S&P 500 Energy",
+    "asset_class": "Equity",
+    "category": "Sector",
+    "family": "S&P",
+    "theme": "Energy",
+    "live_date": "1989-09-11"
+  },
+  {
+    "ticker": "LBUSTRUU Index",
+    "name": "Bloomberg US Aggregate",
+    "asset_class": "Fixed Income",
+    "category": "Broad Market",
+    "family": "Bloomberg Agg",
+    "theme": "Core Duration",
+    "live_date": "1986-01-01"
+  },
+  {
+    "ticker": "LF98TRUU Index",
+    "name": "Bloomberg US High Yield",
+    "asset_class": "Fixed Income",
+    "category": "Credit",
+    "family": "Bloomberg Agg",
+    "theme": "Credit",
+    "live_date": "1983-07-01"
+  },
+  {
+    "ticker": "EMUSTRUU Index",
+    "name": "Bloomberg EM USD Sovereign",
+    "asset_class": "Fixed Income",
+    "category": "Sovereign",
+    "family": "Bloomberg EM",
+    "theme": "Emerging Markets",
+    "live_date": "1993-12-31"
+  },
+  {
+    "ticker": "BCOM Index",
+    "name": "Bloomberg Commodity Index",
+    "asset_class": "Commodity",
+    "category": "Broad Market",
+    "family": "Bloomberg Commodity",
+    "theme": "Diversified Commodities",
+    "live_date": "1998-07-14"
+  },
+  {
+    "ticker": "GOLDS Comdty",
+    "name": "Gold Spot",
+    "asset_class": "Commodity",
+    "category": "Precious Metals",
+    "family": "LBMA",
+    "theme": "Safe Haven",
+    "live_date": "1968-03-15"
+  },
+  {
+    "ticker": "DXY Curncy",
+    "name": "US Dollar Index",
+    "asset_class": "FX",
+    "category": "Basket",
+    "family": "ICE",
+    "theme": "Dollar",
+    "live_date": "1973-03-01"
+  },
+  {
+    "ticker": "MXEF Index",
+    "name": "MSCI Emerging Markets",
+    "asset_class": "Equity",
+    "category": "Regional",
+    "family": "MSCI",
+    "theme": "Emerging Markets",
+    "live_date": "1988-01-01"
+  },
+  {
+    "ticker": "BCLEAN Index",
+    "name": "Bloomberg Clean Energy",
+    "asset_class": "Equity",
+    "category": "Thematic",
+    "family": "Bloomberg Thematic",
+    "theme": "Clean Energy",
+    "live_date": "2021-06-15"
+  },
+  {
+    "ticker": "BAITHM Index",
+    "name": "Bloomberg AI Thematic",
+    "asset_class": "Equity",
+    "category": "Thematic",
+    "family": "Bloomberg Thematic",
+    "theme": "Artificial Intelligence",
+    "live_date": "2026-04-21"
+  }
+]
