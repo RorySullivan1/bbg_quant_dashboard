@@ -37,24 +37,30 @@ dashboard always renders end-to-end.
 | `src/layout.py`       | `build_app()` — banner + 30/70 row + 50/50 row + commentary block.     |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 
-## Data contract — `data/indices.json`
+## Data contract — `data/indexdb.json`
 
-List of objects with these fields. All required, `live_date` is ISO-8601.
+Orient-`index` JSON: a dict keyed by the **short ticker** (without the
+`" Index"` suffix). `src/data.py` appends `" Index"` before any BQL call.
 
 ```json
 {
-  "ticker": "SPX Index",
-  "name": "S&P 500",
-  "asset_class": "Equity",
-  "category": "Broad Market",
-  "family": "S&P",
-  "theme": "Core Beta",
-  "live_date": "1957-03-04"
+  "SPX": {
+    "Name": "S&P 500",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "S&P US Broad",
+    "Theme": "Core Beta",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1957-03-04"
+  }
 }
 ```
 
-`ticker` is the BQL identifier. `name` is the human-readable label shown in
-the dropdown and commentary.
+`COLUMN_MAP` in `src/data.py` renames these to internal snake_case
+(`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
+`live_date`). `IndexFamilyName` maps to the internal `category` field —
+there is no separate "family" dimension. The metadata DataFrame also has
+a derived `ticker` column = `<key> + " Index"`.
 
 ## BQL contract
 
@@ -63,14 +69,19 @@ the dropdown and commentary.
 ```python
 bq = bql.Service()
 px = bq.data.px_last(
-    dates=bq.func.range(start, end),
+    dates=bq.func.range(start.isoformat(), end.isoformat()),
     fill="prev",
 )
 request = bql.Request(tickers, {"px_last": px})
 ```
 
-The response is pivoted into a wide DataFrame (`date` index, one column per
-ticker). If you change this query, also update `_mock_prices` so the mock and
+`tickers` must be the full BQL identifiers (i.e. include `" Index"`).
+The response DataFrame is reset_indexed and we resolve the ID, DATE, and
+value column names case-insensitively via `_pick_column` before pivoting
+to wide form (`date` index, one column per ticker). Tickers that BQL
+returns no data for show up as all-NaN columns rather than raising.
+
+If you change this query, also update `_mock_prices` so the mock and
 live paths return the same shape.
 
 ## Conventions
@@ -82,6 +93,9 @@ live paths return the same shape.
   the full filter set.
 - **Lookback is fixed** at `LOOKBACK_YEARS` in `src/config.py`. There's no UI
   date picker for the chart range.
+- **Recompute errors surface in the commentary block** as a styled traceback,
+  rather than leaving the charts silently empty. See `_render_error` in
+  `src/layout.py`.
 - **New top-level files require updating the architecture map above.**
 
 ## Testing notes

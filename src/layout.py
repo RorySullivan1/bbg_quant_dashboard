@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import traceback
 from datetime import date
 
 import bqplot as bq
@@ -60,8 +61,9 @@ def build_app() -> W.VBox:
 
     asset_w = _multi("Asset Class", unique_values(meta, "asset_class"))
     cat_w = _multi("Category", unique_values(meta, "category"))
-    fam_w = _multi("Family", unique_values(meta, "family"))
     theme_w = _multi("Theme", unique_values(meta, "theme"))
+    sol_w = _multi("Solution", unique_values(meta, "solution"))
+    ret_w = _multi("Return Type", unique_values(meta, "return_type"))
 
     live_min = W.DatePicker(
         description="Live ≥",
@@ -90,7 +92,10 @@ def build_app() -> W.VBox:
     )
 
     filter_box = W.VBox(
-        [asset_w, cat_w, fam_w, theme_w, live_min, live_max, ticker_w, apply_btn],
+        [
+            asset_w, cat_w, theme_w, sol_w, ret_w,
+            live_min, live_max, ticker_w, apply_btn,
+        ],
         layout=W.Layout(width="100%", padding="8px"),
     )
 
@@ -130,8 +135,9 @@ def build_app() -> W.VBox:
             meta,
             asset_classes=list(asset_w.value),
             categories=list(cat_w.value),
-            families=list(fam_w.value),
             themes=list(theme_w.value),
+            solutions=list(sol_w.value),
+            return_types=list(ret_w.value),
             live_date_min=live_min.value,
             live_date_max=live_max.value,
         )
@@ -139,7 +145,7 @@ def build_app() -> W.VBox:
         keep = tuple(t for t in ticker_w.value if t in filtered["ticker"].values)
         ticker_w.value = keep
 
-    for w in (asset_w, cat_w, fam_w, theme_w, live_min, live_max):
+    for w in (asset_w, cat_w, theme_w, sol_w, ret_w, live_min, live_max):
         w.observe(_on_filter_change, names="value")
 
     def _recompute(_btn=None):
@@ -149,20 +155,28 @@ def build_app() -> W.VBox:
                 ["Select at least one ticker."]
             )
             return
-        start, end = default_window(LOOKBACK_YEARS)
-        prices = fetch_prices(tickers, start, end)
-        rets = daily_returns(prices)
-        perf = cum_perf(prices)
-        sz = sharpe_zscore(rets)
-        cm = corr_matrix(rets)
+        try:
+            start, end = default_window(LOOKBACK_YEARS)
+            prices = fetch_prices(tickers, start, end)
+            if prices.empty or prices.dropna(how="all").empty:
+                commentary_w.value = _render_error(
+                    f"BQL returned no price data for the selected tickers: {tickers}."
+                )
+                return
+            rets = daily_returns(prices)
+            perf = cum_perf(prices)
+            sz = sharpe_zscore(rets)
+            cm = corr_matrix(rets)
 
-        _update_line(line_fig, line_x, line_y, line_marks_container, perf)
-        _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
-        _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
+            _update_line(line_fig, line_x, line_y, line_marks_container, perf)
+            _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
+            _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
 
-        sub_meta = meta[meta["ticker"].isin(tickers)]
-        bullets = build_commentary(sub_meta, prices, rets, sz)
-        commentary_w.value = _render_commentary(bullets)
+            sub_meta = meta[meta["ticker"].isin(tickers)]
+            bullets = build_commentary(sub_meta, prices, rets, sz)
+            commentary_w.value = _render_commentary(bullets)
+        except Exception:
+            commentary_w.value = _render_error(traceback.format_exc())
 
     apply_btn.on_click(_recompute)
 
@@ -289,5 +303,16 @@ def _render_commentary(bullets: list[str]) -> str:
         "line-height:1.5;'>"
         "<h3 style='margin:0 0 8px 0;'>Commentary</h3>"
         f"<ul style='margin:0;padding-left:20px;'>{items}</ul>"
+        "</div>"
+    )
+
+
+def _render_error(message: str) -> str:
+    return (
+        "<div style='font-family:system-ui,sans-serif;font-size:13px;"
+        "background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;"
+        "padding:12px 16px;border-radius:4px;'>"
+        "<h3 style='margin:0 0 8px 0;'>Recompute failed</h3>"
+        f"<pre style='white-space:pre-wrap;margin:0;'>{html.escape(message)}</pre>"
         "</div>"
     )

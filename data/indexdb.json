@@ -1,0 +1,137 @@
+{
+  "SPX": {
+    "Name": "S&P 500",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "S&P US Broad",
+    "Theme": "Core Beta",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1957-03-04"
+  },
+  "NDX": {
+    "Name": "Nasdaq 100",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "Nasdaq US Broad",
+    "Theme": "Growth",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1985-01-31"
+  },
+  "RTY": {
+    "Name": "Russell 2000",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "Russell US Small Cap",
+    "Theme": "Small Cap",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1984-01-01"
+  },
+  "SX5E": {
+    "Name": "EURO STOXX 50",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "STOXX Europe Broad",
+    "Theme": "Core Beta",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1998-02-26"
+  },
+  "S5INFT": {
+    "Name": "S&P 500 Information Technology",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "S&P US Sector",
+    "Theme": "Technology",
+    "Solution": "Smart Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1989-09-11"
+  },
+  "S5ENRS": {
+    "Name": "S&P 500 Energy",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "S&P US Sector",
+    "Theme": "Energy",
+    "Solution": "Smart Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1989-09-11"
+  },
+  "LBUSTRUU": {
+    "Name": "Bloomberg US Aggregate",
+    "AssetClass": "Fixed Income",
+    "IndexFamilyName": "Bloomberg US Aggregate",
+    "Theme": "Core Duration",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1986-01-01"
+  },
+  "LF98TRUU": {
+    "Name": "Bloomberg US High Yield",
+    "AssetClass": "Fixed Income",
+    "IndexFamilyName": "Bloomberg US Credit",
+    "Theme": "Credit",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1983-07-01"
+  },
+  "EMUSTRUU": {
+    "Name": "Bloomberg EM USD Sovereign",
+    "AssetClass": "Fixed Income",
+    "IndexFamilyName": "Bloomberg EM Sovereign",
+    "Theme": "Emerging Markets",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1993-12-31"
+  },
+  "BCOM": {
+    "Name": "Bloomberg Commodity Index",
+    "AssetClass": "Commodity",
+    "IndexFamilyName": "Bloomberg Commodity",
+    "Theme": "Diversified Commodities",
+    "Solution": "Beta",
+    "ReturnType": "Excess",
+    "LiveDate": "1998-07-14"
+  },
+  "GOLDS": {
+    "Name": "Gold Spot",
+    "AssetClass": "Commodity",
+    "IndexFamilyName": "LBMA Precious Metals",
+    "Theme": "Safe Haven",
+    "Solution": "Beta",
+    "ReturnType": "Excess",
+    "LiveDate": "1968-03-15"
+  },
+  "DXY": {
+    "Name": "US Dollar Index",
+    "AssetClass": "FX",
+    "IndexFamilyName": "ICE Dollar Basket",
+    "Theme": "Dollar",
+    "Solution": "Beta",
+    "ReturnType": "Excess",
+    "LiveDate": "1973-03-01"
+  },
+  "MXEF": {
+    "Name": "MSCI Emerging Markets",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "MSCI Regional",
+    "Theme": "Emerging Markets",
+    "Solution": "Beta",
+    "ReturnType": "Total",
+    "LiveDate": "1988-01-01"
+  },
+  "BCLEAN": {
+    "Name": "Bloomberg Clean Energy",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "Bloomberg Thematic",
+    "Theme": "Clean Energy",
+    "Solution": "ARP",
+    "ReturnType": "Total",
+    "LiveDate": "2021-06-15"
+  },
+  "BAITHM": {
+    "Name": "Bloomberg AI Thematic",
+    "AssetClass": "Equity",
+    "IndexFamilyName": "Bloomberg Thematic",
+    "Theme": "Artificial Intelligence",
+    "Solution": "ARP",
+    "ReturnType": "Total",
+    "LiveDate": "2026-04-21"
+  }
+}

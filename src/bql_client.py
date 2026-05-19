@@ -12,6 +12,9 @@ except Exception:
     _HAS_BQL = False
 
 
+BQL_FIELD_KEY = "px_last"
+
+
 def fetch_prices(
     tickers: list[str],
     start: date,
@@ -36,12 +39,47 @@ def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
         dates=bq.func.range(start.isoformat(), end.isoformat()),
         fill="prev",
     )
-    request = bql.Request(tickers, {"px_last": px})
+    request = bql.Request(tickers, {BQL_FIELD_KEY: px})
     response = bq.execute(request)
-    df = response[0].df().reset_index()
-    wide = df.pivot(index="DATE", columns="ID", values="px_last")
+
+    raw = response[0].df()
+    if raw is None or raw.empty:
+        raise RuntimeError(
+            f"BQL returned no rows for tickers={tickers}. "
+            "Check that the tickers include the ' Index' suffix and resolve on the terminal."
+        )
+
+    df = raw.reset_index()
+    df.columns = [str(c) for c in df.columns]
+
+    id_col = _pick_column(df, ["ID", "id", "Security", "security", "TICKER", "ticker"])
+    date_col = _pick_column(df, ["DATE", "Date", "date", "AS_OF_DATE", "as_of_date"])
+    value_col = _pick_column(
+        df,
+        [BQL_FIELD_KEY, "px_last", "PX_LAST", "VALUE", "value", "Value"],
+    )
+
+    if id_col is None or date_col is None or value_col is None:
+        raise RuntimeError(
+            "Could not locate ID/DATE/value columns in BQL response. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    wide = df.pivot(index=date_col, columns=id_col, values=value_col)
     wide.index = pd.to_datetime(wide.index)
-    return wide.sort_index()[tickers]
+    wide = wide.sort_index()
+    return wide.reindex(columns=tickers)
+
+
+def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    cols = list(df.columns)
+    lower = {c.lower(): c for c in cols}
+    for cand in candidates:
+        if cand in df.columns:
+            return cand
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    return None
 
 
 def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
