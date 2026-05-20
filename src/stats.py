@@ -63,6 +63,17 @@ def sharpe_zscore(
     return ((current - mean) / std).rename("sharpe_zscore")
 
 
+def rolling_sharpe_zscore(
+    returns: pd.DataFrame,
+    window: int = SHARPE_WINDOW,
+    zscore_window: int = SHARPE_ZSCORE_WINDOW,
+) -> pd.DataFrame:
+    sharpe = rolling_sharpe(returns, window=window)
+    rolling_mean = sharpe.rolling(zscore_window).mean()
+    rolling_std = sharpe.rolling(zscore_window).std().replace(0, np.nan)
+    return (sharpe - rolling_mean) / rolling_std
+
+
 def _slice_last_years(df: pd.DataFrame, years: float) -> pd.DataFrame:
     if df.empty:
         return df

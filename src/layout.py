@@ -4,6 +4,7 @@ import html
 import time
 import traceback
 from datetime import date
+from pathlib import Path
 from typing import Callable
 
 import bqplot as bq
@@ -16,18 +17,24 @@ from .bql_client import default_window, fetch_prices
 from .commentary import build_highlights
 from .config import (
     ARP_SOLUTION_VALUES,
+    LEGAL_DISCLOSURE_PATH,
     LOGO_PATH,
     LOOKBACK_YEARS,
+    PERFORMANCE_DISCLAIMER_PATH,
     SHARPE_WINDOW,
     TRADING_DAYS_PER_YEAR,
     WEEKLY_COMMENTARY_PATH,
 )
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
+    ann_return,
+    ann_sharpe,
+    ann_volatility,
     corr_matrix,
     cum_perf,
     daily_returns,
     perf_table,
+    rolling_sharpe_zscore,
     sharpe_zscore,
     universe_perf,
 )
@@ -38,6 +45,17 @@ LINE_COLORS = [
     "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
     "#bcbd22", "#17becf",
 ]
+
+
+ASSET_CLASS_COLORS: dict[str, str] = {
+    "Equity":       "#1f77b4",
+    "Fixed Income": "#ff7f0e",
+    "Commodity":    "#2ca02c",
+    "FX":           "#d62728",
+    "Multi-Asset":  "#9467bd",
+    "Credit":       "#8c564b",
+}
+UNKNOWN_ASSET_CLASS_COLOR = "#94a3b8"
 
 
 SHARPE_WINDOW_LABEL = (
@@ -182,8 +200,10 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     line_fig, line_x, line_y, _ = _line_chart()
     perf_grid = _perf_grid()
+    sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
-    bar_fig, bar_x, bar_y, bar_mark = _bar_chart()
+    scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
+    scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
     highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
@@ -193,7 +213,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="30%", border="1px solid #ddd"),
     )
     chart_col = W.VBox(
-        [line_fig, perf_grid],
+        [line_fig, perf_grid, sharpe_line_fig],
         layout=W.Layout(width="70%", padding="8px"),
     )
     row1 = W.HBox(
@@ -204,7 +224,10 @@ def build_app(verbose: bool = True) -> W.VBox:
     row2 = W.HBox(
         [
             W.Box([heat_fig], layout=W.Layout(width="50%", padding="8px")),
-            W.Box([bar_fig], layout=W.Layout(width="50%", padding="8px")),
+            W.VBox(
+                [scatter_fig, scatter_legend],
+                layout=W.Layout(width="50%", padding="8px"),
+            ),
         ],
         layout=W.Layout(width="100%"),
     )
@@ -318,8 +341,15 @@ def build_app(verbose: bool = True) -> W.VBox:
             if len(tickers) < 1:
                 _update_line(line_fig, line_x, line_y, pd.DataFrame(), meta)
                 _update_perf_grid(perf_grid, pd.DataFrame(), meta)
+                _update_sharpe_line(
+                    sharpe_line_fig, sharpe_line_x, sharpe_line_y,
+                    sharpe_line_zero, pd.DataFrame(), meta,
+                )
                 _update_heatmap(heat_fig, heat_data, heat_x, heat_y, pd.DataFrame())
-                _update_bar(bar_fig, bar_x, bar_y, bar_mark, pd.Series(dtype=float))
+                _update_scatter(
+                    scatter_fig, scatter_x, scatter_y, scatter_mark,
+                    pd.DataFrame(), pd.DataFrame(), meta,
+                )
             elif universe_prices.empty:
                 highlights_html += _render_error(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
@@ -334,14 +364,21 @@ def build_app(verbose: bool = True) -> W.VBox:
                 else:
                     rets = daily_returns(sel_window)
                     perf = cum_perf(sel_window)
-                    sz = sharpe_zscore(rets)
+                    sz_series = rolling_sharpe_zscore(rets)
                     cm = corr_matrix(rets)
                     pt = perf_table(sel_window)
 
                     _update_line(line_fig, line_x, line_y, perf, meta)
                     _update_perf_grid(perf_grid, pt, meta)
+                    _update_sharpe_line(
+                        sharpe_line_fig, sharpe_line_x, sharpe_line_y,
+                        sharpe_line_zero, sz_series, meta,
+                    )
                     _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
-                    _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
+                    _update_scatter(
+                        scatter_fig, scatter_x, scatter_y, scatter_mark,
+                        sel_window, rets, meta,
+                    )
         except Exception:
             highlights_html += _render_error(traceback.format_exc())
 
@@ -349,8 +386,29 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     apply_btn.on_click(_recompute)
 
+    perf_disclaimer_w = W.HTML(
+        _load_disclaimer(
+            PERFORMANCE_DISCLAIMER_PATH,
+            start_date=universe_start.isoformat(),
+            end_date=today.isoformat(),
+        ),
+        layout=W.Layout(width="100%", padding="0 16px"),
+    )
+    legal_w = W.HTML(
+        _load_disclaimer(LEGAL_DISCLOSURE_PATH),
+        layout=W.Layout(width="100%", padding="0 16px 16px 16px"),
+    )
+
     app = W.VBox(
-        [_banner(), commentary_box, row1, row2, universe_row],
+        [
+            _banner(),
+            commentary_box,
+            row1,
+            row2,
+            universe_row,
+            perf_disclaimer_w,
+            legal_w,
+        ],
         layout=W.Layout(width="100%"),
     )
 
@@ -567,40 +625,196 @@ def _update_heatmap(fig, data, _x_sc, _y_sc, cm: pd.DataFrame):
     data.column = tickers
 
 
-# ---- Bar chart ------------------------------------------------------------
+# ---- Sharpe z-score line chart (selected set, 1Y evolution) ----------------
 
 
-def _bar_chart():
-    x_sc = bq.OrdinalScale()
+def _sharpe_line_chart():
+    x_sc = bq.DateScale()
     y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
+    ax_x = bq.Axis(scale=x_sc, label="Date")
     ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Sharpe z-score")
-    bar = bq.Bars(
-        x=[""],
-        y=[0],
+    zero = bq.Lines(
+        x=[],
+        y=[0, 0],
         scales={"x": x_sc, "y": y_sc},
-        colors=["#3b82f6"],
+        colors=["#94a3b8"],
+        line_style="dashed",
+        stroke_width=1,
+        display_legend=False,
     )
     fig = bq.Figure(
-        marks=[bar],
         axes=[ax_x, ax_y],
-        title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score vs prior {SHARPE_WINDOW_LABEL}",
-        layout=W.Layout(width="100%", height="600px"),
-        fig_margin={"top": 40, "bottom": 120, "left": 60, "right": 20},
+        marks=[zero],
+        title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
+        legend_location="top-left",
+        layout=W.Layout(width="100%", height="260px"),
+        fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
     )
-    return fig, x_sc, y_sc, bar
+    return fig, x_sc, y_sc, zero
 
 
-def _update_bar(_fig, _x_sc, _y_sc, bar, sz: pd.Series):
-    sz = sz.dropna()
-    if sz.empty:
-        bar.x = [""]
-        bar.y = [0]
-        bar.colors = ["#3b82f6"]
+def _update_sharpe_line(fig, x_sc, y_sc, zero, zser: pd.DataFrame, meta: pd.DataFrame):
+    if zser.empty:
+        fig.marks = [zero]
         return
-    bar.x = list(sz.index)
-    bar.y = sz.values.tolist()
-    bar.colors = ["#16a34a" if v >= 0 else "#dc2626" for v in sz.values]
+    tail = zser.dropna(how="all").tail(TRADING_DAYS_PER_YEAR)
+    if tail.empty:
+        fig.marks = [zero]
+        return
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
+    marks: list = []
+    for i, col in enumerate(tail.columns):
+        series = tail[col].dropna()
+        if series.empty:
+            continue
+        name = name_lookup.get(col)
+        label = f"{name} ({col})" if name else col
+        marks.append(
+            bq.Lines(
+                x=series.index.values,
+                y=series.values,
+                scales={"x": x_sc, "y": y_sc},
+                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                labels=[label],
+                display_legend=True,
+            )
+        )
+    x_min = tail.index.min().to_pydatetime()
+    x_max = tail.index.max().to_pydatetime()
+    zero.x = tail.index[[0, -1]].values
+    fig.marks = [zero, *marks]
+    vals = tail.values
+    if np.isfinite(vals).any():
+        y_min = float(np.nanmin(vals))
+        y_max = float(np.nanmax(vals))
+        y_min = min(y_min, 0.0)
+        y_max = max(y_max, 0.0)
+        pad = (y_max - y_min) * 0.05 or 1.0
+        y_sc.min = y_min - pad
+        y_sc.max = y_max + pad
+    x_sc.min = x_min
+    x_sc.max = x_max
+
+
+# ---- Risk / Return scatter (selected set) ----------------------------------
+
+
+def _scatter_chart():
+    x_sc = bq.LinearScale()
+    y_sc = bq.LinearScale()
+    ax_x = bq.Axis(
+        scale=x_sc,
+        label=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
+        tick_format=".0%",
+    )
+    ax_y = bq.Axis(
+        scale=y_sc,
+        orientation="vertical",
+        label=f"Annualized Return ({LOOKBACK_YEARS}Y)",
+        tick_format=".0%",
+    )
+    tt = bq.Tooltip(
+        fields=["name", "x", "y", "size"],
+        labels=["", "Vol", "Return", "Sharpe"],
+        formats=["", ".2%", ".2%", ".2f"],
+    )
+    scatter = bq.Scatter(
+        x=[],
+        y=[],
+        scales={"x": x_sc, "y": y_sc},
+        colors=[UNKNOWN_ASSET_CLASS_COLOR],
+        default_size=80,
+        tooltip=tt,
+    )
+    fig = bq.Figure(
+        marks=[scatter],
+        axes=[ax_x, ax_y],
+        title=f"Risk / Return — {LOOKBACK_YEARS}Y",
+        layout=W.Layout(width="100%", height="560px"),
+        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+    )
+    return fig, x_sc, y_sc, scatter
+
+
+def _update_scatter(
+    fig,
+    x_sc,
+    y_sc,
+    scatter,
+    prices: pd.DataFrame,
+    rets: pd.DataFrame,
+    meta: pd.DataFrame,
+):
+    if prices.empty or rets.empty:
+        scatter.x = []
+        scatter.y = []
+        scatter.size = []
+        scatter.color = []
+        scatter.names = []
+        return
+    vol = ann_volatility(rets, LOOKBACK_YEARS)
+    ret = ann_return(prices, LOOKBACK_YEARS)
+    sharpe = ann_sharpe(rets, prices, LOOKBACK_YEARS)
+    frame = pd.DataFrame({"vol": vol, "ret": ret, "sharpe": sharpe}).dropna(
+        subset=["vol", "ret"]
+    )
+    if frame.empty:
+        scatter.x = []
+        scatter.y = []
+        scatter.size = []
+        scatter.color = []
+        scatter.names = []
+        return
+    info = meta.set_index("ticker").reindex(frame.index)
+    s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
+    if s_clipped.max() > 0:
+        size_vals = (5 + 30 * (s_clipped / s_clipped.max())).tolist()
+    else:
+        size_vals = [10] * len(frame)
+    colors = [
+        ASSET_CLASS_COLORS.get(ac, UNKNOWN_ASSET_CLASS_COLOR)
+        for ac in info["asset_class"].fillna("").tolist()
+    ]
+    names = [
+        f"{n} ({t})" if isinstance(n, str) and n else t
+        for t, n in zip(frame.index, info["name"].tolist())
+    ]
+    scatter.x = frame["vol"].values
+    scatter.y = frame["ret"].values
+    scatter.size = size_vals
+    scatter.color = colors
+    scatter.names = names
+    x_min = float(frame["vol"].min())
+    x_max = float(frame["vol"].max())
+    y_min = float(frame["ret"].min())
+    y_max = float(frame["ret"].max())
+    x_pad = (x_max - x_min) * 0.08 or max(abs(x_min), abs(x_max), 0.01) * 0.1 or 0.005
+    y_pad = (y_max - y_min) * 0.08 or max(abs(y_min), abs(y_max), 0.01) * 0.1 or 0.005
+    x_sc.min = max(0.0, x_min - x_pad)
+    x_sc.max = x_max + x_pad
+    y_sc.min = min(0.0, y_min - y_pad)
+    y_sc.max = y_max + y_pad
+
+
+def _render_scatter_legend(palette: dict[str, str]) -> str:
+    items = []
+    for ac, color in palette.items():
+        items.append(
+            "<span style='display:inline-flex;align-items:center;gap:4px;"
+            "margin-right:14px;font-size:11px;color:#475569;'>"
+            f"<span style='display:inline-block;width:10px;height:10px;"
+            f"border-radius:50%;background:{color};'></span>"
+            f"{html.escape(ac)}"
+            "</span>"
+        )
+    return (
+        "<div style='font-family:system-ui,sans-serif;padding:4px 8px 0 8px;'>"
+        "<span style='font-size:11px;color:#64748b;margin-right:8px;'>"
+        "Color · asset class &nbsp;·&nbsp; Size · annualized Sharpe"
+        "</span>"
+        + "".join(items)
+        + "</div>"
+    )
 
 
 # ---- Commentary rendering -------------------------------------------------
@@ -622,6 +836,15 @@ def _load_weekly_commentary() -> str:
             "</p>"
         )
     return WEEKLY_COMMENTARY_PATH.read_text(encoding="utf-8")
+
+
+def _load_disclaimer(path: Path, **placeholders: str) -> str:
+    if not path.exists():
+        return ""
+    body = path.read_text(encoding="utf-8")
+    for key, val in placeholders.items():
+        body = body.replace("{{" + key + "}}", val)
+    return body
 
 
 def _render_weekly_commentary(body_html: str, as_of: date) -> str:
