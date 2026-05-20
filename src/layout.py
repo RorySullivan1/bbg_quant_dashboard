@@ -15,7 +15,14 @@ from .bql_client import default_window, fetch_prices
 from .commentary import build_commentary
 from .config import LOGO_PATH, LOOKBACK_YEARS, SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
 from .data import apply_filters, load_metadata, unique_values
-from .stats import corr_matrix, cum_perf, daily_returns, perf_table, sharpe_zscore
+from .stats import (
+    corr_matrix,
+    cum_perf,
+    daily_returns,
+    perf_table,
+    sharpe_zscore,
+    universe_perf,
+)
 
 
 LINE_COLORS = [
@@ -55,23 +62,31 @@ def _banner() -> W.HBox:
     )
 
 
-def _checkbox_group(
+def _toggle_group(
     label: str, options: list[str]
-) -> tuple[W.VBox, Callable[[], list[str]], list[W.Checkbox]]:
-    checks = {
-        opt: W.Checkbox(
+) -> tuple[W.VBox, Callable[[], list[str]], list[W.ToggleButton]]:
+    toggles = {
+        opt: W.ToggleButton(
             value=False,
             description=opt,
-            indent=False,
-            layout=W.Layout(width="100%", margin="0"),
+            layout=W.Layout(width="100%", min_height="26px", margin="1px 0"),
         )
         for opt in options
     }
     header = W.HTML(
         f"<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
     )
+    toggle_list = W.VBox(
+        list(toggles.values()),
+        layout=W.Layout(
+            max_height="200px",
+            overflow="auto",
+            width="100%",
+            padding="0 2px",
+        ),
+    )
     box = W.VBox(
-        [header, *checks.values()],
+        [header, toggle_list],
         layout=W.Layout(
             width="100%",
             padding="4px 6px",
@@ -79,17 +94,17 @@ def _checkbox_group(
             margin="0 0 6px 0",
         ),
     )
-    return box, (lambda: [v for v, cb in checks.items() if cb.value]), list(checks.values())
+    return box, (lambda: [v for v, t in toggles.items() if t.value]), list(toggles.values())
 
 
 def build_app() -> W.VBox:
     meta = load_metadata()
 
-    asset_box, asset_get, asset_checks = _checkbox_group("Asset Class", unique_values(meta, "asset_class"))
-    cat_box, cat_get, cat_checks = _checkbox_group("Category", unique_values(meta, "category"))
-    theme_box, theme_get, theme_checks = _checkbox_group("Theme", unique_values(meta, "theme"))
-    sol_box, sol_get, sol_checks = _checkbox_group("Solution", unique_values(meta, "solution"))
-    ret_box, ret_get, ret_checks = _checkbox_group("Return Type", unique_values(meta, "return_type"))
+    asset_box, asset_get, asset_toggles = _toggle_group("Asset Class", unique_values(meta, "asset_class"))
+    cat_box, cat_get, cat_toggles = _toggle_group("Category", unique_values(meta, "category"))
+    theme_box, theme_get, theme_toggles = _toggle_group("Theme", unique_values(meta, "theme"))
+    sol_box, sol_get, sol_toggles = _toggle_group("Solution", unique_values(meta, "solution"))
+    ret_box, ret_get, ret_toggles = _toggle_group("Return Type", unique_values(meta, "return_type"))
 
     live_min = W.DatePicker(
         description="Live ≥",
@@ -136,7 +151,8 @@ def build_app() -> W.VBox:
     perf_grid = _perf_grid()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     bar_fig, bar_x, bar_y, bar_mark = _bar_chart()
-    commentary_w = W.HTML(_render_commentary(["Click Apply to load."]))
+    commentary_w = W.HTML(_render_commentary(["Loading universe…"]))
+    universe_grid = _universe_grid()
 
     filter_col = W.Box(
         [filter_box],
@@ -164,6 +180,39 @@ def build_app() -> W.VBox:
         layout=W.Layout(width="100%", padding="12px 16px"),
     )
 
+    universe_header = W.HTML(
+        "<div style='font-weight:600;font-size:14px;margin:8px 12px 4px 12px;'>"
+        "All-catalog performance"
+        "</div>"
+    )
+    universe_row = W.VBox(
+        [universe_header, universe_grid],
+        layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
+    )
+
+    # Single BQL fetch at app-load time. universe_prices spans the oldest
+    # live date in the catalog → today; every visualization reads from this
+    # cache, so Apply doesn't trigger another BQL call.
+    universe_prices: pd.DataFrame = pd.DataFrame()
+    universe_start_date = meta["live_date"].dropna().min()
+    if pd.isna(universe_start_date):
+        universe_start_date = pd.Timestamp(date.today()) - pd.DateOffset(years=LOOKBACK_YEARS)
+    universe_start = universe_start_date.date()
+    today = date.today()
+
+    try:
+        universe_prices = fetch_prices(meta["ticker"].tolist(), universe_start, today)
+    except Exception:
+        commentary_w.value = _render_error(traceback.format_exc())
+
+    # Seed the universe grid and commentary from the cache.
+    if not universe_prices.empty:
+        try:
+            up = universe_perf(universe_prices)
+            _update_universe_grid(universe_grid, meta, up)
+        except Exception:
+            commentary_w.value = _render_error(traceback.format_exc())
+
     def _on_filter_change(_change=None):
         filtered = apply_filters(
             meta,
@@ -186,55 +235,72 @@ def build_app() -> W.VBox:
             visible = filtered
 
         selected = list(ticker_w.value)
-        # Keep selected tickers in the option list so the user doesn't lose
-        # them while typing or narrowing filters.
         keep_selected = filtered.loc[filtered["ticker"].isin(selected)]
         combined = pd.concat([visible, keep_selected]).drop_duplicates(subset="ticker")
         combined = combined.sort_values("ticker").reset_index(drop=True)
         ticker_w.options = _ticker_options(combined)
         ticker_w.value = tuple(t for t in selected if t in combined["ticker"].values)
 
-    for cb in (*asset_checks, *cat_checks, *theme_checks, *sol_checks, *ret_checks):
-        cb.observe(_on_filter_change, names="value")
+    for tg in (*asset_toggles, *cat_toggles, *theme_toggles, *sol_toggles, *ret_toggles):
+        tg.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
 
     def _recompute(_btn=None):
-        tickers = list(ticker_w.value)
-        if len(tickers) < 1:
-            commentary_w.value = _render_commentary(
-                ["Select at least one ticker."]
-            )
-            return
+        commentary_html = ""
+        # Commentary is always whole-catalog, regardless of selection.
+        universe_window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         try:
-            start, end = default_window(LOOKBACK_YEARS)
-            prices = fetch_prices(tickers, start, end)
-            if prices.empty or prices.dropna(how="all").empty:
-                commentary_w.value = _render_error(
-                    f"BQL returned no price data for the selected tickers: {tickers}."
-                )
-                return
-            rets = daily_returns(prices)
-            perf = cum_perf(prices)
-            sz = sharpe_zscore(rets)
-            cm = corr_matrix(rets)
-            pt = perf_table(prices)
-
-            _update_line(line_fig, line_x, line_y, perf)
-            _update_perf_grid(perf_grid, pt)
-            _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
-            _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
-
-            sub_meta = meta[meta["ticker"].isin(tickers)]
-            bullets = build_commentary(sub_meta, prices, rets, sz)
-            commentary_w.value = _render_commentary(bullets)
+            if not universe_prices.empty:
+                universe_window = universe_prices.loc[
+                    universe_prices.index >= universe_window_start
+                ]
+                if not universe_window.empty:
+                    universe_rets = daily_returns(universe_window)
+                    universe_sz = sharpe_zscore(universe_rets)
+                    bullets = build_commentary(meta, universe_window, universe_rets, universe_sz)
+                    commentary_html = _render_commentary(bullets)
         except Exception:
-            commentary_w.value = _render_error(traceback.format_exc())
+            commentary_html = _render_error(traceback.format_exc())
+
+        try:
+            tickers = list(ticker_w.value)
+            if len(tickers) < 1:
+                _update_line(line_fig, line_x, line_y, pd.DataFrame(), meta)
+                _update_perf_grid(perf_grid, pd.DataFrame(), meta)
+                _update_heatmap(heat_fig, heat_data, heat_x, heat_y, pd.DataFrame())
+                _update_bar(bar_fig, bar_x, bar_y, bar_mark, pd.Series(dtype=float))
+            elif universe_prices.empty:
+                commentary_html = commentary_html + _render_error(
+                    "Universe price cache is empty — initial BQL fetch returned no rows."
+                )
+            else:
+                sel_full = universe_prices.reindex(columns=tickers)
+                sel_window = sel_full.loc[sel_full.index >= universe_window_start]
+                if sel_window.dropna(how="all").empty:
+                    commentary_html = commentary_html + _render_error(
+                        f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
+                    )
+                else:
+                    rets = daily_returns(sel_window)
+                    perf = cum_perf(sel_window)
+                    sz = sharpe_zscore(rets)
+                    cm = corr_matrix(rets)
+                    pt = perf_table(sel_window)
+
+                    _update_line(line_fig, line_x, line_y, perf, meta)
+                    _update_perf_grid(perf_grid, pt, meta)
+                    _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
+                    _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
+        except Exception:
+            commentary_html = commentary_html + _render_error(traceback.format_exc())
+
+        commentary_w.value = commentary_html or _render_commentary(["No data."])
 
     apply_btn.on_click(_recompute)
 
     app = W.VBox(
-        [_banner(), commentary_box, row1, row2],
+        [_banner(), commentary_box, row1, row2, universe_row],
         layout=W.Layout(width="100%"),
     )
 
@@ -262,33 +328,40 @@ def _line_chart():
     return fig, x_sc, y_sc, fig
 
 
-def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame):
+def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame, meta: pd.DataFrame):
     if perf.empty:
         fig.marks = []
         return
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
     marks = []
     for i, col in enumerate(perf.columns):
         series = perf[col].dropna()
+        if series.empty:
+            continue
+        name = name_lookup.get(col)
+        label = f"{name} ({col})" if name else col
         marks.append(
             bq.Lines(
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
                 colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                labels=[col],
+                labels=[label],
                 display_legend=True,
             )
         )
     fig.marks = marks
-    # bqplot retains the prior scale bounds when marks are wholesale replaced,
-    # so refit the axes to the new visible range with a small padding.
-    y_min = float(np.nanmin(perf.values))
-    y_max = float(np.nanmax(perf.values))
-    pad = (y_max - y_min) * 0.02 or 1.0
-    y_sc.min = y_min - pad
-    y_sc.max = y_max + pad
-    x_sc.min = perf.index.min().to_pydatetime()
-    x_sc.max = perf.index.max().to_pydatetime()
+    if not perf.dropna(how="all").empty:
+        y_min = float(np.nanmin(perf.values))
+        y_max = float(np.nanmax(perf.values))
+        pad = (y_max - y_min) * 0.02 or 1.0
+        y_sc.min = y_min - pad
+        y_sc.max = y_max + pad
+        x_sc.min = perf.index.min().to_pydatetime()
+        x_sc.max = perf.index.max().to_pydatetime()
+
+
+# ---- Perf grid (selected set) ---------------------------------------------
 
 
 def _perf_grid() -> DataGrid:
@@ -297,30 +370,113 @@ def _perf_grid() -> DataGrid:
         base_row_size=28,
         base_column_size=82,
         base_row_header_size=120,
-        layout=W.Layout(width="100%", height="220px"),
-        default_renderer=TextRenderer(format=".2%"),
+        layout=W.Layout(width="100%", height="240px"),
     )
     return grid
 
 
-def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame) -> None:
+def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
     if pt.empty:
         grid.data = pd.DataFrame()
         return
-    display = pt.copy()
-    # ipydatagrid wants string-only labels for MultiIndex columns
-    display.columns = pd.MultiIndex.from_tuples(
-        [(str(a), str(b)) for a, b in display.columns]
+    info_block = _info_block(pt.index, meta)
+    pt_norm = pt.copy()
+    pt_norm.columns = pd.MultiIndex.from_tuples(
+        [(str(a), str(b)) for a, b in pt_norm.columns]
     )
-    display.index.name = "Ticker"
-    grid.data = display
+    combined = pd.concat([info_block, pt_norm], axis=1)
+    combined.index.name = "Ticker"
+    grid.data = combined
+    grid.renderers = _perf_renderers(combined.columns)
+
+
+def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
+    info = meta.set_index("ticker").reindex(tickers)[["name", "asset_class", "theme"]]
+    info = info.rename(
+        columns={"name": "Name", "asset_class": "Asset Class", "theme": "Theme"}
+    )
+    info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
+    return info
+
+
+def _perf_renderers(columns: pd.MultiIndex) -> dict:
+    text = TextRenderer()
+    pct = TextRenderer(format=".2%")
+    f2 = TextRenderer(format=".2f")
+    renderers: dict = {}
+    for col in columns:
+        period, metric = col
+        if period == "Info":
+            renderers[col] = text
+        elif metric == "Sharpe":
+            renderers[col] = f2
+        elif metric in ("Return", "Vol", "Max DD"):
+            renderers[col] = pct
+        else:
+            renderers[col] = text
+    return renderers
+
+
+# ---- Universe grid (full catalog) -----------------------------------------
+
+
+def _universe_grid() -> DataGrid:
+    grid = DataGrid(
+        pd.DataFrame(),
+        base_row_size=28,
+        base_column_size=92,
+        base_row_header_size=120,
+        layout=W.Layout(width="100%", height="360px"),
+    )
+    return grid
+
+
+def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) -> None:
+    if meta.empty:
+        grid.data = pd.DataFrame()
+        return
+    info_cols = ["name", "asset_class", "category", "theme", "solution", "return_type", "live_date"]
+    info = meta.set_index("ticker")[info_cols].copy()
+    info["live_date"] = info["live_date"].dt.strftime("%Y-%m-%d")
+    info = info.rename(
+        columns={
+            "name": "Name",
+            "asset_class": "Asset Class",
+            "category": "Category",
+            "theme": "Theme",
+            "solution": "Solution",
+            "return_type": "Return Type",
+            "live_date": "Live Date",
+        }
+    )
+    info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
+
+    if up.empty:
+        combined = info
+    else:
+        up_norm = up.copy()
+        up_norm.columns = pd.MultiIndex.from_tuples(
+            [(str(a), str(b)) for a, b in up_norm.columns]
+        )
+        # Order: Info block first, then 1Y, 3Y, 5Y, SI.
+        period_order = ["1Y", "3Y", "5Y", "SI"]
+        present = [p for p in period_order if p in up_norm.columns.get_level_values(0)]
+        up_norm = up_norm.reindex(columns=present, level=0)
+        combined = info.join(up_norm.reindex(info.index))
+
+    combined.index.name = "Ticker"
+    grid.data = combined
+    grid.renderers = _perf_renderers(combined.columns)
+
+
+# ---- Heatmap --------------------------------------------------------------
 
 
 def _heatmap():
     col_sc = bq.ColorScale(scheme="RdYlBu", min=-1, max=1, reverse=True)
     x_sc = bq.OrdinalScale()
     y_sc = bq.OrdinalScale(reverse=True)
-    ax_x = bq.Axis(scale=x_sc, tick_rotate=-45, tick_style={"font-size": "10px"})
+    ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
     ax_y = bq.Axis(scale=y_sc, orientation="vertical", tick_style={"font-size": "10px"})
     ax_c = bq.ColorAxis(scale=col_sc, orientation="vertical", side="right")
     data = bq.GridHeatMap(
@@ -334,14 +490,16 @@ def _heatmap():
         marks=[data],
         axes=[ax_x, ax_y, ax_c],
         title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-        layout=W.Layout(width="100%", height="360px"),
-        fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 70},
+        layout=W.Layout(width="100%", height="400px"),
+        fig_margin={"top": 40, "bottom": 120, "left": 90, "right": 70},
     )
     return fig, data, x_sc, y_sc
 
 
 def _update_heatmap(fig, data, _x_sc, _y_sc, cm: pd.DataFrame):
-    if cm.empty:
+    # Correlation needs at least 2 series; below that, fall back to a
+    # blank 2x2 placeholder so the GridHeatMap validator doesn't complain.
+    if cm.empty or cm.shape[0] < 2:
         cm = pd.DataFrame(np.zeros((2, 2)), index=["", " "], columns=["", " "])
     tickers = list(cm.columns)
     data.color = cm.values
@@ -349,10 +507,13 @@ def _update_heatmap(fig, data, _x_sc, _y_sc, cm: pd.DataFrame):
     data.column = tickers
 
 
+# ---- Bar chart ------------------------------------------------------------
+
+
 def _bar_chart():
     x_sc = bq.OrdinalScale()
     y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, tick_rotate=-45, tick_style={"font-size": "10px"})
+    ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
     ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Sharpe z-score")
     bar = bq.Bars(
         x=[""],
@@ -364,8 +525,8 @@ def _bar_chart():
         marks=[bar],
         axes=[ax_x, ax_y],
         title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score vs prior {SHARPE_WINDOW_LABEL}",
-        layout=W.Layout(width="100%", height="360px"),
-        fig_margin={"top": 40, "bottom": 70, "left": 60, "right": 20},
+        layout=W.Layout(width="100%", height="400px"),
+        fig_margin={"top": 40, "bottom": 120, "left": 60, "right": 20},
     )
     return fig, x_sc, y_sc, bar
 
@@ -382,12 +543,15 @@ def _update_bar(_fig, _x_sc, _y_sc, bar, sz: pd.Series):
     bar.colors = ["#16a34a" if v >= 0 else "#dc2626" for v in sz.values]
 
 
+# ---- Commentary rendering -------------------------------------------------
+
+
 def _render_commentary(bullets: list[str]) -> str:
     items = "".join(f"<li>{html.escape(b)}</li>" for b in bullets)
     return (
         "<div style='font-family:system-ui,sans-serif;font-size:14px;"
         "line-height:1.5;'>"
-        "<h3 style='margin:0 0 8px 0;'>Commentary</h3>"
+        "<h3 style='margin:0 0 8px 0;'>Commentary <span style='font-weight:400;font-size:12px;color:#64748b;'>(all-catalog)</span></h3>"
         f"<ul style='margin:0;padding-left:20px;'>{items}</ul>"
         "</div>"
     )
