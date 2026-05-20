@@ -537,7 +537,7 @@ def _heatmap():
         label="Correlation",
         num_ticks=11,
         tick_format=".1f",
-        tick_style={"font-size": "10px"},
+        tick_style={"font-size": "12px"},
     )
     data = bq.GridHeatMap(
         color=np.zeros((2, 2)),
@@ -550,8 +550,8 @@ def _heatmap():
         marks=[data],
         axes=[ax_x, ax_y, ax_c],
         title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-        layout=W.Layout(width="100%", height="400px"),
-        fig_margin={"top": 40, "bottom": 80, "left": 90, "right": 110},
+        layout=W.Layout(width="100%", height="600px"),
+        fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 110},
     )
     return fig, data, x_sc, y_sc
 
@@ -585,7 +585,7 @@ def _bar_chart():
         marks=[bar],
         axes=[ax_x, ax_y],
         title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score vs prior {SHARPE_WINDOW_LABEL}",
-        layout=W.Layout(width="100%", height="400px"),
+        layout=W.Layout(width="100%", height="600px"),
         fig_margin={"top": 40, "bottom": 120, "left": 60, "right": 20},
     )
     return fig, x_sc, y_sc, bar
