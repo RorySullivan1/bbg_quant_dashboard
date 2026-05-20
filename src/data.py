@@ -49,7 +49,11 @@ def load_metadata(path: Path | str = DATA_PATH) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = pd.NA
 
-    df["live_date"] = pd.to_datetime(df["live_date"], errors="coerce")
+    df["live_date"] = pd.to_datetime(
+        df["live_date"].astype(str).str.replace(r"\D", "", regex=True),
+        format="%Y%m%d",
+        errors="coerce",
+    )
     return df[META_COLUMNS].reset_index(drop=True)
 
 
