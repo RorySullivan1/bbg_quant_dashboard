@@ -160,11 +160,11 @@ def build_app(verbose: bool = True) -> W.VBox:
     toggle_grid = W.HBox(
         [
             W.VBox(
-                [asset_box, theme_box, ret_box],
+                [asset_box, theme_box],
                 layout=W.Layout(width="50%"),
             ),
             W.VBox(
-                [cat_box],
+                [cat_box, ret_box],
                 layout=W.Layout(width="50%"),
             ),
         ],
