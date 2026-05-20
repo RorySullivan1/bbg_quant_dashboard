@@ -43,3 +43,4 @@ bbg_quant_dashboard/
 ```
 
 See `CLAUDE.md` for the data contract, BQL query shape, and conventions.
+Fix launch date parsing
