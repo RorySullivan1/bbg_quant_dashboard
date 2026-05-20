@@ -15,6 +15,7 @@ from ipydatagrid import DataGrid, TextRenderer
 from .bql_client import default_window, fetch_prices
 from .commentary import build_highlights
 from .config import (
+    ARP_SOLUTION_VALUES,
     LOGO_PATH,
     LOOKBACK_YEARS,
     SHARPE_WINDOW,
@@ -111,12 +112,14 @@ def build_app(verbose: bool = True) -> W.VBox:
             print(f"[{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
 
     meta = load_metadata()
+    meta = meta[
+        meta["solution"].astype(str).str.lower().isin(ARP_SOLUTION_VALUES)
+    ].reset_index(drop=True)
     _log(f"loaded metadata: {len(meta)} tickers")
 
     asset_box, asset_get, asset_toggles = _toggle_group("Asset Class", unique_values(meta, "asset_class"))
     cat_box, cat_get, cat_toggles = _toggle_group("Category", unique_values(meta, "category"))
     theme_box, theme_get, theme_toggles = _toggle_group("Theme", unique_values(meta, "theme"))
-    sol_box, sol_get, sol_toggles = _toggle_group("Solution", unique_values(meta, "solution"))
     ret_box, ret_get, ret_toggles = _toggle_group("Return Type", unique_values(meta, "return_type"))
 
     live_min = W.DatePicker(
@@ -161,7 +164,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                 layout=W.Layout(width="50%"),
             ),
             W.VBox(
-                [cat_box, sol_box],
+                [cat_box],
                 layout=W.Layout(width="50%"),
             ),
         ],
@@ -263,7 +266,6 @@ def build_app(verbose: bool = True) -> W.VBox:
             asset_classes=asset_get(),
             categories=cat_get(),
             themes=theme_get(),
-            solutions=sol_get(),
             return_types=ret_get(),
             live_date_min=live_min.value,
             live_date_max=live_max.value,
@@ -285,7 +287,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         ticker_w.options = _ticker_options(combined)
         ticker_w.value = tuple(t for t in selected if t in combined["ticker"].values)
 
-    for tg in (*asset_toggles, *cat_toggles, *theme_toggles, *sol_toggles, *ret_toggles):
+    for tg in (*asset_toggles, *cat_toggles, *theme_toggles, *ret_toggles):
         tg.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
@@ -486,7 +488,7 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
     if meta.empty:
         grid.data = pd.DataFrame()
         return
-    info_cols = ["name", "asset_class", "category", "theme", "solution", "return_type", "live_date"]
+    info_cols = ["name", "asset_class", "category", "theme", "return_type", "live_date"]
     info = meta.set_index("ticker")[info_cols].copy()
     info["live_date"] = info["live_date"].dt.strftime("%Y-%m-%d")
     info = info.rename(
@@ -495,7 +497,6 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
             "asset_class": "Asset Class",
             "category": "Category",
             "theme": "Theme",
-            "solution": "Solution",
             "return_type": "Return Type",
             "live_date": "Live Date",
         }
@@ -529,7 +530,15 @@ def _heatmap():
     y_sc = bq.OrdinalScale(reverse=True)
     ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
     ax_y = bq.Axis(scale=y_sc, orientation="vertical", tick_style={"font-size": "10px"})
-    ax_c = bq.ColorAxis(scale=col_sc, orientation="vertical", side="right")
+    ax_c = bq.ColorAxis(
+        scale=col_sc,
+        orientation="vertical",
+        side="right",
+        label="Correlation",
+        num_ticks=11,
+        tick_format=".1f",
+        tick_style={"font-size": "10px"},
+    )
     data = bq.GridHeatMap(
         color=np.zeros((2, 2)),
         row=["", " "],
@@ -542,7 +551,7 @@ def _heatmap():
         axes=[ax_x, ax_y, ax_c],
         title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
         layout=W.Layout(width="100%", height="400px"),
-        fig_margin={"top": 40, "bottom": 120, "left": 90, "right": 70},
+        fig_margin={"top": 40, "bottom": 80, "left": 90, "right": 110},
     )
     return fig, data, x_sc, y_sc
 
