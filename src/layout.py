@@ -13,8 +13,14 @@ import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer
 
 from .bql_client import default_window, fetch_prices
-from .commentary import build_commentary
-from .config import LOGO_PATH, LOOKBACK_YEARS, SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
+from .commentary import build_highlights
+from .config import (
+    LOGO_PATH,
+    LOOKBACK_YEARS,
+    SHARPE_WINDOW,
+    TRADING_DAYS_PER_YEAR,
+    WEEKLY_COMMENTARY_PATH,
+)
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
     corr_matrix,
@@ -175,7 +181,8 @@ def build_app(verbose: bool = True) -> W.VBox:
     perf_grid = _perf_grid()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     bar_fig, bar_x, bar_y, bar_mark = _bar_chart()
-    commentary_w = W.HTML(_render_commentary(["Loading universe…"]))
+    weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
+    highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
 
     filter_col = W.Box(
@@ -199,8 +206,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%"),
     )
 
-    commentary_box = W.Box(
-        [commentary_w],
+    commentary_box = W.VBox(
+        [weekly_w, highlights_w],
         layout=W.Layout(width="100%", padding="12px 16px"),
     )
 
@@ -284,12 +291,12 @@ def build_app(verbose: bool = True) -> W.VBox:
         w.observe(_on_filter_change, names="value")
 
     def _recompute(_btn=None):
-        commentary_html = ""
+        highlights_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
         for err in init_errors:
-            commentary_html += _render_error(err)
-        # Commentary is always whole-catalog, regardless of selection.
+            highlights_html += _render_error(err)
+        # Highlights are always whole-catalog, regardless of selection.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         try:
             if not universe_prices.empty:
@@ -299,10 +306,10 @@ def build_app(verbose: bool = True) -> W.VBox:
                 if not universe_window.empty:
                     universe_rets = daily_returns(universe_window)
                     universe_sz = sharpe_zscore(universe_rets)
-                    bullets = build_commentary(meta, universe_window, universe_rets, universe_sz)
-                    commentary_html += _render_commentary(bullets)
+                    cards = build_highlights(meta, universe_window, universe_rets, universe_sz)
+                    highlights_html += _render_highlights(cards)
         except Exception:
-            commentary_html += _render_error(traceback.format_exc())
+            highlights_html += _render_error(traceback.format_exc())
 
         try:
             tickers = list(ticker_w.value)
@@ -312,14 +319,14 @@ def build_app(verbose: bool = True) -> W.VBox:
                 _update_heatmap(heat_fig, heat_data, heat_x, heat_y, pd.DataFrame())
                 _update_bar(bar_fig, bar_x, bar_y, bar_mark, pd.Series(dtype=float))
             elif universe_prices.empty:
-                commentary_html = commentary_html + _render_error(
+                highlights_html += _render_error(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
             else:
                 sel_full = universe_prices.reindex(columns=tickers)
                 sel_window = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_window.dropna(how="all").empty:
-                    commentary_html = commentary_html + _render_error(
+                    highlights_html += _render_error(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
                 else:
@@ -334,9 +341,9 @@ def build_app(verbose: bool = True) -> W.VBox:
                     _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
                     _update_bar(bar_fig, bar_x, bar_y, bar_mark, sz)
         except Exception:
-            commentary_html = commentary_html + _render_error(traceback.format_exc())
+            highlights_html += _render_error(traceback.format_exc())
 
-        commentary_w.value = commentary_html or _render_commentary(["No data."])
+        highlights_w.value = highlights_html or _render_highlights([])
 
     apply_btn.on_click(_recompute)
 
@@ -590,14 +597,63 @@ def _update_bar(_fig, _x_sc, _y_sc, bar, sz: pd.Series):
 # ---- Commentary rendering -------------------------------------------------
 
 
-def _render_commentary(bullets: list[str]) -> str:
-    items = "".join(f"<li>{html.escape(b)}</li>" for b in bullets)
+SENTIMENT_COLORS = {
+    "positive": "#16a34a",
+    "negative": "#dc2626",
+    "neutral":  "#0b1f3a",
+}
+
+
+def _load_weekly_commentary() -> str:
+    if not WEEKLY_COMMENTARY_PATH.exists():
+        return (
+            "<p style='color:#64748b;margin:0;'>"
+            "No weekly commentary yet — create <code>data/weekly_commentary.html</code> "
+            "to populate this section."
+            "</p>"
+        )
+    return WEEKLY_COMMENTARY_PATH.read_text(encoding="utf-8")
+
+
+def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     return (
-        "<div style='font-family:system-ui,sans-serif;font-size:14px;"
-        "line-height:1.5;'>"
-        "<h3 style='margin:0 0 8px 0;'>Commentary <span style='font-weight:400;font-size:12px;color:#64748b;'>(all-catalog)</span></h3>"
-        f"<ul style='margin:0;padding-left:20px;'>{items}</ul>"
+        "<div style='font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;"
+        "border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;background:#f8fafc;'>"
+        "<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:6px;'>"
+        "<h3 style='margin:0;font-size:15px;color:#0b1f3a;'>Weekly Commentary</h3>"
+        f"<span style='font-size:11px;color:#64748b;'>as of {as_of.isoformat()}</span>"
         "</div>"
+        f"<div>{body_html}</div>"
+        "</div>"
+    )
+
+
+def _render_highlights(cards: list[dict]) -> str:
+    if not cards:
+        return ""
+    tiles = []
+    for c in cards:
+        color = SENTIMENT_COLORS.get(c.get("sentiment", "neutral"), "#0b1f3a")
+        label = html.escape(c["label"])
+        value = html.escape(c["value"])
+        ticker = html.escape(c["ticker"])
+        name = html.escape(c.get("name", ""))
+        tiles.append(
+            "<div style='border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;background:#fff;'>"
+            f"<div style='font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:#64748b;margin-bottom:4px;'>{label}</div>"
+            f"<div style='font-size:20px;font-weight:600;color:{color};line-height:1.1;'>{value}</div>"
+            f"<div style='font-size:12px;color:#0b1f3a;margin-top:4px;'>{name}</div>"
+            f"<div style='font-size:11px;color:#64748b;font-family:ui-monospace,monospace;'>{ticker}</div>"
+            "</div>"
+        )
+    return (
+        "<div style='font-family:system-ui,sans-serif;'>"
+        "<h3 style='margin:14px 0 8px 0;font-size:15px;color:#0b1f3a;'>"
+        "Key Highlights <span style='font-weight:400;font-size:11px;color:#64748b;'>(all-catalog)</span>"
+        "</h3>"
+        "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;'>"
+        + "".join(tiles)
+        + "</div></div>"
     )
 
 

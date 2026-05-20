@@ -9,4 +9,5 @@ PERF_TABLE_YEARS = (1, 3, 5)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
+WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
