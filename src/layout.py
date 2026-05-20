@@ -144,11 +144,28 @@ def build_app(verbose: bool = True) -> W.VBox:
     ticker_label = W.HTML(
         "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
     )
+    live_row = W.HBox(
+        [live_min, live_max],
+        layout=W.Layout(width="100%"),
+    )
+    toggle_grid = W.HBox(
+        [
+            W.VBox(
+                [asset_box, theme_box, ret_box],
+                layout=W.Layout(width="50%"),
+            ),
+            W.VBox(
+                [cat_box, sol_box],
+                layout=W.Layout(width="50%"),
+            ),
+        ],
+        layout=W.Layout(width="100%", align_items="flex-start"),
+    )
     filter_box = W.VBox(
         [
-            asset_box, cat_box, theme_box, sol_box, ret_box,
-            live_min, live_max,
             ticker_label, search_w, ticker_w,
+            live_row,
+            toggle_grid,
             apply_btn,
         ],
         layout=W.Layout(width="100%", padding="8px"),
