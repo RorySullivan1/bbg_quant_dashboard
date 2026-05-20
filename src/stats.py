@@ -147,29 +147,33 @@ def perf_table(
 def since_inception_perf(prices: pd.DataFrame) -> pd.DataFrame:
     """Return / Vol / Sharpe / Max DD per ticker over each ticker's full
     valid history (first-non-NaN to last-non-NaN). MultiIndex columns of
-    the form ("SI", metric).
+    the form ("SI", metric). Fully vectorized — no per-ticker Python loop.
     """
     if prices.empty:
         return pd.DataFrame()
-    out: dict[str, dict[str, float]] = {}
-    for ticker in prices.columns:
-        series = prices[ticker].dropna()
-        if series.empty or len(series) < 2:
-            out[ticker] = {m: np.nan for m in ("Return", "Vol", "Sharpe", "Max DD")}
-            continue
-        span_years = (series.index.max() - series.index.min()).days / 365.25
-        if span_years <= 0:
-            out[ticker] = {m: np.nan for m in ("Return", "Vol", "Sharpe", "Max DD")}
-            continue
-        total = series.iloc[-1] / series.iloc[0]
-        ret = total ** (1.0 / span_years) - 1.0
-        rets = series.pct_change().dropna()
-        vol = rets.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-        sharpe = ret / vol if vol else np.nan
-        running_max = series.cummax()
-        dd = (series / running_max - 1.0).min()
-        out[ticker] = {"Return": ret, "Vol": vol, "Sharpe": sharpe, "Max DD": dd}
-    frame = pd.DataFrame.from_dict(out, orient="index")
+
+    first_valid = prices.apply(pd.Series.first_valid_index)
+    last_valid = prices.apply(pd.Series.last_valid_index)
+    span_days = (last_valid - first_valid).dt.total_seconds() / 86_400.0
+    span_years = span_days / 365.25
+    valid = span_years > 0
+
+    first_vals = prices.bfill().iloc[0]
+    last_vals = prices.ffill().iloc[-1]
+    total = last_vals / first_vals
+
+    ann_ret = pd.Series(np.nan, index=prices.columns)
+    ann_ret[valid] = total[valid] ** (1.0 / span_years[valid]) - 1.0
+
+    vol = prices.pct_change().std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+    sharpe = ann_ret.divide(vol.replace(0, np.nan))
+
+    running_max = prices.cummax()
+    max_dd = (prices / running_max - 1.0).min()
+
+    frame = pd.DataFrame(
+        {"Return": ann_ret, "Vol": vol, "Sharpe": sharpe, "Max DD": max_dd}
+    )
     frame.columns = pd.MultiIndex.from_product([["SI"], frame.columns])
     return frame
 

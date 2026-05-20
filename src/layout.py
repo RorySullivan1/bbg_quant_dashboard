@@ -13,13 +13,7 @@ from ipydatagrid import DataGrid, TextRenderer
 
 from .bql_client import default_window, fetch_prices
 from .commentary import build_commentary
-from .config import (
-    LOGO_PATH,
-    LOOKBACK_YEARS,
-    MAX_UNIVERSE_LOOKBACK_YEARS,
-    SHARPE_WINDOW,
-    TRADING_DAYS_PER_YEAR,
-)
+from .config import LOGO_PATH, LOOKBACK_YEARS, SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
     corr_matrix,
@@ -196,17 +190,11 @@ def build_app() -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
-    # Single BQL fetch at app-load time. We cap the range at
-    # MAX_UNIVERSE_LOOKBACK_YEARS so an index with a 1957 live date doesn't
-    # blow up the request. SI metrics are computed over whatever we actually get.
+    # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
+    # fetch (e.g. back to oldest live date) is too slow on the terminal — the
+    # SI column in the all-catalog grid is therefore bounded by this window.
     today = date.today()
-    oldest_live = meta["live_date"].dropna().min()
-    cap_start = pd.Timestamp(today) - pd.DateOffset(years=MAX_UNIVERSE_LOOKBACK_YEARS)
-    if pd.isna(oldest_live):
-        universe_start_ts = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
-    else:
-        universe_start_ts = max(pd.Timestamp(oldest_live), cap_start)
-    universe_start = universe_start_ts.date()
+    universe_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
 
     universe_prices: pd.DataFrame = pd.DataFrame()
     init_errors: list[str] = []
@@ -214,23 +202,9 @@ def build_app() -> W.VBox:
         universe_prices = fetch_prices(meta["ticker"].tolist(), universe_start, today)
     except Exception:
         init_errors.append(
-            f"Initial universe fetch ({universe_start} → {today}) failed:\n"
+            f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
         )
-        # Fallback: try the shorter LOOKBACK_YEARS window. If even this fails,
-        # the user gets both errors stacked in the commentary block.
-        fallback_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
-        if fallback_start != universe_start:
-            try:
-                universe_prices = fetch_prices(meta["ticker"].tolist(), fallback_start, today)
-                init_errors.append(
-                    f"Recovered with a {LOOKBACK_YEARS}Y fetch ({fallback_start} → {today}). "
-                    "Since-Inception metrics in the all-catalog grid are limited to this window."
-                )
-            except Exception:
-                init_errors.append(
-                    f"Fallback {LOOKBACK_YEARS}Y fetch also failed:\n{traceback.format_exc()}"
-                )
 
     if not universe_prices.empty:
         try:
