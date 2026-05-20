@@ -13,7 +13,13 @@ from ipydatagrid import DataGrid, TextRenderer
 
 from .bql_client import default_window, fetch_prices
 from .commentary import build_commentary
-from .config import LOGO_PATH, LOOKBACK_YEARS, SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
+from .config import (
+    LOGO_PATH,
+    LOOKBACK_YEARS,
+    MAX_UNIVERSE_LOOKBACK_YEARS,
+    SHARPE_WINDOW,
+    TRADING_DAYS_PER_YEAR,
+)
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
     corr_matrix,
@@ -190,28 +196,50 @@ def build_app() -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
-    # Single BQL fetch at app-load time. universe_prices spans the oldest
-    # live date in the catalog → today; every visualization reads from this
-    # cache, so Apply doesn't trigger another BQL call.
-    universe_prices: pd.DataFrame = pd.DataFrame()
-    universe_start_date = meta["live_date"].dropna().min()
-    if pd.isna(universe_start_date):
-        universe_start_date = pd.Timestamp(date.today()) - pd.DateOffset(years=LOOKBACK_YEARS)
-    universe_start = universe_start_date.date()
+    # Single BQL fetch at app-load time. We cap the range at
+    # MAX_UNIVERSE_LOOKBACK_YEARS so an index with a 1957 live date doesn't
+    # blow up the request. SI metrics are computed over whatever we actually get.
     today = date.today()
+    oldest_live = meta["live_date"].dropna().min()
+    cap_start = pd.Timestamp(today) - pd.DateOffset(years=MAX_UNIVERSE_LOOKBACK_YEARS)
+    if pd.isna(oldest_live):
+        universe_start_ts = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+    else:
+        universe_start_ts = max(pd.Timestamp(oldest_live), cap_start)
+    universe_start = universe_start_ts.date()
 
+    universe_prices: pd.DataFrame = pd.DataFrame()
+    init_errors: list[str] = []
     try:
         universe_prices = fetch_prices(meta["ticker"].tolist(), universe_start, today)
     except Exception:
-        commentary_w.value = _render_error(traceback.format_exc())
+        init_errors.append(
+            f"Initial universe fetch ({universe_start} → {today}) failed:\n"
+            f"{traceback.format_exc()}"
+        )
+        # Fallback: try the shorter LOOKBACK_YEARS window. If even this fails,
+        # the user gets both errors stacked in the commentary block.
+        fallback_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
+        if fallback_start != universe_start:
+            try:
+                universe_prices = fetch_prices(meta["ticker"].tolist(), fallback_start, today)
+                init_errors.append(
+                    f"Recovered with a {LOOKBACK_YEARS}Y fetch ({fallback_start} → {today}). "
+                    "Since-Inception metrics in the all-catalog grid are limited to this window."
+                )
+            except Exception:
+                init_errors.append(
+                    f"Fallback {LOOKBACK_YEARS}Y fetch also failed:\n{traceback.format_exc()}"
+                )
 
-    # Seed the universe grid and commentary from the cache.
     if not universe_prices.empty:
         try:
             up = universe_perf(universe_prices)
             _update_universe_grid(universe_grid, meta, up)
         except Exception:
-            commentary_w.value = _render_error(traceback.format_exc())
+            init_errors.append(
+                f"universe_perf computation failed:\n{traceback.format_exc()}"
+            )
 
     def _on_filter_change(_change=None):
         filtered = apply_filters(
@@ -248,6 +276,10 @@ def build_app() -> W.VBox:
 
     def _recompute(_btn=None):
         commentary_html = ""
+        # Surface any errors from the initial universe fetch so the user can
+        # see what actually went wrong, not just the downstream "cache empty".
+        for err in init_errors:
+            commentary_html += _render_error(err)
         # Commentary is always whole-catalog, regardless of selection.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         try:
@@ -259,9 +291,9 @@ def build_app() -> W.VBox:
                     universe_rets = daily_returns(universe_window)
                     universe_sz = sharpe_zscore(universe_rets)
                     bullets = build_commentary(meta, universe_window, universe_rets, universe_sz)
-                    commentary_html = _render_commentary(bullets)
+                    commentary_html += _render_commentary(bullets)
         except Exception:
-            commentary_html = _render_error(traceback.format_exc())
+            commentary_html += _render_error(traceback.format_exc())
 
         try:
             tickers = list(ticker_w.value)

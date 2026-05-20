@@ -45,7 +45,8 @@ def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
     raw = response[0].df()
     if raw is None or raw.empty:
         raise RuntimeError(
-            f"BQL returned no rows for tickers={tickers}. "
+            f"BQL returned no rows for {len(tickers)} tickers "
+            f"({start.isoformat()} → {end.isoformat()}). "
             "Check that the tickers include the ' Index' suffix and resolve on the terminal."
         )
 
@@ -61,14 +62,22 @@ def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
 
     if id_col is None or date_col is None or value_col is None:
         raise RuntimeError(
-            "Could not locate ID/DATE/value columns in BQL response. "
-            f"Available columns: {list(df.columns)}"
+            f"Could not locate ID/DATE/value columns in BQL response. "
+            f"Available columns: {list(df.columns)}. "
+            f"Raw shape: {raw.shape}, index: {list(raw.index.names)}."
         )
 
     wide = df.pivot(index=date_col, columns=id_col, values=value_col)
     wide.index = pd.to_datetime(wide.index)
     wide = wide.sort_index()
-    return wide.reindex(columns=tickers)
+    aligned = wide.reindex(columns=tickers)
+    if aligned.dropna(how="all", axis=1).empty:
+        raise RuntimeError(
+            f"BQL response columns {list(wide.columns)[:5]}{'…' if len(wide.columns) > 5 else ''} "
+            f"did not match any requested ticker (sample requested: {tickers[:5]}). "
+            "The reindex produced an all-NaN frame."
+        )
+    return aligned
 
 
 def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
