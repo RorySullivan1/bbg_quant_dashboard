@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import time
 import traceback
 from datetime import date
 from typing import Callable
@@ -97,8 +98,14 @@ def _toggle_group(
     return box, (lambda: [v for v, t in toggles.items() if t.value]), list(toggles.values())
 
 
-def build_app() -> W.VBox:
+def build_app(verbose: bool = True) -> W.VBox:
+    t0 = time.perf_counter()
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
+
     meta = load_metadata()
+    _log(f"loaded metadata: {len(meta)} tickers")
 
     asset_box, asset_get, asset_toggles = _toggle_group("Asset Class", unique_values(meta, "asset_class"))
     cat_box, cat_get, cat_toggles = _toggle_group("Category", unique_values(meta, "category"))
@@ -198,18 +205,29 @@ def build_app() -> W.VBox:
 
     universe_prices: pd.DataFrame = pd.DataFrame()
     init_errors: list[str] = []
+    _log(f"BQL fetch starting: {len(meta)} tickers, {universe_start} → {today}")
+    t_fetch = time.perf_counter()
     try:
         universe_prices = fetch_prices(meta["ticker"].tolist(), universe_start, today)
+        _log(
+            f"BQL fetch done in {time.perf_counter() - t_fetch:.1f}s — "
+            f"shape={universe_prices.shape}"
+        )
     except Exception:
+        _log(f"BQL fetch FAILED after {time.perf_counter() - t_fetch:.1f}s")
         init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
         )
 
     if not universe_prices.empty:
+        t_perf = time.perf_counter()
         try:
             up = universe_perf(universe_prices)
+            _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
+            t_grid = time.perf_counter()
             _update_universe_grid(universe_grid, meta, up)
+            _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
@@ -310,7 +328,10 @@ def build_app() -> W.VBox:
         layout=W.Layout(width="100%"),
     )
 
+    t_initial = time.perf_counter()
     _recompute()
+    _log(f"initial recompute (selected viz) in {time.perf_counter() - t_initial:.2f}s")
+    _log(f"build_app TOTAL: {time.perf_counter() - t0:.2f}s")
     return app
 
 
