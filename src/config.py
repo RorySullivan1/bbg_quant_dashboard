@@ -19,3 +19,15 @@ WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
 LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
+
+# Benchmarks fetched alongside the ARP universe in the single startup BQL
+# call. Used by the Rolling Correlation and Rolling Beta tabs only — never
+# shown in the all-catalog grid or the highlights cards.
+BENCHMARK_TICKERS: list[str] = [
+    "SPX Index",       # S&P 500
+    "MXWO Index",      # MSCI World
+    "LBUSTRUU Index",  # Bloomberg US Aggregate
+    "BCOM Index",      # Bloomberg Commodity
+    "BBG6040 Index",   # Bloomberg 60/40
+]
+DEFAULT_BENCHMARK = "SPX Index"

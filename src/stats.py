@@ -42,6 +42,54 @@ def corr_matrix(returns: pd.DataFrame) -> pd.DataFrame:
     return returns.corr()
 
 
+def drawdown_series(prices: pd.DataFrame) -> pd.DataFrame:
+    if prices.empty:
+        return prices
+    return prices.divide(prices.cummax()).subtract(1.0)
+
+
+def rolling_correlation(
+    returns: pd.DataFrame,
+    benchmark: pd.Series,
+    window: int = SHARPE_WINDOW,
+) -> pd.DataFrame:
+    if returns.empty or benchmark.empty:
+        return pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
+    bench = benchmark.reindex(returns.index)
+    return returns.rolling(window).corr(bench)
+
+
+def rolling_beta(
+    returns: pd.DataFrame,
+    benchmark: pd.Series,
+    window: int = SHARPE_WINDOW,
+) -> pd.DataFrame:
+    if returns.empty or benchmark.empty:
+        return pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
+    bench = benchmark.reindex(returns.index)
+    cov = returns.rolling(window).cov(bench)
+    var = bench.rolling(window).var().replace(0, np.nan)
+    return cov.divide(var, axis=0)
+
+
+def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
+    if returns.empty:
+        return pd.DataFrame(
+            columns=["Mean", "Std", "Skew", "Kurtosis", "Min", "Max"]
+        )
+    stats = pd.DataFrame(
+        {
+            "Mean": returns.mean(),
+            "Std": returns.std(),
+            "Skew": returns.skew(),
+            "Kurtosis": returns.kurtosis(),
+            "Min": returns.min(),
+            "Max": returns.max(),
+        }
+    )
+    return stats
+
+
 def rolling_sharpe(
     returns: pd.DataFrame, window: int = SHARPE_WINDOW
 ) -> pd.DataFrame:

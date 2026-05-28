@@ -14,7 +14,9 @@ is deployable via Voila.
 The screen layout is: banner → all-catalog commentary block → 30/70 row
 (toggle-button filters + searchable ticker box on the left; line chart +
 selected-set performance datagrid + 1Y Sharpe-z-score line chart, stacked,
-on the right) → 50/50 row (correlation heatmap + risk/return scatter) →
+on the right) → full-width **analysis Tab widget** (six tabs:
+Correlation heatmap · Risk / Return scatter · Drawdown · Rolling Correlation
+vs benchmark · Return Distribution · Rolling Beta vs benchmark) →
 full-width **all-catalog performance grid** showing every index in the
 catalog with metadata plus 1Y/3Y/5Y/Since-Inception performance →
 performance disclaimer (templated with the data window) → bottom legal
@@ -42,9 +44,9 @@ dashboard always renders end-to-end.
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end)` — BQL when available, mock otherwise. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
-| `src/layout.py`       | `build_app()` — banner + all-catalog commentary + 30/70 row (filters + line chart + selected-set perf grid + 1Y Sharpe-z line chart) + 50/50 row (heatmap + risk/return scatter) + all-catalog perf grid + performance disclaimer + legal disclosure. |
+| `src/layout.py`       | `build_app()` — banner + all-catalog commentary + 30/70 row (filters + line chart + selected-set perf grid + 1Y Sharpe-z line chart) + analysis Tab widget (correlation heatmap · risk/return scatter · drawdown · rolling correlation · return distribution · rolling beta) + all-catalog perf grid + performance disclaimer + legal disclosure. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
@@ -99,20 +101,33 @@ live paths return the same shape.
 ## Conventions
 
 - **One BQL call per session**. `build_app` issues a single
-  `fetch_prices(all_tickers, min_live_date, today)` request at load time
-  and caches the result in a `universe_prices` closure variable. Every
-  visualization — including the all-catalog grid and the commentary —
-  slices from that cache. The Apply button only re-slices and recomputes;
-  it does not re-fetch from BQL.
+  `fetch_prices(arp_tickers + BENCHMARK_TICKERS, ...)` request at load
+  time and caches the result in a `universe_prices` closure variable.
+  Every visualization — including the all-catalog grid, the commentary,
+  and the Rolling Correlation / Rolling Beta tabs — slices from that
+  cache. The Apply button only re-slices and recomputes; it does not
+  re-fetch from BQL.
+- **Benchmarks ride along the single BQL fetch** but are explicitly
+  scoped to the Rolling Correlation / Rolling Beta tabs. The
+  all-catalog grid and the whole-catalog highlights consume
+  `arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])`
+  so benchmark columns never leak into ARP-universe views.
+  `BENCHMARK_TICKERS` / `DEFAULT_BENCHMARK` live in `src/config.py`.
 - **Toggle groups, search box, and date pickers narrow the ticker
   dropdown only**. They do not trigger any recompute or BQL call.
 - **All compute lives in `src/`**; the notebook stays a one-liner.
 - **Commentary is always whole-catalog**, never the selected subset, so
   the user sees market-wide context regardless of what they're inspecting.
 - **Selected-set charts (cumulative-perf line, perf grid, 1Y Sharpe-z line,
-  heatmap, risk/return scatter)** are over the currently selected tickers
-  only — that's the user's focus area. The whole-catalog scalar
-  `sharpe_zscore` still feeds the highlights cards in the commentary block.
+  and every tab in the analysis Tab widget — heatmap, scatter, drawdown,
+  rolling correlation, return distribution, rolling beta)** are over the
+  currently selected tickers only — that's the user's focus area. The
+  whole-catalog scalar `sharpe_zscore` still feeds the highlights cards
+  in the commentary block.
+- **Tab widget recompute is eager**: every Apply click refreshes all six
+  analysis tabs. Per-tab benchmark dropdowns (Rolling Correlation /
+  Rolling Beta) are read at recompute time only; changing the dropdown
+  alone does not trigger a recompute — the user clicks Apply to refresh.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
@@ -155,10 +170,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Clicking Apply with 2+ tickers — cumulative-perf line chart (legend
   labels read "Name (TICKER Index)"), selected-set perf grid, 1Y
   Sharpe-z-score line chart (one line per ticker plus a dashed zero
-  reference), heatmap, and risk/return scatter all refresh together; the
+  reference), and all six analysis tabs (heatmap, scatter, drawdown,
+  rolling correlation vs benchmark, return distribution + per-ticker
+  stats grid, rolling beta vs benchmark) all refresh together; the
   line charts' y-axes rescale to the new data range.
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
+- Switching the benchmark dropdown inside the Rolling Correlation or
+  Rolling Beta tab and clicking Apply updates the chart title to show
+  the new benchmark and rebuilds the lines against it. The other tab's
+  benchmark is independent.
 - The performance disclaimer below the all-catalog grid shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
