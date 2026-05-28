@@ -17,6 +17,8 @@ from .bql_client import default_window, fetch_prices
 from .commentary import build_highlights
 from .config import (
     ARP_SOLUTION_VALUES,
+    BENCHMARK_TICKERS,
+    DEFAULT_BENCHMARK,
     LEGAL_DISCLOSURE_PATH,
     LOGO_PATH,
     LOOKBACK_YEARS,
@@ -33,7 +35,11 @@ from .stats import (
     corr_matrix,
     cum_perf,
     daily_returns,
+    drawdown_series,
     perf_table,
+    return_distribution_stats,
+    rolling_beta,
+    rolling_correlation,
     rolling_sharpe_zscore,
     sharpe_zscore,
     universe_perf,
@@ -204,6 +210,35 @@ def build_app(verbose: bool = True) -> W.VBox:
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
     scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
+    dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
+    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
+        title_prefix="Rolling Correlation",
+        y_label="Correlation",
+        ref_y=0.0,
+    )
+    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref = _rolling_ref_chart(
+        title_prefix="Rolling Beta",
+        y_label="Beta",
+        ref_y=1.0,
+    )
+    retdist_fig, retdist_x, retdist_y = _return_dist_chart()
+    retdist_stats_grid = _return_dist_stats_grid()
+
+    rcorr_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    rbeta_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
     highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
@@ -221,16 +256,27 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="stretch"),
     )
 
-    row2 = W.HBox(
-        [
-            W.Box([heat_fig], layout=W.Layout(width="50%", padding="8px")),
-            W.VBox(
-                [scatter_fig, scatter_legend],
-                layout=W.Layout(width="50%", padding="8px"),
-            ),
+    tab_layout = W.Layout(width="100%", padding="8px")
+    analysis_tabs = W.Tab(
+        children=[
+            W.VBox([heat_fig], layout=tab_layout),
+            W.VBox([scatter_fig, scatter_legend], layout=tab_layout),
+            W.VBox([dd_fig], layout=tab_layout),
+            W.VBox([rcorr_benchmark_dd, rcorr_fig], layout=tab_layout),
+            W.VBox([retdist_fig, retdist_stats_grid], layout=tab_layout),
+            W.VBox([rbeta_benchmark_dd, rbeta_fig], layout=tab_layout),
         ],
         layout=W.Layout(width="100%"),
     )
+    for i, title in enumerate([
+        "Correlation",
+        "Risk / Return",
+        "Drawdown",
+        "Rolling Correlation",
+        "Return Distribution",
+        "Rolling Beta",
+    ]):
+        analysis_tabs.set_title(i, title)
 
     commentary_box = W.VBox(
         [weekly_w, highlights_w],
@@ -255,10 +301,18 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     universe_prices: pd.DataFrame = pd.DataFrame()
     init_errors: list[str] = []
-    _log(f"BQL fetch starting: {len(meta)} tickers, {universe_start} → {today}")
+    # Benchmarks ride along on the single startup fetch so the Rolling
+    # Correlation / Rolling Beta tabs can slice them from the same cache.
+    # They are excluded from the ARP-universe grid and the highlights cards
+    # via reindex(columns=meta["ticker"]).
+    fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
+    _log(
+        f"BQL fetch starting: {len(meta)} ARP + {len(BENCHMARK_TICKERS)} "
+        f"benchmarks = {len(fetch_tickers)} tickers, {universe_start} → {today}"
+    )
     t_fetch = time.perf_counter()
     try:
-        universe_prices = fetch_prices(meta["ticker"].tolist(), universe_start, today)
+        universe_prices = fetch_prices(fetch_tickers, universe_start, today)
         _log(
             f"BQL fetch done in {time.perf_counter() - t_fetch:.1f}s — "
             f"shape={universe_prices.shape}"
@@ -271,9 +325,12 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
 
     if not universe_prices.empty:
+        # ARP universe view of the cache — used for the all-catalog grid and
+        # the whole-catalog highlights so benchmark columns never leak in.
+        arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
         t_perf = time.perf_counter()
         try:
-            up = universe_perf(universe_prices)
+            up = universe_perf(arp_universe_prices)
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
             _update_universe_grid(universe_grid, meta, up)
@@ -282,6 +339,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
+    else:
+        arp_universe_prices = pd.DataFrame()
 
     def _on_filter_change(_change=None):
         filtered = apply_filters(
@@ -321,12 +380,12 @@ def build_app(verbose: bool = True) -> W.VBox:
         # see what actually went wrong, not just the downstream "cache empty".
         for err in init_errors:
             highlights_html += _render_error(err)
-        # Highlights are always whole-catalog, regardless of selection.
+        # Highlights are always whole-catalog (ARP only), regardless of selection.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         try:
-            if not universe_prices.empty:
-                universe_window = universe_prices.loc[
-                    universe_prices.index >= universe_window_start
+            if not arp_universe_prices.empty:
+                universe_window = arp_universe_prices.loc[
+                    arp_universe_prices.index >= universe_window_start
                 ]
                 if not universe_window.empty:
                     universe_rets = daily_returns(universe_window)
@@ -350,6 +409,25 @@ def build_app(verbose: bool = True) -> W.VBox:
                     scatter_fig, scatter_x, scatter_y, scatter_mark,
                     pd.DataFrame(), pd.DataFrame(), meta,
                 )
+                _update_drawdown(
+                    dd_fig, dd_x, dd_y, dd_zero, pd.DataFrame(), meta,
+                )
+                _update_rolling_ref(
+                    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
+                    pd.DataFrame(), meta,
+                    title_prefix="Rolling Correlation",
+                    benchmark_label="",
+                )
+                _update_rolling_ref(
+                    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
+                    pd.DataFrame(), meta,
+                    title_prefix="Rolling Beta",
+                    benchmark_label="",
+                )
+                _update_return_dist(
+                    retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
+                    pd.DataFrame(), pd.DataFrame(), meta,
+                )
             elif universe_prices.empty:
                 highlights_html += _render_error(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
@@ -367,6 +445,8 @@ def build_app(verbose: bool = True) -> W.VBox:
                     sz_series = rolling_sharpe_zscore(rets)
                     cm = corr_matrix(rets)
                     pt = perf_table(sel_window)
+                    dd = drawdown_series(sel_window)
+                    rd_stats = return_distribution_stats(rets)
 
                     _update_line(line_fig, line_x, line_y, perf, meta)
                     _update_perf_grid(perf_grid, pt, meta)
@@ -379,6 +459,59 @@ def build_app(verbose: bool = True) -> W.VBox:
                         scatter_fig, scatter_x, scatter_y, scatter_mark,
                         sel_window, rets, meta,
                     )
+                    _update_drawdown(
+                        dd_fig, dd_x, dd_y, dd_zero, dd, meta,
+                    )
+                    _update_return_dist(
+                        retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
+                        rets, rd_stats, meta,
+                    )
+
+                    rc_bench_ticker = rcorr_benchmark_dd.value
+                    try:
+                        rc_bench_prices = universe_prices.get(rc_bench_ticker)
+                        if rc_bench_prices is None or rc_bench_prices.dropna().empty:
+                            raise ValueError(
+                                f"No price data for benchmark {rc_bench_ticker!r}."
+                            )
+                        rc_bench_window = rc_bench_prices.loc[
+                            rc_bench_prices.index >= universe_window_start
+                        ]
+                        rc_bench_returns = daily_returns(
+                            rc_bench_window.to_frame()
+                        ).iloc[:, 0]
+                        rc = rolling_correlation(rets, rc_bench_returns)
+                        _update_rolling_ref(
+                            rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
+                            rc, meta,
+                            title_prefix="Rolling Correlation",
+                            benchmark_label=rc_bench_ticker,
+                        )
+                    except Exception:
+                        highlights_html += _render_error(traceback.format_exc())
+
+                    rb_bench_ticker = rbeta_benchmark_dd.value
+                    try:
+                        rb_bench_prices = universe_prices.get(rb_bench_ticker)
+                        if rb_bench_prices is None or rb_bench_prices.dropna().empty:
+                            raise ValueError(
+                                f"No price data for benchmark {rb_bench_ticker!r}."
+                            )
+                        rb_bench_window = rb_bench_prices.loc[
+                            rb_bench_prices.index >= universe_window_start
+                        ]
+                        rb_bench_returns = daily_returns(
+                            rb_bench_window.to_frame()
+                        ).iloc[:, 0]
+                        rb = rolling_beta(rets, rb_bench_returns)
+                        _update_rolling_ref(
+                            rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
+                            rb, meta,
+                            title_prefix="Rolling Beta",
+                            benchmark_label=rb_bench_ticker,
+                        )
+                    except Exception:
+                        highlights_html += _render_error(traceback.format_exc())
         except Exception:
             highlights_html += _render_error(traceback.format_exc())
 
@@ -404,7 +537,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             _banner(),
             commentary_box,
             row1,
-            row2,
+            analysis_tabs,
             universe_row,
             perf_disclaimer_w,
             legal_w,
@@ -815,6 +948,269 @@ def _render_scatter_legend(palette: dict[str, str]) -> str:
         + "".join(items)
         + "</div>"
     )
+
+
+# ---- Drawdown chart (selected set) -----------------------------------------
+
+
+def _drawdown_chart():
+    x_sc = bq.DateScale()
+    y_sc = bq.LinearScale()
+    ax_x = bq.Axis(scale=x_sc, label="Date")
+    ax_y = bq.Axis(
+        scale=y_sc, orientation="vertical", label="Drawdown", tick_format=".0%"
+    )
+    zero = bq.Lines(
+        x=[],
+        y=[0, 0],
+        scales={"x": x_sc, "y": y_sc},
+        colors=["#94a3b8"],
+        line_style="dashed",
+        stroke_width=1,
+        display_legend=False,
+    )
+    fig = bq.Figure(
+        axes=[ax_x, ax_y],
+        marks=[zero],
+        title=f"Drawdown — {LOOKBACK_YEARS}Y",
+        legend_location="bottom-left",
+        layout=W.Layout(width="100%", height="540px"),
+        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+    )
+    return fig, x_sc, y_sc, zero
+
+
+def _update_drawdown(fig, x_sc, y_sc, zero, dd: pd.DataFrame, meta: pd.DataFrame):
+    if dd.empty:
+        fig.marks = [zero]
+        return
+    cleaned = dd.dropna(how="all")
+    if cleaned.empty:
+        fig.marks = [zero]
+        return
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
+    marks: list = []
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna()
+        if series.empty:
+            continue
+        name = name_lookup.get(col)
+        label = f"{name} ({col})" if name else col
+        marks.append(
+            bq.Lines(
+                x=series.index.values,
+                y=series.values,
+                scales={"x": x_sc, "y": y_sc},
+                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                labels=[label],
+                display_legend=True,
+            )
+        )
+    zero.x = cleaned.index[[0, -1]].values
+    fig.marks = [zero, *marks]
+    vals = cleaned.values
+    if np.isfinite(vals).any():
+        y_min = float(np.nanmin(vals))
+        pad = abs(y_min) * 0.05 or 0.01
+        y_sc.min = y_min - pad
+        y_sc.max = pad
+    x_sc.min = cleaned.index.min().to_pydatetime()
+    x_sc.max = cleaned.index.max().to_pydatetime()
+
+
+# ---- Rolling-reference line chart (correlation / beta) ---------------------
+
+
+def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float):
+    x_sc = bq.DateScale()
+    y_sc = bq.LinearScale()
+    ax_x = bq.Axis(scale=x_sc, label="Date")
+    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label=y_label)
+    ref = bq.Lines(
+        x=[],
+        y=[ref_y, ref_y],
+        scales={"x": x_sc, "y": y_sc},
+        colors=["#94a3b8"],
+        line_style="dashed",
+        stroke_width=1,
+        display_legend=False,
+    )
+    fig = bq.Figure(
+        axes=[ax_x, ax_y],
+        marks=[ref],
+        title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
+        legend_location="top-left",
+        layout=W.Layout(width="100%", height="540px"),
+        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+    )
+    return fig, x_sc, y_sc, ref
+
+
+def _update_rolling_ref(
+    fig,
+    x_sc,
+    y_sc,
+    ref,
+    df: pd.DataFrame,
+    meta: pd.DataFrame,
+    *,
+    title_prefix: str,
+    benchmark_label: str,
+):
+    title_suffix = f" — {SHARPE_WINDOW_LABEL} rolling"
+    if benchmark_label:
+        fig.title = f"{title_prefix} vs {benchmark_label}{title_suffix}"
+    else:
+        fig.title = f"{title_prefix}{title_suffix}"
+    if df.empty:
+        fig.marks = [ref]
+        return
+    cleaned = df.dropna(how="all")
+    if cleaned.empty:
+        fig.marks = [ref]
+        return
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
+    marks: list = []
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna()
+        if series.empty:
+            continue
+        name = name_lookup.get(col)
+        label = f"{name} ({col})" if name else col
+        marks.append(
+            bq.Lines(
+                x=series.index.values,
+                y=series.values,
+                scales={"x": x_sc, "y": y_sc},
+                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                labels=[label],
+                display_legend=True,
+            )
+        )
+    ref_y_val = float(ref.y[0]) if len(ref.y) else 0.0
+    ref.x = cleaned.index[[0, -1]].values
+    fig.marks = [ref, *marks]
+    vals = cleaned.values
+    if np.isfinite(vals).any():
+        y_min = float(np.nanmin(vals))
+        y_max = float(np.nanmax(vals))
+        y_min = min(y_min, ref_y_val)
+        y_max = max(y_max, ref_y_val)
+        pad = (y_max - y_min) * 0.05 or 0.05
+        y_sc.min = y_min - pad
+        y_sc.max = y_max + pad
+    x_sc.min = cleaned.index.min().to_pydatetime()
+    x_sc.max = cleaned.index.max().to_pydatetime()
+
+
+# ---- Return distribution histogram (selected set) --------------------------
+
+
+def _return_dist_chart():
+    x_sc = bq.LinearScale()
+    y_sc = bq.LinearScale()
+    ax_x = bq.Axis(scale=x_sc, label="Daily return", tick_format=".1%")
+    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Frequency")
+    fig = bq.Figure(
+        axes=[ax_x, ax_y],
+        marks=[],
+        title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
+        legend_location="top-right",
+        layout=W.Layout(width="100%", height="420px"),
+        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+    )
+    return fig, x_sc, y_sc
+
+
+def _return_dist_stats_grid() -> DataGrid:
+    grid = DataGrid(
+        pd.DataFrame(),
+        base_row_size=28,
+        base_column_size=92,
+        base_row_header_size=180,
+        layout=W.Layout(width="100%", height="180px"),
+    )
+    return grid
+
+
+def _update_return_dist(
+    fig,
+    x_sc,
+    y_sc,
+    stats_grid: DataGrid,
+    rets: pd.DataFrame,
+    stats_df: pd.DataFrame,
+    meta: pd.DataFrame,
+):
+    if rets.empty:
+        fig.marks = []
+        stats_grid.data = pd.DataFrame()
+        return
+    cleaned = rets.dropna(how="all")
+    if cleaned.empty:
+        fig.marks = []
+        stats_grid.data = pd.DataFrame()
+        return
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
+    all_vals = cleaned.values[np.isfinite(cleaned.values)]
+    if all_vals.size == 0:
+        fig.marks = []
+        stats_grid.data = pd.DataFrame()
+        return
+    lo, hi = float(np.nanpercentile(all_vals, 0.5)), float(np.nanpercentile(all_vals, 99.5))
+    if lo == hi:
+        lo, hi = lo - 0.01, hi + 0.01
+    bin_edges = np.linspace(lo, hi, 41)
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    width = bin_edges[1] - bin_edges[0]
+    marks: list = []
+    max_count = 0
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna().values
+        if series.size == 0:
+            continue
+        counts, _ = np.histogram(series, bins=bin_edges)
+        max_count = max(max_count, int(counts.max(initial=0)))
+        name = name_lookup.get(col)
+        label = f"{name} ({col})" if name else col
+        marks.append(
+            bq.Bars(
+                x=centers,
+                y=counts,
+                scales={"x": x_sc, "y": y_sc},
+                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                opacities=[0.5] * len(centers),
+                labels=[label],
+                display_legend=True,
+                stroke=LINE_COLORS[i % len(LINE_COLORS)],
+                padding=0.0,
+            )
+        )
+    fig.marks = marks
+    x_sc.min = lo - width
+    x_sc.max = hi + width
+    y_sc.min = 0
+    y_sc.max = max_count * 1.1 if max_count > 0 else 1
+
+    if stats_df.empty:
+        stats_grid.data = pd.DataFrame()
+        return
+    info = meta.set_index("ticker").reindex(stats_df.index)["name"]
+    display = stats_df.copy()
+    display.insert(0, "Name", info.values)
+    display.index.name = "Ticker"
+    pct = TextRenderer(format=".2%")
+    f2 = TextRenderer(format=".2f")
+    text = TextRenderer()
+    renderers: dict = {"Name": text}
+    for col in ("Mean", "Std", "Min", "Max"):
+        if col in display.columns:
+            renderers[col] = pct
+    for col in ("Skew", "Kurtosis"):
+        if col in display.columns:
+            renderers[col] = f2
+    stats_grid.data = display
+    stats_grid.renderers = renderers
 
 
 # ---- Commentary rendering -------------------------------------------------
