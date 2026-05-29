@@ -113,6 +113,19 @@ returns no data for show up as all-NaN columns rather than raising.
 If you change this query, also update `_mock_prices` so the mock and
 live paths return the same shape.
 
+## Branching
+
+- **Current version**: `v0.5.0`.
+- **Branch naming**: every new branch starts with the current version
+  followed by a slash-separated descriptor of what's being worked on.
+  Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
+  Examples:
+  - `v0.5.0/enhancement/perf-grid-color-swatch`
+  - `v0.5.0/bugfix/empty-ticker-traceback`
+  - `v0.5.0/refactor/style-tokens`
+- When the dashboard bumps to the next version, update this section and
+  open new branches under the new prefix (e.g. `v0.5.1/...`).
+
 ## Conventions
 
 - **One BQL call per session**. `build_app` issues a single
