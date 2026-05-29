@@ -1,5 +1,6 @@
 ipywidgets>=8.0
-bqplot>=0.12
+plotly>=5.18
+anywidget>=0.9
 ipydatagrid>=1.3
 pandas>=2.0
 numpy>=1.24

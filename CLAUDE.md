@@ -8,8 +8,9 @@ A Bloomberg BQuant App that lets clients browse an index catalog: filter by
 metadata, look up tickers, and view performance, correlation, and a 1-year
 rolling Sharpe-ratio z-score over a 5-year lookback. Metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
-runtime. The UI is built with `ipywidgets`, `bqplot`, and `ipydatagrid`, and
-is deployable via Voila.
+runtime. The UI is built with `ipywidgets`, `plotly` (interactive charts
+via `FigureWidget`), and `ipydatagrid` (tables), and is deployable via
+Voila.
 
 The screen layout is: banner → status banner → all-catalog commentary
 block (always visible) → **top-level pill-button tab bar** with two
@@ -152,10 +153,15 @@ live paths return the same shape.
   `sharpe_zscore` still feeds the highlights cards in the commentary
   block.
 - **Per-pane figures are pre-allocated**: each `AnalysisPane` owns one
-  fresh `bqplot` Figure per analysis type. bqplot can't render the same
-  Figure widget in two places, so the two panes never share. Picker
-  changes swap `pane.stack.children` to the relevant pre-built view —
-  no recompute, no BQL fetch.
+  fresh plotly `FigureWidget` per analysis type. Each FigureWidget is a
+  unique widget instance, so the two panes never share. Picker changes
+  swap `pane.stack.children` to the relevant pre-built view — no
+  recompute, no BQL fetch.
+- **Chart updates go through `fig.batch_update()`**: every `_update_*`
+  helper mutates the FigureWidget inside a `batch_update()` block so the
+  frontend sees a single atomic frame. Trace replacement uses
+  `fig.data = ()` (clear) + `fig.add_traces(new_traces)` because plotly's
+  `fig.data` setter only accepts a subset of the existing traces.
 - **Pane recompute is eager**: every Refresh-prices click preps the
   selected-set data slice once and renders BOTH panes against it. Each
   pane reads its own Rolling Correlation / Rolling Beta benchmark
@@ -184,9 +190,11 @@ live paths return the same shape.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
-- **Y-axis refit on every recompute**: `_update_line` explicitly resets
-  `y_sc.min` / `y_sc.max` (and the x-scale) after replacing marks, because
-  bqplot otherwise keeps the prior scale bounds.
+- **Plotly auto-fits y-axis** on data replacement, so the bqplot-era
+  manual scale-rebinding is no longer needed. Line / drawdown / sharpe-z
+  / rolling-ref charts use `layout.shapes` with `xref="paper"` to draw
+  a dashed reference line that stays in place across data updates and
+  empty states.
 - **Selected tickers stay visible** in the dropdown even when the metadata
   filters or search box would otherwise hide them — so the user doesn't lose
   selection state while typing.
@@ -229,7 +237,11 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Changing a pane's analysis-picker dropdown — only that pane's
   mounted view changes; the other pane is untouched, no recompute.
 - Setting both panes' pickers to the same analysis — both render
-  independently with no bqplot duplicate-figure error.
+  independently (separate plotly FigureWidget instances).
+- Plotly modebar is visible at the top-right of every chart (zoom,
+  pan, autoscale, PNG download). Hovering a line chart with
+  `hovermode="x unified"` shows all selected tickers' values at the
+  same date in one tooltip.
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
 - Each pane has its OWN Rolling Correlation / Rolling Beta benchmark

@@ -8,10 +8,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
 
-import bqplot as bq
 import ipywidgets as W
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
 from .bql_client import _cache_path, default_window, fetch_prices
@@ -181,31 +181,28 @@ def _make_tab_button(label: str, *, active: bool) -> W.Button:
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     """Build a self-contained analysis pane with all 8 figures pre-allocated.
 
-    Returns a `SimpleNamespace` carrying every figure/scale/mark handle the
+    Returns a `SimpleNamespace` carrying every plotly `FigureWidget` the
     `_update_*` helpers need, plus the picker widget, the swap container,
     a `views` dict keyed by `ANALYSIS_OPTIONS` labels, and the root VBox.
 
-    bqplot can't render the same Figure widget in two places, so each pane
-    gets its own freshly-instantiated set. The Rolling-Correlation /
-    Rolling-Beta benchmark dropdowns live on the same row as the analysis
-    picker and toggle visibility based on the active analysis.
+    Plotly figures are independent widget instances; each pane owns its
+    own set so the two panes can render the same analysis side-by-side
+    without conflict. The Rolling-Correlation / Rolling-Beta benchmark
+    dropdowns live on the same row as the analysis picker and toggle
+    visibility based on the active analysis.
     """
-    line_fig, line_x, line_y, _ = _line_chart()
-    sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
-    heat_fig, heat_data, heat_x, heat_y = _heatmap()
-    scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
-    dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
-    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
-        title_prefix="Rolling Correlation",
-        y_label="Correlation",
-        ref_y=0.0,
+    line_fig = _line_chart()
+    sharpe_fig = _sharpe_line_chart()
+    heat_fig = _heatmap()
+    scatter_fig = _scatter_chart()
+    dd_fig = _drawdown_chart()
+    rcorr_fig = _rolling_ref_chart(
+        title_prefix="Rolling Correlation", y_label="Correlation", ref_y=0.0,
     )
-    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref = _rolling_ref_chart(
-        title_prefix="Rolling Beta",
-        y_label="Beta",
-        ref_y=1.0,
+    rbeta_fig = _rolling_ref_chart(
+        title_prefix="Rolling Beta", y_label="Beta", ref_y=1.0,
     )
-    retdist_fig, retdist_x, retdist_y = _return_dist_chart()
+    retdist_fig = _return_dist_chart()
     retdist_stats_grid = _return_dist_stats_grid()
 
     rcorr_benchmark_dd = W.Dropdown(
@@ -226,7 +223,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
         "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
-        "1Y Sharpe-z Line":       W.VBox([sharpe_line_fig], layout=view_layout),
+        "1Y Sharpe-z Line":       W.VBox([sharpe_fig], layout=view_layout),
         "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
         "Risk / Return":          W.VBox([scatter_fig], layout=view_layout),
         "Drawdown":               W.VBox([dd_fig], layout=view_layout),
@@ -290,18 +287,14 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         picker=picker,
         stack=stack,
         views=views,
-        line_fig=line_fig, line_x=line_x, line_y=line_y,
-        sharpe_line_fig=sharpe_line_fig, sharpe_line_x=sharpe_line_x,
-        sharpe_line_y=sharpe_line_y, sharpe_line_zero=sharpe_line_zero,
-        heat_fig=heat_fig, heat_data=heat_data, heat_x=heat_x, heat_y=heat_y,
-        scatter_fig=scatter_fig, scatter_x=scatter_x, scatter_y=scatter_y,
-        scatter_mark=scatter_mark,
-        dd_fig=dd_fig, dd_x=dd_x, dd_y=dd_y, dd_zero=dd_zero,
-        rcorr_fig=rcorr_fig, rcorr_x=rcorr_x, rcorr_y=rcorr_y,
-        rcorr_zero=rcorr_zero, rcorr_dd=rcorr_benchmark_dd,
-        rbeta_fig=rbeta_fig, rbeta_x=rbeta_x, rbeta_y=rbeta_y,
-        rbeta_ref=rbeta_ref, rbeta_dd=rbeta_benchmark_dd,
-        retdist_fig=retdist_fig, retdist_x=retdist_x, retdist_y=retdist_y,
+        line_fig=line_fig,
+        sharpe_fig=sharpe_fig,
+        heat_fig=heat_fig,
+        scatter_fig=scatter_fig,
+        dd_fig=dd_fig,
+        rcorr_fig=rcorr_fig, rcorr_dd=rcorr_benchmark_dd,
+        rbeta_fig=rbeta_fig, rbeta_dd=rbeta_benchmark_dd,
+        retdist_fig=retdist_fig,
         retdist_stats_grid=retdist_stats_grid,
     )
 
@@ -561,36 +554,21 @@ def build_app(verbose: bool = True) -> W.VBox:
         w.observe(_on_filter_change, names="value")
 
     def _clear_pane(pane: SimpleNamespace) -> None:
-        _update_line(pane.line_fig, pane.line_x, pane.line_y, pd.DataFrame(), meta)
-        _update_sharpe_line(
-            pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
-            pane.sharpe_line_zero, pd.DataFrame(), meta,
-        )
-        _update_heatmap(
-            pane.heat_fig, pane.heat_data, pane.heat_x, pane.heat_y, pd.DataFrame(),
-        )
-        _update_scatter(
-            pane.scatter_fig, pane.scatter_x, pane.scatter_y, pane.scatter_mark,
-            pd.DataFrame(), pd.DataFrame(), meta,
-        )
-        _update_drawdown(
-            pane.dd_fig, pane.dd_x, pane.dd_y, pane.dd_zero, pd.DataFrame(), meta,
+        _update_line(pane.line_fig, pd.DataFrame(), meta)
+        _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
+        _update_heatmap(pane.heat_fig, pd.DataFrame())
+        _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
+        _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
+        _update_rolling_ref(
+            pane.rcorr_fig, pd.DataFrame(), meta,
+            title_prefix="Rolling Correlation", benchmark_label="",
         )
         _update_rolling_ref(
-            pane.rcorr_fig, pane.rcorr_x, pane.rcorr_y, pane.rcorr_zero,
-            pd.DataFrame(), meta,
-            title_prefix="Rolling Correlation",
-            benchmark_label="",
-        )
-        _update_rolling_ref(
-            pane.rbeta_fig, pane.rbeta_x, pane.rbeta_y, pane.rbeta_ref,
-            pd.DataFrame(), meta,
-            title_prefix="Rolling Beta",
-            benchmark_label="",
+            pane.rbeta_fig, pd.DataFrame(), meta,
+            title_prefix="Rolling Beta", benchmark_label="",
         )
         _update_return_dist(
-            pane.retdist_fig, pane.retdist_x, pane.retdist_y,
-            pane.retdist_stats_grid,
+            pane.retdist_fig, pane.retdist_stats_grid,
             pd.DataFrame(), pd.DataFrame(), meta,
         )
 
@@ -600,24 +578,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         universe_window_start: pd.Timestamp,
         errors: list[str],
     ) -> None:
-        _update_line(pane.line_fig, pane.line_x, pane.line_y, prep.perf, meta)
-        _update_sharpe_line(
-            pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
-            pane.sharpe_line_zero, prep.sz_series, meta,
-        )
-        _update_heatmap(
-            pane.heat_fig, pane.heat_data, pane.heat_x, pane.heat_y, prep.cm,
-        )
-        _update_scatter(
-            pane.scatter_fig, pane.scatter_x, pane.scatter_y, pane.scatter_mark,
-            prep.sel_window, prep.rets, meta,
-        )
-        _update_drawdown(
-            pane.dd_fig, pane.dd_x, pane.dd_y, pane.dd_zero, prep.dd, meta,
-        )
+        _update_line(pane.line_fig, prep.perf, meta)
+        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
+        _update_heatmap(pane.heat_fig, prep.cm)
+        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
+        _update_drawdown(pane.dd_fig, prep.dd, meta)
         _update_return_dist(
-            pane.retdist_fig, pane.retdist_x, pane.retdist_y,
-            pane.retdist_stats_grid,
+            pane.retdist_fig, pane.retdist_stats_grid,
             prep.rets, prep.rd_stats, meta,
         )
 
@@ -636,8 +603,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             ).iloc[:, 0]
             rc = rolling_correlation(prep.rets, rc_bench_returns)
             _update_rolling_ref(
-                pane.rcorr_fig, pane.rcorr_x, pane.rcorr_y, pane.rcorr_zero,
-                rc, meta,
+                pane.rcorr_fig, rc, meta,
                 title_prefix="Rolling Correlation",
                 benchmark_label=rc_bench_ticker,
             )
@@ -659,8 +625,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             ).iloc[:, 0]
             rb = rolling_beta(prep.rets, rb_bench_returns)
             _update_rolling_ref(
-                pane.rbeta_fig, pane.rbeta_x, pane.rbeta_y, pane.rbeta_ref,
-                rb, meta,
+                pane.rbeta_fig, rb, meta,
                 title_prefix="Rolling Beta",
                 benchmark_label=rb_bench_ticker,
             )
@@ -806,53 +771,73 @@ def _ticker_options(df: pd.DataFrame) -> list[tuple[str, str]]:
     return [(f"{r['ticker']} — {r['name']}", r["ticker"]) for _, r in df.iterrows()]
 
 
-def _line_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Rebased = 100")
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[],
-        title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
+_CHART_HEIGHT_PX: int = int(CHART_HEIGHT.removesuffix("px"))
+
+
+def _chart_layout(*, title: str, **overrides) -> dict:
+    """Shared plotly Layout kwargs — uniform height, margins, brand styling.
+
+    Pass `xaxis_title`, `yaxis_title`, `xaxis_tickformat`,
+    `yaxis_tickformat`, `hovermode`, `barmode`, `shapes`, `margin`, etc.
+    via `overrides`.
+    """
+    base = dict(
+        template="plotly_white",
+        height=_CHART_HEIGHT_PX,
+        margin=dict(t=40, b=50, l=60, r=20),
+        title=dict(
+            text=title,
+            font=dict(size=14, color=Color.BRAND_NAVY.value),
+            x=0.02,
+            xanchor="left",
+        ),
+        showlegend=False,
+        font=dict(family=Font.SANS.value, color=Color.BRAND_NAVY.value, size=12),
+        hoverlabel=dict(font_family=Font.SANS.value),
     )
-    return fig, x_sc, y_sc, fig
+    base.update(overrides)
+    return base
 
 
-def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame, meta: pd.DataFrame):
-    if perf.empty:
-        fig.marks = []
-        return
+def _h_ref(y: float) -> dict:
+    """Dashed horizontal reference line spanning the chart's full width."""
+    return dict(
+        type="line",
+        xref="paper", x0=0, x1=1,
+        yref="y", y0=y, y1=y,
+        line=dict(color=Color.SLATE_400.value, dash="dash", width=1),
+    )
+
+
+def _line_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Rebased = 100"),
+        )
+    )
+
+
+def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
     name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(perf.columns):
         series = perf[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
-                labels=[label],
-                display_legend=False,
-            )
-        )
-    fig.marks = marks
-    if not perf.dropna(how="all").empty:
-        y_min = float(np.nanmin(perf.values))
-        y_max = float(np.nanmax(perf.values))
-        pad = (y_max - y_min) * 0.02 or 1.0
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-        x_sc.min = perf.index.min().to_pydatetime()
-        x_sc.max = perf.index.max().to_pydatetime()
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
 
 
 # ---- Perf grid (selected set) ---------------------------------------------
@@ -988,181 +973,129 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
 # ---- Heatmap --------------------------------------------------------------
 
 
-def _heatmap():
-    col_sc = bq.ColorScale(scheme="RdYlBu", min=-1, max=1, reverse=True)
-    x_sc = bq.OrdinalScale()
-    y_sc = bq.OrdinalScale(reverse=True)
-    ax_x = bq.Axis(
-        scale=x_sc, tick_rotate=-75,
-        tick_style={"font-size": FontSize.MICRO.value},
+def _heatmap() -> go.FigureWidget:
+    return go.FigureWidget(
+        data=[go.Heatmap(
+            z=np.zeros((2, 2)),
+            x=["", " "],
+            y=["", " "],
+            colorscale="RdBu",
+            reversescale=True,
+            zmin=-1, zmax=1, zmid=0,
+            colorbar=dict(title="ρ", tickformat=".1f", thickness=14),
+            hovertemplate="%{y} vs %{x}<br>ρ = %{z:.2f}<extra></extra>",
+        )],
+        layout=_chart_layout(
+            title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
+            margin=dict(t=40, b=70, l=120, r=20),
+            xaxis=dict(tickangle=-75, tickfont=dict(size=10)),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10)),
+        ),
     )
-    ax_y = bq.Axis(
-        scale=y_sc, orientation="vertical",
-        tick_style={"font-size": FontSize.MICRO.value},
-    )
-    ax_c = bq.ColorAxis(
-        scale=col_sc,
-        orientation="vertical",
-        side="right",
-        label="Correlation",
-        num_ticks=11,
-        tick_format=".1f",
-        tick_style={"font-size": FontSize.LABEL.value},
-    )
-    data = bq.GridHeatMap(
-        color=np.zeros((2, 2)),
-        row=["", " "],
-        column=["", " "],
-        scales={"color": col_sc, "row": y_sc, "column": x_sc},
-        stroke="white",
-    )
-    fig = bq.Figure(
-        marks=[data],
-        axes=[ax_x, ax_y, ax_c],
-        title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 110},
-    )
-    return fig, data, x_sc, y_sc
 
 
-def _update_heatmap(fig, data, _x_sc, _y_sc, cm: pd.DataFrame):
+def _update_heatmap(fig: go.FigureWidget, cm: pd.DataFrame) -> None:
     # Correlation needs at least 2 series; below that, fall back to a
-    # blank 2x2 placeholder so the GridHeatMap validator doesn't complain.
+    # blank 2x2 placeholder so the heatmap still renders.
     if cm.empty or cm.shape[0] < 2:
         cm = pd.DataFrame(np.zeros((2, 2)), index=["", " "], columns=["", " "])
     tickers = list(cm.columns)
-    data.color = cm.values
-    data.row = tickers
-    data.column = tickers
+    with fig.batch_update():
+        fig.data[0].z = cm.values
+        fig.data[0].x = tickers
+        fig.data[0].y = tickers
 
 
 # ---- Sharpe z-score line chart (selected set, 1Y evolution) ----------------
 
 
-def _sharpe_line_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Sharpe z-score")
-    zero = bq.Lines(
-        x=[],
-        y=[0, 0],
-        scales={"x": x_sc, "y": y_sc},
-        colors=[Color.SLATE_400.value],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
+def _sharpe_line_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Sharpe z-score"),
+            shapes=[_h_ref(0.0)],
+        )
     )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[zero],
-        title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
-    )
-    return fig, x_sc, y_sc, zero
 
 
-def _update_sharpe_line(fig, x_sc, y_sc, zero, zser: pd.DataFrame, meta: pd.DataFrame):
+def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataFrame) -> None:
     if zser.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     tail = zser.dropna(how="all").tail(TRADING_DAYS_PER_YEAR)
     if tail.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(tail.columns):
         series = tail[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
-                labels=[label],
-                display_legend=False,
-            )
-        )
-    x_min = tail.index.min().to_pydatetime()
-    x_max = tail.index.max().to_pydatetime()
-    zero.x = tail.index[[0, -1]].values
-    fig.marks = [zero, *marks]
-    vals = tail.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        y_max = float(np.nanmax(vals))
-        y_min = min(y_min, 0.0)
-        y_max = max(y_max, 0.0)
-        pad = (y_max - y_min) * 0.05 or 1.0
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-    x_sc.min = x_min
-    x_sc.max = x_max
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
 
 
 # ---- Risk / Return scatter (selected set) ----------------------------------
 
 
-def _scatter_chart():
-    x_sc = bq.LinearScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(
-        scale=x_sc,
-        label=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
-        tick_format=".0%",
+def _scatter_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        data=[go.Scatter(
+            mode="markers",
+            x=[], y=[],
+            marker=dict(size=[], color=[], line=dict(width=0)),
+            text=[],
+            customdata=[],
+            hovertemplate=(
+                "%{text}<br>Vol %{x:.2%}<br>Return %{y:.2%}"
+                "<br>Sharpe %{customdata:.2f}<extra></extra>"
+            ),
+        )],
+        layout=_chart_layout(
+            title=f"Risk / Return — {LOOKBACK_YEARS}Y",
+            hovermode="closest",
+            xaxis=dict(
+                title=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
+                tickformat=".0%",
+                rangemode="tozero",
+            ),
+            yaxis=dict(
+                title=f"Annualized Return ({LOOKBACK_YEARS}Y)",
+                tickformat=".0%",
+            ),
+        ),
     )
-    ax_y = bq.Axis(
-        scale=y_sc,
-        orientation="vertical",
-        label=f"Annualized Return ({LOOKBACK_YEARS}Y)",
-        tick_format=".0%",
-    )
-    tt = bq.Tooltip(
-        fields=["name", "x", "y", "size"],
-        labels=["", "Vol", "Return", "Sharpe"],
-        formats=["", ".2%", ".2%", ".2f"],
-    )
-    scatter = bq.Scatter(
-        x=[],
-        y=[],
-        scales={"x": x_sc, "y": y_sc},
-        colors=[Color.SLATE_400.value],
-        default_size=80,
-        tooltip=tt,
-    )
-    fig = bq.Figure(
-        marks=[scatter],
-        axes=[ax_x, ax_y],
-        title=f"Risk / Return — {LOOKBACK_YEARS}Y",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, scatter
 
 
 def _update_scatter(
-    fig,
-    x_sc,
-    y_sc,
-    scatter,
+    fig: go.FigureWidget,
     prices: pd.DataFrame,
     rets: pd.DataFrame,
     meta: pd.DataFrame,
-):
+) -> None:
     if prices.empty or rets.empty:
-        scatter.x = []
-        scatter.y = []
-        scatter.size = []
-        scatter.color = []
-        scatter.names = []
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.size = []
+            fig.data[0].marker.color = []
+            fig.data[0].text = []
+            fig.data[0].customdata = []
         return
     vol = ann_volatility(rets, LOOKBACK_YEARS)
     ret = ann_return(prices, LOOKBACK_YEARS)
@@ -1171,18 +1104,20 @@ def _update_scatter(
         subset=["vol", "ret"]
     )
     if frame.empty:
-        scatter.x = []
-        scatter.y = []
-        scatter.size = []
-        scatter.color = []
-        scatter.names = []
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.size = []
+            fig.data[0].marker.color = []
+            fig.data[0].text = []
+            fig.data[0].customdata = []
         return
     info = meta.set_index("ticker").reindex(frame.index)
     s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
     if s_clipped.max() > 0:
-        size_vals = (5 + 30 * (s_clipped / s_clipped.max())).tolist()
+        sizes = (8 + 32 * (s_clipped / s_clipped.max())).tolist()
     else:
-        size_vals = [10] * len(frame)
+        sizes = [12] * len(frame)
     # Positional palette so each ticker shares one color across every
     # chart inside an analysis pane and the perf-grid color swatch.
     colors = [_palette_color(i) for i in range(len(frame))]
@@ -1190,193 +1125,131 @@ def _update_scatter(
         f"{n} ({t})" if isinstance(n, str) and n else t
         for t, n in zip(frame.index, info["name"].tolist())
     ]
-    scatter.x = frame["vol"].values
-    scatter.y = frame["ret"].values
-    scatter.size = size_vals
-    scatter.color = colors
-    scatter.names = names
-    x_min = float(frame["vol"].min())
-    x_max = float(frame["vol"].max())
-    y_min = float(frame["ret"].min())
-    y_max = float(frame["ret"].max())
-    x_pad = (x_max - x_min) * 0.08 or max(abs(x_min), abs(x_max), 0.01) * 0.1 or 0.005
-    y_pad = (y_max - y_min) * 0.08 or max(abs(y_min), abs(y_max), 0.01) * 0.1 or 0.005
-    x_sc.min = max(0.0, x_min - x_pad)
-    x_sc.max = x_max + x_pad
-    y_sc.min = min(0.0, y_min - y_pad)
-    y_sc.max = y_max + y_pad
+    with fig.batch_update():
+        fig.data[0].x = frame["vol"].values
+        fig.data[0].y = frame["ret"].values
+        fig.data[0].marker.size = sizes
+        fig.data[0].marker.color = colors
+        fig.data[0].text = names
+        fig.data[0].customdata = frame["sharpe"].values
 
 
 # ---- Drawdown chart (selected set) -----------------------------------------
 
 
-def _drawdown_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(
-        scale=y_sc, orientation="vertical", label="Drawdown", tick_format=".0%"
+def _drawdown_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Drawdown — {LOOKBACK_YEARS}Y",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Drawdown", tickformat=".0%"),
+            shapes=[_h_ref(0.0)],
+        )
     )
-    zero = bq.Lines(
-        x=[],
-        y=[0, 0],
-        scales={"x": x_sc, "y": y_sc},
-        colors=[Color.SLATE_400.value],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
-    )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[zero],
-        title=f"Drawdown — {LOOKBACK_YEARS}Y",
-        legend_location="bottom-left",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, zero
 
 
-def _update_drawdown(fig, x_sc, y_sc, zero, dd: pd.DataFrame, meta: pd.DataFrame):
+def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame) -> None:
     if dd.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     cleaned = dd.dropna(how="all")
     if cleaned.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
-                labels=[label],
-                display_legend=False,
-            )
-        )
-    zero.x = cleaned.index[[0, -1]].values
-    fig.marks = [zero, *marks]
-    vals = cleaned.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        pad = abs(y_min) * 0.05 or 0.01
-        y_sc.min = y_min - pad
-        y_sc.max = pad
-    x_sc.min = cleaned.index.min().to_pydatetime()
-    x_sc.max = cleaned.index.max().to_pydatetime()
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2%}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
 
 
 # ---- Rolling-reference line chart (correlation / beta) ---------------------
 
 
-def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float):
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label=y_label)
-    ref = bq.Lines(
-        x=[],
-        y=[ref_y, ref_y],
-        scales={"x": x_sc, "y": y_sc},
-        colors=[Color.SLATE_400.value],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
+def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float) -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title=y_label),
+            shapes=[_h_ref(ref_y)],
+        )
     )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[ref],
-        title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, ref
 
 
 def _update_rolling_ref(
-    fig,
-    x_sc,
-    y_sc,
-    ref,
+    fig: go.FigureWidget,
     df: pd.DataFrame,
     meta: pd.DataFrame,
     *,
     title_prefix: str,
     benchmark_label: str,
-):
+) -> None:
     title_suffix = f" — {SHARPE_WINDOW_LABEL} rolling"
-    if benchmark_label:
-        fig.title = f"{title_prefix} vs {benchmark_label}{title_suffix}"
-    else:
-        fig.title = f"{title_prefix}{title_suffix}"
+    new_title = (
+        f"{title_prefix} vs {benchmark_label}{title_suffix}"
+        if benchmark_label
+        else f"{title_prefix}{title_suffix}"
+    )
     if df.empty:
-        fig.marks = [ref]
+        with fig.batch_update():
+            fig.data = ()
+            fig.layout.title.text = new_title
         return
     cleaned = df.dropna(how="all")
     if cleaned.empty:
-        fig.marks = [ref]
+        with fig.batch_update():
+            fig.data = ()
+            fig.layout.title.text = new_title
         return
     name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
-                labels=[label],
-                display_legend=False,
-            )
-        )
-    ref_y_val = float(ref.y[0]) if len(ref.y) else 0.0
-    ref.x = cleaned.index[[0, -1]].values
-    fig.marks = [ref, *marks]
-    vals = cleaned.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        y_max = float(np.nanmax(vals))
-        y_min = min(y_min, ref_y_val)
-        y_max = max(y_max, ref_y_val)
-        pad = (y_max - y_min) * 0.05 or 0.05
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-    x_sc.min = cleaned.index.min().to_pydatetime()
-    x_sc.max = cleaned.index.max().to_pydatetime()
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.title.text = new_title
 
 
 # ---- Return distribution histogram (selected set) --------------------------
 
 
-def _return_dist_chart():
-    x_sc = bq.LinearScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Daily return", tick_format=".1%")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Frequency")
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[],
-        title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
-        legend_location="top-right",
-        layout=W.Layout(width="100%", height=CHART_HEIGHT),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+def _return_dist_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
+            barmode="overlay",
+            xaxis=dict(title="Daily return", tickformat=".1%"),
+            yaxis=dict(title="Frequency"),
+        )
     )
-    return fig, x_sc, y_sc
 
 
 def _return_dist_stats_grid() -> DataGrid:
@@ -1391,63 +1264,54 @@ def _return_dist_stats_grid() -> DataGrid:
 
 
 def _update_return_dist(
-    fig,
-    x_sc,
-    y_sc,
+    fig: go.FigureWidget,
     stats_grid: DataGrid,
     rets: pd.DataFrame,
     stats_df: pd.DataFrame,
     meta: pd.DataFrame,
-):
+) -> None:
     if rets.empty:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
     cleaned = rets.dropna(how="all")
     if cleaned.empty:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
     name_lookup = meta.set_index("ticker")["name"].to_dict()
     all_vals = cleaned.values[np.isfinite(cleaned.values)]
     if all_vals.size == 0:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
     lo, hi = float(np.nanpercentile(all_vals, 0.5)), float(np.nanpercentile(all_vals, 99.5))
     if lo == hi:
         lo, hi = lo - 0.01, hi + 0.01
-    bin_edges = np.linspace(lo, hi, 81)
-    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    width = bin_edges[1] - bin_edges[0]
-    marks: list = []
-    max_count = 0
+    bin_size = (hi - lo) / 80.0
+    traces: list[go.Histogram] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna().values
         if series.size == 0:
             continue
-        counts, _ = np.histogram(series, bins=bin_edges)
-        max_count = max(max_count, int(counts.max(initial=0)))
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Bars(
-                x=centers,
-                y=counts,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
-                opacities=[0.5] * len(centers),
-                labels=[label],
-                display_legend=False,
-                stroke=LINE_PALETTE[i % len(LINE_PALETTE)],
-                padding=0.0,
-            )
-        )
-    fig.marks = marks
-    x_sc.min = lo - width
-    x_sc.max = hi + width
-    y_sc.min = 0
-    y_sc.max = max_count * 1.1 if max_count > 0 else 1
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Histogram(
+            x=series,
+            xbins=dict(start=lo, end=hi, size=bin_size),
+            marker=dict(color=_palette_color(i)),
+            opacity=0.55,
+            name=label,
+            hovertemplate=f"{label}<br>bin %{{x:.2%}}<br>count %{{y}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.xaxis.range = [lo - bin_size, hi + bin_size]
 
     if stats_df.empty:
         stats_grid.data = pd.DataFrame()
