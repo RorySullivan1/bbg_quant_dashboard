@@ -858,7 +858,7 @@ def _perf_grid() -> DataGrid:
     grid = DataGrid(
         pd.DataFrame(),
         base_row_size=28,
-        base_column_size=82,
+        base_column_size=80,           # default for numeric metric cols
         base_row_header_size=120,
         layout=W.Layout(width="100%", height="240px"),
     )
@@ -866,6 +866,20 @@ def _perf_grid() -> DataGrid:
 
 
 PERF_COLOR_COLUMN: tuple[str, str] = ("Info", "•")
+
+# Column-width overrides keyed by the MultiIndex leaf name. The leaf names
+# repeat across periods (1Y/3Y/5Y Return/Vol/Sharpe/Max DD) so a single
+# override applies uniformly to every period — which is what we want.
+PERF_COLUMN_WIDTHS: dict[str, int] = {
+    "•": 22,             # color swatch — minimal vertical stripe
+    "Name": 240,
+    "Asset Class": 140,
+    "Theme": 180,
+    "Return": 80,
+    "Vol": 72,
+    "Sharpe": 64,
+    "Max DD": 80,
+}
 
 
 def _palette_color(i: int) -> str:
@@ -895,6 +909,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
+    grid.column_widths = dict(PERF_COLUMN_WIDTHS)
 
 
 def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
