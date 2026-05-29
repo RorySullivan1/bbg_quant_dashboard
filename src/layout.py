@@ -775,25 +775,36 @@ _CHART_HEIGHT_PX: int = int(CHART_HEIGHT.removesuffix("px"))
 
 
 def _chart_layout(*, title: str, **overrides) -> dict:
-    """Shared plotly Layout kwargs — uniform height, margins, brand styling.
+    """Shared plotly Layout kwargs — Bloomberg/Barclays dark theme.
 
-    Pass `xaxis_title`, `yaxis_title`, `xaxis_tickformat`,
-    `yaxis_tickformat`, `hovermode`, `barmode`, `shapes`, `margin`, etc.
-    via `overrides`.
+    Charts render on a near-black background (`Color.CHART_BG`) with
+    white titles and light slate text. Axis grid/tick styling inherits
+    from the `plotly_dark` template; we override only background, title,
+    font color, and hover styling.
+
+    Pass `xaxis`, `yaxis`, `hovermode`, `barmode`, `shapes`, `margin`,
+    etc. via `overrides`.
     """
     base = dict(
-        template="plotly_white",
+        template="plotly_dark",
+        paper_bgcolor=Color.CHART_BG.value,
+        plot_bgcolor=Color.CHART_BG.value,
         height=_CHART_HEIGHT_PX,
-        margin=dict(t=40, b=50, l=60, r=20),
+        margin=dict(t=44, b=50, l=60, r=20),
         title=dict(
             text=title,
-            font=dict(size=14, color=Color.BRAND_NAVY.value),
+            font=dict(size=14, color=Color.CHART_TITLE.value),
             x=0.02,
             xanchor="left",
         ),
         showlegend=False,
-        font=dict(family=Font.SANS.value, color=Color.BRAND_NAVY.value, size=12),
-        hoverlabel=dict(font_family=Font.SANS.value),
+        font=dict(family=Font.SANS.value, color=Color.CHART_TEXT.value, size=12),
+        hoverlabel=dict(
+            font_family=Font.SANS.value,
+            bgcolor=Color.CHART_HOVER_BG.value,
+            font_color=Color.CHART_TEXT.value,
+            bordercolor=Color.CHART_AXIS.value,
+        ),
     )
     base.update(overrides)
     return base
@@ -805,7 +816,7 @@ def _h_ref(y: float) -> dict:
         type="line",
         xref="paper", x0=0, x1=1,
         yref="y", y0=y, y1=y,
-        line=dict(color=Color.SLATE_400.value, dash="dash", width=1),
+        line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1),
     )
 
 

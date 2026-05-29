@@ -63,6 +63,21 @@ class Color(_StrEnum):
     # Sentiment accents
     GREEN_600 = "#16a34a"
 
+    # ---- Chart theme (Bloomberg / Barclays blend, dark) -------------------
+    # Near-black with a hint of blue (GitHub-dark vibe; reads better than
+    # pure #000 under typical browser displays).
+    CHART_BG = "#0d1117"
+    # Subtle grid lines that don't compete with the data.
+    CHART_GRID = "#1f2937"
+    # Axis line + tick color — medium slate for legibility on the dark bg.
+    CHART_AXIS = "#475569"
+    # Primary chart text (axis labels, tick text).
+    CHART_TEXT = "#cbd5e1"
+    # Chart title — bright near-white for contrast.
+    CHART_TITLE = "#f9fafb"
+    # Hover tooltip background.
+    CHART_HOVER_BG = "#1f2937"
+
 
 class Font(_StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""
@@ -156,11 +171,19 @@ ASSET_CLASS_COLORS: dict[str, str] = {
 }
 
 
-# Matplotlib's tab10 palette — used for multi-series line/bar marks. Order
-# matters (positional assignment in the marks loop), so keep this as a
-# tuple rather than an enum.
+# Bloomberg / Barclays-blend palette — high-chroma colors tuned to pop
+# against the dark chart background. Bloomberg orange + Barclays cyan
+# anchor the first two slots (most-selected position). Order matters
+# (positional assignment in the marks loop), so keep this as a tuple.
 LINE_PALETTE: tuple[str, ...] = (
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf",
+    "#FFA000",  # Bloomberg orange
+    "#00B5E2",  # Barclays cyan
+    "#FFD400",  # Yellow
+    "#1DE9B6",  # Mint
+    "#FF5252",  # Coral
+    "#B388FF",  # Lavender
+    "#FF80AB",  # Pink
+    "#80D8FF",  # Sky
+    "#69F0AE",  # Lime
+    "#FFAB40",  # Light orange
 )

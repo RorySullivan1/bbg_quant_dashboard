@@ -182,6 +182,17 @@ live paths return the same shape.
   bqplot legend (`display_legend`) is off. `AssetClassColor` /
   `ASSET_CLASS_COLORS` remain defined in `src/style.py` but are
   currently unused.
+- **Chart theme is dark (Bloomberg / Barclays blend)**: charts render
+  on `Color.CHART_BG` (near-black `#0d1117`) via plotly's
+  `plotly_dark` template + custom overrides defined in
+  `_chart_layout()` in `src/layout.py`. The `LINE_PALETTE` is a
+  high-chroma palette anchored by Bloomberg orange (`#FFA000`) and
+  Barclays cyan (`#00B5E2`) so traces pop against the dark
+  background. Chart-specific color tokens (`CHART_BG`, `CHART_GRID`,
+  `CHART_AXIS`, `CHART_TEXT`, `CHART_TITLE`, `CHART_HOVER_BG`) live
+  on the `Color` enum. The rest of the dashboard chrome (page
+  banner, status banner, commentary block, perf grid) stays light —
+  only the charts are dark.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
   stacks, and font sizes used by `src/layout.py` reference the `Color`,
   `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor`,
