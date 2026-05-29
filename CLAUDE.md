@@ -42,6 +42,7 @@ dashboard always renders end-to-end.
 | Module                | Owns                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
+| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
@@ -148,11 +149,15 @@ live paths return the same shape.
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
-- **Scatter palette**: asset-class colors are defined by
-  `ASSET_CLASS_COLORS` in `src/layout.py`; unknown classes fall back to
-  `UNKNOWN_ASSET_CLASS_COLOR`. The legend is rendered as a sibling HTML
-  block under the figure because `bq.Scatter` has no built-in categorical
-  legend.
+- **Scatter palette**: asset-class colors are defined by the
+  `AssetClassColor` enum and the `ASSET_CLASS_COLORS` dict in
+  `src/style.py`; unknown classes fall back to `AssetClassColor.UNKNOWN`.
+  The legend is rendered as a sibling HTML block under the figure because
+  `bq.Scatter` has no built-in categorical legend.
+- **Style tokens live in `src/style.py`**, not inline. Hex colors, font
+  stacks, and font sizes used by `src/layout.py` reference the `Color`,
+  `Font`, `FontSize`, `StatusTone`, `Sentiment`, and `AssetClassColor`
+  enums. Adding a new color or size: extend the enum, don't inline.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.

@@ -44,24 +44,16 @@ from .stats import (
     sharpe_zscore,
     universe_perf,
 )
-
-
-LINE_COLORS = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf",
-]
-
-
-ASSET_CLASS_COLORS: dict[str, str] = {
-    "Equity":       "#1f77b4",
-    "Fixed Income": "#ff7f0e",
-    "Commodity":    "#2ca02c",
-    "FX":           "#d62728",
-    "Multi-Asset":  "#9467bd",
-    "Credit":       "#8c564b",
-}
-UNKNOWN_ASSET_CLASS_COLOR = "#94a3b8"
+from .style import (
+    ASSET_CLASS_COLORS,
+    LINE_PALETTE,
+    AssetClassColor,
+    Color,
+    Font,
+    FontSize,
+    Sentiment,
+    StatusTone,
+)
 
 
 SHARPE_WINDOW_LABEL = (
@@ -73,10 +65,10 @@ SHARPE_WINDOW_LABEL = (
 
 BANNER_HTML = (
     "<div style='display:flex;align-items:center;gap:16px;"
-    "padding:12px 16px;background:#0b1f3a;color:#fff;'>"
-    "<div style='font-size:22px;font-weight:600;'>"
+    f"padding:12px 16px;background:{Color.BRAND_NAVY};color:{Color.WHITE};'>"
+    f"<div style='font-size:{FontSize.HERO};font-weight:600;'>"
     "Index Catalog Dashboard</div>"
-    "<div style='font-size:13px;opacity:0.75;'>"
+    f"<div style='font-size:{FontSize.SMALL};opacity:0.75;'>"
     "Metadata · Performance · Risk</div>"
     "</div>"
 )
@@ -94,28 +86,19 @@ def _banner() -> W.HBox:
     )
 
 
-_STATUS_TONES: dict[str, tuple[str, str, str]] = {
-    # tone -> (background, border, foreground)
-    "info":    ("#f1f5f9", "#cbd5e1", "#0b1f3a"),
-    "success": ("#ecfdf5", "#a7f3d0", "#065f46"),
-    "warn":    ("#fffbeb", "#fde68a", "#92400e"),
-    "error":   ("#fef2f2", "#fecaca", "#7f1d1d"),
-}
-
-
 def _status_banner() -> W.HTML:
     return W.HTML(
-        _render_status("Initializing…", tone="info"),
+        _render_status("Initializing…", tone=StatusTone.INFO),
         layout=W.Layout(width="100%"),
     )
 
 
-def _render_status(text: str, *, tone: str) -> str:
-    bg, border, fg = _STATUS_TONES.get(tone, _STATUS_TONES["info"])
+def _render_status(text: str, *, tone: StatusTone) -> str:
     return (
-        "<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-        "font-size:12px;padding:6px 14px;"
-        f"background:{bg};border-bottom:1px solid {border};color:{fg};'>"
+        f"<div style='font-family:{Font.MONO};"
+        f"font-size:{FontSize.LABEL};padding:6px 14px;"
+        f"background:{tone.bg};border-bottom:1px solid {tone.border};"
+        f"color:{tone.fg};'>"
         f"{html.escape(text)}"
         "</div>"
     )
@@ -133,7 +116,8 @@ def _toggle_group(
         for opt in options
     }
     header = W.HTML(
-        f"<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
+        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
+        f"margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
     )
     toggle_list = W.VBox(
         list(toggles.values()),
@@ -149,7 +133,7 @@ def _toggle_group(
         layout=W.Layout(
             width="100%",
             padding="4px 6px",
-            border="1px solid #e5e7eb",
+            border=f"1px solid {Color.SLATE_200}",
             margin="0 0 6px 0",
         ),
     )
@@ -202,30 +186,31 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     status_w = _status_banner()
 
-    def _set_status(text: str, tone: str = "info") -> None:
+    def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
         status_w.value = _render_status(text, tone=tone)
 
-    def _format_loaded(df: pd.DataFrame, source: str, elapsed: float) -> tuple[str, str]:
+    def _format_loaded(
+        df: pd.DataFrame, source: str, elapsed: float
+    ) -> tuple[str, StatusTone]:
+        n_tickers = df.shape[1]
+        n_days = df.shape[0]
         if source == "cache":
             mtime = _cache_path(today).stat().st_mtime
             stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
-            n_tickers = df.shape[1]
-            n_days = df.shape[0]
             return (
                 f"Loaded {n_tickers} indices · {n_days} trading days from cache ({stamp})",
-                "success",
+                StatusTone.SUCCESS,
             )
-        n_tickers = df.shape[1]
-        n_days = df.shape[0]
         src_label = "BQL" if source == "bql" else "mock prices"
         return (
             f"Loaded {n_tickers} indices · {n_days} trading days · "
             f"fetched from {src_label} in {elapsed:.1f}s",
-            "success",
+            StatusTone.SUCCESS,
         )
 
     ticker_label = W.HTML(
-        "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
+        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
+        "margin:6px 4px 2px 4px;'>Tickers</div>"
     )
     live_row = W.HBox(
         [live_min, live_max],
@@ -295,7 +280,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     filter_col = W.Box(
         [filter_box],
-        layout=W.Layout(width="30%", border="1px solid #ddd"),
+        layout=W.Layout(width="30%", border=f"1px solid {Color.SLATE_200}"),
     )
     chart_col = W.VBox(
         [line_fig, perf_grid, sharpe_line_fig],
@@ -334,7 +319,8 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     universe_header = W.HTML(
-        "<div style='font-weight:600;font-size:14px;margin:8px 12px 4px 12px;'>"
+        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
+        "margin:8px 12px 4px 12px;'>"
         "All-catalog performance"
         "</div>"
     )
@@ -358,7 +344,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
     _set_status(
         f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
-        tone="info",
+        tone=StatusTone.INFO,
     )
     t_fetch = time.perf_counter()
     try:
@@ -369,7 +355,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         text, tone = _format_loaded(universe_prices, fetch_source, fetch_elapsed)
         _set_status(text, tone=tone)
     except Exception:
-        _set_status("Load failed — see error below", tone="error")
+        _set_status("Load failed — see error below", tone=StatusTone.ERROR)
         init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
@@ -572,7 +558,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         nonlocal universe_prices, arp_universe_prices
         _set_status(
             f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
-            tone="info",
+            tone=StatusTone.INFO,
         )
         t_refresh = time.perf_counter()
         try:
@@ -580,7 +566,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                 fetch_tickers, universe_start, today, use_cache=False
             )
         except Exception:
-            _set_status("Load failed — see error below", tone="error")
+            _set_status("Load failed — see error below", tone=StatusTone.ERROR)
             init_errors.append(
                 f"Universe refresh ({universe_start} → {today}) failed:\n"
                 f"{traceback.format_exc()}"
@@ -674,7 +660,7 @@ def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame, meta: pd.DataFrame):
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
                 display_legend=True,
             )
@@ -804,8 +790,14 @@ def _heatmap():
     col_sc = bq.ColorScale(scheme="RdYlBu", min=-1, max=1, reverse=True)
     x_sc = bq.OrdinalScale()
     y_sc = bq.OrdinalScale(reverse=True)
-    ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", tick_style={"font-size": "10px"})
+    ax_x = bq.Axis(
+        scale=x_sc, tick_rotate=-75,
+        tick_style={"font-size": FontSize.MICRO.value},
+    )
+    ax_y = bq.Axis(
+        scale=y_sc, orientation="vertical",
+        tick_style={"font-size": FontSize.MICRO.value},
+    )
     ax_c = bq.ColorAxis(
         scale=col_sc,
         orientation="vertical",
@@ -813,7 +805,7 @@ def _heatmap():
         label="Correlation",
         num_ticks=11,
         tick_format=".1f",
-        tick_style={"font-size": "12px"},
+        tick_style={"font-size": FontSize.LABEL.value},
     )
     data = bq.GridHeatMap(
         color=np.zeros((2, 2)),
@@ -855,7 +847,7 @@ def _sharpe_line_chart():
         x=[],
         y=[0, 0],
         scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
+        colors=[Color.SLATE_400.value],
         line_style="dashed",
         stroke_width=1,
         display_legend=False,
@@ -892,7 +884,7 @@ def _update_sharpe_line(fig, x_sc, y_sc, zero, zser: pd.DataFrame, meta: pd.Data
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
                 display_legend=True,
             )
@@ -940,7 +932,7 @@ def _scatter_chart():
         x=[],
         y=[],
         scales={"x": x_sc, "y": y_sc},
-        colors=[UNKNOWN_ASSET_CLASS_COLOR],
+        colors=[AssetClassColor.UNKNOWN.value],
         default_size=80,
         tooltip=tt,
     )
@@ -990,7 +982,7 @@ def _update_scatter(
     else:
         size_vals = [10] * len(frame)
     colors = [
-        ASSET_CLASS_COLORS.get(ac, UNKNOWN_ASSET_CLASS_COLOR)
+        ASSET_CLASS_COLORS.get(ac, AssetClassColor.UNKNOWN.value)
         for ac in info["asset_class"].fillna("").tolist()
     ]
     names = [
@@ -1019,15 +1011,16 @@ def _render_scatter_legend(palette: dict[str, str]) -> str:
     for ac, color in palette.items():
         items.append(
             "<span style='display:inline-flex;align-items:center;gap:4px;"
-            "margin-right:14px;font-size:11px;color:#475569;'>"
+            f"margin-right:14px;font-size:{FontSize.CAPTION};color:{Color.SLATE_600};'>"
             f"<span style='display:inline-block;width:10px;height:10px;"
             f"border-radius:50%;background:{color};'></span>"
             f"{html.escape(ac)}"
             "</span>"
         )
     return (
-        "<div style='font-family:system-ui,sans-serif;padding:4px 8px 0 8px;'>"
-        "<span style='font-size:11px;color:#64748b;margin-right:8px;'>"
+        f"<div style='font-family:{Font.SANS};padding:4px 8px 0 8px;'>"
+        f"<span style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};"
+        "margin-right:8px;'>"
         "Color · asset class &nbsp;·&nbsp; Size · annualized Sharpe"
         "</span>"
         + "".join(items)
@@ -1049,7 +1042,7 @@ def _drawdown_chart():
         x=[],
         y=[0, 0],
         scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
+        colors=[Color.SLATE_400.value],
         line_style="dashed",
         stroke_width=1,
         display_legend=False,
@@ -1086,7 +1079,7 @@ def _update_drawdown(fig, x_sc, y_sc, zero, dd: pd.DataFrame, meta: pd.DataFrame
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
                 display_legend=True,
             )
@@ -1115,7 +1108,7 @@ def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float):
         x=[],
         y=[ref_y, ref_y],
         scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
+        colors=[Color.SLATE_400.value],
         line_style="dashed",
         stroke_width=1,
         display_legend=False,
@@ -1167,7 +1160,7 @@ def _update_rolling_ref(
                 x=series.index.values,
                 y=series.values,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
                 display_legend=True,
             )
@@ -1263,11 +1256,11 @@ def _update_return_dist(
                 x=centers,
                 y=counts,
                 scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
+                colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 opacities=[0.5] * len(centers),
                 labels=[label],
                 display_legend=True,
-                stroke=LINE_COLORS[i % len(LINE_COLORS)],
+                stroke=LINE_PALETTE[i % len(LINE_PALETTE)],
                 padding=0.0,
             )
         )
@@ -1301,17 +1294,17 @@ def _update_return_dist(
 # ---- Commentary rendering -------------------------------------------------
 
 
-SENTIMENT_COLORS = {
-    "positive": "#16a34a",
-    "negative": "#dc2626",
-    "neutral":  "#0b1f3a",
-}
+def _sentiment_color(name: str) -> str:
+    try:
+        return Sentiment[name.upper()].value
+    except KeyError:
+        return Sentiment.NEUTRAL.value
 
 
 def _load_weekly_commentary() -> str:
     if not WEEKLY_COMMENTARY_PATH.exists():
         return (
-            "<p style='color:#64748b;margin:0;'>"
+            f"<p style='color:{Color.SLATE_500};margin:0;'>"
             "No weekly commentary yet — create <code>data/weekly_commentary.html</code> "
             "to populate this section."
             "</p>"
@@ -1330,11 +1323,14 @@ def _load_disclaimer(path: Path, **placeholders: str) -> str:
 
 def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     return (
-        "<div style='font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;"
-        "border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;background:#f8fafc;'>"
+        f"<div style='font-family:{Font.SANS};font-size:{FontSize.BODY};"
+        f"line-height:1.5;border:1px solid {Color.SLATE_200};border-radius:6px;"
+        f"padding:14px 16px;background:{Color.SLATE_50};'>"
         "<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:6px;'>"
-        "<h3 style='margin:0;font-size:15px;color:#0b1f3a;'>Weekly Commentary</h3>"
-        f"<span style='font-size:11px;color:#64748b;'>as of {as_of.isoformat()}</span>"
+        f"<h3 style='margin:0;font-size:{FontSize.H3};color:{Color.BRAND_NAVY};'>"
+        "Weekly Commentary</h3>"
+        f"<span style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};'>"
+        f"as of {as_of.isoformat()}</span>"
         "</div>"
         f"<div>{body_html}</div>"
         "</div>"
@@ -1346,23 +1342,31 @@ def _render_highlights(cards: list[dict]) -> str:
         return ""
     tiles = []
     for c in cards:
-        color = SENTIMENT_COLORS.get(c.get("sentiment", "neutral"), "#0b1f3a")
+        color = _sentiment_color(c.get("sentiment", "neutral"))
         label = html.escape(c["label"])
         value = html.escape(c["value"])
         ticker = html.escape(c["ticker"])
         name = html.escape(c.get("name", ""))
         tiles.append(
-            "<div style='border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;background:#fff;'>"
-            f"<div style='font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:#64748b;margin-bottom:4px;'>{label}</div>"
-            f"<div style='font-size:20px;font-weight:600;color:{color};line-height:1.1;'>{value}</div>"
-            f"<div style='font-size:12px;color:#0b1f3a;margin-top:4px;'>{name}</div>"
-            f"<div style='font-size:11px;color:#64748b;font-family:ui-monospace,monospace;'>{ticker}</div>"
+            f"<div style='border:1px solid {Color.SLATE_200};border-radius:6px;"
+            f"padding:10px 12px;background:{Color.WHITE};'>"
+            f"<div style='font-size:{FontSize.MICRO};font-weight:600;"
+            "letter-spacing:0.05em;text-transform:uppercase;"
+            f"color:{Color.SLATE_500};margin-bottom:4px;'>{label}</div>"
+            f"<div style='font-size:{FontSize.DISPLAY};font-weight:600;"
+            f"color:{color};line-height:1.1;'>{value}</div>"
+            f"<div style='font-size:{FontSize.LABEL};color:{Color.BRAND_NAVY};"
+            f"margin-top:4px;'>{name}</div>"
+            f"<div style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};"
+            f"font-family:{Font.MONO};'>{ticker}</div>"
             "</div>"
         )
     return (
-        "<div style='font-family:system-ui,sans-serif;'>"
-        "<h3 style='margin:14px 0 8px 0;font-size:15px;color:#0b1f3a;'>"
-        "Key Highlights <span style='font-weight:400;font-size:11px;color:#64748b;'>(all-catalog)</span>"
+        f"<div style='font-family:{Font.SANS};'>"
+        f"<h3 style='margin:14px 0 8px 0;font-size:{FontSize.H3};"
+        f"color:{Color.BRAND_NAVY};'>"
+        f"Key Highlights <span style='font-weight:400;font-size:{FontSize.CAPTION};"
+        f"color:{Color.SLATE_500};'>(all-catalog)</span>"
         "</h3>"
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;'>"
         + "".join(tiles)
@@ -1372,9 +1376,9 @@ def _render_highlights(cards: list[dict]) -> str:
 
 def _render_error(message: str) -> str:
     return (
-        "<div style='font-family:system-ui,sans-serif;font-size:13px;"
-        "background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;"
-        "padding:12px 16px;border-radius:4px;'>"
+        f"<div style='font-family:{Font.SANS};font-size:{FontSize.SMALL};"
+        f"background:{StatusTone.ERROR.bg};border:1px solid {StatusTone.ERROR.border};"
+        f"color:{StatusTone.ERROR.fg};padding:12px 16px;border-radius:4px;'>"
         "<h3 style='margin:0 0 8px 0;'>Recompute failed</h3>"
         f"<pre style='white-space:pre-wrap;margin:0;'>{html.escape(message)}</pre>"
         "</div>"
