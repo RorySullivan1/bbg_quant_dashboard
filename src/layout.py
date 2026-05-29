@@ -1238,7 +1238,7 @@ def _update_return_dist(
     lo, hi = float(np.nanpercentile(all_vals, 0.5)), float(np.nanpercentile(all_vals, 99.5))
     if lo == hi:
         lo, hi = lo - 0.01, hi + 0.01
-    bin_edges = np.linspace(lo, hi, 41)
+    bin_edges = np.linspace(lo, hi, 81)
     centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     width = bin_edges[1] - bin_edges[0]
     marks: list = []
