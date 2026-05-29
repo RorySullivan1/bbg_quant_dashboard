@@ -867,19 +867,37 @@ def _perf_grid() -> DataGrid:
 
 PERF_COLOR_COLUMN: tuple[str, str] = ("Info", "•")
 
-# Column-width overrides keyed by the MultiIndex leaf name. The leaf names
-# repeat across periods (1Y/3Y/5Y Return/Vol/Sharpe/Max DD) so a single
-# override applies uniformly to every period — which is what we want.
-PERF_COLUMN_WIDTHS: dict[str, int] = {
-    "•": 22,             # color swatch — minimal vertical stripe
-    "Name": 240,
-    "Asset Class": 140,
-    "Theme": 180,
-    "Return": 80,
-    "Vol": 72,
-    "Sharpe": 64,
-    "Max DD": 80,
+# Column widths in pixels. ipydatagrid's JS keys columns by
+# `Array.toString()` of the field name — i.e. for our MultiIndex columns
+# the JS-side key is `"<level0>,<level1>"` (comma, no space). Plain
+# leaf-name keys (e.g. `"Name"`) are silently ignored.
+_PERF_INFO_WIDTHS: dict[str, int] = {
+    "Info,•":           22,    # color swatch — minimal vertical stripe
+    "Info,Name":        280,
+    "Info,Asset Class": 140,
+    "Info,Theme":       200,
 }
+_PERF_METRIC_WIDTHS: dict[str, int] = {
+    "Return": 88,
+    "Vol":    76,
+    "Sharpe": 72,
+    "Max DD": 92,
+}
+
+
+def _build_perf_column_widths(columns: pd.MultiIndex) -> dict[str, int]:
+    """Map each (period, metric) MultiIndex column to a pixel width using
+    ipydatagrid's `"<period>,<metric>"` JS key format. Period-specific
+    keys are emitted for each metric so 1Y/3Y/5Y all pick up the same
+    width."""
+    widths: dict[str, int] = dict(_PERF_INFO_WIDTHS)
+    for period, metric in columns:
+        if period == "Info":
+            continue
+        width = _PERF_METRIC_WIDTHS.get(metric)
+        if width is not None:
+            widths[f"{period},{metric}"] = width
+    return widths
 
 
 def _palette_color(i: int) -> str:
@@ -909,7 +927,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
-    grid.column_widths = dict(PERF_COLUMN_WIDTHS)
+    grid.column_widths = _build_perf_column_widths(combined.columns)
 
 
 def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
