@@ -865,17 +865,17 @@ def _perf_grid() -> DataGrid:
     return grid
 
 
-PERF_COLOR_COLUMN: tuple[str, str] = ("Info", "•")
+PERF_COLOR_COLUMN_NAME: str = "•"
 
-# Column widths in pixels. ipydatagrid's JS keys columns by
-# `Array.toString()` of the field name — i.e. for our MultiIndex columns
-# the JS-side key is `"<level0>,<level1>"` (comma, no space). Plain
-# leaf-name keys (e.g. `"Name"`) are silently ignored.
+# Column widths in pixels. With flat (single-level) string column names,
+# `column_widths` keys map 1:1 to the column index ipydatagrid asks for.
+# MultiIndex columns previously made these keys impossible to write
+# correctly — see the v0.5.0 commit history for the gory details.
 _PERF_INFO_WIDTHS: dict[str, int] = {
-    "Info,•":           22,    # color swatch — minimal vertical stripe
-    "Info,Name":        280,
-    "Info,Asset Class": 140,
-    "Info,Theme":       200,
+    PERF_COLOR_COLUMN_NAME: 22,    # color swatch — minimal vertical stripe
+    "Name":         280,
+    "Asset Class":  140,
+    "Theme":        200,
 }
 _PERF_METRIC_WIDTHS: dict[str, int] = {
     "Return": 88,
@@ -883,20 +883,19 @@ _PERF_METRIC_WIDTHS: dict[str, int] = {
     "Sharpe": 72,
     "Max DD": 92,
 }
+_PERF_INFO_TEXT_COLS: frozenset[str] = frozenset({"Name", "Asset Class", "Theme"})
 
 
-def _build_perf_column_widths(columns: pd.MultiIndex) -> dict[str, int]:
-    """Map each (period, metric) MultiIndex column to a pixel width using
-    ipydatagrid's `"<period>,<metric>"` JS key format. Period-specific
-    keys are emitted for each metric so 1Y/3Y/5Y all pick up the same
-    width."""
+def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
+    """Map each flat column name to a pixel width. Period-prefixed metric
+    columns (`"1Y Return"`, `"3Y Vol"`, …) inherit one width per metric
+    leaf so 1Y / 3Y / 5Y stay aligned."""
     widths: dict[str, int] = dict(_PERF_INFO_WIDTHS)
-    for period, metric in columns:
-        if period == "Info":
-            continue
-        width = _PERF_METRIC_WIDTHS.get(metric)
-        if width is not None:
-            widths[f"{period},{metric}"] = width
+    for col in columns:
+        for metric, w in _PERF_METRIC_WIDTHS.items():
+            if col.endswith(" " + metric):
+                widths[col] = w
+                break
     return widths
 
 
@@ -909,21 +908,16 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         grid.data = pd.DataFrame()
         return
     info_block = _info_block(pt.index, meta)
-    pt_norm = pt.copy()
-    pt_norm.columns = pd.MultiIndex.from_tuples(
-        [(str(a), str(b)) for a, b in pt_norm.columns]
-    )
-    combined = pd.concat([info_block, pt_norm], axis=1)
-    # Inject the per-row color swatch as the leftmost column. Each cell
-    # carries the hex string; the renderer paints background+text the
-    # same color so it shows as a solid block, acting as the legend
-    # reference for every chart inside an analysis pane.
+    pt_flat = pt.copy()
+    pt_flat.columns = [f"{period} {metric}" for period, metric in pt.columns]
+    # Per-row color swatch: each cell carries the hex string; the
+    # renderer paints background + text the same color so it shows as
+    # a solid block — the universal legend for every chart in the panes.
     color_col = pd.DataFrame(
-        {PERF_COLOR_COLUMN: [_palette_color(i) for i in range(len(combined))]},
-        index=combined.index,
+        {PERF_COLOR_COLUMN_NAME: [_palette_color(i) for i in range(len(pt))]},
+        index=pt.index,
     )
-    color_col.columns = pd.MultiIndex.from_tuples([PERF_COLOR_COLUMN])
-    combined = pd.concat([color_col, combined], axis=1)
+    combined = pd.concat([color_col, info_block, pt_flat], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
@@ -932,14 +926,12 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
 
 def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
     info = meta.set_index("ticker").reindex(tickers)[["name", "asset_class", "theme"]]
-    info = info.rename(
+    return info.rename(
         columns={"name": "Name", "asset_class": "Asset Class", "theme": "Theme"}
     )
-    info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
-    return info
 
 
-def _perf_renderers(columns: pd.MultiIndex) -> dict:
+def _perf_renderers(columns: pd.Index) -> dict:
     text = TextRenderer()
     pct = TextRenderer(format=".2%")
     f2 = TextRenderer(format=".2f")
@@ -949,14 +941,13 @@ def _perf_renderers(columns: pd.MultiIndex) -> dict:
     )
     renderers: dict = {}
     for col in columns:
-        period, metric = col
-        if col == PERF_COLOR_COLUMN:
+        if col == PERF_COLOR_COLUMN_NAME:
             renderers[col] = color_swatch
-        elif period == "Info":
+        elif col in _PERF_INFO_TEXT_COLS:
             renderers[col] = text
-        elif metric == "Sharpe":
+        elif col.endswith(" Sharpe"):
             renderers[col] = f2
-        elif metric in ("Return", "Vol", "Max DD"):
+        elif col.endswith((" Return", " Vol", " Max DD")):
             renderers[col] = pct
         else:
             renderers[col] = text
