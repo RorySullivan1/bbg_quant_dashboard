@@ -446,7 +446,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     platform_btn = _make_tab_button("Platform", active=True)
-    selected_btn = _make_tab_button("Selected Strategies", active=False)
+    selected_btn = _make_tab_button("Multi-Strategy Analysis", active=False)
     top_tab_bar = W.HBox(
         [platform_btn, selected_btn],
         layout=W.Layout(

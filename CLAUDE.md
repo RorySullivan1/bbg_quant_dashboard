@@ -18,7 +18,7 @@ tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
-- **Selected Strategies** — full-width filter box (toggle-button
+- **Multi-Strategy Analysis** — full-width filter box (toggle-button
   filters + searchable ticker box + Refresh-prices button) on top,
   followed by an always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
@@ -61,7 +61,7 @@ dashboard always renders end-to-end.
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
-| `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Selected Strategies) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Selected Strategies tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
+| `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
@@ -251,7 +251,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   BQL/mock fetch happens.
 - Clicking Refresh prices — banner pulses `Fetching prices…` then
   `Loaded … fetched from BQL in X.Ys`; the parquet mtime advances.
-- Clicking the top-level **Platform** / **Selected Strategies** pill
+- Clicking the top-level **Platform** / **Multi-Strategy Analysis** pill
   buttons toggles the active button to navy + white and swaps the
   content area; commentary stays visible above both.
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH
