@@ -166,11 +166,16 @@ live paths return the same shape.
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
-- **Scatter palette**: asset-class colors are defined by the
-  `AssetClassColor` enum and the `ASSET_CLASS_COLORS` dict in
-  `src/style.py`; unknown classes fall back to `AssetClassColor.UNKNOWN`.
-  The legend is rendered as a sibling HTML block under the figure because
-  `bq.Scatter` has no built-in categorical legend.
+- **One color identity per strategy**: every chart inside an
+  analysis pane (lines, bars, scatter points) uses positional
+  `LINE_PALETTE` colors keyed by the strategy's position in the
+  selected ticker set. The selected-strategy perf grid above the
+  panes carries a leftmost color-swatch column rendered with
+  `ipydatagrid.VegaExpr` and the same positional palette, so the
+  grid acts as the universal legend — every chart's per-strategy
+  bqplot legend (`display_legend`) is off. `AssetClassColor` /
+  `ASSET_CLASS_COLORS` remain defined in `src/style.py` but are
+  currently unused.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
   stacks, and font sizes used by `src/layout.py` reference the `Color`,
   `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor`,

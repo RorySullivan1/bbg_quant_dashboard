@@ -12,7 +12,7 @@ import bqplot as bq
 import ipywidgets as W
 import numpy as np
 import pandas as pd
-from ipydatagrid import DataGrid, TextRenderer
+from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
 from .bql_client import _cache_path, default_window, fetch_prices
 from .commentary import build_highlights
@@ -46,9 +46,7 @@ from .stats import (
     universe_perf,
 )
 from .style import (
-    ASSET_CLASS_COLORS,
     LINE_PALETTE,
-    AssetClassColor,
     Color,
     Font,
     FontSize,
@@ -196,7 +194,6 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
-    scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
     dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
     rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
         title_prefix="Rolling Correlation",
@@ -231,7 +228,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
         "1Y Sharpe-z Line":       W.VBox([sharpe_line_fig], layout=view_layout),
         "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
-        "Risk / Return":          W.VBox([scatter_fig, scatter_legend], layout=view_layout),
+        "Risk / Return":          W.VBox([scatter_fig], layout=view_layout),
         "Drawdown":               W.VBox([dd_fig], layout=view_layout),
         "Rolling Correlation":    W.VBox([rcorr_fig], layout=view_layout),
         "Return Distribution":    W.VBox([retdist_fig, retdist_stats_grid], layout=view_layout),
@@ -844,7 +841,7 @@ def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame, meta: pd.DataFrame):
                 scales={"x": x_sc, "y": y_sc},
                 colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
-                display_legend=True,
+                display_legend=False,
             )
         )
     fig.marks = marks
@@ -872,6 +869,13 @@ def _perf_grid() -> DataGrid:
     return grid
 
 
+PERF_COLOR_COLUMN: tuple[str, str] = ("Info", "•")
+
+
+def _palette_color(i: int) -> str:
+    return LINE_PALETTE[i % len(LINE_PALETTE)]
+
+
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
     if pt.empty:
         grid.data = pd.DataFrame()
@@ -882,6 +886,16 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         [(str(a), str(b)) for a, b in pt_norm.columns]
     )
     combined = pd.concat([info_block, pt_norm], axis=1)
+    # Inject the per-row color swatch as the leftmost column. Each cell
+    # carries the hex string; the renderer paints background+text the
+    # same color so it shows as a solid block, acting as the legend
+    # reference for every chart inside an analysis pane.
+    color_col = pd.DataFrame(
+        {PERF_COLOR_COLUMN: [_palette_color(i) for i in range(len(combined))]},
+        index=combined.index,
+    )
+    color_col.columns = pd.MultiIndex.from_tuples([PERF_COLOR_COLUMN])
+    combined = pd.concat([color_col, combined], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
@@ -900,10 +914,16 @@ def _perf_renderers(columns: pd.MultiIndex) -> dict:
     text = TextRenderer()
     pct = TextRenderer(format=".2%")
     f2 = TextRenderer(format=".2f")
+    color_swatch = TextRenderer(
+        background_color=VegaExpr("cell.value"),
+        text_color=VegaExpr("cell.value"),
+    )
     renderers: dict = {}
     for col in columns:
         period, metric = col
-        if period == "Info":
+        if col == PERF_COLOR_COLUMN:
+            renderers[col] = color_swatch
+        elif period == "Info":
             renderers[col] = text
         elif metric == "Sharpe":
             renderers[col] = f2
@@ -1068,7 +1088,7 @@ def _update_sharpe_line(fig, x_sc, y_sc, zero, zser: pd.DataFrame, meta: pd.Data
                 scales={"x": x_sc, "y": y_sc},
                 colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
-                display_legend=True,
+                display_legend=False,
             )
         )
     x_min = tail.index.min().to_pydatetime()
@@ -1114,7 +1134,7 @@ def _scatter_chart():
         x=[],
         y=[],
         scales={"x": x_sc, "y": y_sc},
-        colors=[AssetClassColor.UNKNOWN.value],
+        colors=[Color.SLATE_400.value],
         default_size=80,
         tooltip=tt,
     )
@@ -1163,10 +1183,9 @@ def _update_scatter(
         size_vals = (5 + 30 * (s_clipped / s_clipped.max())).tolist()
     else:
         size_vals = [10] * len(frame)
-    colors = [
-        ASSET_CLASS_COLORS.get(ac, AssetClassColor.UNKNOWN.value)
-        for ac in info["asset_class"].fillna("").tolist()
-    ]
+    # Positional palette so each ticker shares one color across every
+    # chart inside an analysis pane and the perf-grid color swatch.
+    colors = [_palette_color(i) for i in range(len(frame))]
     names = [
         f"{n} ({t})" if isinstance(n, str) and n else t
         for t, n in zip(frame.index, info["name"].tolist())
@@ -1186,28 +1205,6 @@ def _update_scatter(
     x_sc.max = x_max + x_pad
     y_sc.min = min(0.0, y_min - y_pad)
     y_sc.max = y_max + y_pad
-
-
-def _render_scatter_legend(palette: dict[str, str]) -> str:
-    items = []
-    for ac, color in palette.items():
-        items.append(
-            "<span style='display:inline-flex;align-items:center;gap:4px;"
-            f"margin-right:14px;font-size:{FontSize.CAPTION};color:{Color.SLATE_600};'>"
-            f"<span style='display:inline-block;width:10px;height:10px;"
-            f"border-radius:50%;background:{color};'></span>"
-            f"{html.escape(ac)}"
-            "</span>"
-        )
-    return (
-        f"<div style='font-family:{Font.SANS};padding:4px 8px 0 8px;'>"
-        f"<span style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};"
-        "margin-right:8px;'>"
-        "Color · asset class &nbsp;·&nbsp; Size · annualized Sharpe"
-        "</span>"
-        + "".join(items)
-        + "</div>"
-    )
 
 
 # ---- Drawdown chart (selected set) -----------------------------------------
@@ -1263,7 +1260,7 @@ def _update_drawdown(fig, x_sc, y_sc, zero, dd: pd.DataFrame, meta: pd.DataFrame
                 scales={"x": x_sc, "y": y_sc},
                 colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
-                display_legend=True,
+                display_legend=False,
             )
         )
     zero.x = cleaned.index[[0, -1]].values
@@ -1344,7 +1341,7 @@ def _update_rolling_ref(
                 scales={"x": x_sc, "y": y_sc},
                 colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 labels=[label],
-                display_legend=True,
+                display_legend=False,
             )
         )
     ref_y_val = float(ref.y[0]) if len(ref.y) else 0.0
@@ -1441,7 +1438,7 @@ def _update_return_dist(
                 colors=[LINE_PALETTE[i % len(LINE_PALETTE)]],
                 opacities=[0.5] * len(centers),
                 labels=[label],
-                display_legend=True,
+                display_legend=False,
                 stroke=LINE_PALETTE[i % len(LINE_PALETTE)],
                 padding=0.0,
             )
