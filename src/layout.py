@@ -58,9 +58,14 @@ from .style import (
 )
 
 
+# Uniform height for every chart that lives inside an analysis pane.
+# `_perf_grid` / `_return_dist_stats_grid` / `_universe_grid` keep their
+# own heights — they're tables, not charts.
+CHART_HEIGHT = "520px"
+
+
 ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Cumulative Performance",
-    "Performance Grid",
     "1Y Sharpe-z Line",
     "Correlation Heatmap",
     "Risk / Return",
@@ -176,17 +181,18 @@ def _make_tab_button(label: str, *, active: bool) -> W.Button:
 
 
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
-    """Build a self-contained analysis pane with all 9 figures pre-allocated.
+    """Build a self-contained analysis pane with all 8 figures pre-allocated.
 
     Returns a `SimpleNamespace` carrying every figure/scale/mark handle the
     `_update_*` helpers need, plus the picker widget, the swap container,
     a `views` dict keyed by `ANALYSIS_OPTIONS` labels, and the root VBox.
 
     bqplot can't render the same Figure widget in two places, so each pane
-    gets its own freshly-instantiated set.
+    gets its own freshly-instantiated set. The Rolling-Correlation /
+    Rolling-Beta benchmark dropdowns live on the same row as the analysis
+    picker and toggle visibility based on the active analysis.
     """
     line_fig, line_x, line_y, _ = _line_chart()
-    perf_grid = _perf_grid()
     sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
     heat_fig, heat_data, heat_x, heat_y = _heatmap()
     scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
@@ -223,14 +229,13 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
         "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
-        "Performance Grid":       W.VBox([perf_grid], layout=view_layout),
         "1Y Sharpe-z Line":       W.VBox([sharpe_line_fig], layout=view_layout),
         "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
         "Risk / Return":          W.VBox([scatter_fig, scatter_legend], layout=view_layout),
         "Drawdown":               W.VBox([dd_fig], layout=view_layout),
-        "Rolling Correlation":    W.VBox([rcorr_benchmark_dd, rcorr_fig], layout=view_layout),
+        "Rolling Correlation":    W.VBox([rcorr_fig], layout=view_layout),
         "Return Distribution":    W.VBox([retdist_fig, retdist_stats_grid], layout=view_layout),
-        "Rolling Beta":           W.VBox([rbeta_benchmark_dd, rbeta_fig], layout=view_layout),
+        "Rolling Beta":           W.VBox([rbeta_fig], layout=view_layout),
     }
 
     default_label = (
@@ -241,7 +246,26 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         value=default_label,
         description="Analysis",
         style={"description_width": "70px"},
-        layout=W.Layout(width="360px", margin="0 0 6px 0"),
+        layout=W.Layout(width="360px"),
+    )
+
+    def _sync_benchmark_visibility(label: str) -> None:
+        rcorr_benchmark_dd.layout.display = (
+            "" if label == "Rolling Correlation" else "none"
+        )
+        rbeta_benchmark_dd.layout.display = (
+            "" if label == "Rolling Beta" else "none"
+        )
+
+    _sync_benchmark_visibility(default_label)
+
+    header_row = W.HBox(
+        [picker, rcorr_benchmark_dd, rbeta_benchmark_dd],
+        layout=W.Layout(
+            width="100%",
+            align_items="center",
+            margin="0 0 6px 0",
+        ),
     )
     stack = W.Box(
         [views[default_label]],
@@ -249,12 +273,14 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     )
 
     def _on_pick(change):
-        stack.children = (views[change["new"]],)
+        label = change["new"]
+        _sync_benchmark_visibility(label)
+        stack.children = (views[label],)
 
     picker.observe(_on_pick, names="value")
 
     root = W.VBox(
-        [picker, stack],
+        [header_row, stack],
         layout=W.Layout(
             width="50%",
             padding="8px",
@@ -268,7 +294,6 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         stack=stack,
         views=views,
         line_fig=line_fig, line_x=line_x, line_y=line_y,
-        perf_grid=perf_grid,
         sharpe_line_fig=sharpe_line_fig, sharpe_line_x=sharpe_line_x,
         sharpe_line_y=sharpe_line_y, sharpe_line_zero=sharpe_line_zero,
         heat_fig=heat_fig, heat_data=heat_data, heat_x=heat_x, heat_y=heat_y,
@@ -398,6 +423,18 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="stretch"),
     )
 
+    selected_perf_grid = _perf_grid()
+    selected_perf_header = W.HTML(
+        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
+        "margin:8px 12px 4px 12px;'>"
+        "Selected-strategy performance"
+        "</div>"
+    )
+    selected_perf_section = W.VBox(
+        [selected_perf_header, selected_perf_grid],
+        layout=W.Layout(width="100%", padding="4px 0 8px 0"),
+    )
+
     commentary_box = W.VBox(
         [weekly_w, highlights_w],
         layout=W.Layout(width="100%", padding="12px 16px"),
@@ -414,7 +451,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
     selected_panel = W.VBox(
-        [filter_box, analysis_pane_row],
+        [filter_box, selected_perf_section, analysis_pane_row],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
@@ -528,7 +565,6 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     def _clear_pane(pane: SimpleNamespace) -> None:
         _update_line(pane.line_fig, pane.line_x, pane.line_y, pd.DataFrame(), meta)
-        _update_perf_grid(pane.perf_grid, pd.DataFrame(), meta)
         _update_sharpe_line(
             pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
             pane.sharpe_line_zero, pd.DataFrame(), meta,
@@ -568,7 +604,6 @@ def build_app(verbose: bool = True) -> W.VBox:
         errors: list[str],
     ) -> None:
         _update_line(pane.line_fig, pane.line_x, pane.line_y, prep.perf, meta)
-        _update_perf_grid(pane.perf_grid, prep.pt, meta)
         _update_sharpe_line(
             pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
             pane.sharpe_line_zero, prep.sz_series, meta,
@@ -660,12 +695,14 @@ def build_app(verbose: bool = True) -> W.VBox:
         try:
             tickers = list(ticker_w.value)
             if len(tickers) < 1:
+                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
                 _clear_pane(pane_left)
                 _clear_pane(pane_right)
             elif universe_prices.empty:
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
+                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
                 _clear_pane(pane_left)
                 _clear_pane(pane_right)
             else:
@@ -675,6 +712,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
+                    _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
                     _clear_pane(pane_left)
                     _clear_pane(pane_right)
                 else:
@@ -688,6 +726,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                     prep.sz_series = rolling_sharpe_zscore(prep.rets)
                     prep.cm = corr_matrix(prep.rets)
                     prep.rd_stats = return_distribution_stats(prep.rets)
+                    _update_perf_grid(selected_perf_grid, prep.pt, meta)
                     _render_pane(pane_left, prep, universe_window_start, pane_errors)
                     _render_pane(pane_right, prep, universe_window_start, pane_errors)
         except Exception:
@@ -780,7 +819,7 @@ def _line_chart():
         marks=[],
         title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
         legend_location="top-left",
-        layout=W.Layout(width="100%", height="380px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
     )
     return fig, x_sc, y_sc, fig
@@ -961,7 +1000,7 @@ def _heatmap():
         marks=[data],
         axes=[ax_x, ax_y, ax_c],
         title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-        layout=W.Layout(width="100%", height="600px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 110},
     )
     return fig, data, x_sc, y_sc
@@ -1000,7 +1039,7 @@ def _sharpe_line_chart():
         marks=[zero],
         title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
         legend_location="top-left",
-        layout=W.Layout(width="100%", height="260px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
     )
     return fig, x_sc, y_sc, zero
@@ -1083,7 +1122,7 @@ def _scatter_chart():
         marks=[scatter],
         axes=[ax_x, ax_y],
         title=f"Risk / Return — {LOOKBACK_YEARS}Y",
-        layout=W.Layout(width="100%", height="560px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
     )
     return fig, x_sc, y_sc, scatter
@@ -1195,7 +1234,7 @@ def _drawdown_chart():
         marks=[zero],
         title=f"Drawdown — {LOOKBACK_YEARS}Y",
         legend_location="bottom-left",
-        layout=W.Layout(width="100%", height="540px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
     )
     return fig, x_sc, y_sc, zero
@@ -1261,7 +1300,7 @@ def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float):
         marks=[ref],
         title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
         legend_location="top-left",
-        layout=W.Layout(width="100%", height="540px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
     )
     return fig, x_sc, y_sc, ref
@@ -1337,7 +1376,7 @@ def _return_dist_chart():
         marks=[],
         title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
         legend_location="top-right",
-        layout=W.Layout(width="100%", height="420px"),
+        layout=W.Layout(width="100%", height=CHART_HEIGHT),
         fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
     )
     return fig, x_sc, y_sc

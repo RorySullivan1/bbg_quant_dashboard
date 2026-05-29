@@ -18,14 +18,19 @@ tabs:
 - **Platform** — full-width all-catalog performance grid (every index
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
 - **Selected Strategies** — full-width filter box (toggle-button
-  filters + searchable ticker box + Refresh-prices button) on top, with
-  **two side-by-side analysis panes** below. Each pane carries its own
-  dropdown picker that swaps in any of the 9 analysis types
-  (`Cumulative Performance`, `Performance Grid`, `1Y Sharpe-z Line`,
-  `Correlation Heatmap`, `Risk / Return`, `Drawdown`,
-  `Rolling Correlation`, `Return Distribution`, `Rolling Beta`), so
-  users can compare any two analyses side-by-side. Rolling Correlation
-  and Rolling Beta each have their own per-pane benchmark dropdown.
+  filters + searchable ticker box + Refresh-prices button) on top,
+  followed by an always-visible selected-strategy performance grid
+  (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
+  side-by-side analysis panes**. Each pane carries its own dropdown
+  picker that swaps in any of the 8 analysis types (`Cumulative
+  Performance`, `1Y Sharpe-z Line`, `Correlation Heatmap`,
+  `Risk / Return`, `Drawdown`, `Rolling Correlation`,
+  `Return Distribution`, `Rolling Beta`), so users can compare any
+  two analyses side-by-side. Rolling Correlation and Rolling Beta
+  each carry their own per-pane benchmark dropdown that sits on the
+  same row as the analysis picker and only appears when the picker
+  is on the relevant analysis. Every chart inside a pane renders at
+  the same `CHART_HEIGHT` (520px) so the two panes always line up.
 
 Below the tab content: performance disclaimer (templated with the data
 window) → bottom legal disclosure (justified).
