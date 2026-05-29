@@ -11,16 +11,24 @@ locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime. The UI is built with `ipywidgets`, `bqplot`, and `ipydatagrid`, and
 is deployable via Voila.
 
-The screen layout is: banner → all-catalog commentary block → 30/70 row
-(toggle-button filters + searchable ticker box on the left; line chart +
-selected-set performance datagrid + 1Y Sharpe-z-score line chart, stacked,
-on the right) → full-width **analysis Tab widget** (six tabs:
-Correlation heatmap · Risk / Return scatter · Drawdown · Rolling Correlation
-vs benchmark · Return Distribution · Rolling Beta vs benchmark) →
-full-width **all-catalog performance grid** showing every index in the
-catalog with metadata plus 1Y/3Y/5Y/Since-Inception performance →
-performance disclaimer (templated with the data window) → bottom legal
-disclosure (justified).
+The screen layout is: banner → status banner → all-catalog commentary
+block (always visible) → **top-level pill-button tab bar** with two
+tabs:
+
+- **Platform** — full-width all-catalog performance grid (every index
+  with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
+- **Selected Strategies** — full-width filter box (toggle-button
+  filters + searchable ticker box + Refresh-prices button) on top, with
+  **two side-by-side analysis panes** below. Each pane carries its own
+  dropdown picker that swaps in any of the 9 analysis types
+  (`Cumulative Performance`, `Performance Grid`, `1Y Sharpe-z Line`,
+  `Correlation Heatmap`, `Risk / Return`, `Drawdown`,
+  `Rolling Correlation`, `Return Distribution`, `Rolling Beta`), so
+  users can compare any two analyses side-by-side. Rolling Correlation
+  and Rolling Beta each have their own per-pane benchmark dropdown.
+
+Below the tab content: performance disclaimer (templated with the data
+window) → bottom legal disclosure (justified).
 
 ## Run instructions
 
@@ -47,7 +55,7 @@ dashboard always renders end-to-end.
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
-| `src/layout.py`       | `build_app()` — banner + all-catalog commentary + 30/70 row (filters + line chart + selected-set perf grid + 1Y Sharpe-z line chart) + analysis Tab widget (correlation heatmap · risk/return scatter · drawdown · rolling correlation · return distribution · rolling beta) + all-catalog perf grid + performance disclaimer + legal disclosure. |
+| `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Selected Strategies) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Selected Strategies tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
@@ -133,17 +141,21 @@ live paths return the same shape.
 - **All compute lives in `src/`**; the notebook stays a one-liner.
 - **Commentary is always whole-catalog**, never the selected subset, so
   the user sees market-wide context regardless of what they're inspecting.
-- **Selected-set charts (cumulative-perf line, perf grid, 1Y Sharpe-z line,
-  and every tab in the analysis Tab widget — heatmap, scatter, drawdown,
-  rolling correlation, return distribution, rolling beta)** are over the
-  currently selected tickers only — that's the user's focus area. The
-  whole-catalog scalar `sharpe_zscore` still feeds the highlights cards
-  in the commentary block.
-- **Tab widget recompute is eager**: every Refresh-prices click refreshes
-  all six analysis tabs. Per-tab benchmark dropdowns (Rolling Correlation
-  / Rolling Beta) are read at recompute time only; changing the dropdown
-  alone does not trigger a recompute — the user clicks Refresh prices
-  to refresh.
+- **Selected-set analyses** (the 9 analysis options available in each
+  Selected-Strategies pane) are over the currently selected tickers
+  only — that's the user's focus area. The whole-catalog scalar
+  `sharpe_zscore` still feeds the highlights cards in the commentary
+  block.
+- **Per-pane figures are pre-allocated**: each `AnalysisPane` owns one
+  fresh `bqplot` Figure per analysis type. bqplot can't render the same
+  Figure widget in two places, so the two panes never share. Picker
+  changes swap `pane.stack.children` to the relevant pre-built view —
+  no recompute, no BQL fetch.
+- **Pane recompute is eager**: every Refresh-prices click preps the
+  selected-set data slice once and renders BOTH panes against it. Each
+  pane reads its own Rolling Correlation / Rolling Beta benchmark
+  dropdown at recompute time only; changing a dropdown alone does not
+  trigger a recompute — the user clicks Refresh prices to refresh.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
@@ -156,8 +168,9 @@ live paths return the same shape.
   `bq.Scatter` has no built-in categorical legend.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
   stacks, and font sizes used by `src/layout.py` reference the `Color`,
-  `Font`, `FontSize`, `StatusTone`, `Sentiment`, and `AssetClassColor`
-  enums. Adding a new color or size: extend the enum, don't inline.
+  `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor`,
+  and `TabButtonTone` enums. Adding a new color or size: extend the
+  enum, don't inline.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
@@ -196,25 +209,29 @@ renders the full dashboard without a Bloomberg session. Verify by:
   BQL/mock fetch happens.
 - Clicking Refresh prices — banner pulses `Fetching prices…` then
   `Loaded … fetched from BQL in X.Ys`; the parquet mtime advances.
-- Clicking Refresh prices with 2+ tickers — cumulative-perf line chart (legend
-  labels read "Name (TICKER Index)"), selected-set perf grid, 1Y
-  Sharpe-z-score line chart (one line per ticker plus a dashed zero
-  reference), and all six analysis tabs (heatmap, scatter, drawdown,
-  rolling correlation vs benchmark, return distribution + per-ticker
-  stats grid, rolling beta vs benchmark) all refresh together; the
-  line charts' y-axes rescale to the new data range.
+- Clicking the top-level **Platform** / **Selected Strategies** pill
+  buttons toggles the active button to navy + white and swaps the
+  content area; commentary stays visible above both.
+- Clicking Refresh prices with 2+ tickers — every figure in BOTH
+  analysis panes refreshes (the pane's currently mounted view shows
+  the new data; the other 8 pre-built views are also populated so
+  swapping the picker afterwards is instant).
+- Changing a pane's analysis-picker dropdown — only that pane's
+  mounted view changes; the other pane is untouched, no recompute.
+- Setting both panes' pickers to the same analysis — both render
+  independently with no bqplot duplicate-figure error.
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
-- Switching the benchmark dropdown inside the Rolling Correlation or
-  Rolling Beta tab and clicking Refresh prices updates the chart title
-  to show the new benchmark and rebuilds the lines against it. The
-  other tab's benchmark is independent.
-- The performance disclaimer below the all-catalog grid shows the
+- Each pane has its OWN Rolling Correlation / Rolling Beta benchmark
+  dropdown — setting the left pane's benchmark to SPX and the right
+  pane's to MXWO, then clicking Refresh prices, produces two
+  independently-titled charts.
+- The performance disclaimer below the tab content shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
 - The commentary block stays the same across filter changes — it
   describes the whole catalog every time.
-- The bottom all-catalog grid shows every catalog index with metadata
-  plus 1Y/3Y/5Y/Since-Inception performance.
+- The **Platform** tab shows every catalog index with metadata plus
+  1Y/3Y/5Y/Since-Inception performance.
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.

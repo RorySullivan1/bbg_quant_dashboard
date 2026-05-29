@@ -5,6 +5,7 @@ import time
 import traceback
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import bqplot as bq
@@ -53,6 +54,20 @@ from .style import (
     FontSize,
     Sentiment,
     StatusTone,
+    TabButtonTone,
+)
+
+
+ANALYSIS_OPTIONS: tuple[str, ...] = (
+    "Cumulative Performance",
+    "Performance Grid",
+    "1Y Sharpe-z Line",
+    "Correlation Heatmap",
+    "Risk / Return",
+    "Drawdown",
+    "Rolling Correlation",
+    "Return Distribution",
+    "Rolling Beta",
 )
 
 
@@ -138,6 +153,135 @@ def _toggle_group(
         ),
     )
     return box, (lambda: [v for v, t in toggles.items() if t.value]), list(toggles.values())
+
+
+def _style_tab_button(btn: W.Button, *, active: bool) -> None:
+    tone = TabButtonTone.ACTIVE if active else TabButtonTone.INACTIVE
+    btn.style.button_color = tone.bg
+    btn.style.text_color = tone.fg
+    btn.style.font_weight = tone.weight
+
+
+def _make_tab_button(label: str, *, active: bool) -> W.Button:
+    btn = W.Button(
+        description=label,
+        layout=W.Layout(
+            width="240px",
+            height="40px",
+            margin="0 6px 0 0",
+        ),
+    )
+    _style_tab_button(btn, active=active)
+    return btn
+
+
+def _make_analysis_pane(side_label: str) -> SimpleNamespace:
+    """Build a self-contained analysis pane with all 9 figures pre-allocated.
+
+    Returns a `SimpleNamespace` carrying every figure/scale/mark handle the
+    `_update_*` helpers need, plus the picker widget, the swap container,
+    a `views` dict keyed by `ANALYSIS_OPTIONS` labels, and the root VBox.
+
+    bqplot can't render the same Figure widget in two places, so each pane
+    gets its own freshly-instantiated set.
+    """
+    line_fig, line_x, line_y, _ = _line_chart()
+    perf_grid = _perf_grid()
+    sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
+    heat_fig, heat_data, heat_x, heat_y = _heatmap()
+    scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
+    scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
+    dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
+    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
+        title_prefix="Rolling Correlation",
+        y_label="Correlation",
+        ref_y=0.0,
+    )
+    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref = _rolling_ref_chart(
+        title_prefix="Rolling Beta",
+        y_label="Beta",
+        ref_y=1.0,
+    )
+    retdist_fig, retdist_x, retdist_y = _return_dist_chart()
+    retdist_stats_grid = _return_dist_stats_grid()
+
+    rcorr_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    rbeta_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+
+    view_layout = W.Layout(width="100%", padding="4px")
+    views: dict[str, W.Widget] = {
+        "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
+        "Performance Grid":       W.VBox([perf_grid], layout=view_layout),
+        "1Y Sharpe-z Line":       W.VBox([sharpe_line_fig], layout=view_layout),
+        "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
+        "Risk / Return":          W.VBox([scatter_fig, scatter_legend], layout=view_layout),
+        "Drawdown":               W.VBox([dd_fig], layout=view_layout),
+        "Rolling Correlation":    W.VBox([rcorr_benchmark_dd, rcorr_fig], layout=view_layout),
+        "Return Distribution":    W.VBox([retdist_fig, retdist_stats_grid], layout=view_layout),
+        "Rolling Beta":           W.VBox([rbeta_benchmark_dd, rbeta_fig], layout=view_layout),
+    }
+
+    default_label = (
+        "Cumulative Performance" if side_label == "left" else "Correlation Heatmap"
+    )
+    picker = W.Dropdown(
+        options=list(ANALYSIS_OPTIONS),
+        value=default_label,
+        description="Analysis",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="360px", margin="0 0 6px 0"),
+    )
+    stack = W.Box(
+        [views[default_label]],
+        layout=W.Layout(width="100%"),
+    )
+
+    def _on_pick(change):
+        stack.children = (views[change["new"]],)
+
+    picker.observe(_on_pick, names="value")
+
+    root = W.VBox(
+        [picker, stack],
+        layout=W.Layout(
+            width="50%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
+    )
+
+    return SimpleNamespace(
+        root=root,
+        picker=picker,
+        stack=stack,
+        views=views,
+        line_fig=line_fig, line_x=line_x, line_y=line_y,
+        perf_grid=perf_grid,
+        sharpe_line_fig=sharpe_line_fig, sharpe_line_x=sharpe_line_x,
+        sharpe_line_y=sharpe_line_y, sharpe_line_zero=sharpe_line_zero,
+        heat_fig=heat_fig, heat_data=heat_data, heat_x=heat_x, heat_y=heat_y,
+        scatter_fig=scatter_fig, scatter_x=scatter_x, scatter_y=scatter_y,
+        scatter_mark=scatter_mark,
+        dd_fig=dd_fig, dd_x=dd_x, dd_y=dd_y, dd_zero=dd_zero,
+        rcorr_fig=rcorr_fig, rcorr_x=rcorr_x, rcorr_y=rcorr_y,
+        rcorr_zero=rcorr_zero, rcorr_dd=rcorr_benchmark_dd,
+        rbeta_fig=rbeta_fig, rbeta_x=rbeta_x, rbeta_y=rbeta_y,
+        rbeta_ref=rbeta_ref, rbeta_dd=rbeta_benchmark_dd,
+        retdist_fig=retdist_fig, retdist_x=retdist_x, retdist_y=retdist_y,
+        retdist_stats_grid=retdist_stats_grid,
+    )
 
 
 def build_app(verbose: bool = True) -> W.VBox:
@@ -236,82 +380,23 @@ def build_app(verbose: bool = True) -> W.VBox:
             toggle_grid,
             apply_btn,
         ],
-        layout=W.Layout(width="100%", padding="8px"),
-    )
-
-    line_fig, line_x, line_y, _ = _line_chart()
-    perf_grid = _perf_grid()
-    sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
-    heat_fig, heat_data, heat_x, heat_y = _heatmap()
-    scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
-    scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
-    dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
-    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
-        title_prefix="Rolling Correlation",
-        y_label="Correlation",
-        ref_y=0.0,
-    )
-    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref = _rolling_ref_chart(
-        title_prefix="Rolling Beta",
-        y_label="Beta",
-        ref_y=1.0,
-    )
-    retdist_fig, retdist_x, retdist_y = _return_dist_chart()
-    retdist_stats_grid = _return_dist_stats_grid()
-
-    rcorr_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
-    rbeta_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
+        layout=W.Layout(
+            width="100%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
     highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
 
-    filter_col = W.Box(
-        [filter_box],
-        layout=W.Layout(width="30%", border=f"1px solid {Color.SLATE_200}"),
-    )
-    chart_col = W.VBox(
-        [line_fig, perf_grid, sharpe_line_fig],
-        layout=W.Layout(width="70%", padding="8px"),
-    )
-    row1 = W.HBox(
-        [filter_col, chart_col],
+    pane_left = _make_analysis_pane("left")
+    pane_right = _make_analysis_pane("right")
+    analysis_pane_row = W.HBox(
+        [pane_left.root, pane_right.root],
         layout=W.Layout(width="100%", align_items="stretch"),
     )
-
-    tab_layout = W.Layout(width="100%", padding="8px")
-    analysis_tabs = W.Tab(
-        children=[
-            W.VBox([heat_fig], layout=tab_layout),
-            W.VBox([scatter_fig, scatter_legend], layout=tab_layout),
-            W.VBox([dd_fig], layout=tab_layout),
-            W.VBox([rcorr_benchmark_dd, rcorr_fig], layout=tab_layout),
-            W.VBox([retdist_fig, retdist_stats_grid], layout=tab_layout),
-            W.VBox([rbeta_benchmark_dd, rbeta_fig], layout=tab_layout),
-        ],
-        layout=W.Layout(width="100%"),
-    )
-    for i, title in enumerate([
-        "Correlation",
-        "Risk / Return",
-        "Drawdown",
-        "Rolling Correlation",
-        "Return Distribution",
-        "Rolling Beta",
-    ]):
-        analysis_tabs.set_title(i, title)
 
     commentary_box = W.VBox(
         [weekly_w, highlights_w],
@@ -324,10 +409,40 @@ def build_app(verbose: bool = True) -> W.VBox:
         "All-catalog performance"
         "</div>"
     )
-    universe_row = W.VBox(
+    platform_panel = W.VBox(
         [universe_header, universe_grid],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
+    selected_panel = W.VBox(
+        [filter_box, analysis_pane_row],
+        layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
+    )
+
+    platform_btn = _make_tab_button("Platform", active=True)
+    selected_btn = _make_tab_button("Selected Strategies", active=False)
+    top_tab_bar = W.HBox(
+        [platform_btn, selected_btn],
+        layout=W.Layout(
+            width="100%",
+            padding="10px 16px 4px 16px",
+            border_bottom=f"1px solid {Color.SLATE_200}",
+        ),
+    )
+    top_tab_content = W.Box(
+        [platform_panel],
+        layout=W.Layout(width="100%"),
+    )
+
+    def _activate_tab(which: str) -> None:
+        is_platform = which == "platform"
+        _style_tab_button(platform_btn, active=is_platform)
+        _style_tab_button(selected_btn, active=not is_platform)
+        top_tab_content.children = (
+            platform_panel if is_platform else selected_panel,
+        )
+
+    platform_btn.on_click(lambda _b: _activate_tab("platform"))
+    selected_btn.on_click(lambda _b: _activate_tab("selected"))
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal — the
@@ -411,6 +526,115 @@ def build_app(verbose: bool = True) -> W.VBox:
     for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
 
+    def _clear_pane(pane: SimpleNamespace) -> None:
+        _update_line(pane.line_fig, pane.line_x, pane.line_y, pd.DataFrame(), meta)
+        _update_perf_grid(pane.perf_grid, pd.DataFrame(), meta)
+        _update_sharpe_line(
+            pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
+            pane.sharpe_line_zero, pd.DataFrame(), meta,
+        )
+        _update_heatmap(
+            pane.heat_fig, pane.heat_data, pane.heat_x, pane.heat_y, pd.DataFrame(),
+        )
+        _update_scatter(
+            pane.scatter_fig, pane.scatter_x, pane.scatter_y, pane.scatter_mark,
+            pd.DataFrame(), pd.DataFrame(), meta,
+        )
+        _update_drawdown(
+            pane.dd_fig, pane.dd_x, pane.dd_y, pane.dd_zero, pd.DataFrame(), meta,
+        )
+        _update_rolling_ref(
+            pane.rcorr_fig, pane.rcorr_x, pane.rcorr_y, pane.rcorr_zero,
+            pd.DataFrame(), meta,
+            title_prefix="Rolling Correlation",
+            benchmark_label="",
+        )
+        _update_rolling_ref(
+            pane.rbeta_fig, pane.rbeta_x, pane.rbeta_y, pane.rbeta_ref,
+            pd.DataFrame(), meta,
+            title_prefix="Rolling Beta",
+            benchmark_label="",
+        )
+        _update_return_dist(
+            pane.retdist_fig, pane.retdist_x, pane.retdist_y,
+            pane.retdist_stats_grid,
+            pd.DataFrame(), pd.DataFrame(), meta,
+        )
+
+    def _render_pane(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        universe_window_start: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
+        _update_line(pane.line_fig, pane.line_x, pane.line_y, prep.perf, meta)
+        _update_perf_grid(pane.perf_grid, prep.pt, meta)
+        _update_sharpe_line(
+            pane.sharpe_line_fig, pane.sharpe_line_x, pane.sharpe_line_y,
+            pane.sharpe_line_zero, prep.sz_series, meta,
+        )
+        _update_heatmap(
+            pane.heat_fig, pane.heat_data, pane.heat_x, pane.heat_y, prep.cm,
+        )
+        _update_scatter(
+            pane.scatter_fig, pane.scatter_x, pane.scatter_y, pane.scatter_mark,
+            prep.sel_window, prep.rets, meta,
+        )
+        _update_drawdown(
+            pane.dd_fig, pane.dd_x, pane.dd_y, pane.dd_zero, prep.dd, meta,
+        )
+        _update_return_dist(
+            pane.retdist_fig, pane.retdist_x, pane.retdist_y,
+            pane.retdist_stats_grid,
+            prep.rets, prep.rd_stats, meta,
+        )
+
+        rc_bench_ticker = pane.rcorr_dd.value
+        try:
+            rc_bench_prices = universe_prices.get(rc_bench_ticker)
+            if rc_bench_prices is None or rc_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {rc_bench_ticker!r}."
+                )
+            rc_bench_window = rc_bench_prices.loc[
+                rc_bench_prices.index >= universe_window_start
+            ]
+            rc_bench_returns = daily_returns(
+                rc_bench_window.to_frame()
+            ).iloc[:, 0]
+            rc = rolling_correlation(prep.rets, rc_bench_returns)
+            _update_rolling_ref(
+                pane.rcorr_fig, pane.rcorr_x, pane.rcorr_y, pane.rcorr_zero,
+                rc, meta,
+                title_prefix="Rolling Correlation",
+                benchmark_label=rc_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
+        rb_bench_ticker = pane.rbeta_dd.value
+        try:
+            rb_bench_prices = universe_prices.get(rb_bench_ticker)
+            if rb_bench_prices is None or rb_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {rb_bench_ticker!r}."
+                )
+            rb_bench_window = rb_bench_prices.loc[
+                rb_bench_prices.index >= universe_window_start
+            ]
+            rb_bench_returns = daily_returns(
+                rb_bench_window.to_frame()
+            ).iloc[:, 0]
+            rb = rolling_beta(prep.rets, rb_bench_returns)
+            _update_rolling_ref(
+                pane.rbeta_fig, pane.rbeta_x, pane.rbeta_y, pane.rbeta_ref,
+                rb, meta,
+                title_prefix="Rolling Beta",
+                benchmark_label=rb_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
     def _recompute(_btn=None):
         highlights_html = ""
         # Surface any errors from the initial universe fetch so the user can
@@ -432,125 +656,45 @@ def build_app(verbose: bool = True) -> W.VBox:
         except Exception:
             highlights_html += _render_error(traceback.format_exc())
 
+        pane_errors: list[str] = []
         try:
             tickers = list(ticker_w.value)
             if len(tickers) < 1:
-                _update_line(line_fig, line_x, line_y, pd.DataFrame(), meta)
-                _update_perf_grid(perf_grid, pd.DataFrame(), meta)
-                _update_sharpe_line(
-                    sharpe_line_fig, sharpe_line_x, sharpe_line_y,
-                    sharpe_line_zero, pd.DataFrame(), meta,
-                )
-                _update_heatmap(heat_fig, heat_data, heat_x, heat_y, pd.DataFrame())
-                _update_scatter(
-                    scatter_fig, scatter_x, scatter_y, scatter_mark,
-                    pd.DataFrame(), pd.DataFrame(), meta,
-                )
-                _update_drawdown(
-                    dd_fig, dd_x, dd_y, dd_zero, pd.DataFrame(), meta,
-                )
-                _update_rolling_ref(
-                    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
-                    pd.DataFrame(), meta,
-                    title_prefix="Rolling Correlation",
-                    benchmark_label="",
-                )
-                _update_rolling_ref(
-                    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
-                    pd.DataFrame(), meta,
-                    title_prefix="Rolling Beta",
-                    benchmark_label="",
-                )
-                _update_return_dist(
-                    retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
-                    pd.DataFrame(), pd.DataFrame(), meta,
-                )
+                _clear_pane(pane_left)
+                _clear_pane(pane_right)
             elif universe_prices.empty:
-                highlights_html += _render_error(
+                pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
+                _clear_pane(pane_left)
+                _clear_pane(pane_right)
             else:
                 sel_full = universe_prices.reindex(columns=tickers)
                 sel_window = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_window.dropna(how="all").empty:
-                    highlights_html += _render_error(
+                    pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
+                    _clear_pane(pane_left)
+                    _clear_pane(pane_right)
                 else:
-                    rets = daily_returns(sel_window)
-                    perf = cum_perf(sel_window)
-                    sz_series = rolling_sharpe_zscore(rets)
-                    cm = corr_matrix(rets)
-                    pt = perf_table(sel_window)
-                    dd = drawdown_series(sel_window)
-                    rd_stats = return_distribution_stats(rets)
-
-                    _update_line(line_fig, line_x, line_y, perf, meta)
-                    _update_perf_grid(perf_grid, pt, meta)
-                    _update_sharpe_line(
-                        sharpe_line_fig, sharpe_line_x, sharpe_line_y,
-                        sharpe_line_zero, sz_series, meta,
+                    prep = SimpleNamespace(
+                        sel_window=sel_window,
+                        rets=daily_returns(sel_window),
+                        perf=cum_perf(sel_window),
+                        pt=perf_table(sel_window),
+                        dd=drawdown_series(sel_window),
                     )
-                    _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
-                    _update_scatter(
-                        scatter_fig, scatter_x, scatter_y, scatter_mark,
-                        sel_window, rets, meta,
-                    )
-                    _update_drawdown(
-                        dd_fig, dd_x, dd_y, dd_zero, dd, meta,
-                    )
-                    _update_return_dist(
-                        retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
-                        rets, rd_stats, meta,
-                    )
-
-                    rc_bench_ticker = rcorr_benchmark_dd.value
-                    try:
-                        rc_bench_prices = universe_prices.get(rc_bench_ticker)
-                        if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                            raise ValueError(
-                                f"No price data for benchmark {rc_bench_ticker!r}."
-                            )
-                        rc_bench_window = rc_bench_prices.loc[
-                            rc_bench_prices.index >= universe_window_start
-                        ]
-                        rc_bench_returns = daily_returns(
-                            rc_bench_window.to_frame()
-                        ).iloc[:, 0]
-                        rc = rolling_correlation(rets, rc_bench_returns)
-                        _update_rolling_ref(
-                            rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
-                            rc, meta,
-                            title_prefix="Rolling Correlation",
-                            benchmark_label=rc_bench_ticker,
-                        )
-                    except Exception:
-                        highlights_html += _render_error(traceback.format_exc())
-
-                    rb_bench_ticker = rbeta_benchmark_dd.value
-                    try:
-                        rb_bench_prices = universe_prices.get(rb_bench_ticker)
-                        if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                            raise ValueError(
-                                f"No price data for benchmark {rb_bench_ticker!r}."
-                            )
-                        rb_bench_window = rb_bench_prices.loc[
-                            rb_bench_prices.index >= universe_window_start
-                        ]
-                        rb_bench_returns = daily_returns(
-                            rb_bench_window.to_frame()
-                        ).iloc[:, 0]
-                        rb = rolling_beta(rets, rb_bench_returns)
-                        _update_rolling_ref(
-                            rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
-                            rb, meta,
-                            title_prefix="Rolling Beta",
-                            benchmark_label=rb_bench_ticker,
-                        )
-                    except Exception:
-                        highlights_html += _render_error(traceback.format_exc())
+                    prep.sz_series = rolling_sharpe_zscore(prep.rets)
+                    prep.cm = corr_matrix(prep.rets)
+                    prep.rd_stats = return_distribution_stats(prep.rets)
+                    _render_pane(pane_left, prep, universe_window_start, pane_errors)
+                    _render_pane(pane_right, prep, universe_window_start, pane_errors)
         except Exception:
-            highlights_html += _render_error(traceback.format_exc())
+            pane_errors.append(traceback.format_exc())
+
+        for err in pane_errors:
+            highlights_html += _render_error(err)
 
         highlights_w.value = highlights_html or _render_highlights([])
 
@@ -607,9 +751,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             _banner(),
             status_w,
             commentary_box,
-            row1,
-            analysis_tabs,
-            universe_row,
+            top_tab_bar,
+            top_tab_content,
             perf_disclaimer_w,
             legal_w,
         ],
