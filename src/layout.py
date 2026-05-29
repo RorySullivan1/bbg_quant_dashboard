@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer
 
-from .bql_client import default_window, fetch_prices
+from .bql_client import _cache_path, default_window, fetch_prices
 from .commentary import build_highlights
 from .config import (
     ARP_SOLUTION_VALUES,
@@ -94,6 +94,33 @@ def _banner() -> W.HBox:
     )
 
 
+_STATUS_TONES: dict[str, tuple[str, str, str]] = {
+    # tone -> (background, border, foreground)
+    "info":    ("#f1f5f9", "#cbd5e1", "#0b1f3a"),
+    "success": ("#ecfdf5", "#a7f3d0", "#065f46"),
+    "warn":    ("#fffbeb", "#fde68a", "#92400e"),
+    "error":   ("#fef2f2", "#fecaca", "#7f1d1d"),
+}
+
+
+def _status_banner() -> W.HTML:
+    return W.HTML(
+        _render_status("Initializing…", tone="info"),
+        layout=W.Layout(width="100%"),
+    )
+
+
+def _render_status(text: str, *, tone: str) -> str:
+    bg, border, fg = _STATUS_TONES.get(tone, _STATUS_TONES["info"])
+    return (
+        "<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+        "font-size:12px;padding:6px 14px;"
+        f"background:{bg};border-bottom:1px solid {border};color:{fg};'>"
+        f"{html.escape(text)}"
+        "</div>"
+    )
+
+
 def _toggle_group(
     label: str, options: list[str]
 ) -> tuple[W.VBox, Callable[[], list[str]], list[W.ToggleButton]]:
@@ -169,10 +196,33 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     apply_btn = W.Button(
-        description="Apply",
+        description="Refresh prices",
         button_style="primary",
         layout=W.Layout(width="100%"),
     )
+    status_w = _status_banner()
+
+    def _set_status(text: str, tone: str = "info") -> None:
+        status_w.value = _render_status(text, tone=tone)
+
+    def _format_loaded(df: pd.DataFrame, source: str, elapsed: float) -> tuple[str, str]:
+        if source == "cache":
+            mtime = _cache_path(today).stat().st_mtime
+            stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
+            n_tickers = df.shape[1]
+            n_days = df.shape[0]
+            return (
+                f"Loaded {n_tickers} indices · {n_days} trading days from cache ({stamp})",
+                "success",
+            )
+        n_tickers = df.shape[1]
+        n_days = df.shape[0]
+        src_label = "BQL" if source == "bql" else "mock prices"
+        return (
+            f"Loaded {n_tickers} indices · {n_days} trading days · "
+            f"fetched from {src_label} in {elapsed:.1f}s",
+            "success",
+        )
 
     ticker_label = W.HTML(
         "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
@@ -306,19 +356,20 @@ def build_app(verbose: bool = True) -> W.VBox:
     # They are excluded from the ARP-universe grid and the highlights cards
     # via reindex(columns=meta["ticker"]).
     fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
-    _log(
-        f"BQL fetch starting: {len(meta)} ARP + {len(BENCHMARK_TICKERS)} "
-        f"benchmarks = {len(fetch_tickers)} tickers, {universe_start} → {today}"
+    _set_status(
+        f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
+        tone="info",
     )
     t_fetch = time.perf_counter()
     try:
-        universe_prices = fetch_prices(fetch_tickers, universe_start, today)
-        _log(
-            f"BQL fetch done in {time.perf_counter() - t_fetch:.1f}s — "
-            f"shape={universe_prices.shape}"
+        universe_prices, fetch_source = fetch_prices(
+            fetch_tickers, universe_start, today
         )
+        fetch_elapsed = time.perf_counter() - t_fetch
+        text, tone = _format_loaded(universe_prices, fetch_source, fetch_elapsed)
+        _set_status(text, tone=tone)
     except Exception:
-        _log(f"BQL fetch FAILED after {time.perf_counter() - t_fetch:.1f}s")
+        _set_status("Load failed — see error below", tone="error")
         init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
@@ -517,7 +568,40 @@ def build_app(verbose: bool = True) -> W.VBox:
 
         highlights_w.value = highlights_html or _render_highlights([])
 
-    apply_btn.on_click(_recompute)
+    def _refresh_prices(_btn=None):
+        nonlocal universe_prices, arp_universe_prices
+        _set_status(
+            f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
+            tone="info",
+        )
+        t_refresh = time.perf_counter()
+        try:
+            universe_prices, source = fetch_prices(
+                fetch_tickers, universe_start, today, use_cache=False
+            )
+        except Exception:
+            _set_status("Load failed — see error below", tone="error")
+            init_errors.append(
+                f"Universe refresh ({universe_start} → {today}) failed:\n"
+                f"{traceback.format_exc()}"
+            )
+            _recompute()
+            return
+        elapsed = time.perf_counter() - t_refresh
+        arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
+        try:
+            _update_universe_grid(
+                universe_grid, meta, universe_perf(arp_universe_prices)
+            )
+        except Exception:
+            init_errors.append(
+                f"universe_perf computation failed:\n{traceback.format_exc()}"
+            )
+        text, tone = _format_loaded(universe_prices, source, elapsed)
+        _set_status(text, tone=tone)
+        _recompute()
+
+    apply_btn.on_click(_refresh_prices)
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
@@ -535,6 +619,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     app = W.VBox(
         [
             _banner(),
+            status_w,
             commentary_box,
             row1,
             analysis_tabs,

@@ -43,7 +43,7 @@ dashboard always renders end-to-end.
 | --------------------- | ---------------------------------------------------------------------- |
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
-| `src/bql_client.py`   | `fetch_prices(tickers, start, end)` — BQL when available, mock otherwise. |
+| `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + all-catalog commentary + 30/70 row (filters + line chart + selected-set perf grid + 1Y Sharpe-z line chart) + analysis Tab widget (correlation heatmap · risk/return scatter · drawdown · rolling correlation · return distribution · rolling beta) + all-catalog perf grid + performance disclaimer + legal disclosure. |
@@ -105,8 +105,22 @@ live paths return the same shape.
   time and caches the result in a `universe_prices` closure variable.
   Every visualization — including the all-catalog grid, the commentary,
   and the Rolling Correlation / Rolling Beta tabs — slices from that
-  cache. The Apply button only re-slices and recomputes; it does not
-  re-fetch from BQL.
+  cache.
+- **On-disk trading-day cache**. `fetch_prices` reads/writes
+  `data/.cache/prices_{YYYY-MM-DD}.parquet`. On cold start the call
+  hits BQL/mock and writes the parquet; subsequent same-day startups
+  within `CACHE_TTL_HOURS` read it back without hitting BQL. A stale
+  TTL, a missing file, or a cache that doesn't cover every requested
+  ticker all fall through to a live fetch. The directory is gitignored.
+- **Refresh prices button** (formerly Apply): re-fetches from BQL with
+  `use_cache=False`, overwrites the parquet, then recomputes everything.
+  Filter-only re-slicing (today the button always refetches) will be
+  split back into a separate Apply control in a later PR.
+- **Status banner** below the page banner reports load progress —
+  `Fetching prices…` during the fetch, `Loaded N indices · M trading
+  days · fetched from BQL in X.Ys` / `Loaded from cache (HH:MM · MM-DD)`
+  on success, `Load failed — see error below` on error (with the full
+  traceback rendered in the commentary block).
 - **Benchmarks ride along the single BQL fetch** but are explicitly
   scoped to the Rolling Correlation / Rolling Beta tabs. The
   all-catalog grid and the whole-catalog highlights consume
@@ -124,10 +138,11 @@ live paths return the same shape.
   currently selected tickers only — that's the user's focus area. The
   whole-catalog scalar `sharpe_zscore` still feeds the highlights cards
   in the commentary block.
-- **Tab widget recompute is eager**: every Apply click refreshes all six
-  analysis tabs. Per-tab benchmark dropdowns (Rolling Correlation /
-  Rolling Beta) are read at recompute time only; changing the dropdown
-  alone does not trigger a recompute — the user clicks Apply to refresh.
+- **Tab widget recompute is eager**: every Refresh-prices click refreshes
+  all six analysis tabs. Per-tab benchmark dropdowns (Rolling Correlation
+  / Rolling Beta) are read at recompute time only; changing the dropdown
+  alone does not trigger a recompute — the user clicks Refresh prices
+  to refresh.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
@@ -167,7 +182,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
   (no empty checkbox square).
 - Typing in the ticker search box — the dropdown narrows to substring
   matches on ticker or name; already-selected tickers stay visible.
-- Clicking Apply with 2+ tickers — cumulative-perf line chart (legend
+- Cold start (no `data/.cache/`) — status banner reads `Fetching
+  prices…` then `Loaded N indices · M trading days · fetched from
+  mock prices in X.Ys`; a `prices_<today>.parquet` appears under
+  `data/.cache/`.
+- Warm start (within `CACHE_TTL_HOURS`) — status banner reads
+  `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
+  BQL/mock fetch happens.
+- Clicking Refresh prices — banner pulses `Fetching prices…` then
+  `Loaded … fetched from BQL in X.Ys`; the parquet mtime advances.
+- Clicking Refresh prices with 2+ tickers — cumulative-perf line chart (legend
   labels read "Name (TICKER Index)"), selected-set perf grid, 1Y
   Sharpe-z-score line chart (one line per ticker plus a dashed zero
   reference), and all six analysis tabs (heatmap, scatter, drawdown,
@@ -177,9 +201,9 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
 - Switching the benchmark dropdown inside the Rolling Correlation or
-  Rolling Beta tab and clicking Apply updates the chart title to show
-  the new benchmark and rebuilds the lines against it. The other tab's
-  benchmark is independent.
+  Rolling Beta tab and clicking Refresh prices updates the chart title
+  to show the new benchmark and rebuilds the lines against it. The
+  other tab's benchmark is independent.
 - The performance disclaimer below the all-catalog grid shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
