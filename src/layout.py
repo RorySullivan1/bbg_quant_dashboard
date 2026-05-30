@@ -135,6 +135,34 @@ def build_app(verbose: bool = True) -> W.VBox:
         if verbose:
             print(f"[{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
 
+    def _render_status_loading(n_tickers: int) -> str:
+        return (
+            "<div style='font-family:system-ui,sans-serif;font-size:13px;"
+            "background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;"
+            "padding:8px 14px;border-radius:4px;margin:0 16px 6px 16px;'>"
+            f"Fetching prices for {n_tickers} indices from BQL…"
+            "</div>"
+        )
+
+    def _render_status_summary(n_tickers: int, n_days: int, elapsed_s: float) -> str:
+        return (
+            "<div style='font-family:system-ui,sans-serif;font-size:13px;"
+            "background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;"
+            "padding:8px 14px;border-radius:4px;margin:0 16px 6px 16px;'>"
+            f"Loaded {n_tickers} indices, {n_days} trading days, "
+            f"fetched in {elapsed_s:.1f}s"
+            "</div>"
+        )
+
+    def _render_status_error() -> str:
+        return (
+            "<div style='font-family:system-ui,sans-serif;font-size:13px;"
+            "background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;"
+            "padding:8px 14px;border-radius:4px;margin:0 16px 6px 16px;'>"
+            "Price fetch failed — see details below."
+            "</div>"
+        )
+
     meta = load_metadata()
     meta = meta[
         meta["solution"].astype(str).str.lower().isin(ARP_SOLUTION_VALUES)
@@ -173,6 +201,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         button_style="primary",
         layout=W.Layout(width="100%"),
     )
+    refresh_btn = W.Button(
+        description="Refresh prices",
+        icon="refresh",
+        layout=W.Layout(width="100%"),
+    )
 
     ticker_label = W.HTML(
         "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
@@ -200,6 +233,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             live_row,
             toggle_grid,
             apply_btn,
+            refresh_btn,
         ],
         layout=W.Layout(width="100%", padding="8px"),
     )
@@ -301,6 +335,9 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     universe_prices: pd.DataFrame = pd.DataFrame()
     init_errors: list[str] = []
+    # Load status banner: shows a fetch summary on first render and a live
+    # "Fetching…" → summary transition when the Refresh prices button re-pulls.
+    status_w = W.HTML("", layout=W.Layout(width="100%"))
     # Benchmarks ride along on the single startup fetch so the Rolling
     # Correlation / Rolling Beta tabs can slice them from the same cache.
     # They are excluded from the ARP-universe grid and the highlights cards
@@ -311,14 +348,17 @@ def build_app(verbose: bool = True) -> W.VBox:
         f"benchmarks = {len(fetch_tickers)} tickers, {universe_start} → {today}"
     )
     t_fetch = time.perf_counter()
+    fetch_elapsed = 0.0
     try:
         universe_prices = fetch_prices(fetch_tickers, universe_start, today)
+        fetch_elapsed = time.perf_counter() - t_fetch
         _log(
-            f"BQL fetch done in {time.perf_counter() - t_fetch:.1f}s — "
+            f"BQL fetch done in {fetch_elapsed:.1f}s — "
             f"shape={universe_prices.shape}"
         )
     except Exception:
-        _log(f"BQL fetch FAILED after {time.perf_counter() - t_fetch:.1f}s")
+        fetch_elapsed = time.perf_counter() - t_fetch
+        _log(f"BQL fetch FAILED after {fetch_elapsed:.1f}s")
         init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
@@ -341,6 +381,16 @@ def build_app(verbose: bool = True) -> W.VBox:
             )
     else:
         arp_universe_prices = pd.DataFrame()
+
+    # Startup fetch is synchronous (before the VBox is displayed), so the banner
+    # shows the completion summary rather than a live "Fetching…" message; the
+    # live transition is observable on the Refresh prices button.
+    if not universe_prices.empty:
+        status_w.value = _render_status_summary(
+            len(fetch_tickers), len(universe_prices.index), fetch_elapsed
+        )
+    elif init_errors:
+        status_w.value = _render_status_error()
 
     def _on_filter_change(_change=None):
         filtered = apply_filters(
@@ -517,7 +567,43 @@ def build_app(verbose: bool = True) -> W.VBox:
 
         highlights_w.value = highlights_html or _render_highlights([])
 
+    def _refresh_prices(_btn=None):
+        # Re-pull prices from BQL (or mock off-terminal) and refresh everything.
+        # Rebinds the closure vars so the existing _recompute picks up new data.
+        nonlocal universe_prices, arp_universe_prices, init_errors
+        status_w.value = _render_status_loading(len(fetch_tickers))
+        init_errors = []
+        t = time.perf_counter()
+        try:
+            universe_prices = fetch_prices(fetch_tickers, universe_start, today)
+        except Exception:
+            init_errors.append(
+                f"Refresh fetch ({universe_start} → {today}) failed:\n"
+                f"{traceback.format_exc()}"
+            )
+            status_w.value = _render_status_error()
+            _recompute()
+            return
+        elapsed = time.perf_counter() - t
+        if not universe_prices.empty:
+            arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
+            try:
+                _update_universe_grid(
+                    universe_grid, meta, universe_perf(arp_universe_prices)
+                )
+            except Exception:
+                init_errors.append(
+                    f"universe_perf computation failed:\n{traceback.format_exc()}"
+                )
+        else:
+            arp_universe_prices = pd.DataFrame()
+        status_w.value = _render_status_summary(
+            len(fetch_tickers), len(universe_prices.index), elapsed
+        )
+        _recompute()
+
     apply_btn.on_click(_recompute)
+    refresh_btn.on_click(_refresh_prices)
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
@@ -535,6 +621,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     app = W.VBox(
         [
             _banner(),
+            status_w,
             commentary_box,
             row1,
             analysis_tabs,
