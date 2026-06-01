@@ -18,9 +18,35 @@ tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
-- **Multi-Strategy Analysis** — full-width filter box (toggle-button
-  filters + searchable ticker box + Refresh-prices button) on top,
-  followed by an always-visible selected-strategy performance grid
+- **Multi-Strategy Analysis** — the whole filter UI lives inside an
+  expandable **"Filters"** accordion (expanded by default): a full-width
+  filter box split into two side-by-side panels — a **left** strategies
+  picker (search box above the `ticker_w` dropdown, which stretches via
+  `flex` to match the filter panel's height) and a **right** filter
+  panel. The right panel
+  has an action row on top — **Refresh prices** (green, via the
+  `Color.GREEN_600` token, so the primary action stands out) plus **Clear
+  section** (clears the active filter pill's selections, or the date
+  range/currency on Characteristics, or the ratio thresholds on
+  Quantitative) and **Clear all** (clears every filter checkbox group,
+  the launch-date range, the currency, the quant thresholds, and the
+  search box; selected tickers are kept) — then a pill header bar (same
+  `TabButtonTone` style as the top tabs) whose buttons — Asset Class /
+  Category / Theme / Return Type / **Characteristics** /
+  **Quantitative** — swap which dimension's value list shows below. The
+  first four show checkbox value lists; **Characteristics** shows the
+  Launch-date range (two date boxes separated by a hyphen) plus a
+  **Currency** dropdown; **Quantitative** filters the universe by
+  price-derived ratios — a global Period (1Y/3Y/5Y) dropdown, then one row
+  per metric (Sharpe / Sortino / Calmar / Beta / Treynor / Jensen α /
+  VaR % / RSI / Z-Score) of
+  `[≥ or ≤ dropdown] [value box]`, with an inline parameter dropdown where
+  relevant (Beta / Treynor / Jensen each carry their own benchmark
+  dropdown, Z-Score its selectable base metric) — all via
+  `quant_metrics_table` / `zscore_cross_section`,
+  computed live from the already-fetched prices, no BQL. Below the filter
+  box: an
+  always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
   side-by-side analysis panes**. Each pane carries its own dropdown
   picker that swaps in any of the 9 analysis types (`Cumulative
@@ -67,7 +93,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
@@ -88,6 +114,7 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
     "Theme": "Core Beta",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1957-03-04"
   }
 }
@@ -95,9 +122,12 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
 
 `COLUMN_MAP` in `src/data.py` renames these to internal snake_case
 (`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
-`live_date`). `IndexFamilyName` maps to the internal `category` field —
-there is no separate "family" dimension. The metadata DataFrame also has
-a derived `ticker` column = `<key> + " Index"`.
+`currency`, `live_date`). `IndexFamilyName` maps to the internal
+`category` field — there is no separate "family" dimension. The metadata
+DataFrame also has a derived `ticker` column = `<key> + " Index"`.
+`Currency` is metadata (BQL only supplies `px_last`, not reference
+fields); `load_metadata` pads any missing `COLUMN_MAP` column with `NA`,
+so records without a `Currency` key still load.
 
 ## BQL contract
 
@@ -163,8 +193,14 @@ live paths return the same shape.
   `arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])`
   so benchmark columns never leak into ARP-universe views.
   `BENCHMARK_TICKERS` / `DEFAULT_BENCHMARK` live in `src/config.py`.
-- **Toggle groups, search box, and date pickers narrow the ticker
-  dropdown only**. They do not trigger any recompute or BQL call.
+- **Checkbox filter groups, search box, date pickers, the currency
+  dropdown, and the Quantitative ratio thresholds narrow the ticker
+  dropdown only**. They do not trigger any recompute or BQL call. Their
+  value getters read each widget's `.value` regardless of which
+  filter-type pill is currently visible, so switching pills is purely
+  cosmetic. The Quantitative filter slices the already-fetched
+  `arp_universe_prices` (benchmark prices from `universe_prices`) to
+  compute its per-ticker ratios live, still without a BQL call.
 - **All compute lives in `src/`**; the notebook stays a one-liner.
 - **Commentary is always whole-catalog**, never the selected subset, so
   the user sees market-wide context regardless of what they're inspecting.
@@ -264,11 +300,34 @@ build_app()
 ```
 
 renders the full dashboard without a Bloomberg session. Verify by:
-- Toggling a button under any filter group — the ticker dropdown narrows
-  to the intersection; an unselected toggle looks like a plain button
-  (no empty checkbox square).
-- Typing in the ticker search box — the dropdown narrows to substring
-  matches on ticker or name; already-selected tickers stay visible.
+- Clicking a filter-type pill (Asset Class / Category / Theme / Return
+  Type / Characteristics / Quantitative) in the right panel swaps the
+  value list shown below; the active pill turns navy. Ticking a value
+  checkbox narrows the ticker dropdown to the intersection.
+  Characteristics shows the Launch-date range (two date boxes separated
+  by a hyphen) and a **Currency** dropdown; setting either narrows the
+  dropdown.
+- The **Quantitative** pill shows a global Period (1Y/3Y/5Y) dropdown and
+  one row per metric (Sharpe / Sortino / Calmar / Beta / Treynor /
+  Jensen α / VaR % / RSI / Z-Score), each a `[≥/≤ dropdown] [value box]`;
+  Beta, Treynor, and Jensen each carry their own benchmark dropdown, and
+  Z-Score carries its base-metric selector. Setting e.g. Sharpe
+  `≥ 0.5` (or Sharpe `≤ 0.5`) narrows the dropdown to indices whose metric
+  (computed from the already-fetched prices) clears the threshold; a blank
+  box is ignored. Changing any operator/period/benchmark/z-metric re-narrows
+  live, no BQL.
+- Clicking **Clear section** unticks the active pill's checkboxes (or
+  clears the launch-date range + currency on Characteristics, or the
+  ratio thresholds on Quantitative); **Clear all** clears every filter
+  group, the date range, the currency, the quant thresholds, and the
+  search box. Both re-widen the ticker dropdown but keep the user's
+  selected tickers. They do not recompute or hit BQL.
+- The strategies dropdown (left panel) is the same height as the filter
+  box (right panel) — it grows via `flex` while the parent HBox stretches
+  both panels to equal height.
+- Typing in the strategies search box (left panel, above the dropdown)
+  — the dropdown narrows to substring matches on ticker or name;
+  already-selected tickers stay visible.
 - Cold start (no `data/.cache/`) — status banner reads `Fetching
   prices…` then `Loaded N indices · M trading days · fetched from
   mock prices in X.Ys`; a `prices_<today>.parquet` appears under

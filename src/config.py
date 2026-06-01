@@ -7,6 +7,10 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
+# Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
+VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
+RSI_WINDOW = 14        # Wilder RSI lookback in trading days
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 
