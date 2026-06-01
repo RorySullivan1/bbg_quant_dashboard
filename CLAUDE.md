@@ -33,7 +33,12 @@ tabs:
   and only appears when the picker is on the relevant analysis.
   (`Outperformance` is the cumulative excess return — strategy minus
   benchmark cumulative % return, in percentage points off a zero
-  baseline.) Every chart inside a pane renders at the same
+  baseline.) `Correlation Heatmap` additionally carries a per-pane
+  **Regime filter** checkbox on that row; ticking it reveals a benchmark
+  dropdown, a Down/Up tail-direction toggle, and a 0–100% (step 5) tail
+  size, and conditions the matrix on that benchmark-return regime while
+  adding the benchmark as a row/column (see `regime_corr_matrix`).
+  Every chart inside a pane renders at the same
   `CHART_HEIGHT` (520px) so the two panes always line up.
 
 Below the tab content: performance disclaimer (templated with the data
@@ -62,7 +67,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
@@ -181,8 +186,14 @@ live paths return the same shape.
 - **Pane recompute is eager**: every Refresh-prices click preps the
   selected-set data slice once and renders BOTH panes against it. Each
   pane reads its own Rolling Correlation / Rolling Beta benchmark
-  dropdown at recompute time only; changing a dropdown alone does not
-  trigger a recompute — the user clicks Refresh prices to refresh.
+  dropdown, plus its Correlation-Heatmap Regime-filter checkbox /
+  benchmark / direction / tail controls, at recompute time only;
+  changing any of these alone does not trigger a recompute — the user
+  clicks Refresh prices to refresh. (The heatmap Regime checkbox does
+  toggle the visibility of its sub-controls immediately, but the matrix
+  itself only updates on the next Refresh prices.) The unchecked default
+  uses the shared full-sample `prep.cm`; the regime path is computed
+  per-pane so the two panes stay independent.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
@@ -288,6 +299,13 @@ renders the full dashboard without a Bloomberg session. Verify by:
   dropdown — setting the left pane's benchmark to SPX and the right
   pane's to MXWO, then clicking Refresh prices, produces two
   independently-titled charts.
+- On the Correlation Heatmap view, ticking **Regime filter** reveals a
+  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown;
+  clicking Refresh prices recomputes the matrix over the selected
+  benchmark-return tail and adds the benchmark as a row/column, with the
+  title noting e.g. "SPX Index worst 20% days". Flipping Down→Up or
+  changing the % (then Refresh prices) changes the matrix; the other
+  pane is unaffected. Unticking reverts to the full-sample correlation.
 - The performance disclaimer below the tab content shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
