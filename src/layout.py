@@ -125,40 +125,36 @@ def _render_status(text: str, *, tone: StatusTone) -> str:
     )
 
 
-def _toggle_group(
-    label: str, options: list[str]
-) -> tuple[W.VBox, Callable[[], list[str]], list[W.ToggleButton]]:
-    toggles = {
-        opt: W.ToggleButton(
+def _checkbox_group(
+    options: list[str]
+) -> tuple[W.VBox, Callable[[], list[str]], list[W.Checkbox]]:
+    """A scrollable list of value checkboxes for one filter dimension.
+
+    Returns `(content_vbox, getter, checkboxes)`. The getter reads each
+    checkbox's `.value` regardless of whether the content is currently the
+    visible filter-type view, so `_on_filter_change` works the same way it did
+    with the old toggle groups. No header — the filter-type pill button above
+    the content area is the label now.
+    """
+    checks = {
+        opt: W.Checkbox(
             value=False,
             description=opt,
-            layout=W.Layout(width="100%", min_height="26px", margin="1px 0"),
+            indent=False,
+            layout=W.Layout(width="100%", margin="1px 0"),
         )
         for opt in options
     }
-    header = W.HTML(
-        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
-        f"margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
-    )
-    toggle_list = W.VBox(
-        list(toggles.values()),
+    content = W.VBox(
+        list(checks.values()),
         layout=W.Layout(
-            max_height="200px",
+            max_height="240px",
             overflow="auto",
             width="100%",
-            padding="0 2px",
+            padding="2px 4px",
         ),
     )
-    box = W.VBox(
-        [header, toggle_list],
-        layout=W.Layout(
-            width="100%",
-            padding="4px 6px",
-            border=f"1px solid {Color.SLATE_200}",
-            margin="0 0 6px 0",
-        ),
-    )
-    return box, (lambda: [v for v, t in toggles.items() if t.value]), list(toggles.values())
+    return content, (lambda: [v for v, c in checks.items() if c.value]), list(checks.values())
 
 
 def _style_tab_button(btn: W.Button, *, active: bool) -> None:
@@ -168,12 +164,14 @@ def _style_tab_button(btn: W.Button, *, active: bool) -> None:
     btn.style.font_weight = tone.weight
 
 
-def _make_tab_button(label: str, *, active: bool) -> W.Button:
+def _make_tab_button(
+    label: str, *, active: bool, width: str = "240px", height: str = "40px"
+) -> W.Button:
     btn = W.Button(
         description=label,
         layout=W.Layout(
-            width="240px",
-            height="40px",
+            width=width,
+            height=height,
             margin="0 6px 0 0",
         ),
     )
@@ -378,21 +376,13 @@ def build_app(verbose: bool = True) -> W.VBox:
     ].reset_index(drop=True)
     _log(f"loaded metadata: {len(meta)} tickers")
 
-    asset_box, asset_get, asset_toggles = _toggle_group("Asset Class", unique_values(meta, "asset_class"))
-    cat_box, cat_get, cat_toggles = _toggle_group("Category", unique_values(meta, "category"))
-    theme_box, theme_get, theme_toggles = _toggle_group("Theme", unique_values(meta, "theme"))
-    ret_box, ret_get, ret_toggles = _toggle_group("Return Type", unique_values(meta, "return_type"))
+    asset_content, asset_get, asset_checks = _checkbox_group(unique_values(meta, "asset_class"))
+    cat_content, cat_get, cat_checks = _checkbox_group(unique_values(meta, "category"))
+    theme_content, theme_get, theme_checks = _checkbox_group(unique_values(meta, "theme"))
+    ret_content, ret_get, ret_checks = _checkbox_group(unique_values(meta, "return_type"))
 
-    live_min = W.DatePicker(
-        description="Live ≥",
-        layout=W.Layout(width="100%"),
-        style={"description_width": "60px"},
-    )
-    live_max = W.DatePicker(
-        description="Live ≤",
-        layout=W.Layout(width="100%"),
-        style={"description_width": "60px"},
-    )
+    live_min = W.DatePicker(layout=W.Layout(width="160px"))
+    live_max = W.DatePicker(layout=W.Layout(width="160px"))
 
     search_w = W.Text(
         placeholder="Search ticker or name…",
@@ -434,39 +424,79 @@ def build_app(verbose: bool = True) -> W.VBox:
             StatusTone.SUCCESS,
         )
 
-    ticker_label = W.HTML(
-        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
-        "margin:6px 4px 2px 4px;'>Tickers</div>"
-    )
-    live_row = W.HBox(
-        [live_min, live_max],
-        layout=W.Layout(width="100%"),
-    )
-    toggle_grid = W.HBox(
-        [
-            W.VBox(
-                [asset_box, theme_box],
-                layout=W.Layout(width="50%"),
-            ),
-            W.VBox(
-                [cat_box, ret_box],
-                layout=W.Layout(width="50%"),
-            ),
-        ],
-        layout=W.Layout(width="100%", align_items="flex-start"),
-    )
-    filter_box = W.VBox(
-        [
-            ticker_label, search_w, ticker_w,
-            live_row,
-            toggle_grid,
-            apply_btn,
-        ],
+    def _section_label(text: str) -> W.HTML:
+        return W.HTML(
+            f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
+            f"margin:6px 4px 2px 4px;'>{html.escape(text)}</div>"
+        )
+
+    # Left: the strategies picker — search box above the dropdown.
+    left_panel = W.VBox(
+        [_section_label("Strategies"), search_w, ticker_w],
         layout=W.Layout(
-            width="100%",
+            width="38%",
             padding="8px",
             border=f"1px solid {Color.SLATE_200}",
         ),
+    )
+
+    # Right: filter panel — Refresh prices on top, then a pill header bar whose
+    # buttons swap which filter dimension's values are shown below.
+    date_range_row = W.HBox(
+        [live_min, W.HTML("<div style='padding:0 6px;font-size:16px;'>–</div>"), live_max],
+        layout=W.Layout(width="100%", align_items="center"),
+    )
+    characteristics_view = W.VBox(
+        [_section_label("Launch date"), date_range_row],
+        layout=W.Layout(width="100%", padding="2px 4px"),
+    )
+
+    filter_views: dict[str, W.Widget] = {
+        "Asset Class": asset_content,
+        "Category": cat_content,
+        "Theme": theme_content,
+        "Return Type": ret_content,
+        "Characteristics": characteristics_view,
+    }
+    filter_btns = {
+        label: _make_tab_button(
+            label, active=(i == 0), width="auto", height="32px"
+        )
+        for i, label in enumerate(filter_views)
+    }
+    filter_header_row = W.HBox(
+        list(filter_btns.values()),
+        layout=W.Layout(
+            width="100%",
+            flex_flow="row wrap",
+            margin="2px 0 6px 0",
+        ),
+    )
+    filter_content = W.Box(
+        [filter_views["Asset Class"]],
+        layout=W.Layout(width="100%", min_height="250px"),
+    )
+
+    def _activate_filter(label: str) -> None:
+        for lbl, btn in filter_btns.items():
+            _style_tab_button(btn, active=(lbl == label))
+        filter_content.children = (filter_views[label],)
+
+    for label, btn in filter_btns.items():
+        btn.on_click(lambda _b, l=label: _activate_filter(l))
+
+    right_panel = W.VBox(
+        [apply_btn, filter_header_row, filter_content],
+        layout=W.Layout(
+            width="60%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
+    )
+
+    filter_box = W.HBox(
+        [left_panel, right_panel],
+        layout=W.Layout(width="100%", align_items="flex-start"),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
@@ -615,8 +645,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         ticker_w.options = _ticker_options(combined)
         ticker_w.value = tuple(t for t in selected if t in combined["ticker"].values)
 
-    for tg in (*asset_toggles, *cat_toggles, *theme_toggles, *ret_toggles):
-        tg.observe(_on_filter_change, names="value")
+    for cb in (*asset_checks, *cat_checks, *theme_checks, *ret_checks):
+        cb.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
 
