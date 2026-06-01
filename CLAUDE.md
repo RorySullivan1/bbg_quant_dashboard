@@ -18,9 +18,16 @@ tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
-- **Multi-Strategy Analysis** — full-width filter box (toggle-button
-  filters + searchable ticker box + Refresh-prices button) on top,
-  followed by an always-visible selected-strategy performance grid
+- **Multi-Strategy Analysis** — full-width filter box split into two
+  side-by-side panels: a **left** strategies picker (search box above
+  the `ticker_w` dropdown) and a **right** filter panel. The right
+  panel has the **Refresh-prices button on top**, then a pill header
+  bar (same `TabButtonTone` style as the top tabs) whose buttons —
+  Asset Class / Category / Theme / Return Type / **Characteristics** —
+  swap which dimension's value list shows below. The first four show
+  checkbox value lists; **Characteristics** shows the Launch-date range
+  as two date boxes separated by a hyphen. Below the filter box: an
+  always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
   side-by-side analysis panes**. Each pane carries its own dropdown
   picker that swaps in any of the 9 analysis types (`Cumulative
@@ -163,8 +170,11 @@ live paths return the same shape.
   `arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])`
   so benchmark columns never leak into ARP-universe views.
   `BENCHMARK_TICKERS` / `DEFAULT_BENCHMARK` live in `src/config.py`.
-- **Toggle groups, search box, and date pickers narrow the ticker
-  dropdown only**. They do not trigger any recompute or BQL call.
+- **Checkbox filter groups, search box, and date pickers narrow the
+  ticker dropdown only**. They do not trigger any recompute or BQL
+  call. Their value getters read each widget's `.value` regardless of
+  which filter-type pill is currently visible, so switching pills is
+  purely cosmetic.
 - **All compute lives in `src/`**; the notebook stays a one-liner.
 - **Commentary is always whole-catalog**, never the selected subset, so
   the user sees market-wide context regardless of what they're inspecting.
@@ -264,11 +274,15 @@ build_app()
 ```
 
 renders the full dashboard without a Bloomberg session. Verify by:
-- Toggling a button under any filter group — the ticker dropdown narrows
-  to the intersection; an unselected toggle looks like a plain button
-  (no empty checkbox square).
-- Typing in the ticker search box — the dropdown narrows to substring
-  matches on ticker or name; already-selected tickers stay visible.
+- Clicking a filter-type pill (Asset Class / Category / Theme / Return
+  Type / Characteristics) in the right panel swaps the value list shown
+  below; the active pill turns navy. Ticking a value checkbox narrows
+  the ticker dropdown to the intersection. Characteristics shows the
+  Launch-date range as two date boxes separated by a hyphen; setting a
+  bound narrows the dropdown.
+- Typing in the strategies search box (left panel, above the dropdown)
+  — the dropdown narrows to substring matches on ticker or name;
+  already-selected tickers stay visible.
 - Cold start (no `data/.cache/`) — status banner reads `Fetching
   prices…` then `Loaded N indices · M trading days · fetched from
   mock prices in X.Ys`; a `prices_<today>.parquet` appears under
