@@ -23,15 +23,18 @@ tabs:
   followed by an always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
   side-by-side analysis panes**. Each pane carries its own dropdown
-  picker that swaps in any of the 8 analysis types (`Cumulative
-  Performance`, `1Y Sharpe-z Line`, `Correlation Heatmap`,
-  `Risk / Return`, `Drawdown`, `Rolling Correlation`,
-  `Return Distribution`, `Rolling Beta`), so users can compare any
-  two analyses side-by-side. Rolling Correlation and Rolling Beta
-  each carry their own per-pane benchmark dropdown that sits on the
-  same row as the analysis picker and only appears when the picker
-  is on the relevant analysis. Every chart inside a pane renders at
-  the same `CHART_HEIGHT` (520px) so the two panes always line up.
+  picker that swaps in any of the 9 analysis types (`Cumulative
+  Performance`, `Outperformance`, `1Y Sharpe-z Line`,
+  `Correlation Heatmap`, `Risk / Return`, `Drawdown`,
+  `Rolling Correlation`, `Return Distribution`, `Rolling Beta`), so
+  users can compare any two analyses side-by-side. `Outperformance`,
+  Rolling Correlation, and Rolling Beta each carry their own per-pane
+  benchmark dropdown that sits on the same row as the analysis picker
+  and only appears when the picker is on the relevant analysis.
+  (`Outperformance` is the cumulative excess return — strategy minus
+  benchmark cumulative % return, in percentage points off a zero
+  baseline.) Every chart inside a pane renders at the same
+  `CHART_HEIGHT` (520px) so the two panes always line up.
 
 Below the tab content: performance disclaimer (templated with the data
 window) → bottom legal disclosure (justified).
@@ -59,7 +62,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
@@ -189,12 +192,25 @@ live paths return the same shape.
   analysis pane (lines, bars, scatter points) uses positional
   `LINE_PALETTE` colors keyed by the strategy's position in the
   selected ticker set. The selected-strategy perf grid above the
-  panes carries a leftmost color-swatch column rendered with
+  panes carries a leftmost color-swatch column (header **"Chart
+  Color"**, `PERF_COLOR_COLUMN_NAME`) rendered with
   `ipydatagrid.VegaExpr` and the same positional palette, so the
   grid acts as the universal legend — every chart's per-strategy
   bqplot legend (`display_legend`) is off. `AssetClassColor` /
   `ASSET_CLASS_COLORS` remain defined in `src/style.py` but are
   currently unused.
+- **Selected perf grid uses 2-level MultiIndex columns** (Info / 1Y /
+  3Y / 5Y supercolumns over their leaves), matching the all-catalog
+  grid. Custom per-column widths are kept via ipydatagrid's
+  `"<level0>,<level1>"` comma-joined `column_widths` keys (built by
+  `_build_perf_column_widths`), so the grid both shows a two-row
+  header and fills a ~full-HD width (~2014px). This grid was flattened
+  to single-level strings once (`2a9cc6c`) because MultiIndex widths
+  were flaky; if they regress again, the fallback is uniform sizing
+  via `base_column_size` (no `column_widths`), like the all-catalog
+  grid. `_perf_renderers` matches on the column leaf
+  (`col[-1] if isinstance(col, tuple) else col`) so it serves both
+  grids.
 - **Chart theme is dark (Bloomberg / Barclays blend)**: charts render
   on `Color.CHART_BG` (near-black `#0d1117`) via plotly's
   `plotly_dark` template + custom overrides defined in
@@ -257,7 +273,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows
   the new data; the other 8 pre-built views are also populated so
-  swapping the picker afterwards is instant).
+  swapping the picker afterwards is instant — 9 analysis views total).
 - Changing a pane's analysis-picker dropdown — only that pane's
   mounted view changes; the other pane is untouched, no recompute.
 - Setting both panes' pickers to the same analysis — both render

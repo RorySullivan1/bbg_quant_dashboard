@@ -48,6 +48,25 @@ def drawdown_series(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.divide(prices.cummax()).subtract(1.0)
 
 
+def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFrame:
+    """Cumulative excess return vs a benchmark, in percentage points.
+
+    Each column is the strategy's cumulative % return minus the benchmark's
+    cumulative % return over the same window, so every series starts at 0 and
+    a value above 0 means the strategy has outperformed the benchmark since
+    the window start. Same shape as ``prices``.
+    """
+    if prices.empty or benchmark.empty:
+        return pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
+    bench = benchmark
+    if isinstance(bench, pd.DataFrame):   # tolerate a 1-column frame
+        bench = bench.iloc[:, 0]
+    bench = bench.reindex(prices.index).ffill()
+    strat_ret = cum_perf(prices).subtract(100)
+    bench_ret = cum_perf(bench.to_frame()).iloc[:, 0].subtract(100)
+    return strat_ret.subtract(bench_ret, axis=0)
+
+
 def rolling_correlation(
     returns: pd.DataFrame,
     benchmark: pd.Series,
