@@ -16,6 +16,7 @@ COLUMN_MAP = {
     "Solution": "solution",
     "ReturnType": "return_type",
     "LiveDate": "live_date",
+    "Currency": "currency",
 }
 
 META_COLUMNS = ["ticker"] + list(COLUMN_MAP.values())
@@ -68,6 +69,7 @@ def apply_filters(
     themes: list[str] | None = None,
     solutions: list[str] | None = None,
     return_types: list[str] | None = None,
+    currencies: list[str] | None = None,
     live_date_min: pd.Timestamp | None = None,
     live_date_max: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
@@ -82,6 +84,8 @@ def apply_filters(
         mask &= df["solution"].isin(solutions)
     if return_types:
         mask &= df["return_type"].isin(return_types)
+    if currencies:
+        mask &= df["currency"].isin(currencies)
     if live_date_min is not None:
         mask &= df["live_date"] >= pd.Timestamp(live_date_min)
     if live_date_max is not None:

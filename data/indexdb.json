@@ -6,6 +6,7 @@
     "Theme": "Core Beta",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1957-03-04"
   },
   "NDX": {
@@ -15,6 +16,7 @@
     "Theme": "Growth",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1985-01-31"
   },
   "RTY": {
@@ -24,6 +26,7 @@
     "Theme": "Small Cap",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1984-01-01"
   },
   "SX5E": {
@@ -33,6 +36,7 @@
     "Theme": "Core Beta",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "EUR",
     "LiveDate": "1998-02-26"
   },
   "S5INFT": {
@@ -42,6 +46,7 @@
     "Theme": "Technology",
     "Solution": "Smart Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1989-09-11"
   },
   "S5ENRS": {
@@ -51,6 +56,7 @@
     "Theme": "Energy",
     "Solution": "Smart Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1989-09-11"
   },
   "LBUSTRUU": {
@@ -60,6 +66,7 @@
     "Theme": "Core Duration",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1986-01-01"
   },
   "LF98TRUU": {
@@ -69,6 +76,7 @@
     "Theme": "Credit",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1983-07-01"
   },
   "EMUSTRUU": {
@@ -78,6 +86,7 @@
     "Theme": "Emerging Markets",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1993-12-31"
   },
   "BCOM": {
@@ -87,6 +96,7 @@
     "Theme": "Diversified Commodities",
     "Solution": "Beta",
     "ReturnType": "Excess",
+    "Currency": "USD",
     "LiveDate": "1998-07-14"
   },
   "GOLDS": {
@@ -96,6 +106,7 @@
     "Theme": "Safe Haven",
     "Solution": "Beta",
     "ReturnType": "Excess",
+    "Currency": "USD",
     "LiveDate": "1968-03-15"
   },
   "DXY": {
@@ -105,6 +116,7 @@
     "Theme": "Dollar",
     "Solution": "Beta",
     "ReturnType": "Excess",
+    "Currency": "USD",
     "LiveDate": "1973-03-01"
   },
   "MXEF": {
@@ -114,6 +126,7 @@
     "Theme": "Emerging Markets",
     "Solution": "Beta",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "1988-01-01"
   },
   "BCLEAN": {
@@ -123,6 +136,7 @@
     "Theme": "Clean Energy",
     "Solution": "ARP",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "2021-06-15"
   },
   "BAITHM": {
@@ -132,6 +146,7 @@
     "Theme": "Artificial Intelligence",
     "Solution": "ARP",
     "ReturnType": "Total",
+    "Currency": "USD",
     "LiveDate": "2026-04-21"
   }
 }

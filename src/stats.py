@@ -5,9 +5,11 @@ import pandas as pd
 
 from .config import (
     PERF_TABLE_YEARS,
+    RSI_WINDOW,
     SHARPE_WINDOW,
     SHARPE_ZSCORE_WINDOW,
     TRADING_DAYS_PER_YEAR,
+    VAR_CONFIDENCE,
 )
 
 
@@ -234,6 +236,103 @@ def max_drawdown(prices: pd.DataFrame, years: float) -> pd.Series:
     running_max = sliced.cummax()
     drawdowns = sliced / running_max - 1.0
     return drawdowns.min()
+
+
+# ---- Quantitative filter metrics (per-ticker scalars) ---------------------
+
+
+def calmar_ratio(prices: pd.DataFrame, years: float) -> pd.Series:
+    """Annualized return divided by the absolute max drawdown over `years`."""
+    ret = ann_return(prices, years)
+    dd = max_drawdown(prices, years).abs().replace(0, np.nan)
+    return ret.divide(dd)
+
+
+def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Series:
+    """Scalar beta of each column vs `benchmark` over the last `years`.
+
+    beta = cov(asset, benchmark) / var(benchmark), computed on the sliced
+    daily-return window (not rolling). Returns a Series indexed by ticker.
+    """
+    if returns.empty or benchmark is None or benchmark.empty:
+        return pd.Series(np.nan, index=returns.columns)
+    bench = benchmark
+    if isinstance(bench, pd.DataFrame):  # tolerate a 1-column frame
+        bench = bench.iloc[:, 0]
+    sliced = _slice_last_years(returns, years)
+    bench = bench.reindex(sliced.index)
+    var = bench.var()
+    if not var or np.isnan(var):
+        return pd.Series(np.nan, index=returns.columns)
+    cov = sliced.apply(lambda col: col.cov(bench))
+    return cov.divide(var)
+
+
+def historical_var(
+    returns: pd.DataFrame, years: float, confidence: float = VAR_CONFIDENCE
+) -> pd.Series:
+    """Historical daily VaR per ticker as a positive loss magnitude.
+
+    The `(1 - confidence)` quantile of daily returns (a negative number) is
+    negated, so e.g. 0.025 means a 2.5% worst-case daily loss at the given
+    confidence. Higher = riskier.
+    """
+    sliced = _slice_last_years(returns, years)
+    if sliced.empty:
+        return pd.Series(np.nan, index=returns.columns)
+    return -sliced.quantile(1.0 - confidence)
+
+
+def rsi(prices: pd.DataFrame, window: int = RSI_WINDOW) -> pd.Series:
+    """Latest Wilder RSI (0–100) per ticker over `window` trading days."""
+    if prices.empty:
+        return pd.Series(np.nan, index=prices.columns)
+    delta = prices.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / window, min_periods=window).mean()
+    avg_loss = loss.ewm(alpha=1.0 / window, min_periods=window).mean()
+    rs = avg_gain.divide(avg_loss.replace(0, np.nan))
+    rsi_series = 100.0 - (100.0 / (1.0 + rs))
+    # All-gain windows (avg_loss == 0) are maximally overbought.
+    rsi_series = rsi_series.where(avg_loss != 0, 100.0)
+    return rsi_series.ffill().iloc[-1]
+
+
+def zscore_cross_section(series: pd.Series) -> pd.Series:
+    """Cross-sectional z-score of a per-ticker metric: (x - mean) / std."""
+    std = series.std()
+    if not std or np.isnan(std):
+        return pd.Series(np.nan, index=series.index)
+    return (series - series.mean()) / std
+
+
+def quant_metrics_table(
+    prices: pd.DataFrame,
+    benchmark: pd.Series,
+    years: float,
+    *,
+    var_confidence: float = VAR_CONFIDENCE,
+    rsi_window: int = RSI_WINDOW,
+) -> pd.DataFrame:
+    """Per-ticker Sharpe / Calmar / Beta / VaR / RSI table for the quant filter.
+
+    Rows: tickers (columns of `prices`). One scalar per metric over the
+    trailing `years` window (RSI uses its own `rsi_window`). The cross-sectional
+    Z-Score is derived on demand by the caller via `zscore_cross_section`.
+    """
+    if prices.empty:
+        return pd.DataFrame(columns=["Sharpe", "Calmar", "Beta", "VaR", "RSI"])
+    rets = daily_returns(prices)
+    return pd.DataFrame(
+        {
+            "Sharpe": ann_sharpe(rets, prices, years),
+            "Calmar": calmar_ratio(prices, years),
+            "Beta": ann_beta(rets, benchmark, years),
+            "VaR": historical_var(rets, years, var_confidence),
+            "RSI": rsi(prices, rsi_window),
+        }
+    )
 
 
 def perf_table(
