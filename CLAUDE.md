@@ -18,13 +18,12 @@ tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
-- **Multi-Strategy Analysis** — full-width filter box split into two
-  side-by-side panels: a **left** strategies picker (search box above
-  the `ticker_w` dropdown, which stretches via `flex` to match the
-  filter panel's height) and a **right** filter panel wrapped in an
-  expandable **"Filters"** accordion (expanded by default; the left
-  strategies picker stays outside it so tickers can be selected while
-  filters are collapsed). The right panel
+- **Multi-Strategy Analysis** — the whole filter UI lives inside an
+  expandable **"Filters"** accordion (expanded by default): a full-width
+  filter box split into two side-by-side panels — a **left** strategies
+  picker (search box above the `ticker_w` dropdown, which stretches via
+  `flex` to match the filter panel's height) and a **right** filter
+  panel. The right panel
   has an action row on top — **Refresh prices** (green, via the
   `Color.GREEN_600` token, so the primary action stands out) plus **Clear
   section** (clears the active filter pill's selections, or the date

@@ -681,21 +681,24 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     right_panel = W.VBox(
         [action_row, filter_header_row, filter_content],
-        layout=W.Layout(width="100%", padding="8px"),
+        layout=W.Layout(
+            width="60%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
     )
-    # The whole filter panel collapses under a "Filters" accordion (expanded by
-    # default). `align_self="flex-start"` keeps it from stretching tall when
-    # collapsed; the left Strategies picker stays outside it, always visible.
+    filter_box = W.HBox(
+        [left_panel, right_panel],
+        layout=W.Layout(width="100%", align_items="stretch"),
+    )
+    # The whole filter UI — the Strategies multi-select on the left and the
+    # filter options on the right — collapses under a "Filters" accordion,
+    # expanded by default.
     filters_accordion = W.Accordion(
-        children=[right_panel],
+        children=[filter_box],
         titles=("Filters",),
         selected_index=0,
-        layout=W.Layout(width="60%", align_self="flex-start"),
-    )
-
-    filter_box = W.HBox(
-        [left_panel, filters_accordion],
-        layout=W.Layout(width="100%", align_items="stretch"),
+        layout=W.Layout(width="100%"),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
@@ -737,7 +740,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
     selected_panel = W.VBox(
-        [filter_box, selected_perf_section, analysis_pane_row],
+        [filters_accordion, selected_perf_section, analysis_pane_row],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
