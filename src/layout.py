@@ -398,9 +398,11 @@ def build_app(verbose: bool = True) -> W.VBox:
     def currency_get() -> list[str]:
         return [] if currency_dd.value == "All" else [currency_dd.value]
 
-    # Quantitative filter — per-metric "≥" thresholds applied to ratios computed
-    # from the already-fetched prices (no new BQL). Text boxes (parsed to float)
-    # so a blank box means "no filter"; 0 stays a valid threshold.
+    # Quantitative filter — each metric row is [label] [≥/≤ dropdown] [value],
+    # with an inline parameter dropdown where relevant (Beta → benchmark,
+    # Z-Score → base metric). Ratios are computed from the already-fetched
+    # prices (no new BQL). Value is a Text box parsed to float, so a blank box
+    # means "no filter"; 0 stays a valid threshold.
     q_period = W.Dropdown(
         options=[("1Y", 1), ("3Y", 3), ("5Y", 5)], value=1,
         description="Period", style={"description_width": "55px"},
@@ -408,35 +410,55 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     q_bench = W.Dropdown(
         options=BENCHMARK_TICKERS, value=DEFAULT_BENCHMARK,
-        description="Beta vs", style={"description_width": "55px"},
-        layout=W.Layout(width="240px"),
+        layout=W.Layout(width="200px"),
     )
-
-    def _q_box(label: str) -> W.Text:
-        return W.Text(
-            placeholder="≥ (blank = off)",
-            description=label,
-            style={"description_width": "90px"},
-            layout=W.Layout(width="230px", margin="1px 0"),
-        )
-
-    q_sharpe = _q_box("Sharpe ≥")
-    q_calmar = _q_box("Calmar ≥")
-    q_beta = _q_box("Beta ≥")
-    q_var = _q_box("VaR % ≥")
-    q_rsi = _q_box("RSI ≥")
-    q_z = _q_box("Z-Score ≥")
     q_z_metric = W.Dropdown(
         options=["Sharpe", "Calmar", "Beta", "VaR", "RSI"], value="Sharpe",
         layout=W.Layout(width="120px"),
+    )
+
+    def _q_row(label: str, *, trailing: W.Widget | None = None):
+        op = W.Dropdown(options=["≥", "≤"], value="≥", layout=W.Layout(width="60px"))
+        box = W.Text(placeholder="value", layout=W.Layout(width="100px"))
+        children = [
+            W.HTML(
+                f"<div style='width:84px;font-size:{FontSize.LABEL};'>{html.escape(label)}</div>"
+            ),
+            op, box,
+        ]
+        if trailing is not None:
+            children.append(trailing)
+        row = W.HBox(
+            children,
+            layout=W.Layout(width="100%", align_items="center", margin="1px 0"),
+        )
+        return row, op, box
+
+    sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
+    calmar_row, calmar_op, q_calmar = _q_row("Calmar")
+    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_bench)
+    var_row, var_op, q_var = _q_row("VaR %")
+    rsi_row, rsi_op, q_rsi = _q_row("RSI")
+    z_row, z_op, q_z = _q_row(
+        "Z-Score",
+        trailing=W.HBox(
+            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric],
+            layout=W.Layout(align_items="center"),
+        ),
     )
     quant = SimpleNamespace(
         period_dd=q_period,
         bench_dd=q_bench,
         z_metric_dd=q_z_metric,
-        boxes={
-            "Sharpe": q_sharpe, "Calmar": q_calmar, "Beta": q_beta,
-            "VaR": q_var, "RSI": q_rsi, "Z": q_z,
+        rows=[sharpe_row, calmar_row, beta_row, var_row, rsi_row, z_row],
+        # metric name -> (operator dropdown, value box)
+        specs={
+            "Sharpe": (sharpe_op, q_sharpe),
+            "Calmar": (calmar_op, q_calmar),
+            "Beta": (beta_op, q_beta),
+            "VaR": (var_op, q_var),
+            "RSI": (rsi_op, q_rsi),
+            "Z": (z_op, q_z),
         },
     )
 
@@ -542,12 +564,8 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     quant_view = W.VBox(
         [
-            W.HBox([q_period, q_bench], layout=W.Layout(width="100%", align_items="center")),
-            q_sharpe, q_calmar, q_beta, q_var, q_rsi,
-            W.HBox(
-                [q_z, W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric],
-                layout=W.Layout(width="100%", align_items="center"),
-            ),
+            W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
+            *quant.rows,
         ],
         layout=W.Layout(width="100%", padding="2px 4px"),
     )
@@ -603,8 +621,9 @@ def build_app(verbose: bool = True) -> W.VBox:
     }
 
     def _clear_quant() -> None:
-        for box in quant.boxes.values():
+        for op, box in quant.specs.values():
             box.value = ""
+            op.value = "≥"
 
     def _clear_section(_b=None) -> None:
         label = active_filter[0]
@@ -769,20 +788,21 @@ def build_app(verbose: bool = True) -> W.VBox:
     else:
         arp_universe_prices = pd.DataFrame()
 
-    def _quant_thresholds() -> dict[str, float]:
-        out: dict[str, float] = {}
-        for name, box in quant.boxes.items():
+    def _quant_thresholds() -> dict[str, tuple[str, float]]:
+        """Active quant filters as `{metric: (operator, value)}`; blank = off."""
+        out: dict[str, tuple[str, float]] = {}
+        for name, (op, box) in quant.specs.items():
             raw = (box.value or "").strip()
             if not raw:
                 continue
             try:
-                out[name] = float(raw)
+                out[name] = (op.value, float(raw))
             except ValueError:
                 continue
         return out
 
     def _quant_keep(candidates: pd.Index) -> pd.Index:
-        """Tickers (among `candidates`) passing the active "≥" thresholds.
+        """Tickers (among `candidates`) passing the active ≥/≤ thresholds.
 
         Metrics are computed from the already-fetched ARP prices — no BQL. If
         the cache is empty or no thresholds are set, every candidate passes.
@@ -798,8 +818,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         if "Z" in thresholds:
             qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
         keep = qt.index
-        for name, thresh in thresholds.items():
-            keep = keep.intersection(qt.index[qt[name] >= thresh])
+        for name, (op, value) in thresholds.items():
+            col = qt[name]
+            mask = col >= value if op == "≥" else col <= value
+            keep = keep.intersection(qt.index[mask])
         return keep
 
     def _on_filter_change(_change=None):
@@ -837,7 +859,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         cb.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w, currency_dd):
         w.observe(_on_filter_change, names="value")
-    for w in (q_period, q_bench, q_z_metric, *quant.boxes.values()):
+    quant_inputs = [q_period, q_bench, q_z_metric]
+    for op, box in quant.specs.values():
+        quant_inputs += [op, box]
+    for w in quant_inputs:
         w.observe(_on_filter_change, names="value")
 
     def _clear_pane(pane: SimpleNamespace) -> None:

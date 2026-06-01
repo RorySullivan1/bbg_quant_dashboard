@@ -35,11 +35,13 @@ tabs:
   first four show checkbox value lists; **Characteristics** shows the
   Launch-date range (two date boxes separated by a hyphen) plus a
   **Currency** dropdown; **Quantitative** filters the universe by
-  price-derived ratios — a Period (1Y/3Y/5Y) and Beta-benchmark dropdown
-  plus single "≥" thresholds for Sharpe / Calmar / Beta / VaR % / RSI
-  and a Z-Score of a selectable base metric (`quant_metrics_table` /
-  `zscore_cross_section`, computed live from the already-fetched prices,
-  no BQL). Below the filter box: an
+  price-derived ratios — a global Period (1Y/3Y/5Y) dropdown, then one row
+  per metric (Sharpe / Calmar / Beta / VaR % / RSI / Z-Score) of
+  `[≥ or ≤ dropdown] [value box]`, with an inline parameter dropdown where
+  relevant (Beta carries its benchmark dropdown, Z-Score its selectable
+  base metric) — all via `quant_metrics_table` / `zscore_cross_section`,
+  computed live from the already-fetched prices, no BQL. Below the filter
+  box: an
   always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
   side-by-side analysis panes**. Each pane carries its own dropdown
@@ -301,12 +303,14 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Characteristics shows the Launch-date range (two date boxes separated
   by a hyphen) and a **Currency** dropdown; setting either narrows the
   dropdown.
-- The **Quantitative** pill shows a Period (1Y/3Y/5Y) and Beta-benchmark
-  dropdown plus "≥" threshold boxes for Sharpe / Calmar / Beta / VaR % /
-  RSI and a Z-Score row with a base-metric selector. Typing e.g.
-  `Sharpe ≥ 0.5` narrows the dropdown to indices whose metric (computed
-  from the already-fetched prices) clears the threshold; a blank box is
-  ignored. Changing the period/benchmark/z-metric re-narrows live, no BQL.
+- The **Quantitative** pill shows a global Period (1Y/3Y/5Y) dropdown and
+  one row per metric (Sharpe / Calmar / Beta / VaR % / RSI / Z-Score), each
+  a `[≥/≤ dropdown] [value box]`; Beta's row carries the benchmark dropdown
+  and Z-Score's carries its base-metric selector. Setting e.g. Sharpe
+  `≥ 0.5` (or Sharpe `≤ 0.5`) narrows the dropdown to indices whose metric
+  (computed from the already-fetched prices) clears the threshold; a blank
+  box is ignored. Changing any operator/period/benchmark/z-metric re-narrows
+  live, no BQL.
 - Clicking **Clear section** unticks the active pill's checkboxes (or
   clears the launch-date range + currency on Characteristics, or the
   ratio thresholds on Quantitative); **Clear all** clears every filter
