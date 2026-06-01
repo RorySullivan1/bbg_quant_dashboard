@@ -867,14 +867,12 @@ def _line_chart() -> go.FigureWidget:
 
 
 def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     traces: list[go.Scatter] = []
     for i, col in enumerate(perf.columns):
         series = perf[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -913,14 +911,12 @@ def _update_outperformance(
         else f"Outperformance ({LOOKBACK_YEARS}Y)"
     )
     cleaned = df.dropna(how="all") if not df.empty else df
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -989,6 +985,11 @@ def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
 
 def _palette_color(i: int) -> str:
     return LINE_PALETTE[i % len(LINE_PALETTE)]
+
+
+def _short_ticker(ticker: str) -> str:
+    """Drop the BBG ' Index' suffix, leaving the core ticker (e.g. 'SPX')."""
+    return ticker.removesuffix(" Index")
 
 
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
@@ -1164,14 +1165,12 @@ def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataF
         with fig.batch_update():
             fig.data = ()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     traces: list[go.Scatter] = []
     for i, col in enumerate(tail.columns):
         series = tail[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1245,7 +1244,6 @@ def _update_scatter(
             fig.data[0].text = []
             fig.data[0].customdata = []
         return
-    info = meta.set_index("ticker").reindex(frame.index)
     s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
     if s_clipped.max() > 0:
         sizes = (8 + 32 * (s_clipped / s_clipped.max())).tolist()
@@ -1254,10 +1252,7 @@ def _update_scatter(
     # Positional palette so each ticker shares one color across every
     # chart inside an analysis pane and the perf-grid color swatch.
     colors = [_palette_color(i) for i in range(len(frame))]
-    names = [
-        f"{n} ({t})" if isinstance(n, str) and n else t
-        for t, n in zip(frame.index, info["name"].tolist())
-    ]
+    names = [_short_ticker(t) for t in frame.index]
     with fig.batch_update():
         fig.data[0].x = frame["vol"].values
         fig.data[0].y = frame["ret"].values
@@ -1292,14 +1287,12 @@ def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame)
         with fig.batch_update():
             fig.data = ()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1351,14 +1344,12 @@ def _update_rolling_ref(
             fig.data = ()
             fig.layout.title.text = new_title
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1414,7 +1405,6 @@ def _update_return_dist(
             fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     all_vals = cleaned.values[np.isfinite(cleaned.values)]
     if all_vals.size == 0:
         with fig.batch_update():
@@ -1430,8 +1420,7 @@ def _update_return_dist(
         series = cleaned[col].dropna().values
         if series.size == 0:
             continue
-        name = name_lookup.get(col) or col
-        label = f"{name} ({col})"
+        label = _short_ticker(col)
         traces.append(go.Histogram(
             x=series,
             xbins=dict(start=lo, end=hi, size=bin_size),
