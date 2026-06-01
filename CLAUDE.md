@@ -99,6 +99,9 @@ dashboard always renders end-to-end.
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
+| `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
+| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + empty `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`) to fill in as scope firms up. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.5.0`). Keep in sync with the "Branching" section on every bump. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -288,6 +291,15 @@ live paths return the same shape.
 - **Recompute errors surface in the commentary block** as a styled traceback,
   rather than leaving the charts silently empty. See `_render_error` in
   `src/layout.py`.
+- **Agent context lives in `.claude/` and `.meta/`.** Reusable skills
+  are folder-per-skill under `.claude/skills/<name>/SKILL.md` (Claude
+  Code auto-discovers them) — the Python lifecycle + doc-drafting skills
+  came from `RorySullivan1/claude-skills-library`; `ipywidgets` and
+  `plotly` are project-authored against the conventions in this file
+  (prefer them for UI/chart work). The forward roadmap is
+  `.claude/dev_map/` (an index plus empty `vX.Y.Z` stubs). The canonical
+  shipped version is `.meta/VERSION` — bump it together with the
+  "Branching" section below.
 - **New top-level files require updating the architecture map above.**
 
 ## Testing notes
