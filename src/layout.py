@@ -399,7 +399,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     apply_btn = W.Button(
         description="Refresh prices",
-        button_style="primary",
+        button_style="success",  # green so the primary action stands out
         layout=W.Layout(flex="1 1 auto"),
     )
     clear_section_btn = W.Button(
