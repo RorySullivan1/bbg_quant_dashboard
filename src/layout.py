@@ -872,7 +872,7 @@ def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -
         series = perf[col].dropna()
         if series.empty:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -916,7 +916,7 @@ def _update_outperformance(
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -985,6 +985,11 @@ def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
 
 def _palette_color(i: int) -> str:
     return LINE_PALETTE[i % len(LINE_PALETTE)]
+
+
+def _short_ticker(ticker: str) -> str:
+    """Drop the BBG ' Index' suffix, leaving the core ticker (e.g. 'SPX')."""
+    return ticker.removesuffix(" Index")
 
 
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
@@ -1165,7 +1170,7 @@ def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataF
         series = tail[col].dropna()
         if series.empty:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1247,7 +1252,7 @@ def _update_scatter(
     # Positional palette so each ticker shares one color across every
     # chart inside an analysis pane and the perf-grid color swatch.
     colors = [_palette_color(i) for i in range(len(frame))]
-    names = list(frame.index)
+    names = [_short_ticker(t) for t in frame.index]
     with fig.batch_update():
         fig.data[0].x = frame["vol"].values
         fig.data[0].y = frame["ret"].values
@@ -1287,7 +1292,7 @@ def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame)
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1344,7 +1349,7 @@ def _update_rolling_ref(
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Scatter(
             x=series.index, y=series.values, mode="lines", name=label,
             line=dict(color=_palette_color(i), width=1.5),
@@ -1415,7 +1420,7 @@ def _update_return_dist(
         series = cleaned[col].dropna().values
         if series.size == 0:
             continue
-        label = col
+        label = _short_ticker(col)
         traces.append(go.Histogram(
             x=series,
             xbins=dict(start=lo, end=hi, size=bin_size),
