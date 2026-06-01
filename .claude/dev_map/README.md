@@ -12,7 +12,10 @@ scope for that version firms up (goals, scope, status, related PRs).
   - `v0.6.5` — Dashboard Styling: dark technical chrome, bold masthead,
     loading overlay + staged progress bar (written; a styling point release
     landing after v0.6.0).
-  - `v0.7.0` → `v1.0.0` — empty stubs, to be filled in.
+  - `v0.7.0` — Platform Tab Expansion: conditional-formatted all-catalog
+    grid with a dynamic z-score column, a factor-beta scatter (equity risk
+    premium vs term premium), and an asset-class treemap (written).
+  - `v0.8.0` → `v1.0.0` — empty stubs, to be filled in.
 
 ## How this ties to branching
 
