@@ -30,6 +30,7 @@ from .config import (
 )
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
+    ann_beta,
     ann_return,
     ann_sharpe,
     ann_volatility,
@@ -38,14 +39,18 @@ from .stats import (
     daily_returns,
     drawdown_series,
     excess_cum_return,
+    jensen_alpha,
     perf_table,
+    quant_metrics_table,
     regime_corr_matrix,
     return_distribution_stats,
     rolling_beta,
     rolling_correlation,
     rolling_sharpe_zscore,
     sharpe_zscore,
+    treynor_ratio,
     universe_perf,
+    zscore_cross_section,
 )
 from .style import (
     LINE_PALETTE,
@@ -384,6 +389,103 @@ def build_app(verbose: bool = True) -> W.VBox:
     live_min = W.DatePicker(layout=W.Layout(width="160px"))
     live_max = W.DatePicker(layout=W.Layout(width="160px"))
 
+    # Currency lives under Characteristics; "All" = no currency filter.
+    currency_dd = W.Dropdown(
+        options=["All"] + unique_values(meta, "currency"),
+        value="All",
+        description="Currency",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="240px"),
+    )
+
+    def currency_get() -> list[str]:
+        return [] if currency_dd.value == "All" else [currency_dd.value]
+
+    # Quantitative filter — each metric row is [label] [≥/≤ dropdown] [value],
+    # with an inline parameter dropdown where relevant (Beta → benchmark,
+    # Z-Score → base metric). Ratios are computed from the already-fetched
+    # prices (no new BQL). Value is a Text box parsed to float, so a blank box
+    # means "no filter"; 0 stays a valid threshold.
+    q_period = W.Dropdown(
+        options=[("1Y", 1), ("3Y", 3), ("5Y", 5)], value=1,
+        description="Period", style={"description_width": "55px"},
+        layout=W.Layout(width="150px"),
+    )
+    def _bench_dd() -> W.Dropdown:
+        return W.Dropdown(
+            options=BENCHMARK_TICKERS, value=DEFAULT_BENCHMARK,
+            layout=W.Layout(width="200px"),
+        )
+
+    # Each benchmark-based metric gets its own benchmark dropdown.
+    q_beta_bench = _bench_dd()
+    q_treynor_bench = _bench_dd()
+    q_jensen_bench = _bench_dd()
+    q_z_metric = W.Dropdown(
+        options=["Sharpe", "Sortino", "Calmar", "Beta", "Treynor", "Jensen", "VaR", "RSI"],
+        value="Sharpe",
+        layout=W.Layout(width="120px"),
+    )
+
+    def _q_row(label: str, *, trailing: W.Widget | None = None):
+        op = W.Dropdown(options=["≥", "≤"], value="≥", layout=W.Layout(width="60px"))
+        box = W.Text(placeholder="value", layout=W.Layout(width="100px"))
+        children = [
+            W.HTML(
+                f"<div style='width:84px;font-size:{FontSize.LABEL};'>{html.escape(label)}</div>"
+            ),
+            op, box,
+        ]
+        if trailing is not None:
+            children.append(trailing)
+        row = W.HBox(
+            children,
+            layout=W.Layout(width="100%", align_items="center", margin="1px 0"),
+        )
+        return row, op, box
+
+    sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
+    sortino_row, sortino_op, q_sortino = _q_row("Sortino")
+    calmar_row, calmar_op, q_calmar = _q_row("Calmar")
+    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_beta_bench)
+    treynor_row, treynor_op, q_treynor = _q_row("Treynor", trailing=q_treynor_bench)
+    jensen_row, jensen_op, q_jensen = _q_row("Jensen α", trailing=q_jensen_bench)
+    var_row, var_op, q_var = _q_row("VaR %")
+    rsi_row, rsi_op, q_rsi = _q_row("RSI")
+    z_row, z_op, q_z = _q_row(
+        "Z-Score",
+        trailing=W.HBox(
+            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric],
+            layout=W.Layout(align_items="center"),
+        ),
+    )
+    quant = SimpleNamespace(
+        period_dd=q_period,
+        z_metric_dd=q_z_metric,
+        # Each benchmark-based metric carries its own benchmark dropdown.
+        bench_dd={
+            "Beta": q_beta_bench,
+            "Treynor": q_treynor_bench,
+            "Jensen": q_jensen_bench,
+        },
+        rows=[
+            sharpe_row, sortino_row, calmar_row, beta_row, treynor_row,
+            jensen_row, var_row, rsi_row, z_row,
+        ],
+        # metric name -> (operator dropdown, value box)
+        specs={
+            "Sharpe": (sharpe_op, q_sharpe),
+            "Sortino": (sortino_op, q_sortino),
+            "Calmar": (calmar_op, q_calmar),
+            "Beta": (beta_op, q_beta),
+            "Treynor": (treynor_op, q_treynor),
+            "Jensen": (jensen_op, q_jensen),
+            "VaR": (var_op, q_var),
+            "RSI": (rsi_op, q_rsi),
+            "Z": (z_op, q_z),
+        },
+    )
+
     search_w = W.Text(
         placeholder="Search ticker or name…",
         layout=W.Layout(width="100%"),
@@ -477,7 +579,18 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="center"),
     )
     characteristics_view = W.VBox(
-        [_section_label("Launch date"), date_range_row],
+        [
+            _section_label("Launch date"), date_range_row,
+            _section_label("Currency"), currency_dd,
+        ],
+        layout=W.Layout(width="100%", padding="2px 4px"),
+    )
+
+    quant_view = W.VBox(
+        [
+            W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
+            *quant.rows,
+        ],
         layout=W.Layout(width="100%", padding="2px 4px"),
     )
 
@@ -487,6 +600,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         "Theme": theme_content,
         "Return Type": ret_content,
         "Characteristics": characteristics_view,
+        "Quantitative": quant_view,
     }
     filter_btns = {
         label: _make_tab_button(
@@ -530,11 +644,19 @@ def build_app(verbose: bool = True) -> W.VBox:
         "Return Type": ret_checks,
     }
 
+    def _clear_quant() -> None:
+        for op, box in quant.specs.values():
+            box.value = ""
+            op.value = "≥"
+
     def _clear_section(_b=None) -> None:
         label = active_filter[0]
         if label == "Characteristics":
             live_min.value = None
             live_max.value = None
+            currency_dd.value = "All"
+        elif label == "Quantitative":
+            _clear_quant()
         else:
             for c in filter_checks[label]:
                 c.value = False
@@ -545,6 +667,8 @@ def build_app(verbose: bool = True) -> W.VBox:
                 c.value = False
         live_min.value = None
         live_max.value = None
+        currency_dd.value = "All"
+        _clear_quant()
         search_w.value = ""
 
     clear_section_btn.on_click(_clear_section)
@@ -563,10 +687,18 @@ def build_app(verbose: bool = True) -> W.VBox:
             border=f"1px solid {Color.SLATE_200}",
         ),
     )
-
     filter_box = W.HBox(
         [left_panel, right_panel],
         layout=W.Layout(width="100%", align_items="stretch"),
+    )
+    # The whole filter UI — the Strategies multi-select on the left and the
+    # filter options on the right — collapses under a "Filters" accordion,
+    # expanded by default.
+    filters_accordion = W.Accordion(
+        children=[filter_box],
+        titles=("Filters",),
+        selected_index=0,
+        layout=W.Layout(width="100%"),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
@@ -608,7 +740,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
     selected_panel = W.VBox(
-        [filter_box, selected_perf_section, analysis_pane_row],
+        [filters_accordion, selected_perf_section, analysis_pane_row],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
@@ -688,6 +820,52 @@ def build_app(verbose: bool = True) -> W.VBox:
     else:
         arp_universe_prices = pd.DataFrame()
 
+    def _quant_thresholds() -> dict[str, tuple[str, float]]:
+        """Active quant filters as `{metric: (operator, value)}`; blank = off."""
+        out: dict[str, tuple[str, float]] = {}
+        for name, (op, box) in quant.specs.items():
+            raw = (box.value or "").strip()
+            if not raw:
+                continue
+            try:
+                out[name] = (op.value, float(raw))
+            except ValueError:
+                continue
+        return out
+
+    def _quant_keep(candidates: pd.Index) -> pd.Index:
+        """Tickers (among `candidates`) passing the active ≥/≤ thresholds.
+
+        Metrics are computed from the already-fetched ARP prices — no BQL. If
+        the cache is empty or no thresholds are set, every candidate passes.
+        """
+        thresholds = _quant_thresholds()
+        if not thresholds or arp_universe_prices.empty:
+            return candidates
+        prices = arp_universe_prices.reindex(columns=candidates).dropna(how="all", axis=1)
+        if prices.shape[1] == 0:
+            return candidates
+        years = quant.period_dd.value
+        # Non-benchmark metrics from the shared table; the benchmark-based ones
+        # (Beta / Treynor / Jensen) are recomputed each against its own dropdown.
+        qt = quant_metrics_table(prices, None, years)
+        rets = daily_returns(prices)
+        qt["Beta"] = ann_beta(rets, universe_prices.get(quant.bench_dd["Beta"].value), years)
+        qt["Treynor"] = treynor_ratio(
+            rets, prices, universe_prices.get(quant.bench_dd["Treynor"].value), years
+        )
+        qt["Jensen"] = jensen_alpha(
+            rets, prices, universe_prices.get(quant.bench_dd["Jensen"].value), years
+        )
+        if "Z" in thresholds:
+            qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
+        keep = qt.index
+        for name, (op, value) in thresholds.items():
+            col = qt[name]
+            mask = col >= value if op == "≥" else col <= value
+            keep = keep.intersection(qt.index[mask])
+        return keep
+
     def _on_filter_change(_change=None):
         filtered = apply_filters(
             meta,
@@ -695,6 +873,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             categories=cat_get(),
             themes=theme_get(),
             return_types=ret_get(),
+            currencies=currency_get(),
             live_date_min=live_min.value,
             live_date_max=live_max.value,
         )
@@ -708,6 +887,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         else:
             visible = filtered
 
+        quant_keep = _quant_keep(pd.Index(visible["ticker"]))
+        visible = visible.loc[visible["ticker"].isin(quant_keep)]
+
         selected = list(ticker_w.value)
         keep_selected = filtered.loc[filtered["ticker"].isin(selected)]
         combined = pd.concat([visible, keep_selected]).drop_duplicates(subset="ticker")
@@ -717,7 +899,12 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     for cb in (*asset_checks, *cat_checks, *theme_checks, *ret_checks):
         cb.observe(_on_filter_change, names="value")
-    for w in (live_min, live_max, search_w):
+    for w in (live_min, live_max, search_w, currency_dd):
+        w.observe(_on_filter_change, names="value")
+    quant_inputs = [q_period, q_z_metric, *quant.bench_dd.values()]
+    for op, box in quant.specs.values():
+        quant_inputs += [op, box]
+    for w in quant_inputs:
         w.observe(_on_filter_change, names="value")
 
     def _clear_pane(pane: SimpleNamespace) -> None:
