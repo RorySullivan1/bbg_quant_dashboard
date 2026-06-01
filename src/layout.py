@@ -388,17 +388,32 @@ def build_app(verbose: bool = True) -> W.VBox:
         placeholder="Search ticker or name…",
         layout=W.Layout(width="100%"),
     )
+    # `flex="1 1 auto"` lets the dropdown grow to fill the left panel, which is
+    # stretched to the filter panel's height by the parent HBox — so the
+    # strategies dropdown ends up the same height as the filter box.
     ticker_w = W.SelectMultiple(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        rows=8,
-        layout=W.Layout(width="100%"),
+        layout=W.Layout(width="100%", flex="1 1 auto", min_height="220px"),
     )
 
     apply_btn = W.Button(
         description="Refresh prices",
-        button_style="primary",
-        layout=W.Layout(width="100%"),
+        layout=W.Layout(flex="1 1 auto"),
+    )
+    # Green so the primary refresh action stands out from the secondary clear
+    # buttons. Colour comes from the centralized style token, not button_style.
+    apply_btn.style.button_color = Color.GREEN_600
+    apply_btn.style.text_color = Color.WHITE
+    clear_section_btn = W.Button(
+        description="Clear section",
+        tooltip="Clear the active filter's selections",
+        layout=W.Layout(width="auto"),
+    )
+    clear_all_btn = W.Button(
+        description="Clear all",
+        tooltip="Clear all filters and the search box",
+        layout=W.Layout(width="auto"),
     )
     status_w = _status_banner()
 
@@ -477,7 +492,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", min_height="250px"),
     )
 
+    # The currently visible filter dimension — drives "Clear section".
+    active_filter = ["Asset Class"]
+
     def _activate_filter(label: str) -> None:
+        active_filter[0] = label
         for lbl, btn in filter_btns.items():
             _style_tab_button(btn, active=(lbl == label))
         filter_content.children = (filter_views[label],)
@@ -485,8 +504,44 @@ def build_app(verbose: bool = True) -> W.VBox:
     for label, btn in filter_btns.items():
         btn.on_click(lambda _b, l=label: _activate_filter(l))
 
+    # Maps each checkbox-based filter dimension to its checkboxes. The
+    # Characteristics view clears its date range instead. Clearing a value
+    # widget fires its `_on_filter_change` observer, so the dropdown re-narrows
+    # automatically — no manual recompute needed.
+    filter_checks = {
+        "Asset Class": asset_checks,
+        "Category": cat_checks,
+        "Theme": theme_checks,
+        "Return Type": ret_checks,
+    }
+
+    def _clear_section(_b=None) -> None:
+        label = active_filter[0]
+        if label == "Characteristics":
+            live_min.value = None
+            live_max.value = None
+        else:
+            for c in filter_checks[label]:
+                c.value = False
+
+    def _clear_all(_b=None) -> None:
+        for checks in filter_checks.values():
+            for c in checks:
+                c.value = False
+        live_min.value = None
+        live_max.value = None
+        search_w.value = ""
+
+    clear_section_btn.on_click(_clear_section)
+    clear_all_btn.on_click(_clear_all)
+
+    action_row = W.HBox(
+        [apply_btn, clear_section_btn, clear_all_btn],
+        layout=W.Layout(width="100%", margin="0 0 6px 0"),
+    )
+
     right_panel = W.VBox(
-        [apply_btn, filter_header_row, filter_content],
+        [action_row, filter_header_row, filter_content],
         layout=W.Layout(
             width="60%",
             padding="8px",
@@ -496,7 +551,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     filter_box = W.HBox(
         [left_panel, right_panel],
-        layout=W.Layout(width="100%", align_items="flex-start"),
+        layout=W.Layout(width="100%", align_items="stretch"),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))

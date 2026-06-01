@@ -20,13 +20,19 @@ tabs:
   with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
 - **Multi-Strategy Analysis** — full-width filter box split into two
   side-by-side panels: a **left** strategies picker (search box above
-  the `ticker_w` dropdown) and a **right** filter panel. The right
-  panel has the **Refresh-prices button on top**, then a pill header
-  bar (same `TabButtonTone` style as the top tabs) whose buttons —
-  Asset Class / Category / Theme / Return Type / **Characteristics** —
-  swap which dimension's value list shows below. The first four show
-  checkbox value lists; **Characteristics** shows the Launch-date range
-  as two date boxes separated by a hyphen. Below the filter box: an
+  the `ticker_w` dropdown, which stretches via `flex` to match the
+  filter panel's height) and a **right** filter panel. The right panel
+  has an action row on top — **Refresh prices** (green, via the
+  `Color.GREEN_600` token, so the primary action stands out) plus **Clear
+  section** (clears the active filter pill's selections, or the date
+  range on Characteristics) and **Clear all** (clears every filter
+  checkbox group, the launch-date range, and the search box; selected
+  tickers are kept) — then a pill header bar (same `TabButtonTone`
+  style as the top tabs) whose buttons — Asset Class / Category / Theme
+  / Return Type / **Characteristics** — swap which dimension's value
+  list shows below. The first four show checkbox value lists;
+  **Characteristics** shows the Launch-date range as two date boxes
+  separated by a hyphen. Below the filter box: an
   always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
   side-by-side analysis panes**. Each pane carries its own dropdown
@@ -280,6 +286,14 @@ renders the full dashboard without a Bloomberg session. Verify by:
   the ticker dropdown to the intersection. Characteristics shows the
   Launch-date range as two date boxes separated by a hyphen; setting a
   bound narrows the dropdown.
+- Clicking **Clear section** unticks the active pill's checkboxes (or
+  clears the launch-date range on Characteristics); **Clear all** clears
+  every filter group, the date range, and the search box. Both re-widen
+  the ticker dropdown but keep the user's selected tickers. They do not
+  recompute or hit BQL.
+- The strategies dropdown (left panel) is the same height as the filter
+  box (right panel) — it grows via `flex` while the parent HBox stretches
+  both panels to equal height.
 - Typing in the strategies search box (left panel, above the dropdown)
   — the dropdown narrows to substring matches on ticker or name;
   already-selected tickers stay visible.
