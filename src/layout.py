@@ -878,7 +878,7 @@ _PERF_INFO_WIDTHS: dict[str, int] = {
     # mode, so the column widths must sum to the deployment width by hand.
     # Bumped from 280/140/200 (which left a gap on wide monitors) so the
     # grid fills a full-width layout. Tune these to the target screen width.
-    "Name":         400,
+    "Name":         2000,   # 5× the prior 400 — dominant descriptive column
     "Asset Class":  200,
     "Theme":        320,
 }
