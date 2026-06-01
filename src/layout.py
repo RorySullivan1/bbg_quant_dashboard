@@ -399,9 +399,12 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     apply_btn = W.Button(
         description="Refresh prices",
-        button_style="success",  # green so the primary action stands out
         layout=W.Layout(flex="1 1 auto"),
     )
+    # Green so the primary refresh action stands out from the secondary clear
+    # buttons. Colour comes from the centralized style token, not button_style.
+    apply_btn.style.button_color = Color.GREEN_600
+    apply_btn.style.text_color = Color.WHITE
     clear_section_btn = W.Button(
         description="Clear section",
         tooltip="Clear the active filter's selections",

@@ -60,7 +60,7 @@ class Color(_StrEnum):
     RED_600 = "#dc2626"
     RED_900 = "#7f1d1d"
 
-    # Sentiment accents
+    # Sentiment accents — also the "Refresh prices" primary-action button color.
     GREEN_600 = "#16a34a"
 
     # ---- Chart theme (Bloomberg / Barclays blend, dark) -------------------

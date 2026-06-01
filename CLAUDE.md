@@ -22,7 +22,8 @@ tabs:
   side-by-side panels: a **left** strategies picker (search box above
   the `ticker_w` dropdown, which stretches via `flex` to match the
   filter panel's height) and a **right** filter panel. The right panel
-  has an action row on top — **Refresh prices** (primary) plus **Clear
+  has an action row on top — **Refresh prices** (green, via the
+  `Color.GREEN_600` token, so the primary action stands out) plus **Clear
   section** (clears the active filter pill's selections, or the date
   range on Characteristics) and **Clear all** (clears every filter
   checkbox group, the launch-date range, and the search box; selected
