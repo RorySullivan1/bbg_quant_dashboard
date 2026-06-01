@@ -873,9 +873,14 @@ PERF_COLOR_COLUMN_NAME: str = "•"
 # correctly — see the v0.5.0 commit history for the gory details.
 _PERF_INFO_WIDTHS: dict[str, int] = {
     PERF_COLOR_COLUMN_NAME: 22,    # color swatch — minimal vertical stripe
-    "Name":         280,
-    "Asset Class":  140,
-    "Theme":        200,
+    # The descriptive text columns carry the slack that makes the grid fill
+    # a wide dashboard. ipydatagrid has no responsive stretch-to-container
+    # mode, so widths are set by hand to sum to ~full-HD width (~2046px incl.
+    # the 120px row header + metric columns). Bumped from 280/140/200, which
+    # left a gap on wide monitors. Tune to the target screen width.
+    "Name":         400,
+    "Asset Class":  200,
+    "Theme":        320,
 }
 _PERF_METRIC_WIDTHS: dict[str, int] = {
     "Return": 88,
@@ -941,13 +946,20 @@ def _perf_renderers(columns: pd.Index) -> dict:
     )
     renderers: dict = {}
     for col in columns:
-        if col == PERF_COLOR_COLUMN_NAME:
+        # Columns are flat strings in the selected-strategy grid
+        # (e.g. "1Y Sharpe") but MultiIndex tuples in the all-catalog grid
+        # (e.g. ("1Y", "Sharpe")). Match on the metric leaf either way so
+        # `.endswith` is only ever called on a string.
+        leaf = col[-1] if isinstance(col, tuple) else col
+        if leaf == PERF_COLOR_COLUMN_NAME:
             renderers[col] = color_swatch
-        elif col in _PERF_INFO_TEXT_COLS:
+        elif leaf in _PERF_INFO_TEXT_COLS:
             renderers[col] = text
-        elif col.endswith(" Sharpe"):
+        elif leaf == "Sharpe" or leaf.endswith(" Sharpe"):
             renderers[col] = f2
-        elif col.endswith((" Return", " Vol", " Max DD")):
+        elif leaf in ("Return", "Vol", "Max DD") or leaf.endswith(
+            (" Return", " Vol", " Max DD")
+        ):
             renderers[col] = pct
         else:
             renderers[col] = text
