@@ -681,15 +681,20 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     right_panel = W.VBox(
         [action_row, filter_header_row, filter_content],
-        layout=W.Layout(
-            width="60%",
-            padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
-        ),
+        layout=W.Layout(width="100%", padding="8px"),
+    )
+    # The whole filter panel collapses under a "Filters" accordion (expanded by
+    # default). `align_self="flex-start"` keeps it from stretching tall when
+    # collapsed; the left Strategies picker stays outside it, always visible.
+    filters_accordion = W.Accordion(
+        children=[right_panel],
+        titles=("Filters",),
+        selected_index=0,
+        layout=W.Layout(width="60%", align_self="flex-start"),
     )
 
     filter_box = W.HBox(
-        [left_panel, right_panel],
+        [left_panel, filters_accordion],
         layout=W.Layout(width="100%", align_items="stretch"),
     )
 
