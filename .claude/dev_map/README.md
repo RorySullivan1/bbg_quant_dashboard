@@ -22,7 +22,11 @@ scope for that version firms up (goals, scope, status, related PRs).
   - `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
     statistical-superlatives board (top performer, longest bull run,
     strongest trend, …) and a new-launches board with metadata (written).
-  - `v0.9.0` → `v1.0.0` — empty stubs, to be filled in.
+  - `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
+    profile + cumulative chart, a tabbed monthly-return calendar table, and
+    tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter)
+    (written).
+  - `v1.0.0` — empty stub, to be filled in.
 
 ## How this ties to branching
 
