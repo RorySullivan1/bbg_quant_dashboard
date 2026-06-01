@@ -1,112 +1,138 @@
 ---
 name: plotly
-description: Build and maintain the Plotly charts in this BQuant dashboard — FigureWidget views inside the analysis panes, atomic updates via batch_update, trace replacement, the dark plotly_dark theme, positional LINE_PALETTE coloring, and paper-referenced reference lines. Use this skill whenever the user wants to add, change, or debug a chart, trace, axis, hover, color, legend, or chart-update behavior in the dashboard, or asks why a chart isn't updating, rescaling, or coloring correctly. Trigger on phrases like "add an analysis type", "the chart won't update", "fix the hover", "change the line colors", "the y-axis doesn't rescale", "add a reference line", "FigureWidget", "batch_update", "the two panes share data", or any work on the dashboard's charts in src/layout.py. Distinct from widget/layout work — use the ipywidgets skill for controls, panels, tabs, and grids.
+description: Reference for building interactive charts with the Plotly Python package — plotly.express vs graph_objects, the Figure anatomy (traces/layout/frames), Figure vs FigureWidget, updating figures efficiently (batch_update, add_traces, update_layout), layout/styling (templates, axes, hovertemplate, shapes, colorscales), common chart recipes (line, scatter, heatmap, treemap, histogram, subplots), and rendering in Jupyter/Voila. Use whenever working with Plotly — creating or updating a chart, choosing express vs graph_objects, building a live FigureWidget, configuring axes/hover/legends/colors, or debugging why a figure won't update or rescale. Trigger on plotly, go.Figure, FigureWidget, plotly.express / px, add_trace, update_layout, batch_update, treemap/scatter/heatmap, hovertemplate, make_subplots.
 ---
 
-# plotly (this dashboard)
+# Plotly (Python)
 
-Expert Plotly work scoped to the `bbg_quant_dashboard` charts. All charts
-are interactive `FigureWidget`s built and updated in `src/layout.py`;
-colors and the dark theme come from `src/style.py`. Goal: changes that
-respect the pre-allocated-figure / atomic-update model already in place.
+Plotly renders interactive, browser-based charts from Python. This is a
+reference for the **package**: its two APIs, the figure object, live updates,
+styling, and common recipes. Conventions:
+`import plotly.graph_objects as go` and `import plotly.express as px`.
 
-## Read first
+## Two APIs
 
-- `src/layout.py` — `_make_analysis_pane(side)` builds a self-contained
-  `AnalysisPane`; `_chart_layout()` defines the dark theme overrides; the
-  `_update_*` helpers mutate each FigureWidget. `_recompute()` preps one
-  data slice and renders BOTH panes from it.
-- `src/style.py` — `LINE_PALETTE` (high-chroma, anchored by Bloomberg
-  orange `#FFA000` + Barclays cyan `#00B5E2`) and the chart color tokens
-  on `Color`: `CHART_BG`, `CHART_GRID`, `CHART_AXIS`, `CHART_TEXT`,
-  `CHART_TITLE`, `CHART_HOVER_BG`.
-- `src/config.py` — `CHART_HEIGHT` (520px), `SHARPE_WINDOW`,
-  `LOOKBACK_YEARS`.
-- `src/stats.py` — every series feeding a chart (cum_perf, drawdown,
-  rolling_*, corr/regime matrices, distributions, etc.). Charts render
-  what stats computes; don't compute analytics inside `_update_*`.
+- **`plotly.express` (px)** — high-level; one call builds a whole figure
+  from tidy data. Best for quick, standard charts.
+  ```python
+  fig = px.scatter(df, x="vol", y="ret", color="asset_class",
+                   size="sharpe", hover_name="name")
+  ```
+- **`graph_objects` (go)** — low-level; you assemble traces and layout
+  explicitly. Best for fine control, mixed/custom traces, and incremental
+  updates. (`px` returns a `go.Figure`, so you can build with `px` then tweak
+  with `go` methods.)
 
-## Non-negotiable update model
+## Figure anatomy
 
-- **One FigureWidget per analysis type per pane, pre-allocated.** Each
-  of the 9 analysis types owns a fresh `FigureWidget` instance per pane,
-  so the two panes never share a figure. A picker change swaps
-  `pane.stack.children` to the relevant pre-built view — **no recompute,
-  no fetch.**
-- **Every mutation goes through `fig.batch_update()`** so the frontend
-  sees a single atomic frame. Wrap all layout/trace edits in one
-  `with fig.batch_update():` block.
-- **Replace traces with `fig.data = ()` then `fig.add_traces(...)`.**
-  Plotly's `fig.data` setter only accepts a subset of existing traces,
-  so clear-then-add is the correct idiom — do not assign a new list of
-  fresh traces directly to `fig.data`.
-- **Recompute is eager:** every Refresh-prices click preps the
-  selected-set slice once and renders all 9 views in both panes, so
-  swapping the picker afterward is instant. Per-pane benchmark dropdowns,
-  the heatmap Regime checkbox/benchmark/direction/tail, etc. are read at
-  recompute time only — changing them alone does not refresh (Refresh
-  prices does).
-
-## Theme & color
-
-- Charts are **dark** (`plotly_dark` template + `_chart_layout()`
-  overrides on `Color.CHART_BG` near-black `#0d1117`); the rest of the
-  chrome stays light. Only charts are dark.
-- **One color identity per strategy:** every trace (line, bar, scatter
-  point) uses a positional `LINE_PALETTE` color keyed by the strategy's
-  index in the selected ticker set — the same key the perf grid's "Chart
-  Color" swatch uses. Per-chart legends are **off** (`display_legend`
-  false) because the grid is the universal legend. Don't re-enable
-  per-trace legends; don't color by anything other than position.
-- All charts render at the same `CHART_HEIGHT` so the two panes line up.
-
-## Axes, hover, reference lines
-
-- **Plotly auto-fits the y-axis** on data replacement — no manual
-  scale-rebinding needed (that was the bqplot era).
-- Line / drawdown / sharpe-z / rolling-ref charts draw a dashed
-  reference line via `layout.shapes` with `xref="paper"` so it stays put
-  across data updates and empty states. Use the same pattern for new
-  reference lines rather than a constant-y scatter trace.
-- Line charts use `hovermode="x unified"` (all selected tickers at one
-  date in a single tooltip). The risk/return scatter hover shows ticker
-  name, ann. vol %, ann. return %, ann. Sharpe (2dp). Keep hover
-  templates consistent when adding traces.
-- The Plotly modebar (zoom/pan/autoscale/PNG) stays visible top-right.
-
-## Adding a new analysis type
-
-1. Add the option to the pane's analysis picker and allocate a fresh
-   `FigureWidget` for it in `_make_analysis_pane`.
-2. Add an `_update_<name>(fig, prep, ...)` helper that does all mutation
-   inside `batch_update()` using the clear-then-`add_traces` idiom and
-   positional `LINE_PALETTE` colors.
-3. Compute the underlying series in `src/stats.py`, not in the updater.
-4. If it needs a benchmark / extra control, add a per-pane dropdown on
-   the picker row (visible only for this analysis), read at recompute
-   time — mirror Outperformance / Rolling Correlation / Rolling Beta.
-5. Call the updater from `_recompute()` for both panes.
-
-## Verify (off-terminal)
+A `go.Figure` has three parts: **`data`** (a list of traces), **`layout`**
+(axes, title, legend, colors, shapes…), and **`frames`** (animation).
 
 ```python
-from src.layout import build_app
-build_app()   # deterministic mock prices, full render
+fig = go.Figure(
+    data=[go.Scatter(x=x, y=y, mode="lines", name="A")],
+    layout=go.Layout(title="Demo", template="plotly_dark"),
+)
+fig.add_trace(go.Bar(x=x, y=y2))
+fig.update_layout(yaxis_title="Return")
+fig.update_traces(line_width=2, selector=dict(type="scatter"))
+fig.update_xaxes(tickformat=".0%")
 ```
 
-Then: pick 2+ tickers, click Refresh prices — both panes' mounted views
-update and all 9 pre-built views populate; swapping a pane's picker
-changes only that pane; setting both pickers to the same analysis renders
-two independent figures; the modebar is present; `x unified` hover shows
-all tickers; the dashed reference line holds across updates.
+Common trace types: `Scatter` (lines/markers, `Scattergl` for many points),
+`Bar`, `Heatmap`, `Treemap`, `Sunburst`, `Histogram`, `Box`, `Pie`,
+`Candlestick`. `make_subplots` (from `plotly.subplots`) builds multi-panel
+layouts.
 
-## Out of scope / pitfalls
+## `Figure` vs `FigureWidget`
 
-- Don't recompute or fetch on a picker change — swap the pre-built view.
-- Don't assign a fresh list to `fig.data` — clear with `()` then
-  `add_traces`.
-- Don't mutate a figure outside `batch_update()`.
-- Don't share a FigureWidget between panes.
-- Don't color by asset class or re-enable per-chart legends — the grid
-  is the legend, color is positional.
-- Widget/layout/grid changes belong in the **ipywidgets** skill.
+- **`go.Figure`** — static; render with `fig.show()` (or auto-display).
+- **`go.FigureWidget`** — an **ipywidgets** widget: it renders live in
+  Jupyter/Voila, supports **in-place mutation** that updates the existing
+  chart, and can register callbacks (`fig.data[0].on_click`,
+  `.on_selection`, `.on_hover`). Use it for dashboards / anything that
+  updates after first render.
+
+## Updating efficiently
+
+Wrap edits in **`batch_update`** so the frontend renders one atomic frame
+(no flicker):
+
+```python
+with fig.batch_update():
+    fig.data[0].x = new_x
+    fig.data[0].y = new_y
+    fig.layout.title.text = "Updated"
+```
+
+To **replace the set of traces**, clear then add — the `fig.data` setter
+only accepts a subset/reordering of *existing* traces, so assigning a brand
+new list fails:
+
+```python
+with fig.batch_update():
+    fig.data = ()                  # clear
+    fig.add_traces(new_traces)     # add fresh ones
+```
+
+Plotly auto-rescales axes on data change unless you've pinned a range.
+
+## Layout & styling
+
+- **Templates:** `template="plotly_dark"` / `"plotly_white"`; override per
+  figure via `update_layout`.
+- **Axes:** `tickformat` (`".0%"`, `",.2f"`), `rangemode="tozero"`,
+  `type="log"`, `title`.
+- **Hover:** `hovermode="x unified"` (all traces at one x) or `"closest"`;
+  custom `hovertemplate` with `%{x}`, `%{y}`, `%{customdata[0]}` and a
+  trailing `<extra></extra>` to drop the trace-name box.
+- **Reference lines / bands:** `layout.shapes` with `xref="paper"` (or
+  `yref="paper"`) stay fixed across data updates and empty states.
+- **Color:** continuous `colorscale` + `colorbar`; for diverging metrics
+  (e.g. z-scores) set `cmid=0` so the midpoint maps to the neutral color.
+- **Legend / margins:** `showlegend`, `legend=dict(...)`, `margin`.
+
+## Common recipes
+
+- **Line / area:** `go.Scatter(mode="lines", fill="tozeroy")`.
+- **Scatter w/ encoded marker:** `marker=dict(size=…, color=…,
+  colorscale=…, showscale=True)`.
+- **Heatmap:** `go.Heatmap(z=matrix, x=cols, y=rows, colorscale="RdBu",
+  zmid=0)`.
+- **Treemap:** `go.Treemap(labels=…, parents=…, values=…,
+  marker=dict(colors=…, colorscale=…, cmid=0))`. **`values` must be
+  non-negative** — transform a signed metric (shift by its min, or rank)
+  for sizing while coloring with the raw value.
+- **Histogram overlay:** multiple `go.Histogram` + `barmode="overlay"` +
+  `opacity`.
+- **Subplots:** `make_subplots(rows, cols, shared_xaxes=True)` then
+  `fig.add_trace(trace, row=r, col=c)`.
+
+## Performance & correctness
+
+- Always `batch_update` for multi-attribute edits.
+- **Reuse** `FigureWidget` instances and mutate them; don't rebuild a new
+  widget per update.
+- Use `Scattergl` (WebGL) for large point counts.
+
+## Jupyter / Voila
+
+`FigureWidget` renders under Voila like any ipywidget. Control the toolbar
+via `config={"displayModeBar": True, "modeBarButtonsToRemove": [...]}` (on
+`show`/renderers). For static `Figure`, the active **renderer**
+(`plotly.io.renderers`) decides output.
+
+## Pitfalls
+
+- Mixing `px`- and `go`-constructed objects without converting.
+- Assigning a fresh list to `fig.data` (use clear-then-`add_traces`).
+- Forgetting `batch_update` → visible flicker / multiple frames.
+- Negative `values` in a `Treemap`/`Sunburst`.
+- `hovertemplate` without `<extra></extra>` (leftover trace-name box).
+
+## In this repo (brief)
+
+Charts are `go.FigureWidget` instances built and mutated in `src/layout.py`;
+the dark theme comes from `_chart_layout()`, and traces are colored
+positionally from `LINE_PALETTE` in `src/style.py`. See `CLAUDE.md` for the
+chart conventions, and the `ipywidgets` skill for the surrounding UI.
