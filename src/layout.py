@@ -391,10 +391,13 @@ def build_app(verbose: bool = True) -> W.VBox:
     # `flex="1 1 auto"` lets the dropdown grow to fill the left panel, which is
     # stretched to the filter panel's height by the parent HBox — so the
     # strategies dropdown ends up the same height as the filter box.
+    # The SelectMultiple fills 100% of a flex holder (below), which grows to
+    # the bottom of the left panel — a plain `flex` on the select itself isn't
+    # honored, but `height="100%"` inside a grown holder is.
     ticker_w = W.SelectMultiple(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", flex="1 1 auto", min_height="220px"),
+        layout=W.Layout(width="100%", height="100%"),
     )
 
     apply_btn = W.Button(
@@ -446,12 +449,26 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
 
     # Left: the strategies picker — search box above the dropdown.
+    # Holder grows to fill the left panel's free vertical space; the dropdown
+    # fills the holder, so it reaches the bottom of the container regardless of
+    # the (stretched) panel height.
+    ticker_holder = W.Box(
+        [ticker_w],
+        layout=W.Layout(
+            width="100%",
+            flex="1 1 auto",
+            min_height="220px",
+            display="flex",
+        ),
+    )
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_w, ticker_w],
+        [_section_label("Strategies"), search_w, ticker_holder],
         layout=W.Layout(
             width="38%",
             padding="8px",
             border=f"1px solid {Color.SLATE_200}",
+            display="flex",
+            flex_flow="column",
         ),
     )
 
