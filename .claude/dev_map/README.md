@@ -12,6 +12,10 @@ scope for that version firms up (goals, scope, status, related PRs).
   - `v0.6.5` — Dashboard Styling: dark technical chrome, bold masthead,
     loading overlay + staged progress bar (written; a styling point release
     landing after v0.6.0).
+  - `v0.6.9` — Optimization & Responsiveness: in-memory caching (with a
+    best-effort, read-only-FS-safe disk cache), memoized derived
+    computations, and event-driven benchmark/regime controls that re-render
+    a chart on switch instead of on a full refresh (written).
   - `v0.7.0` — Platform Tab Expansion: conditional-formatted all-catalog
     grid with a dynamic z-score column, a factor-beta scatter (equity risk
     premium vs term premium), and an asset-class treemap (written).
