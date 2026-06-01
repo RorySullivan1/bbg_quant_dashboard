@@ -39,6 +39,7 @@ from .stats import (
     drawdown_series,
     excess_cum_return,
     perf_table,
+    regime_corr_matrix,
     return_distribution_stats,
     rolling_beta,
     rolling_correlation,
@@ -230,6 +231,37 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         layout=W.Layout(width="320px"),
     )
 
+    # Correlation-Heatmap regime controls. The checkbox reveals a benchmark
+    # selector, a Down/Up tail direction toggle, and a 0-100% (step 5) tail
+    # size. When on, the heatmap is conditioned on the benchmark-return tail
+    # and the benchmark is added to the matrix (see `_render_pane`). Read at
+    # Refresh-prices time only, like the other per-pane benchmark dropdowns.
+    heat_regime_chk = W.Checkbox(
+        value=False,
+        description="Regime filter",
+        indent=False,
+        layout=W.Layout(width="140px"),
+    )
+    heat_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    heat_dir = W.ToggleButtons(
+        options=["Down", "Up"],
+        value="Down",
+        layout=W.Layout(width="auto"),
+    )
+    heat_pct = W.Dropdown(
+        options=[(f"{p}%", p) for p in range(0, 101, 5)],
+        value=100,
+        description="Tail",
+        style={"description_width": "40px"},
+        layout=W.Layout(width="160px"),
+    )
+
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
         "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
@@ -254,6 +286,13 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         layout=W.Layout(width="360px"),
     )
 
+    def _sync_regime_controls() -> None:
+        # The benchmark / direction / tail controls only matter on the
+        # Correlation Heatmap view and only when the regime checkbox is on.
+        show = picker.value == "Correlation Heatmap" and heat_regime_chk.value
+        for w in (heat_benchmark_dd, heat_dir, heat_pct):
+            w.layout.display = "" if show else "none"
+
     def _sync_benchmark_visibility(label: str) -> None:
         rcorr_benchmark_dd.layout.display = (
             "" if label == "Rolling Correlation" else "none"
@@ -264,11 +303,20 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         outperf_benchmark_dd.layout.display = (
             "" if label == "Outperformance" else "none"
         )
+        heat_regime_chk.layout.display = (
+            "" if label == "Correlation Heatmap" else "none"
+        )
+        _sync_regime_controls()
 
     _sync_benchmark_visibility(default_label)
+    heat_regime_chk.observe(lambda _c: _sync_regime_controls(), names="value")
 
     header_row = W.HBox(
-        [picker, rcorr_benchmark_dd, rbeta_benchmark_dd, outperf_benchmark_dd],
+        [
+            picker,
+            rcorr_benchmark_dd, rbeta_benchmark_dd, outperf_benchmark_dd,
+            heat_regime_chk, heat_benchmark_dd, heat_dir, heat_pct,
+        ],
         layout=W.Layout(
             width="100%",
             align_items="center",
@@ -305,6 +353,10 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         outperf_fig=outperf_fig, outperf_dd=outperf_benchmark_dd,
         sharpe_fig=sharpe_fig,
         heat_fig=heat_fig,
+        heat_regime_chk=heat_regime_chk,
+        heat_dd=heat_benchmark_dd,
+        heat_dir=heat_dir,
+        heat_pct=heat_pct,
         scatter_fig=scatter_fig,
         dd_fig=dd_fig,
         rcorr_fig=rcorr_fig, rcorr_dd=rcorr_benchmark_dd,
@@ -596,13 +648,50 @@ def build_app(verbose: bool = True) -> W.VBox:
     ) -> None:
         _update_line(pane.line_fig, prep.perf, meta)
         _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
-        _update_heatmap(pane.heat_fig, prep.cm)
         _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
         _update_drawdown(pane.dd_fig, prep.dd, meta)
         _update_return_dist(
             pane.retdist_fig, pane.retdist_stats_grid,
             prep.rets, prep.rd_stats, meta,
         )
+
+        # Correlation heatmap: optionally conditioned on a benchmark-return
+        # regime, with the benchmark added to the matrix. Computed per-pane so
+        # the two panes stay independent (like the rolling-corr/beta blocks).
+        if pane.heat_regime_chk.value:
+            hm_bench_ticker = pane.heat_dd.value
+            try:
+                hm_bench_prices = universe_prices.get(hm_bench_ticker)
+                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {hm_bench_ticker!r}."
+                    )
+                hm_bench_window = hm_bench_prices.loc[
+                    hm_bench_prices.index >= universe_window_start
+                ]
+                hm_bench_returns = daily_returns(
+                    hm_bench_window.to_frame()
+                ).iloc[:, 0]
+                direction = "up" if pane.heat_dir.value == "Up" else "down"
+                pct = pane.heat_pct.value / 100.0
+                cm = regime_corr_matrix(
+                    prep.rets, hm_bench_returns, pct,
+                    direction=direction, include_benchmark=True,
+                )
+                tail_lbl = "worst" if direction == "down" else "best"
+                title = (
+                    f"Correlation — {hm_bench_ticker} {tail_lbl} "
+                    f"{pane.heat_pct.value}% days ({LOOKBACK_YEARS}Y)"
+                )
+                _update_heatmap(pane.heat_fig, cm, title=title)
+            except Exception:
+                errors.append(traceback.format_exc())
+                _update_heatmap(pane.heat_fig, pd.DataFrame())
+        else:
+            _update_heatmap(
+                pane.heat_fig, prep.cm,
+                title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
+            )
 
         rc_bench_ticker = pane.rcorr_dd.value
         try:
@@ -1128,7 +1217,9 @@ def _heatmap() -> go.FigureWidget:
     )
 
 
-def _update_heatmap(fig: go.FigureWidget, cm: pd.DataFrame) -> None:
+def _update_heatmap(
+    fig: go.FigureWidget, cm: pd.DataFrame, title: str | None = None
+) -> None:
     # Correlation needs at least 2 series; below that, fall back to a
     # blank 2x2 placeholder so the heatmap still renders.
     if cm.empty or cm.shape[0] < 2:
@@ -1138,6 +1229,8 @@ def _update_heatmap(fig: go.FigureWidget, cm: pd.DataFrame) -> None:
         fig.data[0].z = cm.values
         fig.data[0].x = tickers
         fig.data[0].y = tickers
+        if title is not None:
+            fig.layout.title.text = title
 
 
 # ---- Sharpe z-score line chart (selected set, 1Y evolution) ----------------
