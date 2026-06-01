@@ -26,7 +26,11 @@ scope for that version firms up (goals, scope, status, related PRs).
     profile + cumulative chart, a tabbed monthly-return calendar table, and
     tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter)
     (written).
-  - `v1.0.0` — empty stub, to be filled in.
+  - `v1.0.0` — Release Hardening: testing, final optimization, documentation,
+    compliant legal-disclaimer placement, enhancements, and the 1.0 release
+    mechanics (written).
+
+All roadmap stubs are now filled in.
 
 ## How this ties to branching
 
