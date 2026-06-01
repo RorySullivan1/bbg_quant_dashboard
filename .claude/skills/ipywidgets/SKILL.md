@@ -1,117 +1,199 @@
 ---
 name: ipywidgets
-description: Build and maintain the ipywidgets UI for this BQuant dashboard — VBox/HBox layouts, flex sizing, accordions, the pill-button tab bars, checkbox/dropdown filter groups, and ipydatagrid tables. Use this skill whenever the user wants to add, change, or debug a widget, panel, tab, filter control, layout, or grid in the dashboard, or asks why a control isn't sizing/aligning/updating correctly. Trigger on phrases like "add a filter", "the dropdown is the wrong height", "add a tab", "the panels don't line up", "wire up a button", "the grid columns are wrong", "VBox/HBox", "accordion", "ipydatagrid", or any work on the dashboard's controls or layout in src/layout.py. Distinct from chart work — use the plotly skill for FigureWidget/trace changes.
+description: Reference for building interactive UIs with the ipywidgets package in Jupyter / JupyterLab / Voila — the widget model (traitlets, .value, observe), the widget catalog, layout containers (Box/HBox/VBox, GridBox, GridspecLayout, AppLayout, TwoByTwoLayout, Tab, Accordion, Stack), the Layout and Style objects, events and linking (observe, on_click, interact, link/jslink), and the Output widget. Use whenever working with ipywidgets — creating or wiring widgets, arranging them in containers/grids, sizing/aligning with Layout, styling controls, handling value changes or clicks, linking widgets, or debugging why a widget isn't updating, sizing, or rendering. Trigger on ipywidgets, "widget", VBox/HBox/GridBox/GridspecLayout/AppLayout/Tab/Accordion/Stack, observe/interact, Output, Layout, .value, link/jslink.
 ---
 
-# ipywidgets (this dashboard)
+# ipywidgets
 
-Expert ipywidgets work scoped to the `bbg_quant_dashboard` UI. The whole
-widget tree is built in `src/layout.py` by `build_app()`; all style
-tokens come from `src/style.py`. The goal is changes that fit the
-existing layout idioms — not a generic widgets tutorial.
+`ipywidgets` (aka Jupyter Widgets) renders interactive HTML/JS controls in
+Jupyter, JupyterLab, and Voila and keeps them in sync with Python objects.
+This is a reference for the **package**: the model, the widgets, the layout
+containers, styling, and events. Convention: `import ipywidgets as widgets`.
 
-## Read first
+## Mental model
 
-- `src/layout.py` — `build_app()` assembles banner → status banner →
-  commentary → top-level pill tab bar (Platform / Multi-Strategy
-  Analysis) → per-tab content → disclaimers. `_make_analysis_pane(side)`
-  is the factory for the two side-by-side analysis panes.
-- `src/style.py` — `Color`, `Font`, `FontSize`, `StatusTone`,
-  `Sentiment`, `TabButtonTone` enums plus `LINE_PALETTE`. **Never inline
-  a hex or font value — extend the enum and reference it.**
-- `CLAUDE.md` — the layout contract and conventions are authoritative;
-  re-read the "Project purpose" and "Conventions" sections before
-  restructuring anything.
-
-## Layout idioms used here
-
-- **Containers:** `VBox` for vertical stacks, `HBox` for side-by-side.
-  The two analysis panes and the left-strategies / right-filter split
-  are `HBox`es of two children.
-- **Equal-height side-by-side panels:** the left strategies picker and
-  the right filter panel are stretched to equal height by letting the
-  child grow via `layout.flex` (e.g. `flex="1 1 auto"`) while the parent
-  `HBox` stretches both. The `ticker_w` dropdown grows this way to match
-  the filter panel's height — do not hardcode a pixel height to fake
-  alignment; let flex do it.
-- **Widths:** prefer `width="100%"` / `flex` over fixed pixels so the
-  app fills a ~full-HD width. The perf grids are the exception (see
-  ipydatagrid below).
-- **Accordion:** the entire filter box lives inside an
-  expandable `Accordion` titled "Filters", `selected_index=0`
-  (expanded by default).
-- **Pill-button tab bars:** both the top-level tabs and the
-  filter-dimension header are rows of `Button`s styled via
-  `TabButtonTone` (active = navy bg + white text). Switching tabs swaps
-  the visible child / `children` of a container — it does **not**
-  recompute or fetch. Keep that cosmetic-only contract.
-
-## Filter controls (narrow-only contract)
-
-This is the single most important behavioral rule and easy to break:
-
-- Checkbox filter groups, the search box, the launch-date pickers, the
-  currency dropdown, and the Quantitative ratio thresholds **only narrow
-  the `ticker_w` strategies dropdown.** They must NOT trigger a recompute
-  or a BQL fetch.
-- Value getters read each widget's `.value` regardless of which
-  filter-type pill is currently visible, so switching pills is purely
-  cosmetic state, not data state.
-- **Selected tickers stay visible** in the dropdown even when filters or
-  the search box would otherwise hide them — preserve selection state
-  while the user types/filters.
-- Only **Refresh prices** re-fetches and recomputes. When you add a new
-  control, decide explicitly: is it a narrow-only filter (no recompute)
-  or does it feed a recompute (read at recompute time only)? Match the
-  existing pattern; don't add `.observe` callbacks that secretly refetch.
-
-## ipydatagrid (perf grids)
-
-- The all-catalog grid and the selected-strategy grid use **2-level
-  MultiIndex columns** (Info / 1Y / 3Y / 5Y supercolumns over leaves).
-- Per-column widths use ipydatagrid's `"<level0>,<level1>"` comma-joined
-  `column_widths` keys, built by `_build_perf_column_widths`. If
-  MultiIndex widths regress/flake, the documented fallback is uniform
-  sizing via `base_column_size` (no `column_widths`) — see CLAUDE.md.
-- `_perf_renderers` matches on the column **leaf**
-  (`col[-1] if isinstance(col, tuple) else col`) so one renderer set
-  serves both grids.
-- The selected grid's leftmost "Chart Color" column
-  (`PERF_COLOR_COLUMN_NAME`) is a `VegaExpr`-rendered swatch using the
-  positional `LINE_PALETTE` — it is the universal chart legend, so per
-  chart legends are off. Keep grid color and chart color keyed the same
-  way (strategy position in the selected set).
-
-## Workflow for a UI change
-
-1. Locate the existing widget/pattern in `src/layout.py` and mimic it —
-   matching the codebase beats inventing a new idiom.
-2. Pull any new color/font/size from `src/style.py` (extend an enum if
-   it doesn't exist yet).
-3. Decide the data contract: narrow-only filter vs recompute input vs
-   cosmetic. State it in the PR/commit so the contract stays explicit.
-4. For a new filter-type pill, add: the pill button (TabButtonTone), the
-   value widget(s), a value getter that reads `.value`, wiring into the
-   dropdown-narrowing logic, and Clear-section / Clear-all handling.
-5. Verify off-terminal with the mock-price fallback (see below).
-
-## Verify (off-terminal)
+A widget is a **synchronized pair**: a Python (kernel-side) model and a
+frontend (browser) view, kept in sync over a Comm channel via
+**traitlets**. Widget attributes are traits; setting one in Python updates
+the browser and vice-versa. The most important trait is usually **`.value`**.
 
 ```python
-from src.layout import build_app
-build_app()   # renders end-to-end on deterministic mock prices
+import ipywidgets as widgets
+slider = widgets.IntSlider(value=5, min=0, max=10)
+slider                 # last expression auto-displays in a notebook
+# from IPython.display import display; display(slider)
+slider.value           # -> 5 ; setting slider.value = 8 moves the UI live
 ```
 
-Then walk the relevant checks from CLAUDE.md's "Testing notes": pills
-swap value lists, ticking a checkbox narrows the dropdown, selected
-tickers stay visible, Clear section / Clear all re-widen but keep
-selection, panels are equal height, and no filter change triggers a
-fetch.
+A widget displayed twice shows two synced views of the *same* model.
 
-## Out of scope / pitfalls
+## Widget catalog (by category)
 
-- Don't fake equal-height panels with fixed pixel heights — use flex.
-- Don't let a filter control trigger a recompute or BQL call.
-- Don't inline CSS hex/font values — they belong in `src/style.py`.
-- Don't drop selected tickers from the dropdown when filtering.
-- Chart/trace edits belong in the **plotly** skill, not here.
+- **Numeric:** `IntSlider`, `FloatSlider`, `FloatLogSlider`,
+  `IntRangeSlider`, `FloatRangeSlider`, `BoundedIntText`, `IntText`,
+  `FloatText`, `IntProgress`, `FloatProgress`.
+- **Boolean:** `Checkbox`, `ToggleButton`, `Valid`.
+- **Selection:** `Dropdown`, `Select`, `SelectMultiple` (**`.value` is a
+  tuple**), `RadioButtons`, `ToggleButtons`, `SelectionSlider`,
+  `SelectionRangeSlider`. Set choices via `options=` (a list, or
+  `[(label, value), …]`).
+- **String:** `Text`, `Textarea`, `Combobox`, `Password`, `Label`, `HTML`,
+  `HTMLMath`.
+- **Button & output:** `Button` (use `.on_click`), `Output` (see below).
+- **Media / misc:** `Image`, `Video`, `Audio`, `FileUpload`, `DatePicker`,
+  `ColorPicker`, `Play` (animation driver).
+
+Common shared traits: `value`, `description`, `disabled`, and for selection
+widgets `options` / `index`.
+
+## Layout containers
+
+**Flexbox boxes** — `Box`, `HBox` (row), `VBox` (column). Children passed as
+a list/tuple; reassign `.children` to swap content.
+
+```python
+widgets.VBox([widgets.HBox([a, b]), c])
+```
+
+**`GridBox`** — CSS-grid container; drive it through its `Layout`:
+
+```python
+widgets.GridBox(
+    [w0, w1, w2, w3],
+    layout=widgets.Layout(
+        grid_template_columns="repeat(2, 1fr)",
+        grid_gap="8px",
+    ),
+)
+```
+
+**`GridspecLayout(n_rows, n_cols)`** — grid with **item placement by
+indexing/slicing** (great for dashboards):
+
+```python
+grid = widgets.GridspecLayout(3, 3)
+grid[0, :] = widgets.Button(description="header (full row)")
+grid[1:, 0] = widgets.Button(description="sidebar (spans rows)")
+grid[1:, 1:] = main_widget
+```
+
+**`AppLayout`** — "holy grail" page layout with named panes:
+
+```python
+widgets.AppLayout(
+    header=hdr, left_sidebar=nav, center=body,
+    right_sidebar=aside, footer=ftr,
+    pane_widths=["200px", 1, "200px"], pane_heights=["60px", 4, "40px"],
+)
+```
+
+**`TwoByTwoLayout`** — quick 2×2 quadrant layout
+(`top_left`/`top_right`/`bottom_left`/`bottom_right`).
+
+**Selection containers:**
+- `Tab` and `Accordion` — hold `children`; set pane titles via
+  `.titles = (...)` (ipywidgets ≥ 8) or `.set_title(i, "…")` (older);
+  `selected_index` controls/reads the open pane (`None` collapses an
+  Accordion).
+- `Stack` (ipywidgets ≥ 8) — shows exactly **one** child at a time by
+  `selected_index`; pair with a selector (e.g. `Dropdown`) via `jslink` for
+  kernel-free page switching.
+
+## The `Layout` object (CSS, on `widget.layout`)
+
+Every widget has a `.layout` exposing CSS:
+
+- **Sizing:** `width`, `height`, `min_width`/`max_width`,
+  `min_height`/`max_height` (`"100%"`, `"320px"`, `"auto"`).
+- **Box model:** `margin`, `padding`, `border`.
+- **Flexbox (on a Box):** `display="flex"`, `flex_flow="row"|"column"`,
+  `align_items`, `justify_content`; **on children:** `flex` (e.g.
+  `"1 1 auto"` to grow/shrink), `align_self`, `order`.
+- **CSS grid:** `grid_template_columns/rows`, `grid_gap`, `grid_area`.
+- **Visibility:** `visibility`, `display="none"` (collapse).
+- **Custom CSS hook:** `widget.add_class("my-class")` /
+  `remove_class(...)`, then target `.my-class` from an injected
+  `widgets.HTML("<style>…</style>")` — this is how you reach `:hover`,
+  scrollbars, transitions, etc. that the Python API doesn't expose.
+
+Prefer flex/`%` sizing over fixed pixels for responsive layouts; to make
+side-by-side panels equal height, let children grow with `flex` rather than
+hardcoding heights.
+
+## Styling (`widget.style`)
+
+`.style` is **widget-specific**: `Button` has `button_color`,
+`text_color`, `font_weight`; sliders have `handle_color`; progress bars have
+`bar_color`; description-bearing widgets have `description_width`.
+
+```python
+b = widgets.Button(description="Go")
+b.style.button_color = "#16a34a"
+dd = widgets.Dropdown(description="Metric",
+                      style={"description_width": "initial"})
+```
+
+For anything `.style` can't express, use the `add_class` + injected-CSS hook.
+
+## Events & interactivity
+
+- **`observe`** — react to trait changes:
+  ```python
+  def on_change(change):   # change: owner, name, old, new, type
+      print(change.new)
+  slider.observe(on_change, names="value")   # omitting names fires on all traits
+  ```
+  Detach with `unobserve`.
+- **`Button.on_click(handler)`** — buttons have no `value`; use clicks.
+- **`interact` / `interactive` / `interactive_output`** — auto-generate
+  controls from a function's args; wrap constants with `fixed(...)`.
+  `interactive_output(f, {...})` separates control layout from output.
+- **Linking widgets:** `link((a, "value"), (b, "value"))` and `dlink`
+  (directional) run **kernel-side**; `jslink` / `jsdlink` run **in the
+  browser** (keep working in a static export / Voila without the kernel).
+
+## The `Output` widget
+
+Captures stdout / rich display / matplotlib figures into a placed area:
+
+```python
+out = widgets.Output()
+with out:
+    print("logged here")          # or display(fig), df, etc.
+out.clear_output(wait=True)        # clear (wait=True avoids flicker)
+```
+
+Useful for logs, dynamic content, or embedding non-widget output in a layout.
+
+## Performance & correctness
+
+- Batch many updates with `with widget.hold_trait_notifications():` to emit
+  one frontend sync.
+- **Reuse** widgets and swap `children` (or use `Stack`) instead of
+  rebuilding trees; rebuilding drops state and is slow.
+- Keep `observe` handlers cheap; avoid triggering cascades of recompute.
+- Call `widget.close()` to release widgets you no longer need.
+
+## Jupyter vs Voila
+
+The same widgets render under **Voila** (notebook → standalone app) — there
+are no input cells and the last expression / `display()` provides the view.
+Avoid relying on cell side effects; build and return/`display` a root
+container.
+
+## Common pitfalls
+
+- Forgetting `names="value"` → handler fires for every trait.
+- `SelectMultiple.value` is a **tuple**, not a scalar.
+- `children` expects a tuple/list; assign a new sequence to change it.
+- `Tab`/`Accordion` title API differs by version (`titles` vs `set_title`).
+- Setting `Layout` props on the wrong object (set on `widget.layout`).
+- Fixed pixel sizing where flex/`%` is needed → misaligned/non-responsive UI.
+
+## In this repo (brief)
+
+`build_app()` in `src/layout.py` assembles the whole widget tree; style
+tokens (colors/fonts/sizes) live in `src/style.py` — reference them, don't
+inline hex. Tabular data grids use the **separate** `ipydatagrid` package
+(not core ipywidgets). See `CLAUDE.md` for the project's layout contract and
+conventions, and the `plotly` skill for chart widgets.
