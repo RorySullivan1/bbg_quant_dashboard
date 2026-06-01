@@ -37,6 +37,7 @@ from .stats import (
     cum_perf,
     daily_returns,
     drawdown_series,
+    excess_cum_return,
     perf_table,
     return_distribution_stats,
     rolling_beta,
@@ -64,6 +65,7 @@ CHART_HEIGHT = "520px"
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Cumulative Performance",
+    "Outperformance",
     "1Y Sharpe-z Line",
     "Correlation Heatmap",
     "Risk / Return",
@@ -179,7 +181,7 @@ def _make_tab_button(label: str, *, active: bool) -> W.Button:
 
 
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
-    """Build a self-contained analysis pane with all 8 figures pre-allocated.
+    """Build a self-contained analysis pane with all 9 figures pre-allocated.
 
     Returns a `SimpleNamespace` carrying every plotly `FigureWidget` the
     `_update_*` helpers need, plus the picker widget, the swap container,
@@ -192,6 +194,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     visibility based on the active analysis.
     """
     line_fig = _line_chart()
+    outperf_fig = _outperformance_chart()
     sharpe_fig = _sharpe_line_chart()
     heat_fig = _heatmap()
     scatter_fig = _scatter_chart()
@@ -219,10 +222,18 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         style={"description_width": "80px"},
         layout=W.Layout(width="320px"),
     )
+    outperf_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
 
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
         "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
+        "Outperformance":         W.VBox([outperf_fig], layout=view_layout),
         "1Y Sharpe-z Line":       W.VBox([sharpe_fig], layout=view_layout),
         "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
         "Risk / Return":          W.VBox([scatter_fig], layout=view_layout),
@@ -250,11 +261,14 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         rbeta_benchmark_dd.layout.display = (
             "" if label == "Rolling Beta" else "none"
         )
+        outperf_benchmark_dd.layout.display = (
+            "" if label == "Outperformance" else "none"
+        )
 
     _sync_benchmark_visibility(default_label)
 
     header_row = W.HBox(
-        [picker, rcorr_benchmark_dd, rbeta_benchmark_dd],
+        [picker, rcorr_benchmark_dd, rbeta_benchmark_dd, outperf_benchmark_dd],
         layout=W.Layout(
             width="100%",
             align_items="center",
@@ -288,6 +302,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         stack=stack,
         views=views,
         line_fig=line_fig,
+        outperf_fig=outperf_fig, outperf_dd=outperf_benchmark_dd,
         sharpe_fig=sharpe_fig,
         heat_fig=heat_fig,
         scatter_fig=scatter_fig,
@@ -555,6 +570,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     def _clear_pane(pane: SimpleNamespace) -> None:
         _update_line(pane.line_fig, pd.DataFrame(), meta)
+        _update_outperformance(pane.outperf_fig, pd.DataFrame(), meta, benchmark_label="")
         _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
         _update_heatmap(pane.heat_fig, pd.DataFrame())
         _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
@@ -628,6 +644,25 @@ def build_app(verbose: bool = True) -> W.VBox:
                 pane.rbeta_fig, rb, meta,
                 title_prefix="Rolling Beta",
                 benchmark_label=rb_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
+        # Outperformance: cumulative excess return vs the benchmark (prices,
+        # not returns — every strategy series starts at 0).
+        op_bench_ticker = pane.outperf_dd.value
+        try:
+            op_bench_prices = universe_prices.get(op_bench_ticker)
+            if op_bench_prices is None or op_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {op_bench_ticker!r}."
+                )
+            op_bench_window = op_bench_prices.loc[
+                op_bench_prices.index >= universe_window_start
+            ]
+            oc = excess_cum_return(prep.sel_window, op_bench_window)
+            _update_outperformance(
+                pane.outperf_fig, oc, meta, benchmark_label=op_bench_ticker,
             )
         except Exception:
             errors.append(traceback.format_exc())
@@ -851,6 +886,53 @@ def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -
             fig.add_traces(traces)
 
 
+def _outperformance_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Outperformance ({LOOKBACK_YEARS}Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Excess return (pp)"),
+            shapes=[_h_ref(0.0)],
+        )
+    )
+
+
+def _update_outperformance(
+    fig: go.FigureWidget,
+    df: pd.DataFrame,
+    meta: pd.DataFrame,
+    *,
+    benchmark_label: str,
+) -> None:
+    """Render cumulative excess return per strategy vs the benchmark. Each
+    series is in percentage points off a dashed zero baseline."""
+    new_title = (
+        f"Outperformance vs {benchmark_label} ({LOOKBACK_YEARS}Y)"
+        if benchmark_label
+        else f"Outperformance ({LOOKBACK_YEARS}Y)"
+    )
+    cleaned = df.dropna(how="all") if not df.empty else df
+    name_lookup = meta.set_index("ticker")["name"].to_dict()
+    traces: list[go.Scatter] = []
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna()
+        if series.empty:
+            continue
+        name = name_lookup.get(col) or col
+        label = f"{name} ({col})"
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}} pp<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.title.text = new_title
+
+
 # ---- Perf grid (selected set) ---------------------------------------------
 
 
@@ -865,22 +947,20 @@ def _perf_grid() -> DataGrid:
     return grid
 
 
-PERF_COLOR_COLUMN_NAME: str = "•"
+PERF_COLOR_COLUMN_NAME: str = "Chart Color"
 
-# Column widths in pixels. With flat (single-level) string column names,
-# `column_widths` keys map 1:1 to the column index ipydatagrid asks for.
-# MultiIndex columns previously made these keys impossible to write
-# correctly — see the v0.5.0 commit history for the gory details.
+# Column widths in pixels, keyed by the column's *leaf* label. The grid uses
+# 2-level MultiIndex columns (Info / 1Y / 3Y / 5Y supercolumns over their
+# leaves); `_build_perf_column_widths` emits ipydatagrid's "<level0>,<level1>"
+# comma-joined keys from these. The descriptive text columns carry the slack
+# that makes the grid fill a wide dashboard — ipydatagrid has no responsive
+# stretch-to-container mode, so widths are set by hand to sum to ~full-HD
+# width (~2014px incl. the 120px row header + metric columns).
 _PERF_INFO_WIDTHS: dict[str, int] = {
-    PERF_COLOR_COLUMN_NAME: 22,    # color swatch — minimal vertical stripe
-    # The descriptive text columns carry the slack that makes the grid fill
-    # a wide dashboard. ipydatagrid has no responsive stretch-to-container
-    # mode, so widths are set by hand to sum to ~full-HD width (~2046px incl.
-    # the 120px row header + metric columns). Bumped from 280/140/200, which
-    # left a gap on wide monitors. Tune to the target screen width.
-    "Name":         400,
-    "Asset Class":  200,
-    "Theme":        320,
+    PERF_COLOR_COLUMN_NAME: 90,    # color swatch — wide enough to show header
+    "Name":         360,
+    "Asset Class":  180,
+    "Theme":        280,
 }
 _PERF_METRIC_WIDTHS: dict[str, int] = {
     "Return": 88,
@@ -892,15 +972,18 @@ _PERF_INFO_TEXT_COLS: frozenset[str] = frozenset({"Name", "Asset Class", "Theme"
 
 
 def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
-    """Map each flat column name to a pixel width. Period-prefixed metric
-    columns (`"1Y Return"`, `"3Y Vol"`, …) inherit one width per metric
-    leaf so 1Y / 3Y / 5Y stay aligned."""
-    widths: dict[str, int] = dict(_PERF_INFO_WIDTHS)
+    """Map each MultiIndex column to a pixel width, keyed by ipydatagrid's
+    "<level0>,<level1>" comma-joined field name (e.g. "Info,Name",
+    "1Y,Return"). Info leaves take fixed widths; metric leaves
+    (Return/Vol/Sharpe/Max DD) take one width each so 1Y/3Y/5Y stay aligned."""
+    widths: dict[str, int] = {}
     for col in columns:
-        for metric, w in _PERF_METRIC_WIDTHS.items():
-            if col.endswith(" " + metric):
-                widths[col] = w
-                break
+        leaf = col[-1] if isinstance(col, tuple) else col
+        key = ",".join(str(p) for p in col) if isinstance(col, tuple) else str(col)
+        if leaf in _PERF_INFO_WIDTHS:
+            widths[key] = _PERF_INFO_WIDTHS[leaf]
+        elif leaf in _PERF_METRIC_WIDTHS:
+            widths[key] = _PERF_METRIC_WIDTHS[leaf]
     return widths
 
 
@@ -913,16 +996,19 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         grid.data = pd.DataFrame()
         return
     info_block = _info_block(pt.index, meta)
-    pt_flat = pt.copy()
-    pt_flat.columns = [f"{period} {metric}" for period, metric in pt.columns]
-    # Per-row color swatch: each cell carries the hex string; the
-    # renderer paints background + text the same color so it shows as
-    # a solid block — the universal legend for every chart in the panes.
-    color_col = pd.DataFrame(
-        {PERF_COLOR_COLUMN_NAME: [_palette_color(i) for i in range(len(pt))]},
-        index=pt.index,
+    # Per-row color swatch: each cell carries the hex string; the renderer
+    # paints background + text the same color so it shows as a solid block —
+    # the universal legend for every chart in the panes. It leads the Info
+    # supercolumn so the grid acts as the legend left-to-right.
+    info_block.insert(
+        0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
     )
-    combined = pd.concat([color_col, info_block, pt_flat], axis=1)
+    info_block.columns = pd.MultiIndex.from_product([["Info"], info_block.columns])
+    perf = pt.copy()
+    perf.columns = pd.MultiIndex.from_tuples(
+        [(str(period), str(metric)) for period, metric in pt.columns]
+    )
+    combined = pd.concat([info_block, perf], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
