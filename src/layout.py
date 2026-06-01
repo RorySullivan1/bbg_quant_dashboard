@@ -388,12 +388,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         placeholder="Search ticker or name…",
         layout=W.Layout(width="100%"),
     )
-    # `flex="1 1 auto"` lets the dropdown grow to fill the left panel, which is
-    # stretched to the filter panel's height by the parent HBox — so the
-    # strategies dropdown ends up the same height as the filter box.
-    # The SelectMultiple fills 100% of a flex holder (below), which grows to
-    # the bottom of the left panel — a plain `flex` on the select itself isn't
-    # honored, but `height="100%"` inside a grown holder is.
+    # The SelectMultiple fills 100% of a flex holder (built below) that grows to
+    # the bottom of the left panel, which the parent HBox stretches to the
+    # filter panel's height. A plain `flex` on the select itself isn't honored,
+    # but `height="100%"` inside a grown holder is — so it reaches the bottom.
     ticker_w = W.SelectMultiple(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
