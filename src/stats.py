@@ -268,6 +268,57 @@ def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Se
     return cov.divide(var)
 
 
+def _benchmark_series(benchmark: pd.Series | pd.DataFrame | None) -> pd.Series | None:
+    if benchmark is None:
+        return None
+    bench = benchmark.iloc[:, 0] if isinstance(benchmark, pd.DataFrame) else benchmark
+    return bench if not bench.empty else None
+
+
+def treynor_ratio(
+    returns: pd.DataFrame, prices: pd.DataFrame, benchmark: pd.Series, years: float
+) -> pd.Series:
+    """Annualized return divided by beta vs `benchmark` (risk-free = 0)."""
+    ret = ann_return(prices, years)
+    beta = ann_beta(returns, benchmark, years).replace(0, np.nan)
+    return ret.divide(beta)
+
+
+def jensen_alpha(
+    returns: pd.DataFrame, prices: pd.DataFrame, benchmark: pd.Series, years: float
+) -> pd.Series:
+    """Jensen's alpha (risk-free = 0): asset return − beta · benchmark return.
+
+    All annualized over the trailing `years` window. Returns a Series per ticker.
+    """
+    bench = _benchmark_series(benchmark)
+    if bench is None:
+        return pd.Series(np.nan, index=prices.columns)
+    bench_ret = ann_return(bench.to_frame(), years).iloc[0]
+    beta = ann_beta(returns, benchmark, years)
+    return ann_return(prices, years) - beta * bench_ret
+
+
+def downside_deviation(
+    returns: pd.DataFrame, years: float, target: float = 0.0
+) -> pd.Series:
+    """Annualized downside deviation: RMS of returns below `target` over `years`."""
+    sliced = _slice_last_years(returns, years)
+    if sliced.empty:
+        return pd.Series(np.nan, index=returns.columns)
+    downside = sliced.where(sliced < target, 0.0)
+    return np.sqrt((downside ** 2).mean()) * np.sqrt(TRADING_DAYS_PER_YEAR)
+
+
+def sortino_ratio(
+    returns: pd.DataFrame, prices: pd.DataFrame, years: float, target: float = 0.0
+) -> pd.Series:
+    """Annualized return divided by downside deviation (risk-free = 0)."""
+    ret = ann_return(prices, years)
+    dd = downside_deviation(returns, years, target).replace(0, np.nan)
+    return ret.divide(dd)
+
+
 def historical_var(
     returns: pd.DataFrame, years: float, confidence: float = VAR_CONFIDENCE
 ) -> pd.Series:
@@ -315,20 +366,28 @@ def quant_metrics_table(
     var_confidence: float = VAR_CONFIDENCE,
     rsi_window: int = RSI_WINDOW,
 ) -> pd.DataFrame:
-    """Per-ticker Sharpe / Calmar / Beta / VaR / RSI table for the quant filter.
+    """Per-ticker quant-filter metrics table.
 
+    Columns: Sharpe / Sortino / Calmar / Beta / Treynor / Jensen / VaR / RSI.
     Rows: tickers (columns of `prices`). One scalar per metric over the
-    trailing `years` window (RSI uses its own `rsi_window`). The cross-sectional
-    Z-Score is derived on demand by the caller via `zscore_cross_section`.
+    trailing `years` window (RSI uses its own `rsi_window`); Beta / Treynor /
+    Jensen are measured vs `benchmark`. The cross-sectional Z-Score is derived
+    on demand by the caller via `zscore_cross_section`.
     """
+    columns = [
+        "Sharpe", "Sortino", "Calmar", "Beta", "Treynor", "Jensen", "VaR", "RSI",
+    ]
     if prices.empty:
-        return pd.DataFrame(columns=["Sharpe", "Calmar", "Beta", "VaR", "RSI"])
+        return pd.DataFrame(columns=columns)
     rets = daily_returns(prices)
     return pd.DataFrame(
         {
             "Sharpe": ann_sharpe(rets, prices, years),
+            "Sortino": sortino_ratio(rets, prices, years),
             "Calmar": calmar_ratio(prices, years),
             "Beta": ann_beta(rets, benchmark, years),
+            "Treynor": treynor_ratio(rets, prices, benchmark, years),
+            "Jensen": jensen_alpha(rets, prices, benchmark, years),
             "VaR": historical_var(rets, years, var_confidence),
             "RSI": rsi(prices, rsi_window),
         }

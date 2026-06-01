@@ -36,7 +36,8 @@ tabs:
   Launch-date range (two date boxes separated by a hyphen) plus a
   **Currency** dropdown; **Quantitative** filters the universe by
   price-derived ratios — a global Period (1Y/3Y/5Y) dropdown, then one row
-  per metric (Sharpe / Calmar / Beta / VaR % / RSI / Z-Score) of
+  per metric (Sharpe / Sortino / Calmar / Beta / Treynor / Jensen α /
+  VaR % / RSI / Z-Score) of
   `[≥ or ≤ dropdown] [value box]`, with an inline parameter dropdown where
   relevant (Beta carries its benchmark dropdown, Z-Score its selectable
   base metric) — all via `quant_metrics_table` / `zscore_cross_section`,
@@ -89,7 +90,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Calmar/Beta/VaR/RSI table for the Quantitative filter), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
@@ -304,8 +305,9 @@ renders the full dashboard without a Bloomberg session. Verify by:
   by a hyphen) and a **Currency** dropdown; setting either narrows the
   dropdown.
 - The **Quantitative** pill shows a global Period (1Y/3Y/5Y) dropdown and
-  one row per metric (Sharpe / Calmar / Beta / VaR % / RSI / Z-Score), each
-  a `[≥/≤ dropdown] [value box]`; Beta's row carries the benchmark dropdown
+  one row per metric (Sharpe / Sortino / Calmar / Beta / Treynor /
+  Jensen α / VaR % / RSI / Z-Score), each a `[≥/≤ dropdown] [value box]`;
+  Beta's row carries the benchmark dropdown (shared by Treynor and Jensen)
   and Z-Score's carries its base-metric selector. Setting e.g. Sharpe
   `≥ 0.5` (or Sharpe `≤ 0.5`) narrows the dropdown to indices whose metric
   (computed from the already-fetched prices) clears the threshold; a blank

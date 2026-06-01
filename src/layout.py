@@ -413,7 +413,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="200px"),
     )
     q_z_metric = W.Dropdown(
-        options=["Sharpe", "Calmar", "Beta", "VaR", "RSI"], value="Sharpe",
+        options=["Sharpe", "Sortino", "Calmar", "Beta", "Treynor", "Jensen", "VaR", "RSI"],
+        value="Sharpe",
         layout=W.Layout(width="120px"),
     )
 
@@ -435,8 +436,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         return row, op, box
 
     sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
+    sortino_row, sortino_op, q_sortino = _q_row("Sortino")
     calmar_row, calmar_op, q_calmar = _q_row("Calmar")
     beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_bench)
+    treynor_row, treynor_op, q_treynor = _q_row("Treynor")
+    jensen_row, jensen_op, q_jensen = _q_row("Jensen α")
     var_row, var_op, q_var = _q_row("VaR %")
     rsi_row, rsi_op, q_rsi = _q_row("RSI")
     z_row, z_op, q_z = _q_row(
@@ -450,12 +454,19 @@ def build_app(verbose: bool = True) -> W.VBox:
         period_dd=q_period,
         bench_dd=q_bench,
         z_metric_dd=q_z_metric,
-        rows=[sharpe_row, calmar_row, beta_row, var_row, rsi_row, z_row],
+        # Beta / Treynor / Jensen share the benchmark dropdown on the Beta row.
+        rows=[
+            sharpe_row, sortino_row, calmar_row, beta_row, treynor_row,
+            jensen_row, var_row, rsi_row, z_row,
+        ],
         # metric name -> (operator dropdown, value box)
         specs={
             "Sharpe": (sharpe_op, q_sharpe),
+            "Sortino": (sortino_op, q_sortino),
             "Calmar": (calmar_op, q_calmar),
             "Beta": (beta_op, q_beta),
+            "Treynor": (treynor_op, q_treynor),
+            "Jensen": (jensen_op, q_jensen),
             "VaR": (var_op, q_var),
             "RSI": (rsi_op, q_rsi),
             "Z": (z_op, q_z),
