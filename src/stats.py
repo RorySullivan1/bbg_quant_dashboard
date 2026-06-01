@@ -42,10 +42,71 @@ def corr_matrix(returns: pd.DataFrame) -> pd.DataFrame:
     return returns.corr()
 
 
+def regime_corr_matrix(
+    returns: pd.DataFrame,
+    benchmark: pd.Series,
+    pct: float,
+    *,
+    direction: str = "down",
+    include_benchmark: bool = True,
+) -> pd.DataFrame:
+    """Correlation of ``returns`` restricted to a benchmark-return regime.
+
+    ``pct`` is the tail size in [0, 1]. ``direction="down"`` keeps days where
+    the benchmark return is at or below its ``pct`` quantile (worst days);
+    ``direction="up"`` keeps days at or above its ``1 - pct`` quantile (best
+    days). ``pct >= 1`` keeps all days. When ``include_benchmark``, the
+    benchmark is appended as a column so its conditional correlation to each
+    strategy (and self = 1) appears in the matrix — its column carries the
+    benchmark's name so it lines up with the full-ticker strategy columns the
+    heatmap already shows. Returns an empty frame when the regime selects fewer
+    than 2 rows (caller falls back to a blank heatmap).
+    """
+    if returns.empty or benchmark is None or benchmark.empty or pct <= 0:
+        return pd.DataFrame()
+    bench = benchmark.reindex(returns.index)
+    valid = bench.dropna()
+    if valid.empty:
+        return pd.DataFrame()
+    if direction == "up":
+        thresh = valid.quantile(1.0 - pct)
+        mask = bench >= thresh
+    else:
+        thresh = valid.quantile(pct)
+        mask = bench <= thresh
+    mask = mask.fillna(False)
+    sub = returns.loc[mask]
+    if include_benchmark:
+        sub = sub.copy()
+        sub[bench.name] = bench.loc[mask]
+    if sub.shape[0] < 2:
+        return pd.DataFrame()
+    return corr_matrix(sub)
+
+
 def drawdown_series(prices: pd.DataFrame) -> pd.DataFrame:
     if prices.empty:
         return prices
     return prices.divide(prices.cummax()).subtract(1.0)
+
+
+def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFrame:
+    """Cumulative excess return vs a benchmark, in percentage points.
+
+    Each column is the strategy's cumulative % return minus the benchmark's
+    cumulative % return over the same window, so every series starts at 0 and
+    a value above 0 means the strategy has outperformed the benchmark since
+    the window start. Same shape as ``prices``.
+    """
+    if prices.empty or benchmark.empty:
+        return pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
+    bench = benchmark
+    if isinstance(bench, pd.DataFrame):   # tolerate a 1-column frame
+        bench = bench.iloc[:, 0]
+    bench = bench.reindex(prices.index).ffill()
+    strat_ret = cum_perf(prices).subtract(100)
+    bench_ret = cum_perf(bench.to_frame()).iloc[:, 0].subtract(100)
+    return strat_ret.subtract(bench_ret, axis=0)
 
 
 def rolling_correlation(

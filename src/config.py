@@ -10,6 +10,12 @@ PERF_TABLE_YEARS = (1, 3, 5)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 
+# On-disk parquet cache for the single startup BQL fetch. Keyed by the
+# `end` date (one file per trading day). `CACHE_TTL_HOURS` bounds how
+# stale a same-day cache can be before it's treated as a miss.
+CACHE_DIR = REPO_ROOT / "data" / ".cache"
+CACHE_TTL_HOURS = 12
+
 # Solution values that count as "Alternative Risk Premia" — compared
 # case-insensitively against the metadata `solution` column. The dataset
 # currently uses the short form "ARP"; the long form is kept here so the

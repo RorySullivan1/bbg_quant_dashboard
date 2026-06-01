@@ -5,15 +5,16 @@ import time
 import traceback
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
-import bqplot as bq
 import ipywidgets as W
 import numpy as np
 import pandas as pd
-from ipydatagrid import DataGrid, TextRenderer
+import plotly.graph_objects as go
+from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
-from .bql_client import default_window, fetch_prices
+from .bql_client import _cache_path, default_window, fetch_prices
 from .commentary import build_highlights
 from .config import (
     ARP_SOLUTION_VALUES,
@@ -36,7 +37,9 @@ from .stats import (
     cum_perf,
     daily_returns,
     drawdown_series,
+    excess_cum_return,
     perf_table,
+    regime_corr_matrix,
     return_distribution_stats,
     rolling_beta,
     rolling_correlation,
@@ -44,24 +47,34 @@ from .stats import (
     sharpe_zscore,
     universe_perf,
 )
+from .style import (
+    LINE_PALETTE,
+    Color,
+    Font,
+    FontSize,
+    Sentiment,
+    StatusTone,
+    TabButtonTone,
+)
 
 
-LINE_COLORS = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf",
-]
+# Uniform height for every chart that lives inside an analysis pane.
+# `_perf_grid` / `_return_dist_stats_grid` / `_universe_grid` keep their
+# own heights — they're tables, not charts.
+CHART_HEIGHT = "520px"
 
 
-ASSET_CLASS_COLORS: dict[str, str] = {
-    "Equity":       "#1f77b4",
-    "Fixed Income": "#ff7f0e",
-    "Commodity":    "#2ca02c",
-    "FX":           "#d62728",
-    "Multi-Asset":  "#9467bd",
-    "Credit":       "#8c564b",
-}
-UNKNOWN_ASSET_CLASS_COLOR = "#94a3b8"
+ANALYSIS_OPTIONS: tuple[str, ...] = (
+    "Cumulative Performance",
+    "Outperformance",
+    "1Y Sharpe-z Line",
+    "Correlation Heatmap",
+    "Risk / Return",
+    "Drawdown",
+    "Rolling Correlation",
+    "Return Distribution",
+    "Rolling Beta",
+)
 
 
 SHARPE_WINDOW_LABEL = (
@@ -73,10 +86,10 @@ SHARPE_WINDOW_LABEL = (
 
 BANNER_HTML = (
     "<div style='display:flex;align-items:center;gap:16px;"
-    "padding:12px 16px;background:#0b1f3a;color:#fff;'>"
-    "<div style='font-size:22px;font-weight:600;'>"
+    f"padding:12px 16px;background:{Color.BRAND_NAVY};color:{Color.WHITE};'>"
+    f"<div style='font-size:{FontSize.HERO};font-weight:600;'>"
     "Index Catalog Dashboard</div>"
-    "<div style='font-size:13px;opacity:0.75;'>"
+    f"<div style='font-size:{FontSize.SMALL};opacity:0.75;'>"
     "Metadata · Performance · Risk</div>"
     "</div>"
 )
@@ -94,6 +107,24 @@ def _banner() -> W.HBox:
     )
 
 
+def _status_banner() -> W.HTML:
+    return W.HTML(
+        _render_status("Initializing…", tone=StatusTone.INFO),
+        layout=W.Layout(width="100%"),
+    )
+
+
+def _render_status(text: str, *, tone: StatusTone) -> str:
+    return (
+        f"<div style='font-family:{Font.MONO};"
+        f"font-size:{FontSize.LABEL};padding:6px 14px;"
+        f"background:{tone.bg};border-bottom:1px solid {tone.border};"
+        f"color:{tone.fg};'>"
+        f"{html.escape(text)}"
+        "</div>"
+    )
+
+
 def _toggle_group(
     label: str, options: list[str]
 ) -> tuple[W.VBox, Callable[[], list[str]], list[W.ToggleButton]]:
@@ -106,7 +137,8 @@ def _toggle_group(
         for opt in options
     }
     header = W.HTML(
-        f"<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
+        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
+        f"margin:6px 4px 2px 4px;'>{html.escape(label)}</div>"
     )
     toggle_list = W.VBox(
         list(toggles.values()),
@@ -122,11 +154,216 @@ def _toggle_group(
         layout=W.Layout(
             width="100%",
             padding="4px 6px",
-            border="1px solid #e5e7eb",
+            border=f"1px solid {Color.SLATE_200}",
             margin="0 0 6px 0",
         ),
     )
     return box, (lambda: [v for v, t in toggles.items() if t.value]), list(toggles.values())
+
+
+def _style_tab_button(btn: W.Button, *, active: bool) -> None:
+    tone = TabButtonTone.ACTIVE if active else TabButtonTone.INACTIVE
+    btn.style.button_color = tone.bg
+    btn.style.text_color = tone.fg
+    btn.style.font_weight = tone.weight
+
+
+def _make_tab_button(label: str, *, active: bool) -> W.Button:
+    btn = W.Button(
+        description=label,
+        layout=W.Layout(
+            width="240px",
+            height="40px",
+            margin="0 6px 0 0",
+        ),
+    )
+    _style_tab_button(btn, active=active)
+    return btn
+
+
+def _make_analysis_pane(side_label: str) -> SimpleNamespace:
+    """Build a self-contained analysis pane with all 9 figures pre-allocated.
+
+    Returns a `SimpleNamespace` carrying every plotly `FigureWidget` the
+    `_update_*` helpers need, plus the picker widget, the swap container,
+    a `views` dict keyed by `ANALYSIS_OPTIONS` labels, and the root VBox.
+
+    Plotly figures are independent widget instances; each pane owns its
+    own set so the two panes can render the same analysis side-by-side
+    without conflict. The Rolling-Correlation / Rolling-Beta benchmark
+    dropdowns live on the same row as the analysis picker and toggle
+    visibility based on the active analysis.
+    """
+    line_fig = _line_chart()
+    outperf_fig = _outperformance_chart()
+    sharpe_fig = _sharpe_line_chart()
+    heat_fig = _heatmap()
+    scatter_fig = _scatter_chart()
+    dd_fig = _drawdown_chart()
+    rcorr_fig = _rolling_ref_chart(
+        title_prefix="Rolling Correlation", y_label="Correlation", ref_y=0.0,
+    )
+    rbeta_fig = _rolling_ref_chart(
+        title_prefix="Rolling Beta", y_label="Beta", ref_y=1.0,
+    )
+    retdist_fig = _return_dist_chart()
+    retdist_stats_grid = _return_dist_stats_grid()
+
+    rcorr_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    rbeta_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    outperf_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+
+    # Correlation-Heatmap regime controls. The checkbox reveals a benchmark
+    # selector, a Down/Up tail direction toggle, and a 0-100% (step 5) tail
+    # size. When on, the heatmap is conditioned on the benchmark-return tail
+    # and the benchmark is added to the matrix (see `_render_pane`). Read at
+    # Refresh-prices time only, like the other per-pane benchmark dropdowns.
+    heat_regime_chk = W.Checkbox(
+        value=False,
+        description="Regime filter",
+        indent=False,
+        layout=W.Layout(width="140px"),
+    )
+    heat_benchmark_dd = W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=DEFAULT_BENCHMARK,
+        description="Benchmark",
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+    heat_dir = W.ToggleButtons(
+        options=["Down", "Up"],
+        value="Down",
+        layout=W.Layout(width="auto"),
+    )
+    heat_pct = W.Dropdown(
+        options=[(f"{p}%", p) for p in range(0, 101, 5)],
+        value=100,
+        description="Tail",
+        style={"description_width": "40px"},
+        layout=W.Layout(width="160px"),
+    )
+
+    view_layout = W.Layout(width="100%", padding="4px")
+    views: dict[str, W.Widget] = {
+        "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
+        "Outperformance":         W.VBox([outperf_fig], layout=view_layout),
+        "1Y Sharpe-z Line":       W.VBox([sharpe_fig], layout=view_layout),
+        "Correlation Heatmap":    W.VBox([heat_fig], layout=view_layout),
+        "Risk / Return":          W.VBox([scatter_fig], layout=view_layout),
+        "Drawdown":               W.VBox([dd_fig], layout=view_layout),
+        "Rolling Correlation":    W.VBox([rcorr_fig], layout=view_layout),
+        "Return Distribution":    W.VBox([retdist_fig, retdist_stats_grid], layout=view_layout),
+        "Rolling Beta":           W.VBox([rbeta_fig], layout=view_layout),
+    }
+
+    default_label = (
+        "Cumulative Performance" if side_label == "left" else "Correlation Heatmap"
+    )
+    picker = W.Dropdown(
+        options=list(ANALYSIS_OPTIONS),
+        value=default_label,
+        description="Analysis",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="360px"),
+    )
+
+    def _sync_regime_controls() -> None:
+        # The benchmark / direction / tail controls only matter on the
+        # Correlation Heatmap view and only when the regime checkbox is on.
+        show = picker.value == "Correlation Heatmap" and heat_regime_chk.value
+        for w in (heat_benchmark_dd, heat_dir, heat_pct):
+            w.layout.display = "" if show else "none"
+
+    def _sync_benchmark_visibility(label: str) -> None:
+        rcorr_benchmark_dd.layout.display = (
+            "" if label == "Rolling Correlation" else "none"
+        )
+        rbeta_benchmark_dd.layout.display = (
+            "" if label == "Rolling Beta" else "none"
+        )
+        outperf_benchmark_dd.layout.display = (
+            "" if label == "Outperformance" else "none"
+        )
+        heat_regime_chk.layout.display = (
+            "" if label == "Correlation Heatmap" else "none"
+        )
+        _sync_regime_controls()
+
+    _sync_benchmark_visibility(default_label)
+    heat_regime_chk.observe(lambda _c: _sync_regime_controls(), names="value")
+
+    header_row = W.HBox(
+        [
+            picker,
+            rcorr_benchmark_dd, rbeta_benchmark_dd, outperf_benchmark_dd,
+            heat_regime_chk, heat_benchmark_dd, heat_dir, heat_pct,
+        ],
+        layout=W.Layout(
+            width="100%",
+            align_items="center",
+            margin="0 0 6px 0",
+        ),
+    )
+    stack = W.Box(
+        [views[default_label]],
+        layout=W.Layout(width="100%"),
+    )
+
+    def _on_pick(change):
+        label = change["new"]
+        _sync_benchmark_visibility(label)
+        stack.children = (views[label],)
+
+    picker.observe(_on_pick, names="value")
+
+    root = W.VBox(
+        [header_row, stack],
+        layout=W.Layout(
+            width="50%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
+    )
+
+    return SimpleNamespace(
+        root=root,
+        picker=picker,
+        stack=stack,
+        views=views,
+        line_fig=line_fig,
+        outperf_fig=outperf_fig, outperf_dd=outperf_benchmark_dd,
+        sharpe_fig=sharpe_fig,
+        heat_fig=heat_fig,
+        heat_regime_chk=heat_regime_chk,
+        heat_dd=heat_benchmark_dd,
+        heat_dir=heat_dir,
+        heat_pct=heat_pct,
+        scatter_fig=scatter_fig,
+        dd_fig=dd_fig,
+        rcorr_fig=rcorr_fig, rcorr_dd=rcorr_benchmark_dd,
+        rbeta_fig=rbeta_fig, rbeta_dd=rbeta_benchmark_dd,
+        retdist_fig=retdist_fig,
+        retdist_stats_grid=retdist_stats_grid,
+    )
 
 
 def build_app(verbose: bool = True) -> W.VBox:
@@ -169,13 +406,37 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     apply_btn = W.Button(
-        description="Apply",
+        description="Refresh prices",
         button_style="primary",
         layout=W.Layout(width="100%"),
     )
+    status_w = _status_banner()
+
+    def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
+        status_w.value = _render_status(text, tone=tone)
+
+    def _format_loaded(
+        df: pd.DataFrame, source: str, elapsed: float
+    ) -> tuple[str, StatusTone]:
+        n_tickers = df.shape[1]
+        n_days = df.shape[0]
+        if source == "cache":
+            mtime = _cache_path(today).stat().st_mtime
+            stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
+            return (
+                f"Loaded {n_tickers} indices · {n_days} trading days from cache ({stamp})",
+                StatusTone.SUCCESS,
+            )
+        src_label = "BQL" if source == "bql" else "mock prices"
+        return (
+            f"Loaded {n_tickers} indices · {n_days} trading days · "
+            f"fetched from {src_label} in {elapsed:.1f}s",
+            StatusTone.SUCCESS,
+        )
 
     ticker_label = W.HTML(
-        "<div style='font-weight:600;font-size:12px;margin:6px 4px 2px 4px;'>Tickers</div>"
+        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
+        "margin:6px 4px 2px 4px;'>Tickers</div>"
     )
     live_row = W.HBox(
         [live_min, live_max],
@@ -201,82 +462,35 @@ def build_app(verbose: bool = True) -> W.VBox:
             toggle_grid,
             apply_btn,
         ],
-        layout=W.Layout(width="100%", padding="8px"),
-    )
-
-    line_fig, line_x, line_y, _ = _line_chart()
-    perf_grid = _perf_grid()
-    sharpe_line_fig, sharpe_line_x, sharpe_line_y, sharpe_line_zero = _sharpe_line_chart()
-    heat_fig, heat_data, heat_x, heat_y = _heatmap()
-    scatter_fig, scatter_x, scatter_y, scatter_mark = _scatter_chart()
-    scatter_legend = W.HTML(_render_scatter_legend(ASSET_CLASS_COLORS))
-    dd_fig, dd_x, dd_y, dd_zero = _drawdown_chart()
-    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero = _rolling_ref_chart(
-        title_prefix="Rolling Correlation",
-        y_label="Correlation",
-        ref_y=0.0,
-    )
-    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref = _rolling_ref_chart(
-        title_prefix="Rolling Beta",
-        y_label="Beta",
-        ref_y=1.0,
-    )
-    retdist_fig, retdist_x, retdist_y = _return_dist_chart()
-    retdist_stats_grid = _return_dist_stats_grid()
-
-    rcorr_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
-    rbeta_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
+        layout=W.Layout(
+            width="100%",
+            padding="8px",
+            border=f"1px solid {Color.SLATE_200}",
+        ),
     )
 
     weekly_w = W.HTML(_render_weekly_commentary(_load_weekly_commentary(), date.today()))
     highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
 
-    filter_col = W.Box(
-        [filter_box],
-        layout=W.Layout(width="30%", border="1px solid #ddd"),
-    )
-    chart_col = W.VBox(
-        [line_fig, perf_grid, sharpe_line_fig],
-        layout=W.Layout(width="70%", padding="8px"),
-    )
-    row1 = W.HBox(
-        [filter_col, chart_col],
+    pane_left = _make_analysis_pane("left")
+    pane_right = _make_analysis_pane("right")
+    analysis_pane_row = W.HBox(
+        [pane_left.root, pane_right.root],
         layout=W.Layout(width="100%", align_items="stretch"),
     )
 
-    tab_layout = W.Layout(width="100%", padding="8px")
-    analysis_tabs = W.Tab(
-        children=[
-            W.VBox([heat_fig], layout=tab_layout),
-            W.VBox([scatter_fig, scatter_legend], layout=tab_layout),
-            W.VBox([dd_fig], layout=tab_layout),
-            W.VBox([rcorr_benchmark_dd, rcorr_fig], layout=tab_layout),
-            W.VBox([retdist_fig, retdist_stats_grid], layout=tab_layout),
-            W.VBox([rbeta_benchmark_dd, rbeta_fig], layout=tab_layout),
-        ],
-        layout=W.Layout(width="100%"),
+    selected_perf_grid = _perf_grid()
+    selected_perf_header = W.HTML(
+        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
+        "margin:8px 12px 4px 12px;'>"
+        "Selected-strategy performance"
+        "</div>"
     )
-    for i, title in enumerate([
-        "Correlation",
-        "Risk / Return",
-        "Drawdown",
-        "Rolling Correlation",
-        "Return Distribution",
-        "Rolling Beta",
-    ]):
-        analysis_tabs.set_title(i, title)
+    selected_perf_section = W.VBox(
+        [selected_perf_header, selected_perf_grid],
+        layout=W.Layout(width="100%", padding="4px 0 8px 0"),
+    )
 
     commentary_box = W.VBox(
         [weekly_w, highlights_w],
@@ -284,14 +498,45 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     universe_header = W.HTML(
-        "<div style='font-weight:600;font-size:14px;margin:8px 12px 4px 12px;'>"
+        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
+        "margin:8px 12px 4px 12px;'>"
         "All-catalog performance"
         "</div>"
     )
-    universe_row = W.VBox(
+    platform_panel = W.VBox(
         [universe_header, universe_grid],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
+    selected_panel = W.VBox(
+        [filter_box, selected_perf_section, analysis_pane_row],
+        layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
+    )
+
+    platform_btn = _make_tab_button("Platform", active=True)
+    selected_btn = _make_tab_button("Multi-Strategy Analysis", active=False)
+    top_tab_bar = W.HBox(
+        [platform_btn, selected_btn],
+        layout=W.Layout(
+            width="100%",
+            padding="10px 16px 4px 16px",
+            border_bottom=f"1px solid {Color.SLATE_200}",
+        ),
+    )
+    top_tab_content = W.Box(
+        [platform_panel],
+        layout=W.Layout(width="100%"),
+    )
+
+    def _activate_tab(which: str) -> None:
+        is_platform = which == "platform"
+        _style_tab_button(platform_btn, active=is_platform)
+        _style_tab_button(selected_btn, active=not is_platform)
+        top_tab_content.children = (
+            platform_panel if is_platform else selected_panel,
+        )
+
+    platform_btn.on_click(lambda _b: _activate_tab("platform"))
+    selected_btn.on_click(lambda _b: _activate_tab("selected"))
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal — the
@@ -306,19 +551,20 @@ def build_app(verbose: bool = True) -> W.VBox:
     # They are excluded from the ARP-universe grid and the highlights cards
     # via reindex(columns=meta["ticker"]).
     fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
-    _log(
-        f"BQL fetch starting: {len(meta)} ARP + {len(BENCHMARK_TICKERS)} "
-        f"benchmarks = {len(fetch_tickers)} tickers, {universe_start} → {today}"
+    _set_status(
+        f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
+        tone=StatusTone.INFO,
     )
     t_fetch = time.perf_counter()
     try:
-        universe_prices = fetch_prices(fetch_tickers, universe_start, today)
-        _log(
-            f"BQL fetch done in {time.perf_counter() - t_fetch:.1f}s — "
-            f"shape={universe_prices.shape}"
+        universe_prices, fetch_source = fetch_prices(
+            fetch_tickers, universe_start, today
         )
+        fetch_elapsed = time.perf_counter() - t_fetch
+        text, tone = _format_loaded(universe_prices, fetch_source, fetch_elapsed)
+        _set_status(text, tone=tone)
     except Exception:
-        _log(f"BQL fetch FAILED after {time.perf_counter() - t_fetch:.1f}s")
+        _set_status("Load failed — see error below", tone=StatusTone.ERROR)
         init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
@@ -374,6 +620,142 @@ def build_app(verbose: bool = True) -> W.VBox:
     for w in (live_min, live_max, search_w):
         w.observe(_on_filter_change, names="value")
 
+    def _clear_pane(pane: SimpleNamespace) -> None:
+        _update_line(pane.line_fig, pd.DataFrame(), meta)
+        _update_outperformance(pane.outperf_fig, pd.DataFrame(), meta, benchmark_label="")
+        _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
+        _update_heatmap(pane.heat_fig, pd.DataFrame())
+        _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
+        _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
+        _update_rolling_ref(
+            pane.rcorr_fig, pd.DataFrame(), meta,
+            title_prefix="Rolling Correlation", benchmark_label="",
+        )
+        _update_rolling_ref(
+            pane.rbeta_fig, pd.DataFrame(), meta,
+            title_prefix="Rolling Beta", benchmark_label="",
+        )
+        _update_return_dist(
+            pane.retdist_fig, pane.retdist_stats_grid,
+            pd.DataFrame(), pd.DataFrame(), meta,
+        )
+
+    def _render_pane(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        universe_window_start: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
+        _update_line(pane.line_fig, prep.perf, meta)
+        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
+        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
+        _update_drawdown(pane.dd_fig, prep.dd, meta)
+        _update_return_dist(
+            pane.retdist_fig, pane.retdist_stats_grid,
+            prep.rets, prep.rd_stats, meta,
+        )
+
+        # Correlation heatmap: optionally conditioned on a benchmark-return
+        # regime, with the benchmark added to the matrix. Computed per-pane so
+        # the two panes stay independent (like the rolling-corr/beta blocks).
+        if pane.heat_regime_chk.value:
+            hm_bench_ticker = pane.heat_dd.value
+            try:
+                hm_bench_prices = universe_prices.get(hm_bench_ticker)
+                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {hm_bench_ticker!r}."
+                    )
+                hm_bench_window = hm_bench_prices.loc[
+                    hm_bench_prices.index >= universe_window_start
+                ]
+                hm_bench_returns = daily_returns(
+                    hm_bench_window.to_frame()
+                ).iloc[:, 0]
+                direction = "up" if pane.heat_dir.value == "Up" else "down"
+                pct = pane.heat_pct.value / 100.0
+                cm = regime_corr_matrix(
+                    prep.rets, hm_bench_returns, pct,
+                    direction=direction, include_benchmark=True,
+                )
+                tail_lbl = "worst" if direction == "down" else "best"
+                title = (
+                    f"Correlation — {hm_bench_ticker} {tail_lbl} "
+                    f"{pane.heat_pct.value}% days ({LOOKBACK_YEARS}Y)"
+                )
+                _update_heatmap(pane.heat_fig, cm, title=title)
+            except Exception:
+                errors.append(traceback.format_exc())
+                _update_heatmap(pane.heat_fig, pd.DataFrame())
+        else:
+            _update_heatmap(
+                pane.heat_fig, prep.cm,
+                title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
+            )
+
+        rc_bench_ticker = pane.rcorr_dd.value
+        try:
+            rc_bench_prices = universe_prices.get(rc_bench_ticker)
+            if rc_bench_prices is None or rc_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {rc_bench_ticker!r}."
+                )
+            rc_bench_window = rc_bench_prices.loc[
+                rc_bench_prices.index >= universe_window_start
+            ]
+            rc_bench_returns = daily_returns(
+                rc_bench_window.to_frame()
+            ).iloc[:, 0]
+            rc = rolling_correlation(prep.rets, rc_bench_returns)
+            _update_rolling_ref(
+                pane.rcorr_fig, rc, meta,
+                title_prefix="Rolling Correlation",
+                benchmark_label=rc_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
+        rb_bench_ticker = pane.rbeta_dd.value
+        try:
+            rb_bench_prices = universe_prices.get(rb_bench_ticker)
+            if rb_bench_prices is None or rb_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {rb_bench_ticker!r}."
+                )
+            rb_bench_window = rb_bench_prices.loc[
+                rb_bench_prices.index >= universe_window_start
+            ]
+            rb_bench_returns = daily_returns(
+                rb_bench_window.to_frame()
+            ).iloc[:, 0]
+            rb = rolling_beta(prep.rets, rb_bench_returns)
+            _update_rolling_ref(
+                pane.rbeta_fig, rb, meta,
+                title_prefix="Rolling Beta",
+                benchmark_label=rb_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
+        # Outperformance: cumulative excess return vs the benchmark (prices,
+        # not returns — every strategy series starts at 0).
+        op_bench_ticker = pane.outperf_dd.value
+        try:
+            op_bench_prices = universe_prices.get(op_bench_ticker)
+            if op_bench_prices is None or op_bench_prices.dropna().empty:
+                raise ValueError(
+                    f"No price data for benchmark {op_bench_ticker!r}."
+                )
+            op_bench_window = op_bench_prices.loc[
+                op_bench_prices.index >= universe_window_start
+            ]
+            oc = excess_cum_return(prep.sel_window, op_bench_window)
+            _update_outperformance(
+                pane.outperf_fig, oc, meta, benchmark_label=op_bench_ticker,
+            )
+        except Exception:
+            errors.append(traceback.format_exc())
+
     def _recompute(_btn=None):
         highlights_html = ""
         # Surface any errors from the initial universe fetch so the user can
@@ -395,129 +777,86 @@ def build_app(verbose: bool = True) -> W.VBox:
         except Exception:
             highlights_html += _render_error(traceback.format_exc())
 
+        pane_errors: list[str] = []
         try:
             tickers = list(ticker_w.value)
             if len(tickers) < 1:
-                _update_line(line_fig, line_x, line_y, pd.DataFrame(), meta)
-                _update_perf_grid(perf_grid, pd.DataFrame(), meta)
-                _update_sharpe_line(
-                    sharpe_line_fig, sharpe_line_x, sharpe_line_y,
-                    sharpe_line_zero, pd.DataFrame(), meta,
-                )
-                _update_heatmap(heat_fig, heat_data, heat_x, heat_y, pd.DataFrame())
-                _update_scatter(
-                    scatter_fig, scatter_x, scatter_y, scatter_mark,
-                    pd.DataFrame(), pd.DataFrame(), meta,
-                )
-                _update_drawdown(
-                    dd_fig, dd_x, dd_y, dd_zero, pd.DataFrame(), meta,
-                )
-                _update_rolling_ref(
-                    rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
-                    pd.DataFrame(), meta,
-                    title_prefix="Rolling Correlation",
-                    benchmark_label="",
-                )
-                _update_rolling_ref(
-                    rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
-                    pd.DataFrame(), meta,
-                    title_prefix="Rolling Beta",
-                    benchmark_label="",
-                )
-                _update_return_dist(
-                    retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
-                    pd.DataFrame(), pd.DataFrame(), meta,
-                )
+                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
+                _clear_pane(pane_left)
+                _clear_pane(pane_right)
             elif universe_prices.empty:
-                highlights_html += _render_error(
+                pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
+                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
+                _clear_pane(pane_left)
+                _clear_pane(pane_right)
             else:
                 sel_full = universe_prices.reindex(columns=tickers)
                 sel_window = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_window.dropna(how="all").empty:
-                    highlights_html += _render_error(
+                    pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
+                    _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
+                    _clear_pane(pane_left)
+                    _clear_pane(pane_right)
                 else:
-                    rets = daily_returns(sel_window)
-                    perf = cum_perf(sel_window)
-                    sz_series = rolling_sharpe_zscore(rets)
-                    cm = corr_matrix(rets)
-                    pt = perf_table(sel_window)
-                    dd = drawdown_series(sel_window)
-                    rd_stats = return_distribution_stats(rets)
-
-                    _update_line(line_fig, line_x, line_y, perf, meta)
-                    _update_perf_grid(perf_grid, pt, meta)
-                    _update_sharpe_line(
-                        sharpe_line_fig, sharpe_line_x, sharpe_line_y,
-                        sharpe_line_zero, sz_series, meta,
+                    prep = SimpleNamespace(
+                        sel_window=sel_window,
+                        rets=daily_returns(sel_window),
+                        perf=cum_perf(sel_window),
+                        pt=perf_table(sel_window),
+                        dd=drawdown_series(sel_window),
                     )
-                    _update_heatmap(heat_fig, heat_data, heat_x, heat_y, cm)
-                    _update_scatter(
-                        scatter_fig, scatter_x, scatter_y, scatter_mark,
-                        sel_window, rets, meta,
-                    )
-                    _update_drawdown(
-                        dd_fig, dd_x, dd_y, dd_zero, dd, meta,
-                    )
-                    _update_return_dist(
-                        retdist_fig, retdist_x, retdist_y, retdist_stats_grid,
-                        rets, rd_stats, meta,
-                    )
-
-                    rc_bench_ticker = rcorr_benchmark_dd.value
-                    try:
-                        rc_bench_prices = universe_prices.get(rc_bench_ticker)
-                        if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                            raise ValueError(
-                                f"No price data for benchmark {rc_bench_ticker!r}."
-                            )
-                        rc_bench_window = rc_bench_prices.loc[
-                            rc_bench_prices.index >= universe_window_start
-                        ]
-                        rc_bench_returns = daily_returns(
-                            rc_bench_window.to_frame()
-                        ).iloc[:, 0]
-                        rc = rolling_correlation(rets, rc_bench_returns)
-                        _update_rolling_ref(
-                            rcorr_fig, rcorr_x, rcorr_y, rcorr_zero,
-                            rc, meta,
-                            title_prefix="Rolling Correlation",
-                            benchmark_label=rc_bench_ticker,
-                        )
-                    except Exception:
-                        highlights_html += _render_error(traceback.format_exc())
-
-                    rb_bench_ticker = rbeta_benchmark_dd.value
-                    try:
-                        rb_bench_prices = universe_prices.get(rb_bench_ticker)
-                        if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                            raise ValueError(
-                                f"No price data for benchmark {rb_bench_ticker!r}."
-                            )
-                        rb_bench_window = rb_bench_prices.loc[
-                            rb_bench_prices.index >= universe_window_start
-                        ]
-                        rb_bench_returns = daily_returns(
-                            rb_bench_window.to_frame()
-                        ).iloc[:, 0]
-                        rb = rolling_beta(rets, rb_bench_returns)
-                        _update_rolling_ref(
-                            rbeta_fig, rbeta_x, rbeta_y, rbeta_ref,
-                            rb, meta,
-                            title_prefix="Rolling Beta",
-                            benchmark_label=rb_bench_ticker,
-                        )
-                    except Exception:
-                        highlights_html += _render_error(traceback.format_exc())
+                    prep.sz_series = rolling_sharpe_zscore(prep.rets)
+                    prep.cm = corr_matrix(prep.rets)
+                    prep.rd_stats = return_distribution_stats(prep.rets)
+                    _update_perf_grid(selected_perf_grid, prep.pt, meta)
+                    _render_pane(pane_left, prep, universe_window_start, pane_errors)
+                    _render_pane(pane_right, prep, universe_window_start, pane_errors)
         except Exception:
-            highlights_html += _render_error(traceback.format_exc())
+            pane_errors.append(traceback.format_exc())
+
+        for err in pane_errors:
+            highlights_html += _render_error(err)
 
         highlights_w.value = highlights_html or _render_highlights([])
 
-    apply_btn.on_click(_recompute)
+    def _refresh_prices(_btn=None):
+        nonlocal universe_prices, arp_universe_prices
+        _set_status(
+            f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
+            tone=StatusTone.INFO,
+        )
+        t_refresh = time.perf_counter()
+        try:
+            universe_prices, source = fetch_prices(
+                fetch_tickers, universe_start, today, use_cache=False
+            )
+        except Exception:
+            _set_status("Load failed — see error below", tone=StatusTone.ERROR)
+            init_errors.append(
+                f"Universe refresh ({universe_start} → {today}) failed:\n"
+                f"{traceback.format_exc()}"
+            )
+            _recompute()
+            return
+        elapsed = time.perf_counter() - t_refresh
+        arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
+        try:
+            _update_universe_grid(
+                universe_grid, meta, universe_perf(arp_universe_prices)
+            )
+        except Exception:
+            init_errors.append(
+                f"universe_perf computation failed:\n{traceback.format_exc()}"
+            )
+        text, tone = _format_loaded(universe_prices, source, elapsed)
+        _set_status(text, tone=tone)
+        _recompute()
+
+    apply_btn.on_click(_refresh_prices)
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
@@ -535,10 +874,10 @@ def build_app(verbose: bool = True) -> W.VBox:
     app = W.VBox(
         [
             _banner(),
+            status_w,
             commentary_box,
-            row1,
-            analysis_tabs,
-            universe_row,
+            top_tab_bar,
+            top_tab_content,
             perf_disclaimer_w,
             legal_w,
         ],
@@ -556,53 +895,127 @@ def _ticker_options(df: pd.DataFrame) -> list[tuple[str, str]]:
     return [(f"{r['ticker']} — {r['name']}", r["ticker"]) for _, r in df.iterrows()]
 
 
-def _line_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Rebased = 100")
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[],
-        title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height="380px"),
-        fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
+_CHART_HEIGHT_PX: int = int(CHART_HEIGHT.removesuffix("px"))
+
+
+def _chart_layout(*, title: str, **overrides) -> dict:
+    """Shared plotly Layout kwargs — Bloomberg/Barclays dark theme.
+
+    Charts render on a near-black background (`Color.CHART_BG`) with
+    white titles and light slate text. Axis grid/tick styling inherits
+    from the `plotly_dark` template; we override only background, title,
+    font color, and hover styling.
+
+    Pass `xaxis`, `yaxis`, `hovermode`, `barmode`, `shapes`, `margin`,
+    etc. via `overrides`.
+    """
+    base = dict(
+        template="plotly_dark",
+        paper_bgcolor=Color.CHART_BG.value,
+        plot_bgcolor=Color.CHART_BG.value,
+        height=_CHART_HEIGHT_PX,
+        margin=dict(t=44, b=50, l=60, r=20),
+        title=dict(
+            text=title,
+            font=dict(size=14, color=Color.CHART_TITLE.value),
+            x=0.02,
+            xanchor="left",
+        ),
+        showlegend=False,
+        font=dict(family=Font.SANS.value, color=Color.CHART_TEXT.value, size=12),
+        hoverlabel=dict(
+            font_family=Font.SANS.value,
+            bgcolor=Color.CHART_HOVER_BG.value,
+            font_color=Color.CHART_TEXT.value,
+            bordercolor=Color.CHART_AXIS.value,
+        ),
     )
-    return fig, x_sc, y_sc, fig
+    base.update(overrides)
+    return base
 
 
-def _update_line(fig, x_sc, y_sc, perf: pd.DataFrame, meta: pd.DataFrame):
-    if perf.empty:
-        fig.marks = []
-        return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks = []
+def _h_ref(y: float) -> dict:
+    """Dashed horizontal reference line spanning the chart's full width."""
+    return dict(
+        type="line",
+        xref="paper", x0=0, x1=1,
+        yref="y", y0=y, y1=y,
+        line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1),
+    )
+
+
+def _line_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Rebased = 100"),
+        )
+    )
+
+
+def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
+    traces: list[go.Scatter] = []
     for i, col in enumerate(perf.columns):
         series = perf[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                labels=[label],
-                display_legend=True,
-            )
+        label = _short_ticker(col)
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+
+
+def _outperformance_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Outperformance ({LOOKBACK_YEARS}Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Excess return (pp)"),
+            shapes=[_h_ref(0.0)],
         )
-    fig.marks = marks
-    if not perf.dropna(how="all").empty:
-        y_min = float(np.nanmin(perf.values))
-        y_max = float(np.nanmax(perf.values))
-        pad = (y_max - y_min) * 0.02 or 1.0
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-        x_sc.min = perf.index.min().to_pydatetime()
-        x_sc.max = perf.index.max().to_pydatetime()
+    )
+
+
+def _update_outperformance(
+    fig: go.FigureWidget,
+    df: pd.DataFrame,
+    meta: pd.DataFrame,
+    *,
+    benchmark_label: str,
+) -> None:
+    """Render cumulative excess return per strategy vs the benchmark. Each
+    series is in percentage points off a dashed zero baseline."""
+    new_title = (
+        f"Outperformance vs {benchmark_label} ({LOOKBACK_YEARS}Y)"
+        if benchmark_label
+        else f"Outperformance ({LOOKBACK_YEARS}Y)"
+    )
+    cleaned = df.dropna(how="all") if not df.empty else df
+    traces: list[go.Scatter] = []
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna()
+        if series.empty:
+            continue
+        label = _short_ticker(col)
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}} pp<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.title.text = new_title
 
 
 # ---- Perf grid (selected set) ---------------------------------------------
@@ -612,11 +1025,60 @@ def _perf_grid() -> DataGrid:
     grid = DataGrid(
         pd.DataFrame(),
         base_row_size=28,
-        base_column_size=82,
+        base_column_size=80,           # default for numeric metric cols
         base_row_header_size=120,
         layout=W.Layout(width="100%", height="240px"),
     )
     return grid
+
+
+PERF_COLOR_COLUMN_NAME: str = "Chart Color"
+
+# Column widths in pixels, keyed by the column's *leaf* label. The grid uses
+# 2-level MultiIndex columns (Info / 1Y / 3Y / 5Y supercolumns over their
+# leaves); `_build_perf_column_widths` emits ipydatagrid's "<level0>,<level1>"
+# comma-joined keys from these. The descriptive text columns carry the slack
+# that makes the grid fill a wide dashboard — ipydatagrid has no responsive
+# stretch-to-container mode, so widths are set by hand to sum to ~full-HD
+# width (~2014px incl. the 120px row header + metric columns).
+_PERF_INFO_WIDTHS: dict[str, int] = {
+    PERF_COLOR_COLUMN_NAME: 90,    # color swatch — wide enough to show header
+    "Name":         360,
+    "Asset Class":  180,
+    "Theme":        280,
+}
+_PERF_METRIC_WIDTHS: dict[str, int] = {
+    "Return": 88,
+    "Vol":    76,
+    "Sharpe": 72,
+    "Max DD": 92,
+}
+_PERF_INFO_TEXT_COLS: frozenset[str] = frozenset({"Name", "Asset Class", "Theme"})
+
+
+def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
+    """Map each MultiIndex column to a pixel width, keyed by ipydatagrid's
+    "<level0>,<level1>" comma-joined field name (e.g. "Info,Name",
+    "1Y,Return"). Info leaves take fixed widths; metric leaves
+    (Return/Vol/Sharpe/Max DD) take one width each so 1Y/3Y/5Y stay aligned."""
+    widths: dict[str, int] = {}
+    for col in columns:
+        leaf = col[-1] if isinstance(col, tuple) else col
+        key = ",".join(str(p) for p in col) if isinstance(col, tuple) else str(col)
+        if leaf in _PERF_INFO_WIDTHS:
+            widths[key] = _PERF_INFO_WIDTHS[leaf]
+        elif leaf in _PERF_METRIC_WIDTHS:
+            widths[key] = _PERF_METRIC_WIDTHS[leaf]
+    return widths
+
+
+def _palette_color(i: int) -> str:
+    return LINE_PALETTE[i % len(LINE_PALETTE)]
+
+
+def _short_ticker(ticker: str) -> str:
+    """Drop the BBG ' Index' suffix, leaving the core ticker (e.g. 'SPX')."""
+    return ticker.removesuffix(" Index")
 
 
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
@@ -624,37 +1086,56 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         grid.data = pd.DataFrame()
         return
     info_block = _info_block(pt.index, meta)
-    pt_norm = pt.copy()
-    pt_norm.columns = pd.MultiIndex.from_tuples(
-        [(str(a), str(b)) for a, b in pt_norm.columns]
+    # Per-row color swatch: each cell carries the hex string; the renderer
+    # paints background + text the same color so it shows as a solid block —
+    # the universal legend for every chart in the panes. It leads the Info
+    # supercolumn so the grid acts as the legend left-to-right.
+    info_block.insert(
+        0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
     )
-    combined = pd.concat([info_block, pt_norm], axis=1)
+    info_block.columns = pd.MultiIndex.from_product([["Info"], info_block.columns])
+    perf = pt.copy()
+    perf.columns = pd.MultiIndex.from_tuples(
+        [(str(period), str(metric)) for period, metric in pt.columns]
+    )
+    combined = pd.concat([info_block, perf], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
     grid.renderers = _perf_renderers(combined.columns)
+    grid.column_widths = _build_perf_column_widths(combined.columns)
 
 
 def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
     info = meta.set_index("ticker").reindex(tickers)[["name", "asset_class", "theme"]]
-    info = info.rename(
+    return info.rename(
         columns={"name": "Name", "asset_class": "Asset Class", "theme": "Theme"}
     )
-    info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
-    return info
 
 
-def _perf_renderers(columns: pd.MultiIndex) -> dict:
+def _perf_renderers(columns: pd.Index) -> dict:
     text = TextRenderer()
     pct = TextRenderer(format=".2%")
     f2 = TextRenderer(format=".2f")
+    color_swatch = TextRenderer(
+        background_color=VegaExpr("cell.value"),
+        text_color=VegaExpr("cell.value"),
+    )
     renderers: dict = {}
     for col in columns:
-        period, metric = col
-        if period == "Info":
+        # Columns are flat strings in the selected-strategy grid
+        # (e.g. "1Y Sharpe") but MultiIndex tuples in the all-catalog grid
+        # (e.g. ("1Y", "Sharpe")). Match on the metric leaf either way so
+        # `.endswith` is only ever called on a string.
+        leaf = col[-1] if isinstance(col, tuple) else col
+        if leaf == PERF_COLOR_COLUMN_NAME:
+            renderers[col] = color_swatch
+        elif leaf in _PERF_INFO_TEXT_COLS:
             renderers[col] = text
-        elif metric == "Sharpe":
+        elif leaf == "Sharpe" or leaf.endswith(" Sharpe"):
             renderers[col] = f2
-        elif metric in ("Return", "Vol", "Max DD"):
+        elif leaf in ("Return", "Vol", "Max DD") or leaf.endswith(
+            (" Return", " Vol", " Max DD")
+        ):
             renderers[col] = pct
         else:
             renderers[col] = text
@@ -715,175 +1196,131 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
 # ---- Heatmap --------------------------------------------------------------
 
 
-def _heatmap():
-    col_sc = bq.ColorScale(scheme="RdYlBu", min=-1, max=1, reverse=True)
-    x_sc = bq.OrdinalScale()
-    y_sc = bq.OrdinalScale(reverse=True)
-    ax_x = bq.Axis(scale=x_sc, tick_rotate=-75, tick_style={"font-size": "10px"})
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", tick_style={"font-size": "10px"})
-    ax_c = bq.ColorAxis(
-        scale=col_sc,
-        orientation="vertical",
-        side="right",
-        label="Correlation",
-        num_ticks=11,
-        tick_format=".1f",
-        tick_style={"font-size": "12px"},
+def _heatmap() -> go.FigureWidget:
+    return go.FigureWidget(
+        data=[go.Heatmap(
+            z=np.zeros((2, 2)),
+            x=["", " "],
+            y=["", " "],
+            colorscale="RdBu",
+            reversescale=True,
+            zmin=-1, zmax=1, zmid=0,
+            colorbar=dict(title="ρ", tickformat=".1f", thickness=14),
+            hovertemplate="%{y} vs %{x}<br>ρ = %{z:.2f}<extra></extra>",
+        )],
+        layout=_chart_layout(
+            title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
+            margin=dict(t=40, b=70, l=120, r=20),
+            xaxis=dict(tickangle=-75, tickfont=dict(size=10)),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10)),
+        ),
     )
-    data = bq.GridHeatMap(
-        color=np.zeros((2, 2)),
-        row=["", " "],
-        column=["", " "],
-        scales={"color": col_sc, "row": y_sc, "column": x_sc},
-        stroke="white",
-    )
-    fig = bq.Figure(
-        marks=[data],
-        axes=[ax_x, ax_y, ax_c],
-        title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-        layout=W.Layout(width="100%", height="600px"),
-        fig_margin={"top": 40, "bottom": 70, "left": 90, "right": 110},
-    )
-    return fig, data, x_sc, y_sc
 
 
-def _update_heatmap(fig, data, _x_sc, _y_sc, cm: pd.DataFrame):
+def _update_heatmap(
+    fig: go.FigureWidget, cm: pd.DataFrame, title: str | None = None
+) -> None:
     # Correlation needs at least 2 series; below that, fall back to a
-    # blank 2x2 placeholder so the GridHeatMap validator doesn't complain.
+    # blank 2x2 placeholder so the heatmap still renders.
     if cm.empty or cm.shape[0] < 2:
         cm = pd.DataFrame(np.zeros((2, 2)), index=["", " "], columns=["", " "])
     tickers = list(cm.columns)
-    data.color = cm.values
-    data.row = tickers
-    data.column = tickers
+    with fig.batch_update():
+        fig.data[0].z = cm.values
+        fig.data[0].x = tickers
+        fig.data[0].y = tickers
+        if title is not None:
+            fig.layout.title.text = title
 
 
 # ---- Sharpe z-score line chart (selected set, 1Y evolution) ----------------
 
 
-def _sharpe_line_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Sharpe z-score")
-    zero = bq.Lines(
-        x=[],
-        y=[0, 0],
-        scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
+def _sharpe_line_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Sharpe z-score"),
+            shapes=[_h_ref(0.0)],
+        )
     )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[zero],
-        title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height="260px"),
-        fig_margin={"top": 40, "bottom": 50, "left": 60, "right": 20},
-    )
-    return fig, x_sc, y_sc, zero
 
 
-def _update_sharpe_line(fig, x_sc, y_sc, zero, zser: pd.DataFrame, meta: pd.DataFrame):
+def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataFrame) -> None:
     if zser.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     tail = zser.dropna(how="all").tail(TRADING_DAYS_PER_YEAR)
     if tail.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(tail.columns):
         series = tail[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                labels=[label],
-                display_legend=True,
-            )
-        )
-    x_min = tail.index.min().to_pydatetime()
-    x_max = tail.index.max().to_pydatetime()
-    zero.x = tail.index[[0, -1]].values
-    fig.marks = [zero, *marks]
-    vals = tail.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        y_max = float(np.nanmax(vals))
-        y_min = min(y_min, 0.0)
-        y_max = max(y_max, 0.0)
-        pad = (y_max - y_min) * 0.05 or 1.0
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-    x_sc.min = x_min
-    x_sc.max = x_max
+        label = _short_ticker(col)
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
 
 
 # ---- Risk / Return scatter (selected set) ----------------------------------
 
 
-def _scatter_chart():
-    x_sc = bq.LinearScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(
-        scale=x_sc,
-        label=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
-        tick_format=".0%",
+def _scatter_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        data=[go.Scatter(
+            mode="markers",
+            x=[], y=[],
+            marker=dict(size=[], color=[], line=dict(width=0)),
+            text=[],
+            customdata=[],
+            hovertemplate=(
+                "%{text}<br>Vol %{x:.2%}<br>Return %{y:.2%}"
+                "<br>Sharpe %{customdata:.2f}<extra></extra>"
+            ),
+        )],
+        layout=_chart_layout(
+            title=f"Risk / Return — {LOOKBACK_YEARS}Y",
+            hovermode="closest",
+            xaxis=dict(
+                title=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
+                tickformat=".0%",
+                rangemode="tozero",
+            ),
+            yaxis=dict(
+                title=f"Annualized Return ({LOOKBACK_YEARS}Y)",
+                tickformat=".0%",
+            ),
+        ),
     )
-    ax_y = bq.Axis(
-        scale=y_sc,
-        orientation="vertical",
-        label=f"Annualized Return ({LOOKBACK_YEARS}Y)",
-        tick_format=".0%",
-    )
-    tt = bq.Tooltip(
-        fields=["name", "x", "y", "size"],
-        labels=["", "Vol", "Return", "Sharpe"],
-        formats=["", ".2%", ".2%", ".2f"],
-    )
-    scatter = bq.Scatter(
-        x=[],
-        y=[],
-        scales={"x": x_sc, "y": y_sc},
-        colors=[UNKNOWN_ASSET_CLASS_COLOR],
-        default_size=80,
-        tooltip=tt,
-    )
-    fig = bq.Figure(
-        marks=[scatter],
-        axes=[ax_x, ax_y],
-        title=f"Risk / Return — {LOOKBACK_YEARS}Y",
-        layout=W.Layout(width="100%", height="560px"),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, scatter
 
 
 def _update_scatter(
-    fig,
-    x_sc,
-    y_sc,
-    scatter,
+    fig: go.FigureWidget,
     prices: pd.DataFrame,
     rets: pd.DataFrame,
     meta: pd.DataFrame,
-):
+) -> None:
     if prices.empty or rets.empty:
-        scatter.x = []
-        scatter.y = []
-        scatter.size = []
-        scatter.color = []
-        scatter.names = []
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.size = []
+            fig.data[0].marker.color = []
+            fig.data[0].text = []
+            fig.data[0].customdata = []
         return
     vol = ann_volatility(rets, LOOKBACK_YEARS)
     ret = ann_return(prices, LOOKBACK_YEARS)
@@ -892,234 +1329,144 @@ def _update_scatter(
         subset=["vol", "ret"]
     )
     if frame.empty:
-        scatter.x = []
-        scatter.y = []
-        scatter.size = []
-        scatter.color = []
-        scatter.names = []
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.size = []
+            fig.data[0].marker.color = []
+            fig.data[0].text = []
+            fig.data[0].customdata = []
         return
-    info = meta.set_index("ticker").reindex(frame.index)
     s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
     if s_clipped.max() > 0:
-        size_vals = (5 + 30 * (s_clipped / s_clipped.max())).tolist()
+        sizes = (8 + 32 * (s_clipped / s_clipped.max())).tolist()
     else:
-        size_vals = [10] * len(frame)
-    colors = [
-        ASSET_CLASS_COLORS.get(ac, UNKNOWN_ASSET_CLASS_COLOR)
-        for ac in info["asset_class"].fillna("").tolist()
-    ]
-    names = [
-        f"{n} ({t})" if isinstance(n, str) and n else t
-        for t, n in zip(frame.index, info["name"].tolist())
-    ]
-    scatter.x = frame["vol"].values
-    scatter.y = frame["ret"].values
-    scatter.size = size_vals
-    scatter.color = colors
-    scatter.names = names
-    x_min = float(frame["vol"].min())
-    x_max = float(frame["vol"].max())
-    y_min = float(frame["ret"].min())
-    y_max = float(frame["ret"].max())
-    x_pad = (x_max - x_min) * 0.08 or max(abs(x_min), abs(x_max), 0.01) * 0.1 or 0.005
-    y_pad = (y_max - y_min) * 0.08 or max(abs(y_min), abs(y_max), 0.01) * 0.1 or 0.005
-    x_sc.min = max(0.0, x_min - x_pad)
-    x_sc.max = x_max + x_pad
-    y_sc.min = min(0.0, y_min - y_pad)
-    y_sc.max = y_max + y_pad
-
-
-def _render_scatter_legend(palette: dict[str, str]) -> str:
-    items = []
-    for ac, color in palette.items():
-        items.append(
-            "<span style='display:inline-flex;align-items:center;gap:4px;"
-            "margin-right:14px;font-size:11px;color:#475569;'>"
-            f"<span style='display:inline-block;width:10px;height:10px;"
-            f"border-radius:50%;background:{color};'></span>"
-            f"{html.escape(ac)}"
-            "</span>"
-        )
-    return (
-        "<div style='font-family:system-ui,sans-serif;padding:4px 8px 0 8px;'>"
-        "<span style='font-size:11px;color:#64748b;margin-right:8px;'>"
-        "Color · asset class &nbsp;·&nbsp; Size · annualized Sharpe"
-        "</span>"
-        + "".join(items)
-        + "</div>"
-    )
+        sizes = [12] * len(frame)
+    # Positional palette so each ticker shares one color across every
+    # chart inside an analysis pane and the perf-grid color swatch.
+    colors = [_palette_color(i) for i in range(len(frame))]
+    names = [_short_ticker(t) for t in frame.index]
+    with fig.batch_update():
+        fig.data[0].x = frame["vol"].values
+        fig.data[0].y = frame["ret"].values
+        fig.data[0].marker.size = sizes
+        fig.data[0].marker.color = colors
+        fig.data[0].text = names
+        fig.data[0].customdata = frame["sharpe"].values
 
 
 # ---- Drawdown chart (selected set) -----------------------------------------
 
 
-def _drawdown_chart():
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(
-        scale=y_sc, orientation="vertical", label="Drawdown", tick_format=".0%"
+def _drawdown_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Drawdown — {LOOKBACK_YEARS}Y",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title="Drawdown", tickformat=".0%"),
+            shapes=[_h_ref(0.0)],
+        )
     )
-    zero = bq.Lines(
-        x=[],
-        y=[0, 0],
-        scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
-    )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[zero],
-        title=f"Drawdown — {LOOKBACK_YEARS}Y",
-        legend_location="bottom-left",
-        layout=W.Layout(width="100%", height="540px"),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, zero
 
 
-def _update_drawdown(fig, x_sc, y_sc, zero, dd: pd.DataFrame, meta: pd.DataFrame):
+def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame) -> None:
     if dd.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
     cleaned = dd.dropna(how="all")
     if cleaned.empty:
-        fig.marks = [zero]
+        with fig.batch_update():
+            fig.data = ()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                labels=[label],
-                display_legend=True,
-            )
-        )
-    zero.x = cleaned.index[[0, -1]].values
-    fig.marks = [zero, *marks]
-    vals = cleaned.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        pad = abs(y_min) * 0.05 or 0.01
-        y_sc.min = y_min - pad
-        y_sc.max = pad
-    x_sc.min = cleaned.index.min().to_pydatetime()
-    x_sc.max = cleaned.index.max().to_pydatetime()
+        label = _short_ticker(col)
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2%}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
 
 
 # ---- Rolling-reference line chart (correlation / beta) ---------------------
 
 
-def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float):
-    x_sc = bq.DateScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Date")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label=y_label)
-    ref = bq.Lines(
-        x=[],
-        y=[ref_y, ref_y],
-        scales={"x": x_sc, "y": y_sc},
-        colors=["#94a3b8"],
-        line_style="dashed",
-        stroke_width=1,
-        display_legend=False,
+def _rolling_ref_chart(*, title_prefix: str, y_label: str, ref_y: float) -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
+            hovermode="x unified",
+            xaxis=dict(title="Date"),
+            yaxis=dict(title=y_label),
+            shapes=[_h_ref(ref_y)],
+        )
     )
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[ref],
-        title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
-        legend_location="top-left",
-        layout=W.Layout(width="100%", height="540px"),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
-    )
-    return fig, x_sc, y_sc, ref
 
 
 def _update_rolling_ref(
-    fig,
-    x_sc,
-    y_sc,
-    ref,
+    fig: go.FigureWidget,
     df: pd.DataFrame,
     meta: pd.DataFrame,
     *,
     title_prefix: str,
     benchmark_label: str,
-):
+) -> None:
     title_suffix = f" — {SHARPE_WINDOW_LABEL} rolling"
-    if benchmark_label:
-        fig.title = f"{title_prefix} vs {benchmark_label}{title_suffix}"
-    else:
-        fig.title = f"{title_prefix}{title_suffix}"
+    new_title = (
+        f"{title_prefix} vs {benchmark_label}{title_suffix}"
+        if benchmark_label
+        else f"{title_prefix}{title_suffix}"
+    )
     if df.empty:
-        fig.marks = [ref]
+        with fig.batch_update():
+            fig.data = ()
+            fig.layout.title.text = new_title
         return
     cleaned = df.dropna(how="all")
     if cleaned.empty:
-        fig.marks = [ref]
+        with fig.batch_update():
+            fig.data = ()
+            fig.layout.title.text = new_title
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
-    marks: list = []
+    traces: list[go.Scatter] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna()
         if series.empty:
             continue
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Lines(
-                x=series.index.values,
-                y=series.values,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                labels=[label],
-                display_legend=True,
-            )
-        )
-    ref_y_val = float(ref.y[0]) if len(ref.y) else 0.0
-    ref.x = cleaned.index[[0, -1]].values
-    fig.marks = [ref, *marks]
-    vals = cleaned.values
-    if np.isfinite(vals).any():
-        y_min = float(np.nanmin(vals))
-        y_max = float(np.nanmax(vals))
-        y_min = min(y_min, ref_y_val)
-        y_max = max(y_max, ref_y_val)
-        pad = (y_max - y_min) * 0.05 or 0.05
-        y_sc.min = y_min - pad
-        y_sc.max = y_max + pad
-    x_sc.min = cleaned.index.min().to_pydatetime()
-    x_sc.max = cleaned.index.max().to_pydatetime()
+        label = _short_ticker(col)
+        traces.append(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=label,
+            line=dict(color=_palette_color(i), width=1.5),
+            hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.title.text = new_title
 
 
 # ---- Return distribution histogram (selected set) --------------------------
 
 
-def _return_dist_chart():
-    x_sc = bq.LinearScale()
-    y_sc = bq.LinearScale()
-    ax_x = bq.Axis(scale=x_sc, label="Daily return", tick_format=".1%")
-    ax_y = bq.Axis(scale=y_sc, orientation="vertical", label="Frequency")
-    fig = bq.Figure(
-        axes=[ax_x, ax_y],
-        marks=[],
-        title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
-        legend_location="top-right",
-        layout=W.Layout(width="100%", height="420px"),
-        fig_margin={"top": 40, "bottom": 60, "left": 70, "right": 20},
+def _return_dist_chart() -> go.FigureWidget:
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
+            barmode="overlay",
+            xaxis=dict(title="Daily return", tickformat=".1%"),
+            yaxis=dict(title="Frequency"),
+        )
     )
-    return fig, x_sc, y_sc
 
 
 def _return_dist_stats_grid() -> DataGrid:
@@ -1134,63 +1481,52 @@ def _return_dist_stats_grid() -> DataGrid:
 
 
 def _update_return_dist(
-    fig,
-    x_sc,
-    y_sc,
+    fig: go.FigureWidget,
     stats_grid: DataGrid,
     rets: pd.DataFrame,
     stats_df: pd.DataFrame,
     meta: pd.DataFrame,
-):
+) -> None:
     if rets.empty:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
     cleaned = rets.dropna(how="all")
     if cleaned.empty:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
     all_vals = cleaned.values[np.isfinite(cleaned.values)]
     if all_vals.size == 0:
-        fig.marks = []
+        with fig.batch_update():
+            fig.data = ()
         stats_grid.data = pd.DataFrame()
         return
     lo, hi = float(np.nanpercentile(all_vals, 0.5)), float(np.nanpercentile(all_vals, 99.5))
     if lo == hi:
         lo, hi = lo - 0.01, hi + 0.01
-    bin_edges = np.linspace(lo, hi, 41)
-    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    width = bin_edges[1] - bin_edges[0]
-    marks: list = []
-    max_count = 0
+    bin_size = (hi - lo) / 80.0
+    traces: list[go.Histogram] = []
     for i, col in enumerate(cleaned.columns):
         series = cleaned[col].dropna().values
         if series.size == 0:
             continue
-        counts, _ = np.histogram(series, bins=bin_edges)
-        max_count = max(max_count, int(counts.max(initial=0)))
-        name = name_lookup.get(col)
-        label = f"{name} ({col})" if name else col
-        marks.append(
-            bq.Bars(
-                x=centers,
-                y=counts,
-                scales={"x": x_sc, "y": y_sc},
-                colors=[LINE_COLORS[i % len(LINE_COLORS)]],
-                opacities=[0.5] * len(centers),
-                labels=[label],
-                display_legend=True,
-                stroke=LINE_COLORS[i % len(LINE_COLORS)],
-                padding=0.0,
-            )
-        )
-    fig.marks = marks
-    x_sc.min = lo - width
-    x_sc.max = hi + width
-    y_sc.min = 0
-    y_sc.max = max_count * 1.1 if max_count > 0 else 1
+        label = _short_ticker(col)
+        traces.append(go.Histogram(
+            x=series,
+            xbins=dict(start=lo, end=hi, size=bin_size),
+            marker=dict(color=_palette_color(i)),
+            opacity=0.55,
+            name=label,
+            hovertemplate=f"{label}<br>bin %{{x:.2%}}<br>count %{{y}}<extra></extra>",
+        ))
+    with fig.batch_update():
+        fig.data = ()
+        if traces:
+            fig.add_traces(traces)
+        fig.layout.xaxis.range = [lo - bin_size, hi + bin_size]
 
     if stats_df.empty:
         stats_grid.data = pd.DataFrame()
@@ -1216,17 +1552,17 @@ def _update_return_dist(
 # ---- Commentary rendering -------------------------------------------------
 
 
-SENTIMENT_COLORS = {
-    "positive": "#16a34a",
-    "negative": "#dc2626",
-    "neutral":  "#0b1f3a",
-}
+def _sentiment_color(name: str) -> str:
+    try:
+        return Sentiment[name.upper()].value
+    except KeyError:
+        return Sentiment.NEUTRAL.value
 
 
 def _load_weekly_commentary() -> str:
     if not WEEKLY_COMMENTARY_PATH.exists():
         return (
-            "<p style='color:#64748b;margin:0;'>"
+            f"<p style='color:{Color.SLATE_500};margin:0;'>"
             "No weekly commentary yet — create <code>data/weekly_commentary.html</code> "
             "to populate this section."
             "</p>"
@@ -1245,11 +1581,14 @@ def _load_disclaimer(path: Path, **placeholders: str) -> str:
 
 def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     return (
-        "<div style='font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;"
-        "border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;background:#f8fafc;'>"
+        f"<div style='font-family:{Font.SANS};font-size:{FontSize.BODY};"
+        f"line-height:1.5;border:1px solid {Color.SLATE_200};border-radius:6px;"
+        f"padding:14px 16px;background:{Color.SLATE_50};'>"
         "<div style='display:flex;align-items:baseline;gap:10px;margin-bottom:6px;'>"
-        "<h3 style='margin:0;font-size:15px;color:#0b1f3a;'>Weekly Commentary</h3>"
-        f"<span style='font-size:11px;color:#64748b;'>as of {as_of.isoformat()}</span>"
+        f"<h3 style='margin:0;font-size:{FontSize.H3};color:{Color.BRAND_NAVY};'>"
+        "Weekly Commentary</h3>"
+        f"<span style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};'>"
+        f"as of {as_of.isoformat()}</span>"
         "</div>"
         f"<div>{body_html}</div>"
         "</div>"
@@ -1261,23 +1600,31 @@ def _render_highlights(cards: list[dict]) -> str:
         return ""
     tiles = []
     for c in cards:
-        color = SENTIMENT_COLORS.get(c.get("sentiment", "neutral"), "#0b1f3a")
+        color = _sentiment_color(c.get("sentiment", "neutral"))
         label = html.escape(c["label"])
         value = html.escape(c["value"])
         ticker = html.escape(c["ticker"])
         name = html.escape(c.get("name", ""))
         tiles.append(
-            "<div style='border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;background:#fff;'>"
-            f"<div style='font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:#64748b;margin-bottom:4px;'>{label}</div>"
-            f"<div style='font-size:20px;font-weight:600;color:{color};line-height:1.1;'>{value}</div>"
-            f"<div style='font-size:12px;color:#0b1f3a;margin-top:4px;'>{name}</div>"
-            f"<div style='font-size:11px;color:#64748b;font-family:ui-monospace,monospace;'>{ticker}</div>"
+            f"<div style='border:1px solid {Color.SLATE_200};border-radius:6px;"
+            f"padding:10px 12px;background:{Color.WHITE};'>"
+            f"<div style='font-size:{FontSize.MICRO};font-weight:600;"
+            "letter-spacing:0.05em;text-transform:uppercase;"
+            f"color:{Color.SLATE_500};margin-bottom:4px;'>{label}</div>"
+            f"<div style='font-size:{FontSize.DISPLAY};font-weight:600;"
+            f"color:{color};line-height:1.1;'>{value}</div>"
+            f"<div style='font-size:{FontSize.LABEL};color:{Color.BRAND_NAVY};"
+            f"margin-top:4px;'>{name}</div>"
+            f"<div style='font-size:{FontSize.CAPTION};color:{Color.SLATE_500};"
+            f"font-family:{Font.MONO};'>{ticker}</div>"
             "</div>"
         )
     return (
-        "<div style='font-family:system-ui,sans-serif;'>"
-        "<h3 style='margin:14px 0 8px 0;font-size:15px;color:#0b1f3a;'>"
-        "Key Highlights <span style='font-weight:400;font-size:11px;color:#64748b;'>(all-catalog)</span>"
+        f"<div style='font-family:{Font.SANS};'>"
+        f"<h3 style='margin:14px 0 8px 0;font-size:{FontSize.H3};"
+        f"color:{Color.BRAND_NAVY};'>"
+        f"Key Highlights <span style='font-weight:400;font-size:{FontSize.CAPTION};"
+        f"color:{Color.SLATE_500};'>(all-catalog)</span>"
         "</h3>"
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;'>"
         + "".join(tiles)
@@ -1287,9 +1634,9 @@ def _render_highlights(cards: list[dict]) -> str:
 
 def _render_error(message: str) -> str:
     return (
-        "<div style='font-family:system-ui,sans-serif;font-size:13px;"
-        "background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;"
-        "padding:12px 16px;border-radius:4px;'>"
+        f"<div style='font-family:{Font.SANS};font-size:{FontSize.SMALL};"
+        f"background:{StatusTone.ERROR.bg};border:1px solid {StatusTone.ERROR.border};"
+        f"color:{StatusTone.ERROR.fg};padding:12px 16px;border-radius:4px;'>"
         "<h3 style='margin:0 0 8px 0;'>Recompute failed</h3>"
         f"<pre style='white-space:pre-wrap;margin:0;'>{html.escape(message)}</pre>"
         "</div>"

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from .config import CACHE_DIR, CACHE_TTL_HOURS
 
 try:
     import bql  # type: ignore
@@ -19,18 +23,62 @@ def fetch_prices(
     tickers: list[str],
     start: date,
     end: date,
-) -> pd.DataFrame:
+    use_cache: bool = True,
+) -> tuple[pd.DataFrame, str]:
     """Wide DataFrame of px_last: date index, one column per ticker.
+
+    Returns `(df, source)` where `source` is one of `"cache"`, `"bql"`,
+    or `"mock"` so callers can report what served the request.
 
     Falls back to a deterministic synthetic series when bql is unavailable
     (off-terminal development), so the dashboard renders end-to-end.
+
+    When `use_cache=True` (default) and a same-day parquet under
+    `CACHE_DIR` covers every requested ticker within `CACHE_TTL_HOURS`,
+    it's returned without hitting BQL. On a miss or with `use_cache=False`
+    the live fetch result is written to the cache before returning.
     """
     if not tickers:
-        return pd.DataFrame()
+        return pd.DataFrame(), "cache"
+
+    if use_cache:
+        cached = _cache_read(end, tickers)
+        if cached is not None:
+            return cached, "cache"
 
     if _HAS_BQL:
-        return _fetch_via_bql(tickers, start, end)
-    return _mock_prices(tickers, start, end)
+        df = _fetch_via_bql(tickers, start, end)
+        source = "bql"
+    else:
+        df = _mock_prices(tickers, start, end)
+        source = "mock"
+    _cache_write(end, df)
+    return df, source
+
+
+def _cache_path(day: date) -> Path:
+    return CACHE_DIR / f"prices_{day.isoformat()}.parquet"
+
+
+def _cache_read(day: date, tickers: list[str]) -> pd.DataFrame | None:
+    path = _cache_path(day)
+    if not path.exists():
+        return None
+    age_hours = (time.time() - path.stat().st_mtime) / 3600
+    if age_hours >= CACHE_TTL_HOURS:
+        return None
+    df = pd.read_parquet(path)
+    missing = set(tickers) - set(df.columns)
+    if missing:
+        return None
+    return df.reindex(columns=tickers)
+
+
+def _cache_write(day: date, df: pd.DataFrame) -> None:
+    if df.empty:
+        return
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(_cache_path(day), engine="pyarrow")
 
 
 def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
