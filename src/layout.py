@@ -873,9 +873,14 @@ PERF_COLOR_COLUMN_NAME: str = "•"
 # correctly — see the v0.5.0 commit history for the gory details.
 _PERF_INFO_WIDTHS: dict[str, int] = {
     PERF_COLOR_COLUMN_NAME: 22,    # color swatch — minimal vertical stripe
-    "Name":         280,
-    "Asset Class":  140,
-    "Theme":        200,
+    # The descriptive text columns carry the slack that makes the grid fill
+    # a wide dashboard: ipydatagrid has no responsive stretch-to-container
+    # mode, so the column widths must sum to the deployment width by hand.
+    # Bumped from 280/140/200 (which left a gap on wide monitors) so the
+    # grid fills a full-width layout. Tune these to the target screen width.
+    "Name":         400,
+    "Asset Class":  200,
+    "Theme":        320,
 }
 _PERF_METRIC_WIDTHS: dict[str, int] = {
     "Return": 88,
