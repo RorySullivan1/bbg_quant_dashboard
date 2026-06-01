@@ -30,6 +30,7 @@ from .config import (
 )
 from .data import apply_filters, load_metadata, unique_values
 from .stats import (
+    ann_beta,
     ann_return,
     ann_sharpe,
     ann_volatility,
@@ -38,6 +39,7 @@ from .stats import (
     daily_returns,
     drawdown_series,
     excess_cum_return,
+    jensen_alpha,
     perf_table,
     quant_metrics_table,
     regime_corr_matrix,
@@ -46,6 +48,7 @@ from .stats import (
     rolling_correlation,
     rolling_sharpe_zscore,
     sharpe_zscore,
+    treynor_ratio,
     universe_perf,
     zscore_cross_section,
 )
@@ -408,10 +411,16 @@ def build_app(verbose: bool = True) -> W.VBox:
         description="Period", style={"description_width": "55px"},
         layout=W.Layout(width="150px"),
     )
-    q_bench = W.Dropdown(
-        options=BENCHMARK_TICKERS, value=DEFAULT_BENCHMARK,
-        layout=W.Layout(width="200px"),
-    )
+    def _bench_dd() -> W.Dropdown:
+        return W.Dropdown(
+            options=BENCHMARK_TICKERS, value=DEFAULT_BENCHMARK,
+            layout=W.Layout(width="200px"),
+        )
+
+    # Each benchmark-based metric gets its own benchmark dropdown.
+    q_beta_bench = _bench_dd()
+    q_treynor_bench = _bench_dd()
+    q_jensen_bench = _bench_dd()
     q_z_metric = W.Dropdown(
         options=["Sharpe", "Sortino", "Calmar", "Beta", "Treynor", "Jensen", "VaR", "RSI"],
         value="Sharpe",
@@ -438,9 +447,9 @@ def build_app(verbose: bool = True) -> W.VBox:
     sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
     sortino_row, sortino_op, q_sortino = _q_row("Sortino")
     calmar_row, calmar_op, q_calmar = _q_row("Calmar")
-    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_bench)
-    treynor_row, treynor_op, q_treynor = _q_row("Treynor")
-    jensen_row, jensen_op, q_jensen = _q_row("Jensen α")
+    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_beta_bench)
+    treynor_row, treynor_op, q_treynor = _q_row("Treynor", trailing=q_treynor_bench)
+    jensen_row, jensen_op, q_jensen = _q_row("Jensen α", trailing=q_jensen_bench)
     var_row, var_op, q_var = _q_row("VaR %")
     rsi_row, rsi_op, q_rsi = _q_row("RSI")
     z_row, z_op, q_z = _q_row(
@@ -452,9 +461,13 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     quant = SimpleNamespace(
         period_dd=q_period,
-        bench_dd=q_bench,
         z_metric_dd=q_z_metric,
-        # Beta / Treynor / Jensen share the benchmark dropdown on the Beta row.
+        # Each benchmark-based metric carries its own benchmark dropdown.
+        bench_dd={
+            "Beta": q_beta_bench,
+            "Treynor": q_treynor_bench,
+            "Jensen": q_jensen_bench,
+        },
         rows=[
             sharpe_row, sortino_row, calmar_row, beta_row, treynor_row,
             jensen_row, var_row, rsi_row, z_row,
@@ -824,8 +837,18 @@ def build_app(verbose: bool = True) -> W.VBox:
         prices = arp_universe_prices.reindex(columns=candidates).dropna(how="all", axis=1)
         if prices.shape[1] == 0:
             return candidates
-        bench = universe_prices.get(quant.bench_dd.value)
-        qt = quant_metrics_table(prices, bench, quant.period_dd.value)
+        years = quant.period_dd.value
+        # Non-benchmark metrics from the shared table; the benchmark-based ones
+        # (Beta / Treynor / Jensen) are recomputed each against its own dropdown.
+        qt = quant_metrics_table(prices, None, years)
+        rets = daily_returns(prices)
+        qt["Beta"] = ann_beta(rets, universe_prices.get(quant.bench_dd["Beta"].value), years)
+        qt["Treynor"] = treynor_ratio(
+            rets, prices, universe_prices.get(quant.bench_dd["Treynor"].value), years
+        )
+        qt["Jensen"] = jensen_alpha(
+            rets, prices, universe_prices.get(quant.bench_dd["Jensen"].value), years
+        )
         if "Z" in thresholds:
             qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
         keep = qt.index
@@ -870,7 +893,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         cb.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w, currency_dd):
         w.observe(_on_filter_change, names="value")
-    quant_inputs = [q_period, q_bench, q_z_metric]
+    quant_inputs = [q_period, q_z_metric, *quant.bench_dd.values()]
     for op, box in quant.specs.values():
         quant_inputs += [op, box]
     for w in quant_inputs:
