@@ -4,34 +4,17 @@ All hex colors, font stacks, and typography sizes used by `src/layout.py`
 live here. Inline literals in HTML/CSS strings should reference these
 enums so colors and fonts can be changed in one place.
 
-Members of `str`-mixed enums (e.g. `Color`, `Font`) are `str` subclasses,
-so they interpolate into f-strings without needing `.value`.
+Members of the `StrEnum` token enums (e.g. `Color`, `Font`) are `str`
+subclasses whose `str()`/`format()` return the value, so they interpolate
+into f-strings without needing `.value`.
 """
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 
-class _StrEnum(str, Enum):
-    """`str`-mixed Enum whose `__str__`/`__format__` return the value,
-    so members interpolate cleanly into f-strings:
-
-        >>> f"color:{Color.BRAND_NAVY};"
-        'color:#0b1f3a;'
-
-    The plain `(str, Enum)` mixin's `__str__` returns `"Color.BRAND_NAVY"`
-    in Python 3.11+, which would corrupt every inline style string.
-    """
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __format__(self, spec: str) -> str:
-        return format(self.value, spec)
-
-
-class Color(_StrEnum):
+class Color(StrEnum):
     """Pure hex palette. Semantic groupings live in the dedicated enums
     below (`StatusTone`, `Sentiment`, `AssetClassColor`)."""
 
@@ -79,34 +62,34 @@ class Color(_StrEnum):
     CHART_HOVER_BG = "#1f2937"
 
 
-class Font(_StrEnum):
+class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""
 
     SANS = "system-ui,sans-serif"
     MONO = "ui-monospace,SFMono-Regular,Menlo,monospace"
 
 
-class FontSize(_StrEnum):
+class FontSize(StrEnum):
     """Typography scale. Pick the smallest semantic name that fits."""
 
-    HERO = "22px"     # page-banner title
+    HERO = "22px"  # page-banner title
     DISPLAY = "20px"  # highlight-card value
-    H3 = "15px"       # section heading
-    BODY = "14px"     # default body / commentary
-    SMALL = "13px"    # small body / error block
-    LABEL = "12px"    # form labels / status banner
+    H3 = "15px"  # section heading
+    BODY = "14px"  # default body / commentary
+    SMALL = "13px"  # small body / error block
+    LABEL = "12px"  # form labels / status banner
     CAPTION = "11px"  # legend / metadata caption
-    MICRO = "10px"    # uppercase micro-label
+    MICRO = "10px"  # uppercase micro-label
 
 
 class StatusTone(Enum):
     """Color triple for the status banner. Each tone bundles
     `(background, border, foreground)`."""
 
-    INFO    = (Color.SLATE_100,  Color.SLATE_300,  Color.BRAND_NAVY)
+    INFO = (Color.SLATE_100, Color.SLATE_300, Color.BRAND_NAVY)
     SUCCESS = (Color.EMERALD_50, Color.EMERALD_200, Color.EMERALD_800)
-    WARN    = (Color.AMBER_50,   Color.AMBER_200,  Color.AMBER_800)
-    ERROR   = (Color.RED_50,     Color.RED_200,    Color.RED_900)
+    WARN = (Color.AMBER_50, Color.AMBER_200, Color.AMBER_800)
+    ERROR = (Color.RED_50, Color.RED_200, Color.RED_900)
 
     @property
     def bg(self) -> str:
@@ -125,8 +108,8 @@ class TabButtonTone(Enum):
     """Active / inactive state for the top-level pill tab buttons.
     Bundles `(background, foreground, font-weight)`."""
 
-    ACTIVE   = (Color.BRAND_NAVY, Color.WHITE,     "600")
-    INACTIVE = (Color.SLATE_100,  Color.SLATE_600, "500")
+    ACTIVE = (Color.BRAND_NAVY, Color.WHITE, "600")
+    INACTIVE = (Color.SLATE_100, Color.SLATE_600, "500")
 
     @property
     def bg(self) -> str:
@@ -141,7 +124,7 @@ class TabButtonTone(Enum):
         return self.value[2]
 
 
-class Sentiment(_StrEnum):
+class Sentiment(StrEnum):
     """Highlight-card sentiment colors."""
 
     POSITIVE = Color.GREEN_600
@@ -149,7 +132,7 @@ class Sentiment(_StrEnum):
     NEUTRAL = Color.BRAND_NAVY
 
 
-class AssetClassColor(_StrEnum):
+class AssetClassColor(StrEnum):
     """Per-asset-class accent colors for the risk/return scatter."""
 
     EQUITY = "#1f77b4"
@@ -162,12 +145,12 @@ class AssetClassColor(_StrEnum):
 
 
 ASSET_CLASS_COLORS: dict[str, str] = {
-    "Equity":       AssetClassColor.EQUITY.value,
+    "Equity": AssetClassColor.EQUITY.value,
     "Fixed Income": AssetClassColor.FIXED_INCOME.value,
-    "Commodity":    AssetClassColor.COMMODITY.value,
-    "FX":           AssetClassColor.FX.value,
-    "Multi-Asset":  AssetClassColor.MULTI_ASSET.value,
-    "Credit":       AssetClassColor.CREDIT.value,
+    "Commodity": AssetClassColor.COMMODITY.value,
+    "FX": AssetClassColor.FX.value,
+    "Multi-Asset": AssetClassColor.MULTI_ASSET.value,
+    "Credit": AssetClassColor.CREDIT.value,
 }
 
 

@@ -11,6 +11,7 @@ from .config import CACHE_DIR, CACHE_TTL_HOURS
 
 try:
     import bql  # type: ignore
+
     _HAS_BQL = True
 except Exception:
     _HAS_BQL = False

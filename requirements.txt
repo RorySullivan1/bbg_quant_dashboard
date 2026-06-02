@@ -7,3 +7,7 @@ numpy>=1.24
 pyarrow>=14
 voila>=0.5
 jupyterlab>=4.0
+
+# --- dev tooling (not needed at runtime) ---
+ruff>=0.15
+black>=26.0
