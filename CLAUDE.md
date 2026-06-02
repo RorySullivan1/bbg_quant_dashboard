@@ -44,7 +44,16 @@ tabs:
   relevant (Beta / Treynor / Jensen each carry their own benchmark
   dropdown, Z-Score its selectable base metric) — all via
   `quant_metrics_table` / `zscore_cross_section`,
-  computed live from the already-fetched prices, no BQL. Below the filter
+  computed live from the already-fetched prices, no BQL. Below the two
+  panels, still inside the Filters accordion, a full-width **"Analysis
+  date range"** row holds a `SelectionRangeSlider` flanked by two
+  `DatePicker` boxes, two-way linked (move the slider → boxes update;
+  type/pick a date → slider snaps to the nearest day). Its bounds fit the
+  **overlap window of the selected strategies** — `bound_start = max(each
+  ticker's first-valid date)`, `bound_end = min(each ticker's last-valid
+  date)` via `common_window_bounds` — and the selected sub-range scopes
+  the whole selected set (perf grid **and** all pane charts/benchmarks) on
+  the next Refresh prices. Below the filter
   box: an
   always-visible selected-strategy performance grid
   (1Y/3Y/5Y per-ticker Return/Vol/Sharpe/Max DD), followed by **two
@@ -93,7 +102,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
@@ -233,6 +242,22 @@ live paths return the same shape.
   itself only updates on the next Refresh prices.) The unchecked default
   uses the shared full-sample `prep.cm`; the regime path is computed
   per-pane so the two panes stay independent.
+- **Analysis date range scopes the selected set, on Refresh prices.**
+  Unlike the metadata filters (which only narrow the ticker dropdown),
+  the date-range slider re-slices the already-fetched `universe_prices`
+  (still no BQL) and feeds the narrowed `sel_window` into both the perf
+  grid and every pane chart, with benchmark series sliced to the **same**
+  `[win_start, win_end]`. Moving the slider / editing a date box only
+  syncs the three controls — the re-slice happens on the next Refresh
+  prices. Bounds re-derive from the selection on every Refresh: a
+  `last_sel_key` closure tracks the rendered ticker set, so a **changed**
+  basket resets the slider to the new full overlap, while an **unchanged**
+  basket preserves the user's narrowed range (clamped to current bounds).
+  The slider's option list is the overlap window's trading days (values
+  are `pd.Timestamp`); the placeholder option is a string sentinel, never
+  `pd.NaT` (NaT fails ipywidgets' selection validator). `Clear all` snaps
+  the range back to its full span; `Clear section` leaves it untouched
+  (it is not a filter pill).
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
   substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
@@ -340,6 +365,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Typing in the strategies search box (left panel, above the dropdown)
   — the dropdown narrows to substring matches on ticker or name;
   already-selected tickers stay visible.
+- The **Analysis date range** row (full-width, below the two panels):
+  select a basket → Refresh prices → the slider spans the overlap window
+  and both date boxes show its ends. Dragging the slider or editing a
+  date box mirrors the other controls live but does **not** redraw;
+  clicking Refresh prices re-slices the perf grid + all pane charts to the
+  chosen window. Refreshing the **same** basket preserves a narrowed
+  range; changing the basket resets the slider to the new full overlap.
+  Pairing a recently-launched index with SPX shrinks the bounds to the
+  short overlap. `Clear all` snaps the range to full span. A single-ticker
+  or non-overlapping basket renders without a traceback.
 - Cold start (no `data/.cache/`) — status banner reads `Fetching
   prices…` then `Loaded N indices · M trading days · fetched from
   mock prices in X.Ys`; a `prices_<today>.parquet` appears under
