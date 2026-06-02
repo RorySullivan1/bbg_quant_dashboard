@@ -6,7 +6,7 @@ from collections.abc import Callable
 import ipywidgets as W
 import pandas as pd
 
-from ..style import FontSize
+from .html import STYLE_CTX, render_template
 
 
 def _checkbox_group(
@@ -50,10 +50,7 @@ def _ticker_options(df: pd.DataFrame) -> list[tuple[str, str]]:
 
 
 def _section_label(text: str) -> W.HTML:
-    return W.HTML(
-        f"<div style='font-weight:600;font-size:{FontSize.LABEL};"
-        f"margin:6px 4px 2px 4px;'>{html.escape(text)}</div>"
-    )
+    return W.HTML(render_template("section_label", **STYLE_CTX, text=html.escape(text)))
 
 
 def _q_row(label: str, *, trailing: W.Widget | None = None):
@@ -61,7 +58,7 @@ def _q_row(label: str, *, trailing: W.Widget | None = None):
     box = W.Text(placeholder="value", layout=W.Layout(width="100px"))
     children = [
         W.HTML(
-            f"<div style='width:84px;font-size:{FontSize.LABEL};'>{html.escape(label)}</div>"
+            render_template("quant_row_label", **STYLE_CTX, text=html.escape(label))
         ),
         op,
         box,

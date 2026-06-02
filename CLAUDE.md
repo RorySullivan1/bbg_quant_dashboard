@@ -107,14 +107,15 @@ dashboard always renders end-to-end.
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
 | `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref`, `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
-| `src/layout/chrome.py` | Page chrome: `_banner`, `_status_banner`, `_render_status`, `_make_tab_button`, `_style_tab_button`, `BANNER_HTML`. |
+| `src/layout/chrome.py` | Page chrome: `_banner`, `_status_banner`, `_render_status`, `_make_tab_button`, `_style_tab_button` (HTML via `render_template`). |
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts. Imports `theme`. |
-| `src/layout/html.py` | HTML loaders/renderers: `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error`. Imports `theme` `_sentiment_color`. |
+| `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
 | `src/layout/builder.py` | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers. Owns the orchestration closures (`_recompute` preps one data slice and renders both panes; `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Imports every sibling module. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
+| `data/templates/` | Component HTML templates rendered by `render_template` (banner, status, section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
@@ -278,9 +279,25 @@ live paths return the same shape.
   (it is not a filter pill). All of this lives in `build_app`'s closures
   in `src/layout/builder.py` (`_set_slider_options`, `_on_slider_change`,
   `_on_range_box`).
+- **Inline HTML lives in `data/templates/`, not Python.** Every HTML
+  snippet the UI builds (banner, status banner, section labels, quant-row
+  labels, highlight cards + wrapper, error box, weekly-commentary wrapper +
+  fallback, grid headers) is a `*.html` file rendered via
+  `render_template(name, /, **ctx)` in `src/layout/html.py`. Templates carry
+  `{{placeholders}}` for **both** style tokens (spread from the shared
+  `STYLE_CTX` — `{{navy}}`, `{{label_size}}`, …, so a `src/style.py` token
+  change still propagates) and dynamic data (`html.escape`'d by the caller
+  before substitution; `body_html` from the weekly file stays raw). Size
+  placeholders end in `_size` so they never collide with a dynamic key like a
+  card's `{{label}}`. Substitution is one pass per key in insertion order
+  (style first, dynamic last) so escaped text is never re-scanned. Edit the
+  `.html` files — not the Python — to change markup. The two 1-char
+  separators in `builder.py` (the Z-Score row's "of", the date-range "–")
+  stay inline as trivial exceptions.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
-  substituted at app-build time using `_load_disclaimer` in `src/layout/html.py`;
+  substituted at app-build time using `_load_disclaimer` in `src/layout/html.py`
+  (a thin caller of the same `{{key}}` substitution as `render_template`);
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
 - **One color identity per strategy**: every chart inside an

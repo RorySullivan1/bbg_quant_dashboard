@@ -42,7 +42,6 @@ from ..stats import (
 )
 from ..style import (
     Color,
-    FontSize,
     StatusTone,
 )
 from .charts import (
@@ -70,11 +69,13 @@ from .grids import (
     _update_universe_grid,
 )
 from .html import (
+    STYLE_CTX,
     _load_disclaimer,
     _load_weekly_commentary,
     _render_error,
     _render_highlights,
     _render_weekly_commentary,
+    render_template,
 )
 from .panes import _make_analysis_pane
 
@@ -574,10 +575,9 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     selected_perf_grid = _perf_grid()
     selected_perf_header = W.HTML(
-        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
-        "margin:8px 12px 4px 12px;'>"
-        "Selected-strategy performance"
-        "</div>"
+        render_template(
+            "grid_header", **STYLE_CTX, text="Selected-strategy performance"
+        )
     )
     selected_perf_section = W.VBox(
         [selected_perf_header, selected_perf_grid],
@@ -590,10 +590,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     universe_header = W.HTML(
-        f"<div style='font-weight:600;font-size:{FontSize.BODY};"
-        "margin:8px 12px 4px 12px;'>"
-        "All-catalog performance"
-        "</div>"
+        render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
     platform_panel = W.VBox(
         [universe_header, universe_grid],

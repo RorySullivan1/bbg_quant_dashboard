@@ -28,6 +28,7 @@ ARP_SOLUTION_VALUES = frozenset({"arp", "alternative risk premia"})
 WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
+TEMPLATES_DIR = REPO_ROOT / "data" / "templates"
 LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 
 # Benchmarks fetched alongside the ARP universe in the single startup BQL
