@@ -16,7 +16,7 @@ from enum import Enum, StrEnum
 
 class Color(StrEnum):
     """Pure hex palette. Semantic groupings live in the dedicated enums
-    below (`StatusTone`, `Sentiment`, `AssetClassColor`)."""
+    below (`StatusTone`, `Sentiment`)."""
 
     # Brand
     BRAND_NAVY = "#0b1f3a"
@@ -130,28 +130,6 @@ class Sentiment(StrEnum):
     POSITIVE = Color.GREEN_600
     NEGATIVE = Color.RED_600
     NEUTRAL = Color.BRAND_NAVY
-
-
-class AssetClassColor(StrEnum):
-    """Per-asset-class accent colors for the risk/return scatter."""
-
-    EQUITY = "#1f77b4"
-    FIXED_INCOME = "#ff7f0e"
-    COMMODITY = "#2ca02c"
-    FX = "#d62728"
-    MULTI_ASSET = "#9467bd"
-    CREDIT = "#8c564b"
-    UNKNOWN = "#94a3b8"
-
-
-ASSET_CLASS_COLORS: dict[str, str] = {
-    "Equity": AssetClassColor.EQUITY.value,
-    "Fixed Income": AssetClassColor.FIXED_INCOME.value,
-    "Commodity": AssetClassColor.COMMODITY.value,
-    "FX": AssetClassColor.FX.value,
-    "Multi-Asset": AssetClassColor.MULTI_ASSET.value,
-    "Credit": AssetClassColor.CREDIT.value,
-}
 
 
 # Bloomberg / Barclays-blend palette — high-chroma colors tuned to pop
