@@ -13,7 +13,4 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "W"]
-ignore = [
-    "E501",   # line length is owned by black
-    "UP042",  # keep the documented custom _StrEnum (style.py); StrEnum migration is out of scope here
-]
+ignore = ["E501"]  # line length is owned by black

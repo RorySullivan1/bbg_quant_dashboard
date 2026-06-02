@@ -313,8 +313,9 @@ ruff check src
 black src          # or: black --check src
 ```
 
-Black owns line width (ruff ignores `E501`). The custom `_StrEnum` in
-`src/style.py` is intentional, so `UP042` (StrEnum migration) is ignored.
+Black owns line width (ruff ignores `E501`). The style-token enums in
+`src/style.py` use the stdlib `enum.StrEnum` base (Python 3.11+) so members
+interpolate cleanly into f-strings.
 
 ## Testing notes
 
