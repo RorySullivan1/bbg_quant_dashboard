@@ -90,7 +90,7 @@ dashboard always renders end-to-end.
 | Module                | Owns                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
-| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
+| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `TabButtonTone` enums plus `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `perf_table`, `since_inception_perf`, `universe_perf`. |
@@ -246,9 +246,7 @@ live paths return the same shape.
   Color"**, `PERF_COLOR_COLUMN_NAME`) rendered with
   `ipydatagrid.VegaExpr` and the same positional palette, so the
   grid acts as the universal legend — every chart's per-strategy
-  bqplot legend (`display_legend`) is off. `AssetClassColor` /
-  `ASSET_CLASS_COLORS` remain defined in `src/style.py` but are
-  currently unused.
+  bqplot legend (`display_legend`) is off.
 - **Selected perf grid uses 2-level MultiIndex columns** (Info / 1Y /
   3Y / 5Y supercolumns over their leaves), matching the all-catalog
   grid. Custom per-column widths are kept via ipydatagrid's
@@ -274,9 +272,8 @@ live paths return the same shape.
   only the charts are dark.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
   stacks, and font sizes used by `src/layout.py` reference the `Color`,
-  `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor`,
-  and `TabButtonTone` enums. Adding a new color or size: extend the
-  enum, don't inline.
+  `Font`, `FontSize`, `StatusTone`, `Sentiment`, and `TabButtonTone`
+  enums. Adding a new color or size: extend the enum, don't inline.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
