@@ -187,6 +187,22 @@ def _make_tab_button(
     return btn
 
 
+def _make_benchmark_dropdown(
+    description: str = "Benchmark", *, default: str = DEFAULT_BENCHMARK
+) -> W.Dropdown:
+    """A per-pane benchmark selector. Every analysis-pane benchmark dropdown
+    (Rolling Correlation / Rolling Beta / Outperformance / Correlation-Heatmap
+    regime) is the same widget over `BENCHMARK_TICKERS`, so they share this
+    factory."""
+    return W.Dropdown(
+        options=BENCHMARK_TICKERS,
+        value=default,
+        description=description,
+        style={"description_width": "80px"},
+        layout=W.Layout(width="320px"),
+    )
+
+
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     """Build a self-contained analysis pane with all 9 figures pre-allocated.
 
@@ -219,27 +235,9 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     retdist_fig = _return_dist_chart()
     retdist_stats_grid = _return_dist_stats_grid()
 
-    rcorr_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
-    rbeta_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
-    outperf_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
+    rcorr_benchmark_dd = _make_benchmark_dropdown()
+    rbeta_benchmark_dd = _make_benchmark_dropdown()
+    outperf_benchmark_dd = _make_benchmark_dropdown()
 
     # Correlation-Heatmap regime controls. The checkbox reveals a benchmark
     # selector, a Down/Up tail direction toggle, and a 0-100% (step 5) tail
@@ -252,13 +250,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         indent=False,
         layout=W.Layout(width="140px"),
     )
-    heat_benchmark_dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=DEFAULT_BENCHMARK,
-        description="Benchmark",
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
-    )
+    heat_benchmark_dd = _make_benchmark_dropdown()
     heat_dir = W.ToggleButtons(
         options=["Down", "Up"],
         value="Down",
@@ -1313,10 +1305,33 @@ def _line_chart() -> go.FigureWidget:
     )
 
 
-def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
+def _update_line_series(
+    fig: go.FigureWidget,
+    df: pd.DataFrame,
+    *,
+    value_format: str = ".2f",
+    hover_suffix: str = "",
+    tail_n: int | None = None,
+    title: str | None = None,
+) -> None:
+    """Shared engine for every per-strategy line chart — cumulative
+    performance, outperformance, Sharpe-z, drawdown, and rolling
+    correlation/beta.
+
+    Builds one `go.Scatter` per non-empty column using the positional
+    `LINE_PALETTE`, then atomically swaps the figure's traces inside a
+    `batch_update`. `value_format` / `hover_suffix` shape the hover y-value
+    (".2%" for drawdown, a " pp" suffix for outperformance); `tail_n` keeps
+    only the last N rows (the Sharpe-z 1Y window); `title`, when given, is
+    written to the figure title (used by the benchmark-aware charts whose
+    title depends on the selected benchmark, so it stays correct even on the
+    empty-data path)."""
+    cleaned = df.dropna(how="all") if not df.empty else df
+    if tail_n is not None and not cleaned.empty:
+        cleaned = cleaned.tail(tail_n)
     traces: list[go.Scatter] = []
-    for i, col in enumerate(perf.columns):
-        series = perf[col].dropna()
+    for i, col in enumerate(cleaned.columns):
+        series = cleaned[col].dropna()
         if series.empty:
             continue
         label = _short_ticker(col)
@@ -1327,13 +1342,22 @@ def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -
                 mode="lines",
                 name=label,
                 line=dict(color=_palette_color(i), width=1.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
+                hovertemplate=(
+                    f"{label}<br>%{{x|%Y-%m-%d}}<br>"
+                    f"%{{y:{value_format}}}{hover_suffix}<extra></extra>"
+                ),
             )
         )
     with fig.batch_update():
         fig.data = ()
         if traces:
             fig.add_traces(traces)
+        if title is not None:
+            fig.layout.title.text = title
+
+
+def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
+    _update_line_series(fig, perf)
 
 
 def _outperformance_chart() -> go.FigureWidget:
@@ -1362,28 +1386,7 @@ def _update_outperformance(
         if benchmark_label
         else f"Outperformance ({LOOKBACK_YEARS}Y)"
     )
-    cleaned = df.dropna(how="all") if not df.empty else df
-    traces: list[go.Scatter] = []
-    for i, col in enumerate(cleaned.columns):
-        series = cleaned[col].dropna()
-        if series.empty:
-            continue
-        label = _short_ticker(col)
-        traces.append(
-            go.Scatter(
-                x=series.index,
-                y=series.values,
-                mode="lines",
-                name=label,
-                line=dict(color=_palette_color(i), width=1.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}} pp<extra></extra>",
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        if traces:
-            fig.add_traces(traces)
-        fig.layout.title.text = new_title
+    _update_line_series(fig, df, hover_suffix=" pp", title=new_title)
 
 
 # ---- Perf grid (selected set) ---------------------------------------------
@@ -1453,7 +1456,12 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     if pt.empty:
         grid.data = pd.DataFrame()
         return
-    info_block = _info_block(pt.index, meta)
+    info_block = _build_info_block(
+        meta,
+        pt.index,
+        ["name", "asset_class", "theme"],
+        {"name": "Name", "asset_class": "Asset Class", "theme": "Theme"},
+    )
     # Per-row color swatch: each cell carries the hex string; the renderer
     # paints background + text the same color so it shows as a solid block —
     # the universal legend for every chart in the panes. It leads the Info
@@ -1469,15 +1477,29 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     combined = pd.concat([info_block, perf], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
-    grid.renderers = _perf_renderers(combined.columns)
-    grid.column_widths = _build_perf_column_widths(combined.columns)
+    _apply_grid_styling(grid, combined.columns, widths=True)
 
 
-def _info_block(tickers: pd.Index, meta: pd.DataFrame) -> pd.DataFrame:
-    info = meta.set_index("ticker").reindex(tickers)[["name", "asset_class", "theme"]]
-    return info.rename(
-        columns={"name": "Name", "asset_class": "Asset Class", "theme": "Theme"}
-    )
+def _build_info_block(
+    meta: pd.DataFrame,
+    tickers: pd.Index | None,
+    columns: list[str],
+    rename: dict[str, str],
+    *,
+    date_cols: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    """Build a grid 'Info' block from metadata: index by ticker, optionally
+    `reindex` to `tickers` (selected-set order), select `columns`, ISO-format
+    any `date_cols`, then `rename` to display headers. Shared by the
+    selected-strategy grid (3 cols, reindexed to the current selection) and
+    the all-catalog grid (6 cols incl. a formatted live_date, all tickers)."""
+    info = meta.set_index("ticker")
+    if tickers is not None:
+        info = info.reindex(tickers)
+    info = info[columns].copy()
+    for col in date_cols:
+        info[col] = info[col].dt.strftime("%Y-%m-%d")
+    return info.rename(columns=rename)
 
 
 def _perf_renderers(columns: pd.Index) -> dict:
@@ -1510,6 +1532,18 @@ def _perf_renderers(columns: pd.Index) -> dict:
     return renderers
 
 
+def _apply_grid_styling(
+    grid: DataGrid, columns: pd.Index, *, widths: bool = False
+) -> None:
+    """Wire the shared per-column renderers (text / pct / 2dp / color-swatch)
+    onto a grid, and — for the selected-strategy grid — the hand-tuned
+    MultiIndex column widths. The all-catalog grid uses uniform
+    `base_column_size`, so it leaves `widths` off."""
+    grid.renderers = _perf_renderers(columns)
+    if widths:
+        grid.column_widths = _build_perf_column_widths(columns)
+
+
 # ---- Universe grid (full catalog) -----------------------------------------
 
 
@@ -1528,18 +1562,19 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
     if meta.empty:
         grid.data = pd.DataFrame()
         return
-    info_cols = ["name", "asset_class", "category", "theme", "return_type", "live_date"]
-    info = meta.set_index("ticker")[info_cols].copy()
-    info["live_date"] = info["live_date"].dt.strftime("%Y-%m-%d")
-    info = info.rename(
-        columns={
+    info = _build_info_block(
+        meta,
+        None,
+        ["name", "asset_class", "category", "theme", "return_type", "live_date"],
+        {
             "name": "Name",
             "asset_class": "Asset Class",
             "category": "Category",
             "theme": "Theme",
             "return_type": "Return Type",
             "live_date": "Live Date",
-        }
+        },
+        date_cols=("live_date",),
     )
     info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
 
@@ -1558,7 +1593,7 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
 
     combined.index.name = "Ticker"
     grid.data = combined
-    grid.renderers = _perf_renderers(combined.columns)
+    _apply_grid_styling(grid, combined.columns)
 
 
 # ---- Heatmap --------------------------------------------------------------
@@ -1623,35 +1658,7 @@ def _sharpe_line_chart() -> go.FigureWidget:
 def _update_sharpe_line(
     fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataFrame
 ) -> None:
-    if zser.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    tail = zser.dropna(how="all").tail(TRADING_DAYS_PER_YEAR)
-    if tail.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    traces: list[go.Scatter] = []
-    for i, col in enumerate(tail.columns):
-        series = tail[col].dropna()
-        if series.empty:
-            continue
-        label = _short_ticker(col)
-        traces.append(
-            go.Scatter(
-                x=series.index,
-                y=series.values,
-                mode="lines",
-                name=label,
-                line=dict(color=_palette_color(i), width=1.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        if traces:
-            fig.add_traces(traces)
+    _update_line_series(fig, zser, tail_n=TRADING_DAYS_PER_YEAR)
 
 
 # ---- Risk / Return scatter (selected set) ----------------------------------
@@ -1755,35 +1762,7 @@ def _drawdown_chart() -> go.FigureWidget:
 def _update_drawdown(
     fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame
 ) -> None:
-    if dd.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    cleaned = dd.dropna(how="all")
-    if cleaned.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    traces: list[go.Scatter] = []
-    for i, col in enumerate(cleaned.columns):
-        series = cleaned[col].dropna()
-        if series.empty:
-            continue
-        label = _short_ticker(col)
-        traces.append(
-            go.Scatter(
-                x=series.index,
-                y=series.values,
-                mode="lines",
-                name=label,
-                line=dict(color=_palette_color(i), width=1.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2%}}<extra></extra>",
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        if traces:
-            fig.add_traces(traces)
+    _update_line_series(fig, dd, value_format=".2%")
 
 
 # ---- Rolling-reference line chart (correlation / beta) ---------------------
@@ -1817,38 +1796,7 @@ def _update_rolling_ref(
         if benchmark_label
         else f"{title_prefix}{title_suffix}"
     )
-    if df.empty:
-        with fig.batch_update():
-            fig.data = ()
-            fig.layout.title.text = new_title
-        return
-    cleaned = df.dropna(how="all")
-    if cleaned.empty:
-        with fig.batch_update():
-            fig.data = ()
-            fig.layout.title.text = new_title
-        return
-    traces: list[go.Scatter] = []
-    for i, col in enumerate(cleaned.columns):
-        series = cleaned[col].dropna()
-        if series.empty:
-            continue
-        label = _short_ticker(col)
-        traces.append(
-            go.Scatter(
-                x=series.index,
-                y=series.values,
-                mode="lines",
-                name=label,
-                line=dict(color=_palette_color(i), width=1.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}<extra></extra>",
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        if traces:
-            fig.add_traces(traces)
-        fig.layout.title.text = new_title
+    _update_line_series(fig, df, title=new_title)
 
 
 # ---- Return distribution histogram (selected set) --------------------------
