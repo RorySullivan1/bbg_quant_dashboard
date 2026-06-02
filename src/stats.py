@@ -397,6 +397,28 @@ def quant_metrics_table(
     )
 
 
+def common_window_bounds(
+    prices: pd.DataFrame,
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """Overlap window across all columns of ``prices``.
+
+    Returns ``(start, end)`` where ``start`` is the latest per-column
+    first-valid date ("highest min date") and ``end`` is the earliest
+    per-column last-valid date ("lowest common max date") — i.e. the span
+    over which every column has data. Returns ``(None, None)`` if there's
+    no data or no overlap (``start > end``).
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return (None, None)
+    first_valid = prices.apply(pd.Series.first_valid_index)
+    last_valid = prices.apply(pd.Series.last_valid_index)
+    start = first_valid.max()
+    end = last_valid.min()
+    if pd.isna(start) or pd.isna(end) or start > end:
+        return (None, None)
+    return (start, end)
+
+
 def perf_table(
     prices: pd.DataFrame,
     years: tuple[int, ...] = PERF_TABLE_YEARS,
