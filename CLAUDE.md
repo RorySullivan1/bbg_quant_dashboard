@@ -222,6 +222,15 @@ live paths return the same shape.
   frontend sees a single atomic frame. Trace replacement uses
   `fig.data = ()` (clear) + `fig.add_traces(new_traces)` because plotly's
   `fig.data` setter only accepts a subset of the existing traces.
+  The five per-strategy line updaters (`_update_line`,
+  `_update_outperformance`, `_update_sharpe_line`, `_update_drawdown`,
+  `_update_rolling_ref`) are thin wrappers over one shared
+  `_update_line_series` engine — they only supply the per-chart hover
+  format/suffix, an optional `tail_n` (Sharpe-z 1Y window), and an
+  optional dynamic title; reference lines stay baked into each figure's
+  `layout.shapes` at factory time. The four analysis-pane benchmark
+  dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
+  share `_build_info_block` + `_apply_grid_styling`.
 - **Pane recompute is eager**: every Refresh-prices click preps the
   selected-set data slice once and renders BOTH panes against it. Each
   pane reads its own Rolling Correlation / Rolling Beta benchmark
