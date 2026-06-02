@@ -89,24 +89,24 @@ class Font(_StrEnum):
 class FontSize(_StrEnum):
     """Typography scale. Pick the smallest semantic name that fits."""
 
-    HERO = "22px"     # page-banner title
+    HERO = "22px"  # page-banner title
     DISPLAY = "20px"  # highlight-card value
-    H3 = "15px"       # section heading
-    BODY = "14px"     # default body / commentary
-    SMALL = "13px"    # small body / error block
-    LABEL = "12px"    # form labels / status banner
+    H3 = "15px"  # section heading
+    BODY = "14px"  # default body / commentary
+    SMALL = "13px"  # small body / error block
+    LABEL = "12px"  # form labels / status banner
     CAPTION = "11px"  # legend / metadata caption
-    MICRO = "10px"    # uppercase micro-label
+    MICRO = "10px"  # uppercase micro-label
 
 
 class StatusTone(Enum):
     """Color triple for the status banner. Each tone bundles
     `(background, border, foreground)`."""
 
-    INFO    = (Color.SLATE_100,  Color.SLATE_300,  Color.BRAND_NAVY)
+    INFO = (Color.SLATE_100, Color.SLATE_300, Color.BRAND_NAVY)
     SUCCESS = (Color.EMERALD_50, Color.EMERALD_200, Color.EMERALD_800)
-    WARN    = (Color.AMBER_50,   Color.AMBER_200,  Color.AMBER_800)
-    ERROR   = (Color.RED_50,     Color.RED_200,    Color.RED_900)
+    WARN = (Color.AMBER_50, Color.AMBER_200, Color.AMBER_800)
+    ERROR = (Color.RED_50, Color.RED_200, Color.RED_900)
 
     @property
     def bg(self) -> str:
@@ -125,8 +125,8 @@ class TabButtonTone(Enum):
     """Active / inactive state for the top-level pill tab buttons.
     Bundles `(background, foreground, font-weight)`."""
 
-    ACTIVE   = (Color.BRAND_NAVY, Color.WHITE,     "600")
-    INACTIVE = (Color.SLATE_100,  Color.SLATE_600, "500")
+    ACTIVE = (Color.BRAND_NAVY, Color.WHITE, "600")
+    INACTIVE = (Color.SLATE_100, Color.SLATE_600, "500")
 
     @property
     def bg(self) -> str:
@@ -162,12 +162,12 @@ class AssetClassColor(_StrEnum):
 
 
 ASSET_CLASS_COLORS: dict[str, str] = {
-    "Equity":       AssetClassColor.EQUITY.value,
+    "Equity": AssetClassColor.EQUITY.value,
     "Fixed Income": AssetClassColor.FIXED_INCOME.value,
-    "Commodity":    AssetClassColor.COMMODITY.value,
-    "FX":           AssetClassColor.FX.value,
-    "Multi-Asset":  AssetClassColor.MULTI_ASSET.value,
-    "Credit":       AssetClassColor.CREDIT.value,
+    "Commodity": AssetClassColor.COMMODITY.value,
+    "FX": AssetClassColor.FX.value,
+    "Multi-Asset": AssetClassColor.MULTI_ASSET.value,
+    "Credit": AssetClassColor.CREDIT.value,
 }
 
 

@@ -302,6 +302,20 @@ live paths return the same shape.
   "Branching" section below.
 - **New top-level files require updating the architecture map above.**
 
+## Lint / format
+
+Style is enforced by **ruff** (lint) + **black** (format, 88-char), configured
+in `pyproject.toml` (tooling config only — not a packaging manifest). Dev tools
+are pinned in the `requirements.txt` dev-tooling section. Run before committing:
+
+```
+ruff check src
+black src          # or: black --check src
+```
+
+Black owns line width (ruff ignores `E501`). The custom `_StrEnum` in
+`src/style.py` is intentional, so `UP042` (StrEnum migration) is ignored.
+
 ## Testing notes
 
 Off-terminal, the mock-price fallback is deterministic per ticker, so:

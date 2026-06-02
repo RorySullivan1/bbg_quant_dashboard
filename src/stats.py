@@ -103,7 +103,7 @@ def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFram
     if prices.empty or benchmark.empty:
         return pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
     bench = benchmark
-    if isinstance(bench, pd.DataFrame):   # tolerate a 1-column frame
+    if isinstance(bench, pd.DataFrame):  # tolerate a 1-column frame
         bench = bench.iloc[:, 0]
     bench = bench.reindex(prices.index).ffill()
     strat_ret = cum_perf(prices).subtract(100)
@@ -137,9 +137,7 @@ def rolling_beta(
 
 def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
     if returns.empty:
-        return pd.DataFrame(
-            columns=["Mean", "Std", "Skew", "Kurtosis", "Min", "Max"]
-        )
+        return pd.DataFrame(columns=["Mean", "Std", "Skew", "Kurtosis", "Min", "Max"])
     stats = pd.DataFrame(
         {
             "Mean": returns.mean(),
@@ -153,9 +151,7 @@ def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
-def rolling_sharpe(
-    returns: pd.DataFrame, window: int = SHARPE_WINDOW
-) -> pd.DataFrame:
+def rolling_sharpe(returns: pd.DataFrame, window: int = SHARPE_WINDOW) -> pd.DataFrame:
     mean = returns.rolling(window).mean() * TRADING_DAYS_PER_YEAR
     std = returns.rolling(window).std() * np.sqrt(TRADING_DAYS_PER_YEAR)
     return mean.divide(std.replace(0, np.nan))
@@ -307,7 +303,7 @@ def downside_deviation(
     if sliced.empty:
         return pd.Series(np.nan, index=returns.columns)
     downside = sliced.where(sliced < target, 0.0)
-    return np.sqrt((downside ** 2).mean()) * np.sqrt(TRADING_DAYS_PER_YEAR)
+    return np.sqrt((downside**2).mean()) * np.sqrt(TRADING_DAYS_PER_YEAR)
 
 
 def sortino_ratio(
@@ -375,7 +371,14 @@ def quant_metrics_table(
     on demand by the caller via `zscore_cross_section`.
     """
     columns = [
-        "Sharpe", "Sortino", "Calmar", "Beta", "Treynor", "Jensen", "VaR", "RSI",
+        "Sharpe",
+        "Sortino",
+        "Calmar",
+        "Beta",
+        "Treynor",
+        "Jensen",
+        "VaR",
+        "RSI",
     ]
     if prices.empty:
         return pd.DataFrame(columns=columns)
@@ -463,4 +466,6 @@ def universe_perf(
     """1Y / 3Y / 5Y window stats plus Since-Inception, in one MultiIndex frame."""
     if prices.empty:
         return pd.DataFrame()
-    return pd.concat([perf_table(prices, years=years), since_inception_perf(prices)], axis=1)
+    return pd.concat(
+        [perf_table(prices, years=years), since_inception_perf(prices)], axis=1
+    )
