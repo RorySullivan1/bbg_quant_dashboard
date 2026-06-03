@@ -11,3 +11,4 @@ jupyterlab>=4.0
 # --- dev tooling (not needed at runtime) ---
 ruff>=0.15
 black>=26.0
+pytest>=8.0
