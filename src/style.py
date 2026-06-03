@@ -61,6 +61,28 @@ class Color(StrEnum):
     # Hover tooltip background.
     CHART_HOVER_BG = "#1f2937"
 
+    # ---- Dark technical chrome (v0.6.5) -----------------------------------
+    # Cohesive dark surface palette aligned with the chart theme above, so the
+    # surrounding chrome reads as the same "terminal-grade" surface as the
+    # charts. Workstreams B/C/D (masthead, loading overlay, buttons, grids)
+    # hang their styling off these tokens.
+    # Page background — matches the chart canvas so chrome and charts blend.
+    CHROME_BG = "#0d1117"
+    # Raised panel surface (filter box, cards) — one step above the page bg.
+    SURFACE = "#161b22"
+    # Second raised surface (nested panels, hover rows).
+    SURFACE_2 = "#1f2937"
+    # Hairline borders / dividers / scrollbar thumb.
+    BORDER = "#30363d"
+    # Primary chrome text — bright near-white for legibility on the dark bg.
+    TEXT = "#e6edf3"
+    # Muted secondary text (captions, metadata, placeholders).
+    TEXT_MUTED = "#8b949e"
+    # Accent — Bloomberg orange (LINE_PALETTE[0]); primary highlight / rule.
+    ACCENT = "#FFA000"
+    # Secondary accent — Barclays cyan (LINE_PALETTE[1]).
+    ACCENT_2 = "#00B5E2"
+
 
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""

@@ -19,11 +19,14 @@ def test_build_app_renders_expected_tree():
     # Top-level container.
     assert isinstance(app, W.VBox)
 
-    # banner, status, commentary, top tab bar, tab content, perf disclaimer,
-    # legal disclosure — 7 children in this order (see builder.py).
+    # injected CSS, banner, status, commentary, top tab bar, tab content, perf
+    # disclaimer, legal disclosure — 8 children in this order (see builder.py).
+    # The leading W.HTML is the global stylesheet mounted by `_app_css()`.
     children = app.children
-    assert len(children) == 7
-    banner, status, commentary, tab_bar, tab_content, perf_disc, legal = children
+    assert len(children) == 8
+    css, banner, status, commentary, tab_bar, tab_content, perf_disc, legal = children
+    assert isinstance(css, W.HTML)
+    assert "<style" in css.value
     assert isinstance(banner, W.HBox)
     assert isinstance(status, W.HTML)
     assert isinstance(commentary, W.VBox)
@@ -34,7 +37,7 @@ def test_build_app_renders_expected_tree():
 
 def test_build_app_reports_successful_load():
     app = build_app(verbose=False)
-    status_html = app.children[1].value
+    status_html = app.children[2].value
     # Success states read "Loaded N indices …"; failure reads "Load failed".
     assert "Loaded" in status_html
     assert "Load failed" not in status_html

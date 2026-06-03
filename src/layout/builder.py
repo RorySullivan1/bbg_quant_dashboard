@@ -55,6 +55,7 @@ from .charts import (
     _update_sharpe_line,
 )
 from .chrome import (
+    _app_css,
     _banner,
     _make_tab_button,
     _render_status,
@@ -1077,6 +1078,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     app = W.VBox(
         [
+            _app_css(),  # global stylesheet, injected once (v0.6.5 Workstream A)
             _banner(),
             status_w,
             commentary_box,
@@ -1087,6 +1089,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         ],
         layout=W.Layout(width="100%"),
     )
+    # Opt the app container into the injected dark-chrome class.
+    app.add_class("bbg-app")
 
     t_initial = time.perf_counter()
     _recompute()

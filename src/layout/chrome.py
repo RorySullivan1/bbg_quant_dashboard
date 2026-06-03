@@ -9,6 +9,16 @@ from ..style import StatusTone, TabButtonTone
 from .html import STYLE_CTX, render_template
 
 
+def _app_css() -> W.HTML:
+    """Global stylesheet, injected once at the top of the app VBox.
+
+    Renders ``data/templates/app_css.html`` (a single ``<style>`` block whose
+    values come from the shared style tokens via ``STYLE_CTX``) into a
+    ``W.HTML``. The ``<style>`` is document-global, so widgets opt into the
+    classes it defines via ``widget.add_class(...)`` (Workstreams B/C/D)."""
+    return W.HTML(render_template("app_css", **STYLE_CTX))
+
+
 def _banner() -> W.HBox:
     children: list[W.Widget] = []
     if LOGO_PATH.exists():
