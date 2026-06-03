@@ -1,0 +1,53 @@
+<style>
+/* ---- v0.6.5 global stylesheet (Workstream A foundation) ----------------
+   Injected once at the top of the app VBox via `_app_css()` (chrome.py).
+   All values come from `src/style.py` tokens through STYLE_CTX — no
+   hardcoded hex here. Later workstreams (B masthead, C loading overlay,
+   D buttons/widgets/grids) fill in the placeholder class blocks below. */
+
+/* Dark technical chrome: dark page surface + bright text + base font. */
+.bbg-app {
+  background: {{chrome_bg}};
+  color: {{text_color}};
+  font-family: {{sans}};
+}
+
+/* Slim, dark-themed scrollbars (WebKit/Blink). */
+.bbg-app ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.bbg-app ::-webkit-scrollbar-track {
+  background: {{chrome_bg}};
+}
+.bbg-app ::-webkit-scrollbar-thumb {
+  background: {{border_color}};
+  border-radius: 6px;
+  border: 2px solid {{chrome_bg}};
+}
+.bbg-app ::-webkit-scrollbar-thumb:hover {
+  background: {{surface2}};
+}
+
+/* Slim, dark-themed scrollbars (Firefox). */
+.bbg-app * {
+  scrollbar-width: thin;
+  scrollbar-color: {{border_color}} {{chrome_bg}};
+}
+
+/* ---- Placeholder hooks for later workstreams --------------------------
+   Defined-but-minimal so B/C/D can fill them in without re-touching the
+   CSS mount point. */
+
+/* Workstream B — masthead accent rule. */
+.bbg-masthead {}
+
+/* Workstream C — loading overlay + staged progress bar. */
+.bbg-overlay {}
+.bbg-progress {}
+
+/* Workstream D — button hover/active/focus states, dark controls + grids. */
+.bbg-btn {}
+.bbg-btn-secondary {}
+.bbg-grid {}
+</style>
