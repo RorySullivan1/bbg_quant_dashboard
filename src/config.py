@@ -9,7 +9,7 @@ PERF_TABLE_YEARS = (1, 3, 5)
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
-RSI_WINDOW = 14        # Wilder RSI lookback in trading days
+RSI_WINDOW = 14  # Wilder RSI lookback in trading days
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
@@ -28,16 +28,17 @@ ARP_SOLUTION_VALUES = frozenset({"arp", "alternative risk premia"})
 WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
+TEMPLATES_DIR = REPO_ROOT / "data" / "templates"
 LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 
 # Benchmarks fetched alongside the ARP universe in the single startup BQL
 # call. Used by the Rolling Correlation and Rolling Beta tabs only — never
 # shown in the all-catalog grid or the highlights cards.
 BENCHMARK_TICKERS: list[str] = [
-    "SPX Index",       # S&P 500
-    "MXWO Index",      # MSCI World
+    "SPX Index",  # S&P 500
+    "MXWO Index",  # MSCI World
     "LBUSTRUU Index",  # Bloomberg US Aggregate
-    "BCOM Index",      # Bloomberg Commodity
-    "BBG6040 Index",   # Bloomberg 60/40
+    "BCOM Index",  # Bloomberg Commodity
+    "BBG6040 Index",  # Bloomberg 60/40
 ]
 DEFAULT_BENCHMARK = "SPX Index"

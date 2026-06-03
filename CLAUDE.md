@@ -99,18 +99,31 @@ dashboard always renders end-to-end.
 | Module                | Owns                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
-| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor` enums plus `ASSET_CLASS_COLORS` / `LINE_PALETTE`. All inline CSS in `src/layout.py` references these — change hex/font values here, not at call sites. |
+| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `TabButtonTone` enums plus `LINE_PALETTE`. All inline CSS in `src/layout/` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
-| `src/layout.py`       | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + performance disclaimer + legal disclosure. `_make_analysis_pane(side)` factory builds a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container); the Multi-Strategy Analysis tab mounts two of them side by side. `_recompute()` preps one data slice and renders both panes from it. |
+| `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
+| `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
+| `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref`, `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
+| `src/layout/chrome.py` | Page chrome: `_banner`, `_status_banner`, `_render_status`, `_make_tab_button`, `_style_tab_button` (HTML via `render_template`). |
+| `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
+| `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
+| `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
+| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts. Imports `theme`. |
+| `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
+| `src/layout/builder.py` | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers. Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Imports every sibling module. |
+| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w`, the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
+| `data/templates/` | Component HTML templates rendered by `render_template` (banner, status, section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
-| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + empty `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`) to fill in as scope firms up. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.5.0`). Keep in sync with the "Branching" section on every bump. |
+| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.6.0`). Keep in sync with the "Branching" section on every bump. |
+| `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
+| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.0`. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -165,16 +178,20 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.5.0`.
+- **Current version**: `v0.6.0`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
   Examples:
-  - `v0.5.0/enhancement/perf-grid-color-swatch`
-  - `v0.5.0/bugfix/empty-ticker-traceback`
-  - `v0.5.0/refactor/style-tokens`
+  - `v0.6.0/enhancement/perf-grid-color-swatch`
+  - `v0.6.0/bugfix/empty-ticker-traceback`
+  - `v0.6.0/refactor/style-tokens`
+  - **Caveat:** when the integration branch is named exactly `v{X.Y.Z}` (as
+    with `v0.6.0`), git can't also host nested `v{X.Y.Z}/<type>/<desc>` refs,
+    so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
+    `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.5.1/...`).
+  open new branches under the new prefix (e.g. `v0.6.5/...`).
 
 ## Conventions
 
@@ -231,6 +248,15 @@ live paths return the same shape.
   frontend sees a single atomic frame. Trace replacement uses
   `fig.data = ()` (clear) + `fig.add_traces(new_traces)` because plotly's
   `fig.data` setter only accepts a subset of the existing traces.
+  The five per-strategy line updaters (`_update_line`,
+  `_update_outperformance`, `_update_sharpe_line`, `_update_drawdown`,
+  `_update_rolling_ref`) are thin wrappers over one shared
+  `_update_line_series` engine — they only supply the per-chart hover
+  format/suffix, an optional `tail_n` (Sharpe-z 1Y window), and an
+  optional dynamic title; reference lines stay baked into each figure's
+  `layout.shapes` at factory time. The four analysis-pane benchmark
+  dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
+  share `_build_info_block` + `_apply_grid_styling`.
 - **Pane recompute is eager**: every Refresh-prices click preps the
   selected-set data slice once and renders BOTH panes against it. Each
   pane reads its own Rolling Correlation / Rolling Beta benchmark
@@ -257,10 +283,28 @@ live paths return the same shape.
   are `pd.Timestamp`); the placeholder option is a string sentinel, never
   `pd.NaT` (NaT fails ipywidgets' selection validator). `Clear all` snaps
   the range back to its full span; `Clear section` leaves it untouched
-  (it is not a filter pill).
+  (it is not a filter pill). All of this lives in `build_app`'s closures
+  in `src/layout/builder.py` (`_set_slider_options`, `_on_slider_change`,
+  `_on_range_box`).
+- **Inline HTML lives in `data/templates/`, not Python.** Every HTML
+  snippet the UI builds (banner, status banner, section labels, quant-row
+  labels, highlight cards + wrapper, error box, weekly-commentary wrapper +
+  fallback, grid headers) is a `*.html` file rendered via
+  `render_template(name, /, **ctx)` in `src/layout/html.py`. Templates carry
+  `{{placeholders}}` for **both** style tokens (spread from the shared
+  `STYLE_CTX` — `{{navy}}`, `{{label_size}}`, …, so a `src/style.py` token
+  change still propagates) and dynamic data (`html.escape`'d by the caller
+  before substitution; `body_html` from the weekly file stays raw). Size
+  placeholders end in `_size` so they never collide with a dynamic key like a
+  card's `{{label}}`. Substitution is one pass per key in insertion order
+  (style first, dynamic last) so escaped text is never re-scanned. Edit the
+  `.html` files — not the Python — to change markup. The two 1-char
+  separators in `builder.py` (the Z-Score row's "of", the date-range "–")
+  stay inline as trivial exceptions.
 - **Disclaimers are templated HTML** loaded from `data/`. The performance
   disclaimer's `{{start_date}}` / `{{end_date}}` placeholders are
-  substituted at app-build time using `_load_disclaimer` in `src/layout.py`;
+  substituted at app-build time using `_load_disclaimer` in `src/layout/html.py`
+  (a thin caller of the same `{{key}}` substitution as `render_template`);
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
 - **One color identity per strategy**: every chart inside an
@@ -271,9 +315,7 @@ live paths return the same shape.
   Color"**, `PERF_COLOR_COLUMN_NAME`) rendered with
   `ipydatagrid.VegaExpr` and the same positional palette, so the
   grid acts as the universal legend — every chart's per-strategy
-  bqplot legend (`display_legend`) is off. `AssetClassColor` /
-  `ASSET_CLASS_COLORS` remain defined in `src/style.py` but are
-  currently unused.
+  bqplot legend (`display_legend`) is off.
 - **Selected perf grid uses 2-level MultiIndex columns** (Info / 1Y /
   3Y / 5Y supercolumns over their leaves), matching the all-catalog
   grid. Custom per-column widths are kept via ipydatagrid's
@@ -289,7 +331,7 @@ live paths return the same shape.
 - **Chart theme is dark (Bloomberg / Barclays blend)**: charts render
   on `Color.CHART_BG` (near-black `#0d1117`) via plotly's
   `plotly_dark` template + custom overrides defined in
-  `_chart_layout()` in `src/layout.py`. The `LINE_PALETTE` is a
+  `_chart_layout()` in `src/layout/theme.py`. The `LINE_PALETTE` is a
   high-chroma palette anchored by Bloomberg orange (`#FFA000`) and
   Barclays cyan (`#00B5E2`) so traces pop against the dark
   background. Chart-specific color tokens (`CHART_BG`, `CHART_GRID`,
@@ -298,10 +340,9 @@ live paths return the same shape.
   banner, status banner, commentary block, perf grid) stays light —
   only the charts are dark.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
-  stacks, and font sizes used by `src/layout.py` reference the `Color`,
-  `Font`, `FontSize`, `StatusTone`, `Sentiment`, `AssetClassColor`,
-  and `TabButtonTone` enums. Adding a new color or size: extend the
-  enum, don't inline.
+  stacks, and font sizes used by `src/layout/` reference the `Color`,
+  `Font`, `FontSize`, `StatusTone`, `Sentiment`, and `TabButtonTone`
+  enums. Adding a new color or size: extend the enum, don't inline.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
@@ -315,19 +356,58 @@ live paths return the same shape.
   selection state while typing.
 - **Recompute errors surface in the commentary block** as a styled traceback,
   rather than leaving the charts silently empty. See `_render_error` in
-  `src/layout.py`.
+  `src/layout/html.py`.
 - **Agent context lives in `.claude/` and `.meta/`.** Reusable skills
   are folder-per-skill under `.claude/skills/<name>/SKILL.md` (Claude
   Code auto-discovers them) — the Python lifecycle + doc-drafting skills
   came from `RorySullivan1/claude-skills-library`; `ipywidgets` and
   `plotly` are project-authored against the conventions in this file
   (prefer them for UI/chart work). The forward roadmap is
-  `.claude/dev_map/` (an index plus empty `vX.Y.Z` stubs). The canonical
+  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs). The canonical
   shipped version is `.meta/VERSION` — bump it together with the
   "Branching" section below.
+- **Session state lives on `DashboardState`** (`src/layout/state.py`), built
+  once in `build_app` and shared by the orchestration closures. They mutate
+  attributes (`state.universe_prices = …`, `state.active_filter = …`), which
+  never rebinds a name — so there is **no `nonlocal`** and no list-as-mutable-cell
+  hack. The closures stay nested in `build_app`; add new shared session state as
+  a `DashboardState` field, not a fresh closure variable.
 - **New top-level files require updating the architecture map above.**
 
+## Lint / format
+
+Style is enforced by **ruff** (lint) + **black** (format, 88-char), configured
+in `pyproject.toml` (tooling config only — not a packaging manifest). Dev tools
+are pinned in the `requirements.txt` dev-tooling section. Run before committing:
+
+```
+ruff check src tests
+black src tests    # or: black --check src tests
+```
+
+Black owns line width (ruff ignores `E501`). The style-token enums in
+`src/style.py` use the stdlib `enum.StrEnum` base (Python 3.11+) so members
+interpolate cleanly into f-strings.
+
+A `.pre-commit-config.yaml` wires the same tools as `repo: local` hooks (so
+versions match `requirements.txt`/CI): `ruff check --fix` + `black` on commit,
+`pytest -q` on push. Opt in once with `pre-commit install` (and
+`pre-commit install --hook-type pre-push` for the test hook); run everything
+with `pre-commit run --all-files`.
+
 ## Testing notes
+
+Automated tests live in `tests/` and run with **pytest** (a dev-only dep):
+
+```
+pytest -q
+```
+
+`tests/test_stats.py` unit-tests the pure `src/stats.py` metric functions
+against small fixed frames (fixtures in `tests/conftest.py`); `tests/test_smoke.py`
+is the regression guard — it builds the whole dashboard on the mock-price
+fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
+also run in CI (`.github/workflows/ci.yml`) on every push/PR to `v0.6.0`.
 
 Off-terminal, the mock-price fallback is deterministic per ticker, so:
 

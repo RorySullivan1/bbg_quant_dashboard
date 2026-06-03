@@ -1,0 +1,34 @@
+name: CI
+
+# Lint, format-check, and test on the v0.6.0 integration branch and any PR
+# targeting it. Mirrors the local commands documented in CLAUDE.md.
+on:
+  push:
+    branches: ["v0.6.0"]
+  pull_request:
+    branches: ["v0.6.0"]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ruff (lint)
+        run: ruff check src tests
+
+      - name: Black (format check)
+        run: black --check src tests
+
+      - name: Pytest
+        run: pytest -q
