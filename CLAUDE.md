@@ -193,6 +193,29 @@ live paths return the same shape.
 - When the dashboard bumps to the next version, update this section and
   open new branches under the new prefix (e.g. `v0.6.5/...`).
 
+## Development workflow
+
+Every roadmap item ships through the same loop. The `/workstream` skill
+(`.claude/skills/workstream/SKILL.md`) is the step-by-step playbook; the
+`.claude/settings.json` PreToolUse hooks **enforce** the gates below.
+
+1. **Plan first.** Enter plan mode (`Shift+Tab` ×2; there is no auto-default
+   plan-mode setting), read the target `.claude/dev_map/vX.Y.Z.md` stub,
+   explore, design, and get the plan approved before editing.
+2. **Branch.** Cut one integration branch per version (`vX.Y.Z`, off `main`),
+   then a **flat-named sub-branch per workstream** off it
+   (`vX.Y.Z-<desc>` — see the "Branching" caveat above). One workstream per
+   branch, mirroring the dev-map §9 PR sequencing.
+3. **Implement** only that workstream; respect the stub's non-goals; add/adjust
+   `tests/`.
+4. **Quality gates** — `ruff check src tests`, `black --check src tests`,
+   `python -m pytest -q` must all be green. `.claude/hooks/quality-gates.sh`
+   re-runs these on every `git commit` and **blocks** the commit on failure.
+5. **Commit & push** `-u origin <branch>`. Never push to `main`/`master` —
+   `.claude/hooks/block-main-push.sh` blocks it; land changes via PR.
+6. **PR into the integration branch** (`vX.Y.Z`, not `main`); tick the dev-map
+   §9 checkbox. Defer `.meta/VERSION` + release-note edits to end-of-cycle.
+
 ## Conventions
 
 - **One BQL call per session**. `build_app` issues a single
