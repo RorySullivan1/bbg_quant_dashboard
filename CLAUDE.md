@@ -121,6 +121,8 @@ dashboard always renders end-to-end.
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + empty `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`) to fill in as scope firms up. |
 | `.meta/VERSION`                    | Canonical current shipped version (`0.5.0`). Keep in sync with the "Branching" section on every bump. |
+| `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
+| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.0`. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -368,8 +370,8 @@ in `pyproject.toml` (tooling config only — not a packaging manifest). Dev tool
 are pinned in the `requirements.txt` dev-tooling section. Run before committing:
 
 ```
-ruff check src
-black src          # or: black --check src
+ruff check src tests
+black src tests    # or: black --check src tests
 ```
 
 Black owns line width (ruff ignores `E501`). The style-token enums in
@@ -377,6 +379,18 @@ Black owns line width (ruff ignores `E501`). The style-token enums in
 interpolate cleanly into f-strings.
 
 ## Testing notes
+
+Automated tests live in `tests/` and run with **pytest** (a dev-only dep):
+
+```
+pytest -q
+```
+
+`tests/test_stats.py` unit-tests the pure `src/stats.py` metric functions
+against small fixed frames (fixtures in `tests/conftest.py`); `tests/test_smoke.py`
+is the regression guard — it builds the whole dashboard on the mock-price
+fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
+also run in CI (`.github/workflows/ci.yml`) on every push/PR to `v0.6.0`.
 
 Off-terminal, the mock-price fallback is deterministic per ticker, so:
 

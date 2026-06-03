@@ -9,8 +9,11 @@ target-version = ["py311"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-src = ["src"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "W"]
 ignore = ["E501"]  # line length is owned by black
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
