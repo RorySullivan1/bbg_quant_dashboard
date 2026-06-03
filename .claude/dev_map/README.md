@@ -5,7 +5,7 @@ in this directory is a stub for a planned release — fill it in as the
 scope for that version firms up (goals, scope, status, related PRs).
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.5.0`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.6.0`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -22,7 +22,7 @@ sections carry the same checkboxes so progress is visible at a glance; tick
 them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 
 - [x] `v0.5.0` — feature-complete baseline (shipped; pre-roadmap).
-- [ ] `v0.6.0` — Refactoring & Optimization. _(in progress)_
+- [x] `v0.6.0` — Refactoring & Optimization (shipped).
 - [ ] `v0.6.5` — Dashboard Styling: dark technical chrome, bold masthead,
   loading overlay + staged progress bar (point release after v0.6.0).
 - [ ] `v0.6.9` — Optimization & Responsiveness: in-memory caching (with a
