@@ -1,0 +1,25 @@
+# Local hooks — run the dev tools already pinned in requirements.txt (no hosted
+# revs / network, so versions match CI exactly). Install once with
+# `pre-commit install` (commit hooks) and `pre-commit install --hook-type
+# pre-push` (the test hook). Run across the repo with `pre-commit run --all-files`.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint + autofix)
+        entry: ruff check --fix
+        language: system
+        types: [python]
+      - id: black
+        name: black (format)
+        entry: black
+        language: system
+        types: [python]
+      - id: pytest
+        name: pytest
+        entry: python -m pytest -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

@@ -1,0 +1,97 @@
+"""Statistics package — performance, risk, and rolling metrics.
+
+Split out of the former single ``src/stats.py`` (v0.6.0 Workstream G stretch)
+into ``_common`` (price/return primitives) + ``performance`` / ``risk`` /
+``rolling``. The public surface is flat and unchanged: every name a caller used
+via ``from ..stats import X`` / ``stats.X`` is re-exported here, so consumers
+(``layout/builder.py``, ``layout/charts.py``, ``commentary.py``, the tests) need
+no edits.
+"""
+
+from __future__ import annotations
+
+from ._common import (
+    _benchmark_series,
+    _has_enough_history,
+    _slice_last_years,
+    common_window_bounds,
+    daily_returns,
+    drawdown_series,
+    max_drawdown,
+    zscore_cross_section,
+)
+from .performance import (
+    ann_return,
+    ann_sharpe,
+    ann_volatility,
+    cum_perf,
+    excess_cum_return,
+    perf_table,
+    since_inception_perf,
+    total_return,
+    universe_perf,
+    weekly_change,
+)
+from .risk import (
+    ann_beta,
+    calmar_ratio,
+    corr_matrix,
+    downside_deviation,
+    historical_var,
+    jensen_alpha,
+    quant_metrics_table,
+    regime_corr_matrix,
+    return_distribution_stats,
+    rsi,
+    sortino_ratio,
+    treynor_ratio,
+)
+from .rolling import (
+    rolling_beta,
+    rolling_correlation,
+    rolling_sharpe,
+    rolling_sharpe_zscore,
+    sharpe_zscore,
+)
+
+__all__ = [
+    # _common
+    "daily_returns",
+    "drawdown_series",
+    "max_drawdown",
+    "zscore_cross_section",
+    "common_window_bounds",
+    "_slice_last_years",
+    "_has_enough_history",
+    "_benchmark_series",
+    # performance
+    "cum_perf",
+    "total_return",
+    "weekly_change",
+    "excess_cum_return",
+    "ann_return",
+    "ann_volatility",
+    "ann_sharpe",
+    "perf_table",
+    "since_inception_perf",
+    "universe_perf",
+    # risk
+    "corr_matrix",
+    "regime_corr_matrix",
+    "return_distribution_stats",
+    "ann_beta",
+    "calmar_ratio",
+    "treynor_ratio",
+    "jensen_alpha",
+    "downside_deviation",
+    "sortino_ratio",
+    "historical_var",
+    "rsi",
+    "quant_metrics_table",
+    # rolling
+    "rolling_sharpe",
+    "sharpe_zscore",
+    "rolling_sharpe_zscore",
+    "rolling_correlation",
+    "rolling_beta",
+]

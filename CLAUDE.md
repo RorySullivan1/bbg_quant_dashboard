@@ -102,7 +102,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `TabButtonTone` enums plus `LINE_PALETTE`. All inline CSS in `src/layout/` references these — change hex/font values here, not at call sites. |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
-| `src/stats.py`        | `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
@@ -120,8 +120,8 @@ dashboard always renders end-to-end.
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
-| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + empty `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`) to fill in as scope firms up. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.5.0`). Keep in sync with the "Branching" section on every bump. |
+| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.6.0`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.0`. |
 
@@ -178,16 +178,20 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.5.0`.
+- **Current version**: `v0.6.0`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
   Examples:
-  - `v0.5.0/enhancement/perf-grid-color-swatch`
-  - `v0.5.0/bugfix/empty-ticker-traceback`
-  - `v0.5.0/refactor/style-tokens`
+  - `v0.6.0/enhancement/perf-grid-color-swatch`
+  - `v0.6.0/bugfix/empty-ticker-traceback`
+  - `v0.6.0/refactor/style-tokens`
+  - **Caveat:** when the integration branch is named exactly `v{X.Y.Z}` (as
+    with `v0.6.0`), git can't also host nested `v{X.Y.Z}/<type>/<desc>` refs,
+    so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
+    `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.5.1/...`).
+  open new branches under the new prefix (e.g. `v0.6.5/...`).
 
 ## Conventions
 
@@ -359,7 +363,7 @@ live paths return the same shape.
   came from `RorySullivan1/claude-skills-library`; `ipywidgets` and
   `plotly` are project-authored against the conventions in this file
   (prefer them for UI/chart work). The forward roadmap is
-  `.claude/dev_map/` (an index plus empty `vX.Y.Z` stubs). The canonical
+  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs). The canonical
   shipped version is `.meta/VERSION` — bump it together with the
   "Branching" section below.
 - **Session state lives on `DashboardState`** (`src/layout/state.py`), built
@@ -384,6 +388,12 @@ black src tests    # or: black --check src tests
 Black owns line width (ruff ignores `E501`). The style-token enums in
 `src/style.py` use the stdlib `enum.StrEnum` base (Python 3.11+) so members
 interpolate cleanly into f-strings.
+
+A `.pre-commit-config.yaml` wires the same tools as `repo: local` hooks (so
+versions match `requirements.txt`/CI): `ruff check --fix` + `black` on commit,
+`pytest -q` on push. Opt in once with `pre-commit install` (and
+`pre-commit install --hook-type pre-push` for the test hook); run everything
+with `pre-commit run --all-files`.
 
 ## Testing notes
 
