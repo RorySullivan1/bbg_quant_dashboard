@@ -5,17 +5,8 @@ import html
 import ipywidgets as W
 
 from ..config import LOGO_PATH
-from ..style import Color, Font, FontSize, StatusTone, TabButtonTone
-
-BANNER_HTML = (
-    "<div style='display:flex;align-items:center;gap:16px;"
-    f"padding:12px 16px;background:{Color.BRAND_NAVY};color:{Color.WHITE};'>"
-    f"<div style='font-size:{FontSize.HERO};font-weight:600;'>"
-    "Index Catalog Dashboard</div>"
-    f"<div style='font-size:{FontSize.SMALL};opacity:0.75;'>"
-    "Metadata · Performance · Risk</div>"
-    "</div>"
-)
+from ..style import StatusTone, TabButtonTone
+from .html import STYLE_CTX, render_template
 
 
 def _banner() -> W.HBox:
@@ -23,7 +14,9 @@ def _banner() -> W.HBox:
     if LOGO_PATH.exists():
         with open(LOGO_PATH, "rb") as f:
             children.append(W.Image(value=f.read(), format="png", width=48, height=48))
-    children.append(W.HTML(BANNER_HTML, layout=W.Layout(flex="1 1 auto")))
+    children.append(
+        W.HTML(render_template("banner", **STYLE_CTX), layout=W.Layout(flex="1 1 auto"))
+    )
     return W.HBox(
         children,
         layout=W.Layout(width="100%", align_items="center"),
@@ -38,13 +31,13 @@ def _status_banner() -> W.HTML:
 
 
 def _render_status(text: str, *, tone: StatusTone) -> str:
-    return (
-        f"<div style='font-family:{Font.MONO};"
-        f"font-size:{FontSize.LABEL};padding:6px 14px;"
-        f"background:{tone.bg};border-bottom:1px solid {tone.border};"
-        f"color:{tone.fg};'>"
-        f"{html.escape(text)}"
-        "</div>"
+    return render_template(
+        "status",
+        **STYLE_CTX,
+        bg=tone.bg,
+        border=tone.border,
+        fg=tone.fg,
+        text=html.escape(text),
     )
 
 
