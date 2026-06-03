@@ -78,6 +78,7 @@ from .html import (
     render_template,
 )
 from .panes import _make_analysis_pane
+from .state import DashboardState
 
 
 def build_app(verbose: bool = True) -> W.VBox:
@@ -224,8 +225,9 @@ def build_app(verbose: bool = True) -> W.VBox:
     # Analysis date range — a slider flanked by two date boxes, two-way
     # linked. Its bounds are rebuilt at recompute time to the overlap window
     # of the selected strategies; the selected sub-range scopes the
-    # selected-set charts and perf grid (re-slice only, no BQL). `_sync_guard`
-    # suppresses the bidirectional observers during programmatic updates.
+    # selected-set charts and perf grid (re-slice only, no BQL).
+    # `state.sync_guard` suppresses the bidirectional observers during
+    # programmatic updates.
     range_min_box = W.DatePicker(layout=W.Layout(width="160px"))
     range_max_box = W.DatePicker(layout=W.Layout(width="160px"))
     # Placeholder option is a plain string sentinel, not pd.NaT — a NaT value
@@ -238,11 +240,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         disabled=True,
         layout=W.Layout(width="100%", flex="1 1 auto"),
     )
-    _sync_guard = [False]
-    # The ticker set rendered on the last recompute. When it changes, the
-    # slider bounds + value reset to the new overlap; when it's unchanged
-    # (same basket, user only narrowed the range), the range is preserved.
-    last_sel_key = [None]
+    # `state.sync_guard` suppresses the bidirectional observers during
+    # programmatic updates; `state.last_sel_key` tracks the ticker set rendered
+    # on the last recompute — when it changes the slider bounds + value reset to
+    # the new overlap, when it's unchanged (same basket, user only narrowed the
+    # range) the range is preserved. Both live on `DashboardState` (built below).
 
     apply_btn = W.Button(
         description="Refresh prices",
@@ -265,7 +267,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     status_w = _status_banner()
 
     def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
-        status_w.value = _render_status(text, tone=tone)
+        state.status_w.value = _render_status(text, tone=tone)
 
     def _format_loaded(
         df: pd.DataFrame, source: str, elapsed: float
@@ -318,7 +320,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         snaps to the full span; otherwise the prior ``keep`` range is clamped
         to the new options. Guarded so the bidirectional observers stay quiet.
         """
-        _sync_guard[0] = True
+        state.sync_guard = True
         try:
             if index is None or len(index) == 0:
                 date_slider.options = [("—", "—")]
@@ -345,23 +347,23 @@ def build_app(verbose: bool = True) -> W.VBox:
             range_min_box.value = values[lo].date()
             range_max_box.value = values[hi].date()
         finally:
-            _sync_guard[0] = False
+            state.sync_guard = False
 
     def _on_slider_change(change) -> None:
-        if _sync_guard[0]:
+        if state.sync_guard:
             return
         lo, hi = date_slider.value
         if not isinstance(lo, pd.Timestamp) or not isinstance(hi, pd.Timestamp):
             return  # placeholder sentinel — nothing to mirror
-        _sync_guard[0] = True
+        state.sync_guard = True
         try:
             range_min_box.value = lo.date()
             range_max_box.value = hi.date()
         finally:
-            _sync_guard[0] = False
+            state.sync_guard = False
 
     def _on_range_box(change, *, is_min: bool) -> None:
-        if _sync_guard[0] or change["new"] is None:
+        if state.sync_guard or change["new"] is None:
             return
         values = [v for _, v in date_slider.options]
         if len(values) < 2 or pd.isna(values[0]):
@@ -376,13 +378,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         else:
             hi = target
             lo = min(lo, hi)
-        _sync_guard[0] = True
+        state.sync_guard = True
         try:
             date_slider.index = (lo, hi)
             range_min_box.value = values[lo].date()
             range_max_box.value = values[hi].date()
         finally:
-            _sync_guard[0] = False
+            state.sync_guard = False
 
     date_slider.observe(_on_slider_change, names="value")
     range_min_box.observe(lambda c: _on_range_box(c, is_min=True), names="value")
@@ -452,11 +454,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", min_height="250px"),
     )
 
-    # The currently visible filter dimension — drives "Clear section".
-    active_filter = ["Asset Class"]
-
+    # The currently visible filter dimension (on `state`) drives "Clear section".
     def _activate_filter(label: str) -> None:
-        active_filter[0] = label
+        state.active_filter = label
         for lbl, btn in filter_btns.items():
             _style_tab_button(btn, active=(lbl == label))
         filter_content.children = (filter_views[label],)
@@ -481,7 +481,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             op.value = "≥"
 
     def _clear_section(_b=None) -> None:
-        label = active_filter[0]
+        label = state.active_filter
         if label == "Characteristics":
             live_min.value = None
             live_max.value = None
@@ -574,6 +574,21 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     selected_perf_grid = _perf_grid()
+
+    # All session state the orchestration closures read/write lives here, so
+    # the data flow is explicit (no nonlocal, no list-as-cell hacks). The
+    # closures stay nested and reference `state.<field>`; mutating an attribute
+    # never rebinds a name, so `nonlocal` is unnecessary.
+    state = DashboardState(
+        ticker_w=ticker_w,
+        status_w=status_w,
+        universe_grid=universe_grid,
+        selected_perf_grid=selected_perf_grid,
+        pane_left=pane_left,
+        pane_right=pane_right,
+        highlights_w=highlights_w,
+    )
+
     selected_perf_header = W.HTML(
         render_template(
             "grid_header", **STYLE_CTX, text="Selected-strategy performance"
@@ -631,8 +646,8 @@ def build_app(verbose: bool = True) -> W.VBox:
     today = date.today()
     universe_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
 
-    universe_prices: pd.DataFrame = pd.DataFrame()
-    init_errors: list[str] = []
+    # `state.universe_prices` / `state.init_errors` default to empty (see
+    # DashboardState); the startup fetch below populates them.
     # Benchmarks ride along on the single startup fetch so the Rolling
     # Correlation / Rolling Beta tabs can slice them from the same cache.
     # They are excluded from the ARP-universe grid and the highlights cards
@@ -644,36 +659,38 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     t_fetch = time.perf_counter()
     try:
-        universe_prices, fetch_source = fetch_prices(
+        state.universe_prices, fetch_source = fetch_prices(
             fetch_tickers, universe_start, today
         )
         fetch_elapsed = time.perf_counter() - t_fetch
-        text, tone = _format_loaded(universe_prices, fetch_source, fetch_elapsed)
+        text, tone = _format_loaded(state.universe_prices, fetch_source, fetch_elapsed)
         _set_status(text, tone=tone)
     except Exception:
         _set_status("Load failed — see error below", tone=StatusTone.ERROR)
-        init_errors.append(
+        state.init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
             f"{traceback.format_exc()}"
         )
 
-    if not universe_prices.empty:
+    if not state.universe_prices.empty:
         # ARP universe view of the cache — used for the all-catalog grid and
         # the whole-catalog highlights so benchmark columns never leak in.
-        arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
+        state.arp_universe_prices = state.universe_prices.reindex(
+            columns=meta["ticker"]
+        )
         t_perf = time.perf_counter()
         try:
-            up = universe_perf(arp_universe_prices)
+            up = universe_perf(state.arp_universe_prices)
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
-            _update_universe_grid(universe_grid, meta, up)
+            _update_universe_grid(state.universe_grid, meta, up)
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
-            init_errors.append(
+            state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
     else:
-        arp_universe_prices = pd.DataFrame()
+        state.arp_universe_prices = pd.DataFrame()
 
     def _quant_thresholds() -> dict[str, tuple[str, float]]:
         """Active quant filters as `{metric: (operator, value)}`; blank = off."""
@@ -695,9 +712,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         the cache is empty or no thresholds are set, every candidate passes.
         """
         thresholds = _quant_thresholds()
-        if not thresholds or arp_universe_prices.empty:
+        if not thresholds or state.arp_universe_prices.empty:
             return candidates
-        prices = arp_universe_prices.reindex(columns=candidates).dropna(
+        prices = state.arp_universe_prices.reindex(columns=candidates).dropna(
             how="all", axis=1
         )
         if prices.shape[1] == 0:
@@ -708,13 +725,19 @@ def build_app(verbose: bool = True) -> W.VBox:
         qt = quant_metrics_table(prices, None, years)
         rets = daily_returns(prices)
         qt["Beta"] = ann_beta(
-            rets, universe_prices.get(quant.bench_dd["Beta"].value), years
+            rets, state.universe_prices.get(quant.bench_dd["Beta"].value), years
         )
         qt["Treynor"] = treynor_ratio(
-            rets, prices, universe_prices.get(quant.bench_dd["Treynor"].value), years
+            rets,
+            prices,
+            state.universe_prices.get(quant.bench_dd["Treynor"].value),
+            years,
         )
         qt["Jensen"] = jensen_alpha(
-            rets, prices, universe_prices.get(quant.bench_dd["Jensen"].value), years
+            rets,
+            prices,
+            state.universe_prices.get(quant.bench_dd["Jensen"].value),
+            years,
         )
         if "Z" in thresholds:
             qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
@@ -748,12 +771,14 @@ def build_app(verbose: bool = True) -> W.VBox:
         quant_keep = _quant_keep(pd.Index(visible["ticker"]))
         visible = visible.loc[visible["ticker"].isin(quant_keep)]
 
-        selected = list(ticker_w.value)
+        selected = list(state.ticker_w.value)
         keep_selected = filtered.loc[filtered["ticker"].isin(selected)]
         combined = pd.concat([visible, keep_selected]).drop_duplicates(subset="ticker")
         combined = combined.sort_values("ticker").reset_index(drop=True)
-        ticker_w.options = _ticker_options(combined)
-        ticker_w.value = tuple(t for t in selected if t in combined["ticker"].values)
+        state.ticker_w.options = _ticker_options(combined)
+        state.ticker_w.value = tuple(
+            t for t in selected if t in combined["ticker"].values
+        )
 
     for cb in (*asset_checks, *cat_checks, *theme_checks, *ret_checks):
         cb.observe(_on_filter_change, names="value")
@@ -821,7 +846,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
             try:
-                hm_bench_prices = universe_prices.get(hm_bench_ticker)
+                hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
                 if hm_bench_prices is None or hm_bench_prices.dropna().empty:
                     raise ValueError(
                         f"No price data for benchmark {hm_bench_ticker!r}."
@@ -855,7 +880,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
         rc_bench_ticker = pane.rcorr_dd.value
         try:
-            rc_bench_prices = universe_prices.get(rc_bench_ticker)
+            rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
             if rc_bench_prices is None or rc_bench_prices.dropna().empty:
                 raise ValueError(f"No price data for benchmark {rc_bench_ticker!r}.")
             rc_bench_window = rc_bench_prices.loc[win_start:win_end]
@@ -873,7 +898,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
         rb_bench_ticker = pane.rbeta_dd.value
         try:
-            rb_bench_prices = universe_prices.get(rb_bench_ticker)
+            rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
             if rb_bench_prices is None or rb_bench_prices.dropna().empty:
                 raise ValueError(f"No price data for benchmark {rb_bench_ticker!r}.")
             rb_bench_window = rb_bench_prices.loc[win_start:win_end]
@@ -893,7 +918,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         # not returns — every strategy series starts at 0).
         op_bench_ticker = pane.outperf_dd.value
         try:
-            op_bench_prices = universe_prices.get(op_bench_ticker)
+            op_bench_prices = state.universe_prices.get(op_bench_ticker)
             if op_bench_prices is None or op_bench_prices.dropna().empty:
                 raise ValueError(f"No price data for benchmark {op_bench_ticker!r}.")
             op_bench_window = op_bench_prices.loc[win_start:win_end]
@@ -911,16 +936,16 @@ def build_app(verbose: bool = True) -> W.VBox:
         highlights_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
-        for err in init_errors:
+        for err in state.init_errors:
             highlights_html += _render_error(err)
         # Highlights are always whole-catalog (ARP only), regardless of selection.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(
             years=LOOKBACK_YEARS
         )
         try:
-            if not arp_universe_prices.empty:
-                universe_window = arp_universe_prices.loc[
-                    arp_universe_prices.index >= universe_window_start
+            if not state.arp_universe_prices.empty:
+                universe_window = state.arp_universe_prices.loc[
+                    state.arp_universe_prices.index >= universe_window_start
                 ]
                 if not universe_window.empty:
                     universe_rets = daily_returns(universe_window)
@@ -934,34 +959,34 @@ def build_app(verbose: bool = True) -> W.VBox:
 
         pane_errors: list[str] = []
         try:
-            tickers = list(ticker_w.value)
+            tickers = list(state.ticker_w.value)
             if len(tickers) < 1:
-                last_sel_key[0] = None
+                state.last_sel_key = None
                 _set_slider_options(None, reset=True)
-                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(pane_left)
-                _clear_pane(pane_right)
-            elif universe_prices.empty:
-                last_sel_key[0] = None
+                _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
+                _clear_pane(state.pane_left)
+                _clear_pane(state.pane_right)
+            elif state.universe_prices.empty:
+                state.last_sel_key = None
                 _set_slider_options(None, reset=True)
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
-                _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(pane_left)
-                _clear_pane(pane_right)
+                _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
+                _clear_pane(state.pane_left)
+                _clear_pane(state.pane_right)
             else:
-                sel_full = universe_prices.reindex(columns=tickers)
+                sel_full = state.universe_prices.reindex(columns=tickers)
                 sel_5y = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_5y.dropna(how="all").empty:
-                    last_sel_key[0] = None
+                    state.last_sel_key = None
                     _set_slider_options(None, reset=True)
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
-                    _update_perf_grid(selected_perf_grid, pd.DataFrame(), meta)
-                    _clear_pane(pane_left)
-                    _clear_pane(pane_right)
+                    _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
+                    _clear_pane(state.pane_left)
+                    _clear_pane(state.pane_right)
                 else:
                     # Bounds = overlap window of the selected set; fall back to
                     # the full 5Y span if the series don't overlap at all.
@@ -972,10 +997,10 @@ def build_app(verbose: bool = True) -> W.VBox:
                     sel_key = tuple(tickers)
                     _set_slider_options(
                         window_index,
-                        reset=(sel_key != last_sel_key[0]),
+                        reset=(sel_key != state.last_sel_key),
                         keep=date_slider.value,
                     )
-                    last_sel_key[0] = sel_key
+                    state.last_sel_key = sel_key
                     win_start, win_end = date_slider.value
                     sel_window = sel_5y.loc[win_start:win_end]
                     prep = SimpleNamespace(
@@ -988,47 +1013,50 @@ def build_app(verbose: bool = True) -> W.VBox:
                     prep.sz_series = rolling_sharpe_zscore(prep.rets)
                     prep.cm = corr_matrix(prep.rets)
                     prep.rd_stats = return_distribution_stats(prep.rets)
-                    _update_perf_grid(selected_perf_grid, prep.pt, meta)
-                    _render_pane(pane_left, prep, win_start, win_end, pane_errors)
-                    _render_pane(pane_right, prep, win_start, win_end, pane_errors)
+                    _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
+                    _render_pane(state.pane_left, prep, win_start, win_end, pane_errors)
+                    _render_pane(
+                        state.pane_right, prep, win_start, win_end, pane_errors
+                    )
         except Exception:
             pane_errors.append(traceback.format_exc())
 
         for err in pane_errors:
             highlights_html += _render_error(err)
 
-        highlights_w.value = highlights_html or _render_highlights([])
+        state.highlights_w.value = highlights_html or _render_highlights([])
 
     def _refresh_prices(_btn=None):
-        nonlocal universe_prices, arp_universe_prices
         _set_status(
             f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
             tone=StatusTone.INFO,
         )
         t_refresh = time.perf_counter()
         try:
-            universe_prices, source = fetch_prices(
+            state.universe_prices, source = fetch_prices(
                 fetch_tickers, universe_start, today, use_cache=False
             )
         except Exception:
             _set_status("Load failed — see error below", tone=StatusTone.ERROR)
-            init_errors.append(
+            state.init_errors.append(
                 f"Universe refresh ({universe_start} → {today}) failed:\n"
                 f"{traceback.format_exc()}"
             )
             _recompute()
             return
         elapsed = time.perf_counter() - t_refresh
-        arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])
+        state.arp_universe_prices = state.universe_prices.reindex(
+            columns=meta["ticker"]
+        )
         try:
             _update_universe_grid(
-                universe_grid, meta, universe_perf(arp_universe_prices)
+                state.universe_grid, meta, universe_perf(state.arp_universe_prices)
             )
         except Exception:
-            init_errors.append(
+            state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
-        text, tone = _format_loaded(universe_prices, source, elapsed)
+        text, tone = _format_loaded(state.universe_prices, source, elapsed)
         _set_status(text, tone=tone)
         _recompute()
 

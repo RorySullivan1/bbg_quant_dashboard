@@ -113,7 +113,8 @@ dashboard always renders end-to-end.
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts. Imports `theme`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
-| `src/layout/builder.py` | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers. Owns the orchestration closures (`_recompute` preps one data slice and renders both panes; `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Imports every sibling module. |
+| `src/layout/builder.py` | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers. Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Imports every sibling module. |
+| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w`, the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/templates/` | Component HTML templates rendered by `render_template` (banner, status, section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
@@ -121,7 +122,7 @@ dashboard always renders end-to-end.
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + empty `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`) to fill in as scope firms up. |
 | `.meta/VERSION`                    | Canonical current shipped version (`0.5.0`). Keep in sync with the "Branching" section on every bump. |
-| `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
+| `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.0`. |
 
 ## Data contract — `data/indexdb.json`
@@ -361,6 +362,12 @@ live paths return the same shape.
   `.claude/dev_map/` (an index plus empty `vX.Y.Z` stubs). The canonical
   shipped version is `.meta/VERSION` — bump it together with the
   "Branching" section below.
+- **Session state lives on `DashboardState`** (`src/layout/state.py`), built
+  once in `build_app` and shared by the orchestration closures. They mutate
+  attributes (`state.universe_prices = …`, `state.active_filter = …`), which
+  never rebinds a name — so there is **no `nonlocal`** and no list-as-mutable-cell
+  hack. The closures stay nested in `build_app`; add new shared session state as
+  a `DashboardState` field, not a fresh closure variable.
 - **New top-level files require updating the architecture map above.**
 
 ## Lint / format
