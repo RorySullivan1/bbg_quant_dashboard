@@ -385,6 +385,12 @@ Black owns line width (ruff ignores `E501`). The style-token enums in
 `src/style.py` use the stdlib `enum.StrEnum` base (Python 3.11+) so members
 interpolate cleanly into f-strings.
 
+A `.pre-commit-config.yaml` wires the same tools as `repo: local` hooks (so
+versions match `requirements.txt`/CI): `ruff check --fix` + `black` on commit,
+`pytest -q` on push. Opt in once with `pre-commit install` (and
+`pre-commit install --hook-type pre-push` for the test hook); run everything
+with `pre-commit run --all-files`.
+
 ## Testing notes
 
 Automated tests live in `tests/` and run with **pytest** (a dev-only dep):
