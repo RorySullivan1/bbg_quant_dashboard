@@ -45,6 +45,8 @@ def _status_banner() -> W.HTML:
 
 
 def _render_status(text: str, *, tone: StatusTone) -> str:
+    # Rendered as the slim auto-fading `.bbg-toast` (status.html); the tone
+    # kwargs are kept for signature stability and ignored by the toast markup.
     return render_template(
         "status",
         **STYLE_CTX,
@@ -52,6 +54,34 @@ def _render_status(text: str, *, tone: StatusTone) -> str:
         border=tone.border,
         fg=tone.fg,
         text=html.escape(text),
+    )
+
+
+def _loading_overlay() -> W.HTML:
+    """The dimmed full-screen loading overlay (v0.6.5 Workstream C).
+
+    A single `W.HTML` whose value is re-rendered through `_render_overlay` at
+    each load stage. The outer template div carries the `.bbg-overlay`
+    (`position:fixed`) class, so the overlay covers the viewport regardless of
+    where the widget is mounted."""
+    return W.HTML(_render_overlay(0, "Initializing…"))
+
+
+def _render_overlay(
+    pct: int, label: str, *, error: bool = False, hidden: bool = False
+) -> str:
+    if hidden:
+        state_class = "bbg-overlay is-hidden"
+    elif error:
+        state_class = "bbg-overlay is-error"
+    else:
+        state_class = "bbg-overlay"
+    return render_template(
+        "loading_overlay",
+        **STYLE_CTX,
+        pct=int(pct),
+        label=html.escape(label),
+        state_class=state_class,
     )
 
 

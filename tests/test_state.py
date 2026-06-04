@@ -16,6 +16,7 @@ def _make(**overrides) -> DashboardState:
     handles = dict(
         ticker_w=object(),
         status_w=object(),
+        overlay_w=object(),
         universe_grid=object(),
         selected_perf_grid=object(),
         pane_left=object(),
