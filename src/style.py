@@ -85,6 +85,16 @@ class Color(StrEnum):
     # Dimmed loading-overlay backdrop — CHROME_BG at ~90% alpha (8-digit hex).
     SCRIM = "#0d1117e6"
 
+    # ---- Conditional-format heatmap (v0.7.0 Platform grid) ----------------
+    # Diverging red→neutral→green cell backgrounds for the all-catalog grid's
+    # Sharpe + Z-Score columns. Low-alpha tints (8-digit hex) over the dark
+    # body so the bright cell text stays legible; built from GREEN_600 /
+    # RED_600 so the heatmap shares the dashboard's sentiment palette.
+    HEAT_POS_STRONG = "#16a34acc"  # GREEN_600 @ ~80%
+    HEAT_POS_SOFT = "#16a34a55"  # GREEN_600 @ ~33%
+    HEAT_NEG_SOFT = "#dc262655"  # RED_600 @ ~33%
+    HEAT_NEG_STRONG = "#dc2626cc"  # RED_600 @ ~80%
+
 
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""

@@ -17,9 +17,13 @@ from ..config import (
     BENCHMARK_TICKERS,
     DEFAULT_BENCHMARK,
     FACTOR_TICKERS,
+    HALF_YEAR_WINDOW,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
+    MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
+    QUARTER_WINDOW,
+    TRADING_DAYS_PER_YEAR,
 )
 from ..data import apply_filters, load_metadata, unique_values
 from ..stats import (
@@ -37,6 +41,7 @@ from ..stats import (
     return_distribution_stats,
     rolling_beta,
     rolling_correlation,
+    rolling_metric_zscore,
     rolling_sharpe_zscore,
     sharpe_zscore,
     treynor_ratio,
@@ -600,6 +605,51 @@ def build_app(verbose: bool = True) -> W.VBox:
     highlights_w = W.HTML(_render_highlights([]))
     universe_grid = _universe_grid()
 
+    # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
+    # narrow nothing and never fetch — changing one recomputes only the grid's
+    # dynamic z-score column from the cached prices and re-sorts the grid by it
+    # (see `_render_universe_grid`). Window / Lookback values are trading-day
+    # counts; the `.label` of each (e.g. "Sharpe" / "1M" / "1Y") builds the
+    # column header. Default: z(1M Sharpe, 1Y).
+    z_metric_dd = W.Dropdown(
+        options=[
+            ("Sharpe", "sharpe"),
+            ("Sortino", "sortino"),
+            ("Return", "return"),
+            ("Vol", "vol"),
+        ],
+        value="sharpe",
+        description="Metric",
+        style={"description_width": "55px"},
+        layout=W.Layout(width="175px"),
+    )
+    z_window_dd = W.Dropdown(
+        options=[
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=MONTH_WINDOW,
+        description="Window",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="165px"),
+    )
+    z_lookback_dd = W.Dropdown(
+        options=[
+            ("1Y", TRADING_DAYS_PER_YEAR),
+            ("3Y", TRADING_DAYS_PER_YEAR * 3),
+            ("5Y", TRADING_DAYS_PER_YEAR * 5),
+        ],
+        value=TRADING_DAYS_PER_YEAR,
+        description="Lookback",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="180px"),
+    )
+    z_controls_row = W.HBox(
+        [_section_label("Z-Score ranking"), z_metric_dd, z_window_dd, z_lookback_dd],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
+
     pane_left = _make_analysis_pane("left")
     pane_right = _make_analysis_pane("right")
     analysis_pane_row = W.HBox(
@@ -643,7 +693,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
     platform_panel = W.VBox(
-        [universe_header, universe_grid],
+        [universe_header, z_controls_row, universe_grid],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
     selected_panel = W.VBox(
@@ -674,6 +724,33 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     platform_btn.on_click(lambda _b: _activate_tab("platform"))
     selected_btn.on_click(lambda _b: _activate_tab("selected"))
+
+    def _render_universe_grid(_change=None) -> None:
+        """Render the all-catalog grid with the dynamic z-score column from the
+        current Metric/Window/Lookback dropdowns. Reads the cached perf table
+        (`state.universe_up`) and computes only the z-score column live from the
+        already-fetched `arp_universe_prices` — no BQL, no full recompute. The
+        dropdown observers and the load/refresh paths both call this."""
+        if state.arp_universe_prices.empty:
+            return
+        try:
+            zcol = rolling_metric_zscore(
+                state.arp_universe_prices,
+                metric=z_metric_dd.value,
+                window=z_window_dd.value,
+                zscore_window=z_lookback_dd.value,
+            )
+            zlabel = f"{z_metric_dd.label} {z_window_dd.label}/{z_lookback_dd.label}"
+            _update_universe_grid(
+                state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
+            )
+        except Exception:
+            state.init_errors.append(
+                f"all-catalog grid z-score render failed:\n{traceback.format_exc()}"
+            )
+
+    for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
+        _dd.observe(_render_universe_grid, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal — the
@@ -719,10 +796,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
         t_perf = time.perf_counter()
         try:
-            up = universe_perf(state.arp_universe_prices)
+            state.universe_up = universe_perf(state.arp_universe_prices)
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
-            _update_universe_grid(state.universe_grid, meta, up)
+            _render_universe_grid()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -731,6 +808,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         _set_progress(85, "Building catalog…")
     else:
         state.arp_universe_prices = pd.DataFrame()
+        state.universe_up = pd.DataFrame()
 
     def _quant_thresholds() -> dict[str, tuple[str, float]]:
         """Active quant filters as `{metric: (operator, value)}`; blank = off."""
@@ -1267,9 +1345,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             columns=meta["ticker"]
         )
         try:
-            _update_universe_grid(
-                state.universe_grid, meta, universe_perf(state.arp_universe_prices)
-            )
+            state.universe_up = universe_perf(state.arp_universe_prices)
+            _render_universe_grid()
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"

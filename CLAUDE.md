@@ -24,7 +24,14 @@ block (always visible) → **top-level pill-button tab bar** with two
 tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
-  with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
+  with metadata plus 1Y / 3Y / 5Y / Since-Inception performance). The
+  Sharpe cells are **conditional-formatted** (diverging red→neutral→green),
+  and a **dynamic z-score column** sits right after the Info block: a
+  **Z-Score ranking** control row above the grid (Metric: Sharpe/Sortino/
+  Return/Vol · Window: 1M/3M/6M · Lookback: 1Y/3Y/5Y; default *z(1M Sharpe,
+  1Y)*) recomputes that column live from the already-fetched cache (via
+  `rolling_metric_zscore`, no BQL) and the grid is **sorted by it**
+  descending (v0.7.0 Workstream A).
 - **Multi-Strategy Analysis** — the whole filter UI lives inside an
   expandable **"Filters"** accordion (expanded by default): a full-width
   filter box split into two side-by-side panels — a **left** strategies
@@ -119,7 +126,7 @@ dashboard always renders end-to-end.
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
-| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
+| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid` (thin wrapper over the pure `_build_universe_frame`, which inserts the v0.7.0 `ZSCORE_SUPERCOL` z-score column after the Info block and sorts by it), `_build_info_block`, `_perf_renderers`/`_apply_grid_styling` (both take a `sharpe_heatmap` flag — the all-catalog grid passes it to color-grade the Sharpe + Z-Score columns via `_diverging_bg_renderer`; the selected grid leaves it off so it's visually unchanged), `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
 | `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
 | `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`, and the v0.6.9 live-render slice `cur_prep` / `cur_win_start` / `cur_win_end`, plus the `memo` `LRUCache` for benchmark-dependent results). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). |

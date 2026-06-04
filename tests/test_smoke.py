@@ -43,6 +43,19 @@ def test_build_app_renders_expected_tree():
     assert "is-hidden" in overlay.value
 
 
+def test_platform_panel_has_zscore_controls():
+    # v0.7.0 Workstream A: the Platform panel gains a Z-Score control row
+    # (Metric / Window / Lookback dropdowns) between the header and the grid,
+    # defaulting to z(1M Sharpe, 1Y).
+    app = build_app(verbose=False)
+    platform_panel = app.children[5].children[0]  # tab_content → active panel
+    assert isinstance(platform_panel, W.VBox)
+    header, controls, grid = platform_panel.children
+    dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
+    assert len(dropdowns) == 3
+    assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]
