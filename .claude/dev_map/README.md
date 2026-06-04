@@ -33,6 +33,15 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   grid with a dynamic z-score column, a factor-beta scatter (equity risk
   premium vs term premium), and an asset class → theme → ticker treemap
   (shipped).
+- [ ] `v0.7.1` — Platform scatter: drop the duplicative chart title, expand to a
+  **3D** factor scatter (z-axis = β to BSLXAT "Trend Exposure"), and color
+  markers by asset class instead of grey.
+- [ ] `v0.7.2` — Platform performance table: remove the Since-Inception columns.
+- [ ] `v0.7.3` — Platform treemap: color tiles by **z(1W Sharpe)** (was 1M),
+  size stays z(6M Sharpe), and drop the duplicative chart title.
+- [ ] `v0.7.5` — Multi-Strategy tab fixes: Sharpe color-coding in the selected
+  perf grid, replace the analysis date slider with two side-by-side date boxes,
+  and restructure the correlation Benchmark/Regime controls (>/< dropdown).
 - [ ] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
   statistical-superlatives board (top performer, longest bull run, strongest
   trend, …) and a new-launches board with metadata.
