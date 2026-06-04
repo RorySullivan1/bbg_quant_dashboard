@@ -23,8 +23,8 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 
 - [x] `v0.5.0` — feature-complete baseline (shipped; pre-roadmap).
 - [x] `v0.6.0` — Refactoring & Optimization (shipped).
-- [ ] `v0.6.5` — Dashboard Styling: dark technical chrome, bold masthead,
-  loading overlay + staged progress bar (point release after v0.6.0).
+- [x] `v0.6.5` — Dashboard Styling: dark technical chrome, bold masthead,
+  loading overlay + staged progress bar (shipped).
 - [ ] `v0.6.9` — Optimization & Responsiveness: in-memory caching (with a
   best-effort, read-only-FS-safe disk cache), memoized derived computations,
   and event-driven benchmark/regime controls that re-render a chart on switch
