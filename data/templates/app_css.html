@@ -240,6 +240,11 @@
   color: {{text_color}};
 }
 
-/* Workstream D (PR 5) — dark ipydatagrid theme. */
-.bbg-grid {}
+/* Workstream D (PR 5) — dark ipydatagrid theme. The canvas colors come from
+   the grid_style API (grids.py); this just frames the widget container. */
+.bbg-app .bbg-grid {
+  border: 1px solid {{border_color}};
+  border-radius: 6px;
+  overflow: hidden;
+}
 </style>

@@ -4,7 +4,47 @@ import ipywidgets as W
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
+from ..style import Color
 from .theme import _palette_color
+
+
+def _dark_grid_style() -> dict:
+    """ipydatagrid `grid_style` for the dark chrome (v0.6.5 PR 5). All values
+    are `src/style.py` Color tokens, matching the dark charts/chrome. A subtle
+    `SURFACE` zebra over the `CHROME_BG` body keeps wide rows readable; selection
+    / cursor pick up the orange `ACCENT`."""
+    return {
+        "void_color": Color.CHROME_BG,
+        "background_color": Color.CHROME_BG,
+        "row_background_color": VegaExpr(
+            f"cell.row % 2 === 0 ? '{Color.CHROME_BG}' : '{Color.SURFACE}'"
+        ),
+        "grid_line_color": Color.BORDER,
+        "header_background_color": Color.SURFACE,
+        "header_grid_line_color": Color.BORDER,
+        "selection_fill_color": Color.SURFACE_2,
+        "selection_border_color": Color.ACCENT,
+        "header_selection_fill_color": Color.SURFACE_2,
+        "header_selection_border_color": Color.ACCENT,
+        "cursor_fill_color": Color.SURFACE_2,
+        "cursor_border_color": Color.ACCENT,
+    }
+
+
+def _dark_grid_kwargs() -> dict:
+    """Static dark-theme kwargs shared by both grid constructors: the
+    `grid_style` plus bright-text header / corner / body-fallback renderers
+    (header text color is a renderer trait, not a `grid_style` key)."""
+    return {
+        "grid_style": _dark_grid_style(),
+        "header_renderer": TextRenderer(
+            text_color=Color.TEXT, background_color=Color.SURFACE
+        ),
+        "corner_renderer": TextRenderer(
+            text_color=Color.TEXT, background_color=Color.SURFACE
+        ),
+        "default_renderer": TextRenderer(text_color=Color.TEXT),
+    }
 
 
 def _perf_grid() -> DataGrid:
@@ -14,7 +54,9 @@ def _perf_grid() -> DataGrid:
         base_column_size=80,  # default for numeric metric cols
         base_row_header_size=120,
         layout=W.Layout(width="100%", height="240px"),
+        **_dark_grid_kwargs(),
     )
+    grid.add_class("bbg-grid")
     return grid
 
 
@@ -114,9 +156,12 @@ def _build_info_block(
 
 
 def _perf_renderers(columns: pd.Index) -> dict:
-    text = TextRenderer()
-    pct = TextRenderer(format=".2%")
-    f2 = TextRenderer(format=".2f")
+    # Bright text on the dark body; no background_color so the `grid_style`
+    # zebra (`row_background_color`) shows through. The color-swatch keeps its
+    # VegaExpr bg/text (a renderer's own background overrides grid_style).
+    text = TextRenderer(text_color=Color.TEXT)
+    pct = TextRenderer(format=".2%", text_color=Color.TEXT)
+    f2 = TextRenderer(format=".2f", text_color=Color.TEXT)
     color_swatch = TextRenderer(
         background_color=VegaExpr("cell.value"),
         text_color=VegaExpr("cell.value"),
@@ -162,7 +207,9 @@ def _universe_grid() -> DataGrid:
         base_column_size=92,
         base_row_header_size=120,
         layout=W.Layout(width="100%", height="360px"),
+        **_dark_grid_kwargs(),
     )
+    grid.add_class("bbg-grid")
     return grid
 
 

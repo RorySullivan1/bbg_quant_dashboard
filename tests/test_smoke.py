@@ -110,3 +110,21 @@ def test_app_css_has_button_and_control_rules():
         assert rule in css
     assert "#16a34a" in css  # Color.GREEN_600 (primary button), substituted
     assert "{{" not in css
+
+
+def test_dark_grid_style():
+    from src.layout.grids import _dark_grid_style
+
+    gs = _dark_grid_style()
+    assert gs["background_color"] == "#0d1117"  # Color.CHROME_BG
+    assert gs["header_background_color"] == "#161b22"  # Color.SURFACE
+    assert gs["grid_line_color"] == "#30363d"  # Color.BORDER
+
+
+def test_grids_are_dark_themed():
+    from src.layout.grids import _perf_grid, _universe_grid
+
+    for grid in (_perf_grid(), _universe_grid()):
+        assert grid.grid_style["background_color"] == "#0d1117"
+        assert grid.header_renderer.text_color == "#e6edf3"  # Color.TEXT
+        assert "bbg-grid" in grid._dom_classes
