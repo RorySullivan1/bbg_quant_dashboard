@@ -872,27 +872,36 @@ def build_app(verbose: bool = True) -> W.VBox:
         # the two panes stay independent (like the rolling-corr/beta blocks).
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
+            direction = "up" if pane.heat_dir.value == "Up" else "down"
+            pct_int = pane.heat_pct.value
             try:
-                hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {hm_bench_ticker!r}."
+
+                def _compute_regime():
+                    hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
+                    if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                        raise ValueError(
+                            f"No price data for benchmark {hm_bench_ticker!r}."
+                        )
+                    hm_bench_window = hm_bench_prices.loc[win_start:win_end]
+                    hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[
+                        :, 0
+                    ]
+                    return regime_corr_matrix(
+                        prep.rets,
+                        hm_bench_returns,
+                        pct_int / 100.0,
+                        direction=direction,
+                        include_benchmark=True,
                     )
-                hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-                hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[:, 0]
-                direction = "up" if pane.heat_dir.value == "Up" else "down"
-                pct = pane.heat_pct.value / 100.0
-                cm = regime_corr_matrix(
-                    prep.rets,
-                    hm_bench_returns,
-                    pct,
-                    direction=direction,
-                    include_benchmark=True,
+
+                cm = state.memo.get_or_compute(
+                    ("heatmap", hm_bench_ticker, direction, pct_int),
+                    _compute_regime,
                 )
                 tail_lbl = "worst" if direction == "down" else "best"
                 title = (
                     f"Correlation — {hm_bench_ticker} {tail_lbl} "
-                    f"{pane.heat_pct.value}% days ({LOOKBACK_YEARS}Y)"
+                    f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
                 )
                 _update_heatmap(pane.heat_fig, cm, title=title)
             except Exception:
@@ -914,12 +923,18 @@ def build_app(verbose: bool = True) -> W.VBox:
     ) -> None:
         rc_bench_ticker = pane.rcorr_dd.value
         try:
-            rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
-            if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {rc_bench_ticker!r}.")
-            rc_bench_window = rc_bench_prices.loc[win_start:win_end]
-            rc_bench_returns = daily_returns(rc_bench_window.to_frame()).iloc[:, 0]
-            rc = rolling_correlation(prep.rets, rc_bench_returns)
+
+            def _compute_rcorr():
+                rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
+                if rc_bench_prices is None or rc_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {rc_bench_ticker!r}."
+                    )
+                rc_bench_window = rc_bench_prices.loc[win_start:win_end]
+                rc_bench_returns = daily_returns(rc_bench_window.to_frame()).iloc[:, 0]
+                return rolling_correlation(prep.rets, rc_bench_returns)
+
+            rc = state.memo.get_or_compute(("rcorr", rc_bench_ticker), _compute_rcorr)
             _update_rolling_ref(
                 pane.rcorr_fig,
                 rc,
@@ -939,12 +954,18 @@ def build_app(verbose: bool = True) -> W.VBox:
     ) -> None:
         rb_bench_ticker = pane.rbeta_dd.value
         try:
-            rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
-            if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {rb_bench_ticker!r}.")
-            rb_bench_window = rb_bench_prices.loc[win_start:win_end]
-            rb_bench_returns = daily_returns(rb_bench_window.to_frame()).iloc[:, 0]
-            rb = rolling_beta(prep.rets, rb_bench_returns)
+
+            def _compute_rbeta():
+                rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
+                if rb_bench_prices is None or rb_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {rb_bench_ticker!r}."
+                    )
+                rb_bench_window = rb_bench_prices.loc[win_start:win_end]
+                rb_bench_returns = daily_returns(rb_bench_window.to_frame()).iloc[:, 0]
+                return rolling_beta(prep.rets, rb_bench_returns)
+
+            rb = state.memo.get_or_compute(("rbeta", rb_bench_ticker), _compute_rbeta)
             _update_rolling_ref(
                 pane.rbeta_fig,
                 rb,
@@ -966,11 +987,19 @@ def build_app(verbose: bool = True) -> W.VBox:
         # not returns — every strategy series starts at 0).
         op_bench_ticker = pane.outperf_dd.value
         try:
-            op_bench_prices = state.universe_prices.get(op_bench_ticker)
-            if op_bench_prices is None or op_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {op_bench_ticker!r}.")
-            op_bench_window = op_bench_prices.loc[win_start:win_end]
-            oc = excess_cum_return(prep.sel_window, op_bench_window)
+
+            def _compute_outperf():
+                op_bench_prices = state.universe_prices.get(op_bench_ticker)
+                if op_bench_prices is None or op_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {op_bench_ticker!r}."
+                    )
+                op_bench_window = op_bench_prices.loc[win_start:win_end]
+                return excess_cum_return(prep.sel_window, op_bench_window)
+
+            oc = state.memo.get_or_compute(
+                ("outperf", op_bench_ticker), _compute_outperf
+            )
             _update_outperformance(
                 pane.outperf_fig,
                 oc,
@@ -1036,6 +1065,12 @@ def build_app(verbose: bool = True) -> W.VBox:
             ctrl.observe(_make(_render_heatmap), names="value")
 
     def _recompute(_btn=None):
+        # A recompute rebuilds the selection slice (`cur_prep`), so every
+        # memoized benchmark-dependent result is stale — drop them all. This is
+        # the single invalidation point (covers Refresh, initial load, and the
+        # no-selection guard branches below). Benchmark flips don't call
+        # _recompute, so the memo survives across them within a stable slice.
+        state.memo.clear()
         highlights_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
