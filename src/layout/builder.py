@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import ipywidgets as W
 import pandas as pd
+from IPython import get_ipython
+from IPython.display import display
 
 from ..bql_client import _cache_path, fetch_prices
 from ..commentary import build_highlights
@@ -55,8 +57,11 @@ from .charts import (
     _update_sharpe_line,
 )
 from .chrome import (
+    _app_css,
     _banner,
+    _loading_overlay,
     _make_tab_button,
+    _render_overlay,
     _render_status,
     _status_banner,
     _style_tab_button,
@@ -88,11 +93,30 @@ def build_app(verbose: bool = True) -> W.VBox:
         if verbose:
             print(f"[{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
 
+    # Loading overlay (v0.6.5 Workstream C). `build_app` is synchronous, so we
+    # display() the overlay first and push staged progress as each load step
+    # completes, then mount the dashboard (which also contains `overlay_w`) and
+    # dismiss it. Caveat: in Voila the kernel may collapse the intermediate
+    # comm frames to the first/last, so the bar is best-effort — it always
+    # appears and dismisses, but frame-by-frame animation isn't guaranteed
+    # without a background-thread load (a deferred dev-map stretch).
+    overlay_w = _loading_overlay()
+
+    def _set_progress(
+        pct: int, label: str, *, error: bool = False, hidden: bool = False
+    ) -> None:
+        overlay_w.value = _render_overlay(pct, label, error=error, hidden=hidden)
+
+    if get_ipython() is not None:
+        display(overlay_w)
+    _set_progress(0, "Initializing…")
+
     meta = load_metadata()
     meta = meta[
         meta["solution"].astype(str).str.lower().isin(ARP_SOLUTION_VALUES)
     ].reset_index(drop=True)
     _log(f"loaded metadata: {len(meta)} tickers")
+    _set_progress(25, f"Loaded {len(meta)} indices")
 
     asset_content, asset_get, asset_checks = _checkbox_group(
         unique_values(meta, "asset_class")
@@ -250,10 +274,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         description="Refresh prices",
         layout=W.Layout(flex="1 1 auto"),
     )
-    # Green so the primary refresh action stands out from the secondary clear
-    # buttons. Colour comes from the centralized style token, not button_style.
-    apply_btn.style.button_color = Color.GREEN_600
-    apply_btn.style.text_color = Color.WHITE
+    # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
+    # states — styled via CSS class, not inline `.style`, so `:hover` works.
+    apply_btn.add_class("bbg-btn")
     clear_section_btn = W.Button(
         description="Clear section",
         tooltip="Clear the active filter's selections",
@@ -264,6 +287,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         tooltip="Clear all filters and the search box",
         layout=W.Layout(width="auto"),
     )
+    # Secondary (outlined/muted) action style with hover/focus — via CSS class.
+    clear_section_btn.add_class("bbg-btn-secondary")
+    clear_all_btn.add_class("bbg-btn-secondary")
     status_w = _status_banner()
 
     def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
@@ -395,7 +421,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="38%",
             padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
             display="flex",
             flex_flow="column",
         ),
@@ -520,7 +546,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="60%",
             padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
         ),
     )
     filter_box = W.HBox(
@@ -543,7 +569,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             width="100%",
             padding="8px",
             margin="6px 0 0 0",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
         ),
     )
     # The whole filter UI — the Strategies multi-select on the left, the
@@ -582,6 +608,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     state = DashboardState(
         ticker_w=ticker_w,
         status_w=status_w,
+        overlay_w=overlay_w,
         universe_grid=universe_grid,
         selected_perf_grid=selected_perf_grid,
         pane_left=pane_left,
@@ -623,7 +650,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="100%",
             padding="10px 16px 4px 16px",
-            border_bottom=f"1px solid {Color.SLATE_200}",
+            border_bottom=f"1px solid {Color.BORDER}",
         ),
     )
     top_tab_content = W.Box(
@@ -653,10 +680,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     # They are excluded from the ARP-universe grid and the highlights cards
     # via reindex(columns=meta["ticker"]).
     fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
-    _set_status(
-        f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
-        tone=StatusTone.INFO,
-    )
+    _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
     t_fetch = time.perf_counter()
     try:
         state.universe_prices, fetch_source = fetch_prices(
@@ -666,6 +690,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         text, tone = _format_loaded(state.universe_prices, fetch_source, fetch_elapsed)
         _set_status(text, tone=tone)
     except Exception:
+        _set_progress(60, "Load failed — see error below", error=True)
         _set_status("Load failed — see error below", tone=StatusTone.ERROR)
         state.init_errors.append(
             f"Universe fetch ({universe_start} → {today}) failed:\n"
@@ -689,6 +714,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
+        _set_progress(85, "Building catalog…")
     else:
         state.arp_universe_prices = pd.DataFrame()
 
@@ -1027,16 +1053,17 @@ def build_app(verbose: bool = True) -> W.VBox:
         state.highlights_w.value = highlights_html or _render_highlights([])
 
     def _refresh_prices(_btn=None):
-        _set_status(
-            f"Fetching prices for {len(fetch_tickers)} indices ({universe_start} → {today})…",
-            tone=StatusTone.INFO,
-        )
+        # Re-show the overlay (it's already in the tree — just re-render its
+        # value visible) and re-run the staged bar.
+        _set_progress(0, "Refreshing…")
+        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
         t_refresh = time.perf_counter()
         try:
             state.universe_prices, source = fetch_prices(
                 fetch_tickers, universe_start, today, use_cache=False
             )
         except Exception:
+            _set_progress(60, "Load failed — see error below", error=True)
             _set_status("Load failed — see error below", tone=StatusTone.ERROR)
             state.init_errors.append(
                 f"Universe refresh ({universe_start} → {today}) failed:\n"
@@ -1056,9 +1083,11 @@ def build_app(verbose: bool = True) -> W.VBox:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
+        _set_progress(85, "Building catalog…")
         text, tone = _format_loaded(state.universe_prices, source, elapsed)
         _set_status(text, tone=tone)
         _recompute()
+        _set_progress(100, "Ready", hidden=True)
 
     apply_btn.on_click(_refresh_prices)
 
@@ -1077,6 +1106,7 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     app = W.VBox(
         [
+            _app_css(),  # global stylesheet, injected once (v0.6.5 Workstream A)
             _banner(),
             status_w,
             commentary_box,
@@ -1084,12 +1114,19 @@ def build_app(verbose: bool = True) -> W.VBox:
             top_tab_content,
             perf_disclaimer_w,
             legal_w,
+            overlay_w,  # fixed-position loading overlay (v0.6.5 Workstream C)
         ],
         layout=W.Layout(width="100%"),
     )
+    # Opt the app container into the injected dark-chrome class.
+    app.add_class("bbg-app")
 
     t_initial = time.perf_counter()
     _recompute()
     _log(f"initial recompute (selected viz) in {time.perf_counter() - t_initial:.2f}s")
     _log(f"build_app TOTAL: {time.perf_counter() - t0:.2f}s")
+    # Dismiss the overlay once data is loaded; on a fatal fetch failure leave
+    # the error overlay up (the traceback also renders in the commentary block).
+    if not state.universe_prices.empty:
+        _set_progress(100, "Ready", hidden=True)
     return app

@@ -12,7 +12,14 @@ runtime. The UI is built with `ipywidgets`, `plotly` (interactive charts
 via `FigureWidget`), and `ipydatagrid` (tables), and is deployable via
 Voila.
 
-The screen layout is: banner → status banner → all-catalog commentary
+The whole UI renders on a cohesive **dark technical chrome** (v0.6.5): the
+chrome shares the charts' near-black surface, the title is a bold masthead
+with an accent rule, buttons/controls/grids are dark-themed, and load
+progress shows in a **full-screen dimmed loading overlay with a staged
+progress bar** (replacing the old permanent status banner) that dismisses
+once data is loaded, leaving a slim auto-fading post-load toast.
+
+The screen layout is: masthead banner → all-catalog commentary
 block (always visible) → **top-level pill-button tab bar** with two
 tabs:
 
@@ -31,7 +38,7 @@ tabs:
   Quantitative) and **Clear all** (clears every filter checkbox group,
   the launch-date range, the currency, the quant thresholds, and the
   search box; selected tickers are kept) — then a pill header bar (same
-  `TabButtonTone` style as the top tabs) whose buttons — Asset Class /
+  `.bbg-pill` style as the top tabs) whose buttons — Asset Class /
   Category / Theme / Return Type / **Characteristics** /
   **Quantitative** — swap which dimension's value list shows below. The
   first four show checkbox value lists; **Characteristics** shows the
@@ -99,7 +106,7 @@ dashboard always renders end-to-end.
 | Module                | Owns                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
-| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment`, `TabButtonTone` enums plus `LINE_PALETTE`. All inline CSS in `src/layout/` references these — change hex/font values here, not at call sites. |
+| `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
 | `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
@@ -107,16 +114,16 @@ dashboard always renders end-to-end.
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
 | `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref`, `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
-| `src/layout/chrome.py` | Page chrome: `_banner`, `_status_banner`, `_render_status`, `_make_tab_button`, `_style_tab_button` (HTML via `render_template`). |
+| `src/layout/chrome.py` | Page chrome: `_app_css` (mounts the global `app_css.html` stylesheet once), `_banner` (dark masthead, adds `.bbg-masthead`), `_loading_overlay`/`_render_overlay` (the staged loading overlay, v0.6.5), `_status_banner`/`_render_status` (now the post-load `.bbg-toast`), `_make_tab_button`/`_style_tab_button` (pills via the `.bbg-pill`/`is-active` CSS class). HTML via `render_template`. |
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
-| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts. Imports `theme`. |
+| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
-| `src/layout/builder.py` | `build_app()` — banner + status banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers. Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Imports every sibling module. |
-| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w`, the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
+| `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
+| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
-| `data/templates/` | Component HTML templates rendered by `render_template` (banner, status, section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
+| `data/templates/` | Component HTML templates rendered by `render_template` (`app_css` — the global `<style>` injected once, carrying the dark-chrome `.bbg-*` classes; `loading_overlay`; banner masthead; status — now the toast; section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
@@ -178,7 +185,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.6.0`.
+- **Current version**: `v0.6.5`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -192,6 +199,29 @@ live paths return the same shape.
     `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
   open new branches under the new prefix (e.g. `v0.6.5/...`).
+
+## Development workflow
+
+Every roadmap item ships through the same loop. The `/workstream` skill
+(`.claude/skills/workstream/SKILL.md`) is the step-by-step playbook; the
+`.claude/settings.json` PreToolUse hooks **enforce** the gates below.
+
+1. **Plan first.** Enter plan mode (`Shift+Tab` ×2; there is no auto-default
+   plan-mode setting), read the target `.claude/dev_map/vX.Y.Z.md` stub,
+   explore, design, and get the plan approved before editing.
+2. **Branch.** Cut one integration branch per version (`vX.Y.Z`, off `main`),
+   then a **flat-named sub-branch per workstream** off it
+   (`vX.Y.Z-<desc>` — see the "Branching" caveat above). One workstream per
+   branch, mirroring the dev-map §9 PR sequencing.
+3. **Implement** only that workstream; respect the stub's non-goals; add/adjust
+   `tests/`.
+4. **Quality gates** — `ruff check src tests`, `black --check src tests`,
+   `python -m pytest -q` must all be green. `.claude/hooks/quality-gates.sh`
+   re-runs these on every `git commit` and **blocks** the commit on failure.
+5. **Commit & push** `-u origin <branch>`. Never push to `main`/`master` —
+   `.claude/hooks/block-main-push.sh` blocks it; land changes via PR.
+6. **PR into the integration branch** (`vX.Y.Z`, not `main`); tick the dev-map
+   §9 checkbox. Defer `.meta/VERSION` + release-note edits to end-of-cycle.
 
 ## Conventions
 
@@ -211,11 +241,19 @@ live paths return the same shape.
   `use_cache=False`, overwrites the parquet, then recomputes everything.
   Filter-only re-slicing (today the button always refetches) will be
   split back into a separate Apply control in a later PR.
-- **Status banner** below the page banner reports load progress —
-  `Fetching prices…` during the fetch, `Loaded N indices · M trading
-  days · fetched from BQL in X.Ys` / `Loaded from cache (HH:MM · MM-DD)`
-  on success, `Load failed — see error below` on error (with the full
-  traceback rendered in the commentary block).
+- **Loading overlay + toast** report load progress (v0.6.5, replacing the
+  old permanent status banner). A full-screen dimmed `.bbg-overlay` with a
+  staged progress bar advances through the load (`_set_progress`: 0
+  Initializing → 25 metadata → 60 fetching → 85 building catalog → 100
+  Ready) then dismisses; **Refresh prices** re-shows it. On a fatal fetch
+  error the overlay stays visible in a red `is-error` state and the full
+  traceback also renders in the commentary block. The post-load summary
+  (`Loaded N indices · M trading days · fetched from BQL in X.Ys` /
+  `… from cache (HH:MM · MM-DD)`) folds into a slim auto-fading
+  `.bbg-toast` (`status_w`). `build_app` is synchronous, so it `display()`s
+  the overlay first (guarded on `get_ipython()`) and pushes stage updates as
+  each step completes — best-effort in Voila (intermediate frames may
+  collapse); the overlay always appears and dismisses.
 - **Benchmarks ride along the single BQL fetch** but are explicitly
   scoped to the Rolling Correlation / Rolling Beta tabs. The
   all-catalog grid and the whole-catalog highlights consume
@@ -336,12 +374,22 @@ live paths return the same shape.
   Barclays cyan (`#00B5E2`) so traces pop against the dark
   background. Chart-specific color tokens (`CHART_BG`, `CHART_GRID`,
   `CHART_AXIS`, `CHART_TEXT`, `CHART_TITLE`, `CHART_HOVER_BG`) live
-  on the `Color` enum. The rest of the dashboard chrome (page
-  banner, status banner, commentary block, perf grid) stays light —
-  only the charts are dark.
+  on the `Color` enum. As of v0.6.5 the **whole dashboard chrome is dark
+  too** (it no longer stays light) — see the next bullet.
+- **Dark technical chrome via injected CSS (v0.6.5)**. A single global
+  stylesheet (`data/templates/app_css.html`, rendered by `_app_css()` and
+  mounted as the app VBox's first child; the app gets `add_class("bbg-app")`)
+  defines the `.bbg-*` classes the chrome hangs off — base dark surface +
+  scrollbars, the `.bbg-masthead`, the loading `.bbg-overlay`/`.bbg-progress`
+  + post-load `.bbg-toast`, button states (`.bbg-pill`/`.bbg-pill.is-active`,
+  `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, and the
+  `.bbg-grid` frame. Widgets opt in via `widget.add_class(...)` (the
+  ipywidgets `.style` API can't express `:hover`/`:focus`). The grids' cell
+  colors come from ipydatagrid's `grid_style`/renderer API, not CSS. All
+  values flow from `src/style.py` tokens through `STYLE_CTX` — no inline hex.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
-  stacks, and font sizes used by `src/layout/` reference the `Color`,
-  `Font`, `FontSize`, `StatusTone`, `Sentiment`, and `TabButtonTone`
+  stacks, and font sizes used by `src/layout/` and `data/templates/`
+  reference the `Color`, `Font`, `FontSize`, `StatusTone`, and `Sentiment`
   enums. Adding a new color or size: extend the enum, don't inline.
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
@@ -419,7 +467,8 @@ build_app()
 renders the full dashboard without a Bloomberg session. Verify by:
 - Clicking a filter-type pill (Asset Class / Category / Theme / Return
   Type / Characteristics / Quantitative) in the right panel swaps the
-  value list shown below; the active pill turns navy. Ticking a value
+  value list shown below; the active pill gets the `.is-active` style
+  (accent-bordered raised surface). Ticking a value
   checkbox narrows the ticker dropdown to the intersection.
   Characteristics shows the Launch-date range (two date boxes separated
   by a hyphen) and a **Currency** dropdown; setting either narrows the
@@ -455,17 +504,18 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Pairing a recently-launched index with SPX shrinks the bounds to the
   short overlap. `Clear all` snaps the range to full span. A single-ticker
   or non-overlapping basket renders without a traceback.
-- Cold start (no `data/.cache/`) — status banner reads `Fetching
-  prices…` then `Loaded N indices · M trading days · fetched from
-  mock prices in X.Ys`; a `prices_<today>.parquet` appears under
-  `data/.cache/`.
-- Warm start (within `CACHE_TTL_HOURS`) — status banner reads
+- Cold start (no `data/.cache/`) — the loading overlay advances through its
+  stages then dismisses; the post-load toast reads `Loaded N indices · M
+  trading days · fetched from mock prices in X.Ys`; a `prices_<today>.parquet`
+  appears under `data/.cache/`.
+- Warm start (within `CACHE_TTL_HOURS`) — the toast reads
   `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
   BQL/mock fetch happens.
-- Clicking Refresh prices — banner pulses `Fetching prices…` then
-  `Loaded … fetched from BQL in X.Ys`; the parquet mtime advances.
+- Clicking Refresh prices — the overlay re-shows and runs the staged bar,
+  then dismisses; the toast reads `Loaded … fetched from BQL in X.Ys`; the
+  parquet mtime advances.
 - Clicking the top-level **Platform** / **Multi-Strategy Analysis** pill
-  buttons toggles the active button to navy + white and swaps the
+  buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
   content area; commentary stays visible above both.
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows

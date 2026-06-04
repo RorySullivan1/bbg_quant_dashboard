@@ -22,6 +22,7 @@ STYLE_CTX = {
     "slate500": Color.SLATE_500,
     "sans": Font.SANS,
     "mono": Font.MONO,
+    "title_size": FontSize.TITLE,
     "hero_size": FontSize.HERO,
     "display_size": FontSize.DISPLAY,
     "h3_size": FontSize.H3,
@@ -30,6 +31,20 @@ STYLE_CTX = {
     "label_size": FontSize.LABEL,
     "caption_size": FontSize.CAPTION,
     "micro_size": FontSize.MICRO,
+    # Dark technical chrome (v0.6.5). `border`/`text` are reserved by the
+    # status/error templates' dynamic kwargs, so the chrome tokens use the
+    # `_color` suffix to avoid duplicate-keyword collisions in render_template.
+    "chrome_bg": Color.CHROME_BG,
+    "surface": Color.SURFACE,
+    "surface2": Color.SURFACE_2,
+    "border_color": Color.BORDER,
+    "text_color": Color.TEXT,
+    "text_muted": Color.TEXT_MUTED,
+    "accent": Color.ACCENT,
+    "accent2": Color.ACCENT_2,
+    "scrim": Color.SCRIM,
+    "red": Color.RED_600,
+    "green": Color.GREEN_600,
 }
 
 
