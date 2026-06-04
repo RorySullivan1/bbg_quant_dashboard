@@ -89,6 +89,7 @@ from .html import (
     render_template,
 )
 from .panes import _make_analysis_pane
+from .platform import _factor_beta_scatter, _update_factor_scatter
 from .state import DashboardState
 
 
@@ -650,6 +651,29 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
     )
 
+    # Shared 6M/1Y/3Y/5Y lookback selector (v0.7.0 Workstream C) — the beta
+    # window for the factor scatter below (and, later, the treemap z-score
+    # normalization window). Value is a trading-day count, like z_lookback_dd;
+    # the factor scatter converts it to years. Re-slices the cache only.
+    lookback_selector = W.ToggleButtons(
+        options=[
+            ("6M", HALF_YEAR_WINDOW),
+            ("1Y", TRADING_DAYS_PER_YEAR),
+            ("3Y", TRADING_DAYS_PER_YEAR * 3),
+            ("5Y", TRADING_DAYS_PER_YEAR * 5),
+        ],
+        value=TRADING_DAYS_PER_YEAR,
+        layout=W.Layout(width="auto"),
+    )
+    lookback_row = W.HBox(
+        [_section_label("Lookback"), lookback_selector],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
+    scatter_header = W.HTML(
+        render_template("grid_header", **STYLE_CTX, text="Factor exposures")
+    )
+    factor_scatter_fig = _factor_beta_scatter()
+
     pane_left = _make_analysis_pane("left")
     pane_right = _make_analysis_pane("right")
     analysis_pane_row = W.HBox(
@@ -693,7 +717,14 @@ def build_app(verbose: bool = True) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
     platform_panel = W.VBox(
-        [universe_header, z_controls_row, universe_grid],
+        [
+            universe_header,
+            z_controls_row,
+            universe_grid,
+            lookback_row,
+            scatter_header,
+            factor_scatter_fig,
+        ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
     selected_panel = W.VBox(
@@ -752,6 +783,30 @@ def build_app(verbose: bool = True) -> W.VBox:
     for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
         _dd.observe(_render_universe_grid, names="value")
 
+    def _render_factor_scatter(_change=None) -> None:
+        """Render the Platform factor-beta scatter (β to the equity risk premium
+        vs β to the term premium, per strategy, colored by asset class) at the
+        currently-selected lookback. Computes live from the fetched cache — the
+        factor series from `universe_prices`, per-strategy returns from
+        `arp_universe_prices` — so the lookback toggle re-slices only, no BQL."""
+        if state.arp_universe_prices.empty or state.universe_prices.empty:
+            return
+        try:
+            _update_factor_scatter(
+                factor_scatter_fig,
+                state.arp_universe_prices,
+                state.universe_prices,
+                meta,
+                years=lookback_selector.value / TRADING_DAYS_PER_YEAR,
+                title=f"Equity vs term-premium β — {lookback_selector.label}",
+            )
+        except Exception:
+            state.init_errors.append(
+                f"factor-beta scatter render failed:\n{traceback.format_exc()}"
+            )
+
+    lookback_selector.observe(_render_factor_scatter, names="value")
+
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal — the
     # SI column in the all-catalog grid is therefore bounded by this window.
@@ -800,6 +855,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
             _render_universe_grid()
+            _render_factor_scatter()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -1347,6 +1403,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
             _render_universe_grid()
+            _render_factor_scatter()
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"

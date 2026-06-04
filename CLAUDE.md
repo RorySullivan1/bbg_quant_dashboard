@@ -31,7 +31,12 @@ tabs:
   Return/Vol · Window: 1M/3M/6M · Lookback: 1Y/3Y/5Y; default *z(1M Sharpe,
   1Y)*) recomputes that column live from the already-fetched cache (via
   `rolling_metric_zscore`, no BQL) and the grid is **sorted by it**
-  descending (v0.7.0 Workstream A).
+  descending (v0.7.0 Workstream A). Below the grid, a shared **6M / 1Y / 3Y /
+  5Y** lookback `ToggleButtons` drives a **factor-beta scatter** (Section 1):
+  per-strategy β to the equity risk premium (x) vs β to the term premium (y),
+  colored + legended by asset class, with a dashed zero crosshair — computed
+  live from the fetched cache, no BQL (v0.7.0 Workstream C+D). *(Workstream E
+  will add an asset-class treemap as Section 2 under the same selector.)*
 - **Multi-Strategy Analysis** — the whole filter UI lives inside an
   expandable **"Filters"** accordion (expanded by default): a full-width
   filter box split into two side-by-side panels — a **left** strategies
@@ -121,10 +126,11 @@ dashboard always renders end-to-end.
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
-| `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref`, `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
+| `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref` (horizontal ref line), `_v_ref` (vertical ref line, v0.7.0), `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
 | `src/layout/chrome.py` | Page chrome: `_app_css` (mounts the global `app_css.html` stylesheet once), `_banner` (dark masthead, adds `.bbg-masthead`), `_loading_overlay`/`_render_overlay` (the staged loading overlay, v0.6.5), `_status_banner`/`_render_status` (now the post-load `.bbg-toast`), `_make_tab_button`/`_style_tab_button` (pills via the `.bbg-pill`/`is-active` CSS class). HTML via `render_template`. |
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
+| `src/layout/platform.py` | Platform-tab standalone visuals (v0.7.0, distinct from the Multi-Strategy panes). `_factor_beta_scatter` (factory) + `_update_factor_scatter` (updater) — the factor-beta scatter (x = β to the equity risk premium, y = β to the term premium; one marker per strategy, one trace + legend entry per asset class via `ASSET_CLASS_COLORS`, dashed zero crosshair via `_h_ref`/`_v_ref`). Computes live from the fetched cache (`equity_risk_premium`/`term_premium`/`factor_beta`), no BQL. Imports `theme` + `..stats` + `..style`. (Workstream E's treemap will join it here.) |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid` (thin wrapper over the pure `_build_universe_frame`, which inserts the v0.7.0 `ZSCORE_SUPERCOL` z-score column after the Info block and sorts by it), `_build_info_block`, `_perf_renderers`/`_apply_grid_styling` (both take a `sharpe_heatmap` flag — the all-catalog grid passes it to color-grade the Sharpe + Z-Score columns via `_diverging_bg_renderer`; the selected grid leaves it off so it's visually unchanged), `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
