@@ -20,6 +20,12 @@ from ._common import (
     max_drawdown,
     zscore_cross_section,
 )
+from .factors import (
+    equity_risk_premium,
+    factor_beta,
+    platform_treemap_frame,
+    term_premium,
+)
 from .performance import (
     ann_return,
     ann_sharpe,
@@ -49,8 +55,12 @@ from .risk import (
 from .rolling import (
     rolling_beta,
     rolling_correlation,
+    rolling_metric_zscore,
+    rolling_return,
     rolling_sharpe,
     rolling_sharpe_zscore,
+    rolling_sortino,
+    rolling_volatility,
     sharpe_zscore,
 )
 
@@ -89,9 +99,18 @@ __all__ = [
     "rsi",
     "quant_metrics_table",
     # rolling
+    "rolling_return",
+    "rolling_volatility",
     "rolling_sharpe",
+    "rolling_sortino",
+    "rolling_metric_zscore",
     "sharpe_zscore",
     "rolling_sharpe_zscore",
     "rolling_correlation",
     "rolling_beta",
+    # factors / platform
+    "equity_risk_premium",
+    "term_premium",
+    "factor_beta",
+    "platform_treemap_frame",
 ]

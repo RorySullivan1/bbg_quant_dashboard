@@ -7,6 +7,13 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
+# Short metric windows (trading days) for the v0.7.0 Platform z-score views.
+# The treemap sizes by z(6M Sharpe, lookback) and colors by z(1M Sharpe,
+# lookback); the grid z-score column offers 1M / 3M / 6M as the short window.
+MONTH_WINDOW = 21  # ~1 month  (treemap color window)
+QUARTER_WINDOW = 63  # ~3 months
+HALF_YEAR_WINDOW = 126  # ~6 months (treemap size window)
+
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
 RSI_WINDOW = 14  # Wilder RSI lookback in trading days
@@ -46,3 +53,17 @@ BENCHMARK_TICKERS: list[str] = [
     "BBG6040 Index",  # Bloomberg 60/40
 ]
 DEFAULT_BENCHMARK = "SPX Index"
+
+# Factor proxies for the v0.7.0 Platform factor-beta scatter. Total-return
+# index proxies that ride the *same* single startup fetch as the benchmarks
+# (no second BQL call) and are excluded from the ARP-universe views exactly
+# like the benchmarks. `bql_client` fetches only `px_last`, so the two
+# "premia" are return spreads, not true excess-of-risk-free premia:
+#   equity risk premium ≈ equity TR return − short-rate TR return
+#   term premium        ≈ long-Treasury TR return − short-rate TR return
+# The equity leg reuses SPX (already a benchmark); only the two rate/bond
+# proxies below are *new* tickers, so `FACTOR_TICKERS` lists just those.
+EQUITY_FACTOR_TICKER = "SPX Index"  # equity proxy (also in BENCHMARK_TICKERS)
+LONG_TREASURY_TICKER = "LUTLTRUU Index"  # Bloomberg US Long Treasury TR
+SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
+FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER]

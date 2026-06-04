@@ -1,0 +1,99 @@
+"""Factor / Platform-view stats (v0.7.0 Workstream B).
+
+Macro-factor return proxies built from the already-fetched price cache
+(equity risk premium, term premium), a thin factor-beta wrapper over
+``risk.ann_beta``, and the per-ticker frame backing the Platform asset-class
+treemap. Everything here is a pure function over prices — no BQL, no fetch.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+from ..config import (
+    EQUITY_FACTOR_TICKER,
+    HALF_YEAR_WINDOW,
+    LONG_TREASURY_TICKER,
+    MONTH_WINDOW,
+    SHARPE_ZSCORE_WINDOW,
+    SHORT_RATE_TICKER,
+)
+from ._common import daily_returns
+from .risk import ann_beta
+from .rolling import rolling_metric_zscore
+
+_TREEMAP_COLUMNS = ["asset_class", "size_z", "color_z"]
+
+
+def _factor_spread(prices: pd.DataFrame, long_leg: str, short_leg: str) -> pd.Series:
+    """Daily return of ``long_leg`` minus daily return of ``short_leg``.
+
+    Returns an empty float Series when either leg is missing from ``prices`` so
+    a partial/mock frame never raises.
+    """
+    if (
+        prices.empty
+        or long_leg not in prices.columns
+        or short_leg not in prices.columns
+    ):
+        return pd.Series(dtype=float)
+    rets = daily_returns(prices[[long_leg, short_leg]])
+    return rets[long_leg] - rets[short_leg]
+
+
+def equity_risk_premium(
+    prices: pd.DataFrame,
+    *,
+    equity: str = EQUITY_FACTOR_TICKER,
+    short_rate: str = SHORT_RATE_TICKER,
+) -> pd.Series:
+    """Daily equity-risk-premium factor return ≈ equity TR − short-rate TR."""
+    return _factor_spread(prices, equity, short_rate).rename("equity_risk_premium")
+
+
+def term_premium(
+    prices: pd.DataFrame,
+    *,
+    long_bond: str = LONG_TREASURY_TICKER,
+    short_rate: str = SHORT_RATE_TICKER,
+) -> pd.Series:
+    """Daily term-premium factor return ≈ long-Treasury TR − short-rate TR."""
+    return _factor_spread(prices, long_bond, short_rate).rename("term_premium")
+
+
+def factor_beta(
+    returns: pd.DataFrame, factor_returns: pd.Series, years: float
+) -> pd.Series:
+    """Beta of each strategy's returns to a factor-return series over ``years``.
+
+    Thin wrapper over ``ann_beta`` — the "benchmark" is a daily factor-return
+    series (e.g. from ``equity_risk_premium`` / ``term_premium``) rather than a
+    price series, which ``ann_beta`` handles directly (cov/var on daily returns).
+    """
+    return ann_beta(returns, factor_returns, years)
+
+
+def platform_treemap_frame(
+    prices: pd.DataFrame, meta: pd.DataFrame, *, lookback: int = SHARPE_ZSCORE_WINDOW
+) -> pd.DataFrame:
+    """Per-ticker ``asset_class`` + ``size_z`` + ``color_z`` for the Platform
+    treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1M Sharpe,
+    lookback) — both **raw** z-scores (can be negative). The non-negative
+    size transform for ``go.Treemap.values`` is the renderer's concern, not
+    this frame's. ``lookback`` is the z-normalization window in trading days.
+    """
+    if prices.empty:
+        return pd.DataFrame(columns=_TREEMAP_COLUMNS)
+    size_z = rolling_metric_zscore(
+        prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=lookback
+    )
+    color_z = rolling_metric_zscore(
+        prices, metric="sharpe", window=MONTH_WINDOW, zscore_window=lookback
+    )
+    frame = pd.DataFrame({"size_z": size_z, "color_z": color_z})
+    if "ticker" in meta.columns and "asset_class" in meta.columns:
+        ac = meta.set_index("ticker")["asset_class"]
+        frame.insert(0, "asset_class", frame.index.map(ac))
+    else:
+        frame.insert(0, "asset_class", pd.NA)
+    return frame[_TREEMAP_COLUMNS]

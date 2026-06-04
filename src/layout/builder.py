@@ -16,6 +16,7 @@ from ..config import (
     ARP_SOLUTION_VALUES,
     BENCHMARK_TICKERS,
     DEFAULT_BENCHMARK,
+    FACTOR_TICKERS,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
     PERFORMANCE_DISCLAIMER_PATH,
@@ -682,11 +683,17 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     # `state.universe_prices` / `state.init_errors` default to empty (see
     # DashboardState); the startup fetch below populates them.
-    # Benchmarks ride along on the single startup fetch so the Rolling
-    # Correlation / Rolling Beta tabs can slice them from the same cache.
-    # They are excluded from the ARP-universe grid and the highlights cards
-    # via reindex(columns=meta["ticker"]).
-    fetch_tickers = list(meta["ticker"]) + list(BENCHMARK_TICKERS)
+    # Benchmarks and v0.7.0 Platform factor proxies ride along on the single
+    # startup fetch so the Rolling Correlation / Rolling Beta tabs and the
+    # Platform factor scatter/treemap can slice them from the same cache. Both
+    # are excluded from the ARP-universe grid and the highlights cards via
+    # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
+    # equity factor proxy is also a benchmark) while preserving order.
+    fetch_tickers = list(
+        dict.fromkeys(
+            list(meta["ticker"]) + list(BENCHMARK_TICKERS) + list(FACTOR_TICKERS)
+        )
+    )
     _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
     t_fetch = time.perf_counter()
     try:
