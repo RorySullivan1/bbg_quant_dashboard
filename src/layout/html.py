@@ -22,6 +22,7 @@ STYLE_CTX = {
     "slate500": Color.SLATE_500,
     "sans": Font.SANS,
     "mono": Font.MONO,
+    "title_size": FontSize.TITLE,
     "hero_size": FontSize.HERO,
     "display_size": FontSize.DISPLAY,
     "h3_size": FontSize.H3,

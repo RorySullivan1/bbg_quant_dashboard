@@ -23,14 +23,18 @@ def _banner() -> W.HBox:
     children: list[W.Widget] = []
     if LOGO_PATH.exists():
         with open(LOGO_PATH, "rb") as f:
-            children.append(W.Image(value=f.read(), format="png", width=48, height=48))
+            children.append(W.Image(value=f.read(), format="png", width=56, height=56))
     children.append(
         W.HTML(render_template("banner", **STYLE_CTX), layout=W.Layout(flex="1 1 auto"))
     )
-    return W.HBox(
+    hbox = W.HBox(
         children,
         layout=W.Layout(width="100%", align_items="center"),
     )
+    # Dark surface + accent rule (bg/border/padding live on `.bbg-masthead` in
+    # app_css.html) span the logo and text together.
+    hbox.add_class("bbg-masthead")
+    return hbox
 
 
 def _status_banner() -> W.HTML:
