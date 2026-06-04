@@ -4,9 +4,9 @@ name: CI
 # any PR targeting them. Mirrors the local commands documented in CLAUDE.md.
 on:
   push:
-    branches: ["v0.6.9", "main"]
+    branches: ["v0.7.0", "main"]
   pull_request:
-    branches: ["v0.6.9", "main"]
+    branches: ["v0.7.0", "main"]
 
 jobs:
   checks:

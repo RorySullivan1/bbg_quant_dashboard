@@ -43,6 +43,35 @@ def test_build_app_renders_expected_tree():
     assert "is-hidden" in overlay.value
 
 
+def test_platform_panel_has_zscore_controls_and_factor_scatter():
+    # v0.7.0 Workstream A: a Z-Score control row (Metric/Window/Lookback) above
+    # the grid, defaulting to z(1M Sharpe, 1Y). Workstream C+D: a 6M/1Y/3Y/5Y
+    # lookback ToggleButtons + the factor-beta scatter FigureWidget below it.
+    import plotly.graph_objects as go
+
+    app = build_app(verbose=False)
+    platform_panel = app.children[5].children[0]  # tab_content → active panel
+    assert isinstance(platform_panel, W.VBox)
+    (
+        header,
+        controls,
+        grid,
+        lookback_row,
+        scatter_header,
+        scatter,
+        treemap_header,
+        treemap,
+    ) = platform_panel.children
+    dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
+    assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
+    # Shared lookback selector (defaults to 1Y) + scatter + treemap figures.
+    toggles = [c for c in lookback_row.children if isinstance(c, W.ToggleButtons)]
+    assert len(toggles) == 1
+    assert toggles[0].label == "1Y"
+    assert isinstance(scatter, go.FigureWidget)
+    assert isinstance(treemap, go.FigureWidget)
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]

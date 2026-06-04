@@ -24,7 +24,22 @@ block (always visible) → **top-level pill-button tab bar** with two
 tabs:
 
 - **Platform** — full-width all-catalog performance grid (every index
-  with metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
+  with metadata plus 1Y / 3Y / 5Y / Since-Inception performance). The
+  Sharpe cells are **conditional-formatted** (diverging red→neutral→green),
+  and a **dynamic z-score column** sits right after the Info block: a
+  **Z-Score ranking** control row above the grid (Metric: Sharpe/Sortino/
+  Return/Vol · Window: 1M/3M/6M · Lookback: 1Y/3Y/5Y; default *z(1M Sharpe,
+  1Y)*) recomputes that column live from the already-fetched cache (via
+  `rolling_metric_zscore`, no BQL) and the grid is **sorted by it**
+  descending (v0.7.0 Workstream A). Below the grid, a shared **6M / 1Y / 3Y /
+  5Y** lookback `ToggleButtons` drives a **factor-beta scatter** (Section 1):
+  per-strategy β to the equity risk premium (x) vs β to the term premium (y),
+  colored + legended by asset class, with a dashed zero crosshair — computed
+  live from the fetched cache, no BQL (v0.7.0 Workstream C+D). Section 2 (under
+  the same lookback selector) is a **treemap** nested **asset class → theme →
+  ticker**, tiles **sized by z(6M Sharpe, lookback)** and **colored by z(1M
+  Sharpe, lookback)** on a diverging colorscale + colorbar (v0.7.0 Workstream
+  E). Both factor sections re-render live on the shared lookback toggle, no BQL.
 - **Multi-Strategy Analysis** — the whole filter UI lives inside an
   expandable **"Filters"** accordion (expanded by default): a full-width
   filter box split into two side-by-side panels — a **left** strategies
@@ -109,17 +124,18 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Two-tier cache (v0.6.9): an in-memory `_MEM_CACHE` checked before a per-trading-day parquet under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. Disk writes are best-effort (`_disk_cache_writable` tri-state; warns once and degrades to in-memory on a read-only FS). `_clear_caches()` resets both tiers for tests. |
-| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` — plus `factors` (v0.7.0) — with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. **v0.7.0 Platform additions:** `rolling_return` / `rolling_volatility` / `rolling_sortino` (alongside `rolling_sharpe`), `rolling_metric_zscore` (generalizes `sharpe_zscore` over metric/window/lookback) in `rolling`; and in `factors` — `equity_risk_premium` / `term_premium` (daily factor-return proxies from the fetched factor tickers, return spreads since BQL is `px_last`-only), `factor_beta` (thin `ann_beta` wrapper vs a factor-return series), and `platform_treemap_frame` (per-ticker `asset_class` + size-z `z(6M Sharpe, lookback)` + color-z `z(1M Sharpe, lookback)`). |
 | `src/cache.py`        | `LRUCache` — a tiny bounded LRU (`OrderedDict`-backed, stdlib only) with `get_or_compute(key, fn)` / `clear()`. Leaf module (no project imports). Memoizes the benchmark-dependent chart results (v0.6.9 Workstream B); reusable for future live controls. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
-| `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref`, `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
+| `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref` (horizontal ref line), `_v_ref` (vertical ref line, v0.7.0), `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
 | `src/layout/chrome.py` | Page chrome: `_app_css` (mounts the global `app_css.html` stylesheet once), `_banner` (dark masthead, adds `.bbg-masthead`), `_loading_overlay`/`_render_overlay` (the staged loading overlay, v0.6.5), `_status_banner`/`_render_status` (now the post-load `.bbg-toast`), `_make_tab_button`/`_style_tab_button` (pills via the `.bbg-pill`/`is-active` CSS class). HTML via `render_template`. |
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
+| `src/layout/platform.py` | Platform-tab standalone visuals (v0.7.0, distinct from the Multi-Strategy panes). `_factor_beta_scatter`/`_update_factor_scatter` — the factor-beta scatter (x = β to the equity risk premium, y = β to the term premium; one marker per strategy, one trace + legend entry per asset class via `ASSET_CLASS_COLORS`, dashed zero crosshair via `_h_ref`/`_v_ref`). `_treemap`/`_update_treemap` — a 3-level **asset class → theme → ticker** `go.Treemap` (sized by a non-negative shift of z(6M Sharpe), colored by raw z(1M Sharpe) on a token-driven diverging colorscale + colorbar; parents aggregate, `branchvalues="total"`). Both compute live from the fetched cache (`equity_risk_premium`/`term_premium`/`factor_beta`, `platform_treemap_frame`), no BQL. Imports `theme` + `..stats` + `..style`. |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
-| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
+| `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid` (thin wrapper over the pure `_build_universe_frame`, which inserts the v0.7.0 `ZSCORE_SUPERCOL` z-score column after the Info block and sorts by it), `_build_info_block`, `_perf_renderers`/`_apply_grid_styling` (both take a `sharpe_heatmap` flag — the all-catalog grid passes it to color-grade the Sharpe + Z-Score columns via `_diverging_bg_renderer`; the selected grid leaves it off so it's visually unchanged), `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
 | `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
 | `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`, and the v0.6.9 live-render slice `cur_prep` / `cur_win_start` / `cur_win_end`, plus the `memo` `LRUCache` for benchmark-dependent results). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). |
@@ -129,9 +145,9 @@ dashboard always renders end-to-end.
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.6.9`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.7.0`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
-| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.9`. |
+| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.0`. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -186,7 +202,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.6.9`.
+- **Current version**: `v0.7.0`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -199,7 +215,7 @@ live paths return the same shape.
     so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
     `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.7.0/...`).
+  open new branches under the new prefix (e.g. `v0.8.0/...`).
 
 ## Development workflow
 
@@ -227,11 +243,15 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 ## Conventions
 
 - **One BQL call per session**. `build_app` issues a single
-  `fetch_prices(arp_tickers + BENCHMARK_TICKERS, ...)` request at load
-  time and caches the result in a `universe_prices` closure variable.
-  Every visualization — including the all-catalog grid, the commentary,
-  and the Rolling Correlation / Rolling Beta tabs — slices from that
-  cache.
+  `fetch_prices(arp_tickers + BENCHMARK_TICKERS + FACTOR_TICKERS, ...)`
+  request at load time (deduped, order-preserving) and caches the result in a
+  `universe_prices` closure variable. Every visualization — including the
+  all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
+  tabs, and the v0.7.0 Platform factor scatter/treemap — slices from that
+  cache. The `FACTOR_TICKERS` (v0.7.0: a long-Treasury + short-rate TR proxy;
+  the equity leg reuses SPX) ride this same fetch — *no second BQL call* — and,
+  like the benchmarks, are excluded from the ARP-universe views via
+  `reindex(columns=meta["ticker"])`.
 - **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
   fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
   `(tuple(sorted(tickers)), start, end)`) checked **before** the

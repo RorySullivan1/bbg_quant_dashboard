@@ -253,3 +253,139 @@ def test_quant_metrics_table_returns_param_matches_internal(
         stats.quant_metrics_table(multiyear_prices, benchmark, 1),
         stats.quant_metrics_table(multiyear_prices, benchmark, 1, returns=rets),
     )
+
+
+# --- v0.7.0 Platform stats: rolling helpers / z-score / factors / treemap ---
+
+
+def _factor_frame(idx) -> pd.DataFrame:
+    """Seeded prices including the factor proxy tickers + one strategy."""
+    rng = np.random.default_rng(11)
+    specs = {
+        "SPX Index": (0.0004, 0.011),
+        "LUTLTRUU Index": (0.0002, 0.005),
+        "LD12TRUU Index": (0.00005, 0.0005),
+        "AAA Index": (0.0003, 0.012),
+    }
+    data = {
+        t: 100.0 * np.cumprod(1.0 + rng.normal(mu, sig, len(idx)))
+        for t, (mu, sig) in specs.items()
+    }
+    return pd.DataFrame(data, index=idx)
+
+
+def test_rolling_helpers_shape_and_warmup(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    for fn in (
+        stats.rolling_return,
+        stats.rolling_volatility,
+        stats.rolling_sharpe,
+        stats.rolling_sortino,
+    ):
+        out = fn(rets, window=63)
+        assert out.shape == rets.shape
+        # The first window-1 rows are an incomplete window → NaN.
+        assert out.iloc[:62].isna().all().all()
+        assert out.iloc[63:].notna().any().any()
+
+
+def test_rolling_volatility_constant_return_is_zero(bdays):
+    idx = bdays(300)
+    # +1% every step → zero rolling volatility.
+    prices = pd.DataFrame({"X Index": 100.0 * 1.01 ** np.arange(len(idx))}, index=idx)
+    vol = stats.rolling_volatility(stats.daily_returns(prices), window=21)
+    assert vol.dropna().abs().to_numpy().max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_rolling_metric_zscore_matches_sharpe_zscore(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    generalized = stats.rolling_metric_zscore(
+        multiyear_prices, metric="sharpe", window=63, zscore_window=126
+    )
+    special = stats.sharpe_zscore(rets, window=63, zscore_window=126)
+    pd.testing.assert_series_equal(generalized, special, check_names=False)
+
+
+def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
+    for metric in ("sharpe", "sortino", "return", "vol"):
+        z = stats.rolling_metric_zscore(
+            multiyear_prices, metric=metric, window=63, zscore_window=126
+        )
+        assert list(z.index) == list(multiyear_prices.columns)
+        assert z.name == f"{metric}_zscore"
+
+
+def test_rolling_metric_zscore_unknown_metric_raises(multiyear_prices):
+    with pytest.raises(ValueError):
+        stats.rolling_metric_zscore(
+            multiyear_prices, metric="bogus", window=21, zscore_window=63
+        )
+
+
+def test_rolling_metric_zscore_positive_for_recent_strength(bdays):
+    idx = bdays(400)
+    rng = np.random.default_rng(0)
+    # Calm noisy history, then a steady low-vol positive run → positive z.
+    rets = np.concatenate([rng.normal(0.0, 0.01, 320), np.full(80, 0.004)])
+    prices = pd.DataFrame({"X Index": 100.0 * np.cumprod(1.0 + rets)}, index=idx)
+    z = stats.rolling_metric_zscore(
+        prices, metric="sharpe", window=21, zscore_window=252
+    )
+    assert z["X Index"] > 0
+
+
+def test_equity_risk_premium_is_equity_minus_short(bdays):
+    prices = _factor_frame(bdays(300))
+    erp = stats.equity_risk_premium(prices)
+    rets = stats.daily_returns(prices[["SPX Index", "LD12TRUU Index"]])
+    expected = rets["SPX Index"] - rets["LD12TRUU Index"]
+    pd.testing.assert_series_equal(erp, expected, check_names=False)
+    assert erp.name == "equity_risk_premium"
+
+
+def test_term_premium_is_long_minus_short(bdays):
+    prices = _factor_frame(bdays(300))
+    tp = stats.term_premium(prices)
+    rets = stats.daily_returns(prices[["LUTLTRUU Index", "LD12TRUU Index"]])
+    expected = rets["LUTLTRUU Index"] - rets["LD12TRUU Index"]
+    pd.testing.assert_series_equal(tp, expected, check_names=False)
+    assert tp.name == "term_premium"
+
+
+def test_factor_builders_missing_columns_return_empty():
+    prices = pd.DataFrame({"AAA Index": [100.0, 101.0, 102.0]})
+    assert stats.equity_risk_premium(prices).empty
+    assert stats.term_premium(prices).empty
+
+
+def test_factor_beta_matches_ann_beta(bdays):
+    prices = _factor_frame(bdays(400))
+    rets = stats.daily_returns(prices[["AAA Index"]])
+    erp = stats.equity_risk_premium(prices)
+    pd.testing.assert_series_equal(
+        stats.factor_beta(rets, erp, years=1),
+        stats.ann_beta(rets, erp, years=1),
+    )
+
+
+def test_platform_treemap_frame_columns_and_join(multiyear_prices):
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "asset_class": ["Equity", "Fixed Income", "Commodity"],
+            "theme": ["Growth", "Credit", "Energy"],
+        }
+    )
+    frame = stats.platform_treemap_frame(multiyear_prices, meta, lookback=252)
+    assert list(frame.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    assert len(frame) == 3
+    assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
+    assert frame.loc["BBB Index", "theme"] == "Credit"
+    assert frame["size_z"].notna().any()
+
+
+def test_platform_treemap_frame_empty_safe():
+    meta = pd.DataFrame({"ticker": [], "asset_class": [], "theme": []})
+    out = stats.platform_treemap_frame(pd.DataFrame(), meta, lookback=252)
+    assert list(out.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    assert out.empty
