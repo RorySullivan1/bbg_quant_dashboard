@@ -153,3 +153,18 @@ LINE_PALETTE: tuple[str, ...] = (
     "#69F0AE",  # Lime
     "#FFAB40",  # Light orange
 )
+
+
+# Asset-class color map for the v0.7.0 Platform factor-scatter / treemap
+# (colored by asset class). The original `AssetClassColor`/`ASSET_CLASS_COLORS`
+# were deleted in v0.6.0 Workstream G as dead code; this is a small, focused
+# reintroduction drawn from `LINE_PALETTE` so the colors stay token-driven and
+# sit naturally in the dark chart theme. Keys match the `AssetClass` values in
+# `data/indexdb.json`; `ASSET_CLASS_FALLBACK_COLOR` covers anything unmapped.
+ASSET_CLASS_COLORS: dict[str, str] = {
+    "Equity": LINE_PALETTE[1],  # cyan
+    "Fixed Income": LINE_PALETTE[3],  # mint
+    "Commodity": LINE_PALETTE[0],  # orange
+    "FX": LINE_PALETTE[5],  # lavender
+}
+ASSET_CLASS_FALLBACK_COLOR: str = Color.SLATE_400
