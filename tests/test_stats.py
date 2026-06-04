@@ -219,3 +219,37 @@ def test_common_window_bounds_no_overlap_returns_none(bdays):
 
 def test_common_window_bounds_empty_returns_none():
     assert stats.common_window_bounds(pd.DataFrame()) == (None, None)
+
+
+# --- v0.6.9 Workstream D: precomputed-returns threading (equivalence) -------
+
+
+def test_perf_table_returns_param_matches_internal(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    pd.testing.assert_frame_equal(
+        stats.perf_table(multiyear_prices),
+        stats.perf_table(multiyear_prices, returns=rets),
+    )
+
+
+def test_universe_perf_threads_returns_unchanged(multiyear_prices):
+    # universe_perf now computes daily_returns once and threads it into
+    # perf_table; the result must equal the plain concat it replaced.
+    expected = pd.concat(
+        [
+            stats.perf_table(multiyear_prices),
+            stats.since_inception_perf(multiyear_prices),
+        ],
+        axis=1,
+    )
+    pd.testing.assert_frame_equal(stats.universe_perf(multiyear_prices), expected)
+
+
+def test_quant_metrics_table_returns_param_matches_internal(
+    multiyear_prices, benchmark
+):
+    rets = stats.daily_returns(multiyear_prices)
+    pd.testing.assert_frame_equal(
+        stats.quant_metrics_table(multiyear_prices, benchmark, 1),
+        stats.quant_metrics_table(multiyear_prices, benchmark, 1, returns=rets),
+    )

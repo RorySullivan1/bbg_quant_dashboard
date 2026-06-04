@@ -54,26 +54,39 @@ def _set_all(dropdowns, value) -> None:
         dd.value = value
 
 
+def _pickers(app) -> list[W.Dropdown]:
+    return [
+        w
+        for w in _walk(app)
+        if isinstance(w, W.Dropdown) and "Rolling Correlation" in list(w.options)
+    ]
+
+
 def test_flip_back_hits_memo_and_shares_across_panes(monkeypatch):
     calls = _spy_rolling_correlation(monkeypatch)
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
 
-    # The load renders both panes for the default benchmark; the shared memo
-    # means rolling_correlation runs once even though two panes consume it.
-    after_load = calls["n"]
-    assert after_load == 1
+    # Lazy rendering: neither pane's default view is Rolling Correlation, so
+    # nothing is computed at load.
+    assert calls["n"] == 0
+
+    # Mount Rolling Correlation on BOTH panes. The first pane computes it
+    # (memo miss); the second is a hit — the result is pane-independent.
+    for picker in _pickers(app):
+        picker.value = "Rolling Correlation"
+    assert calls["n"] == 1  # cross-pane share
 
     other = next(b for b in BENCHMARK_TICKERS if b != DEFAULT_BENCHMARK)
     dds = _benchmark_dropdowns(app)
 
-    # Flip every benchmark to `other`: the two panes' rolling-correlation
-    # dropdowns both fire, but the result is computed once (cross-pane share).
+    # Flip every benchmark to `other`: both panes' rolling-correlation dropdowns
+    # fire, but the result is computed once (shared memo).
     _set_all(dds, other)
     after_flip = calls["n"]
-    assert after_flip == after_load + 1
+    assert after_flip == 2
 
-    # Flip back to the default: still cached from load -> a pure memo hit.
+    # Flip back to the default: still cached from the mount -> a pure memo hit.
     _set_all(dds, DEFAULT_BENCHMARK)
     assert calls["n"] == after_flip
 
@@ -82,10 +95,14 @@ def test_refresh_invalidates_memo(monkeypatch):
     calls = _spy_rolling_correlation(monkeypatch)
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
-    assert calls["n"] == 1  # default benchmark computed once at load
+
+    # Mount Rolling Correlation on the left pane -> computed on demand once.
+    _pickers(app)[0].value = "Rolling Correlation"
+    assert calls["n"] == 1
 
     # Refresh prices rebuilds the slice and must clear the memo, so the same
-    # benchmark is recomputed rather than served stale.
+    # benchmark is recomputed (the mounted view re-renders) rather than served
+    # stale.
     refresh_btn = next(
         w
         for w in _walk(app)

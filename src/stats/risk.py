@@ -185,6 +185,7 @@ def quant_metrics_table(
     *,
     var_confidence: float = VAR_CONFIDENCE,
     rsi_window: int = RSI_WINDOW,
+    returns: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-ticker quant-filter metrics table.
 
@@ -193,6 +194,9 @@ def quant_metrics_table(
     trailing `years` window (RSI uses its own `rsi_window`); Beta / Treynor /
     Jensen are measured vs `benchmark`. The cross-sectional Z-Score is derived
     on demand by the caller via `zscore_cross_section`.
+
+    ``returns`` may be passed when the caller already holds
+    ``daily_returns(prices)``, to skip recomputing it here.
     """
     columns = [
         "Sharpe",
@@ -206,7 +210,7 @@ def quant_metrics_table(
     ]
     if prices.empty:
         return pd.DataFrame(columns=columns)
-    rets = daily_returns(prices)
+    rets = daily_returns(prices) if returns is None else returns
     return pd.DataFrame(
         {
             "Sharpe": ann_sharpe(rets, prices, years),

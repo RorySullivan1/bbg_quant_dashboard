@@ -755,8 +755,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         years = quant.period_dd.value
         # Non-benchmark metrics from the shared table; the benchmark-based ones
         # (Beta / Treynor / Jensen) are recomputed each against its own dropdown.
-        qt = quant_metrics_table(prices, None, years)
+        # Compute returns once and share them with quant_metrics_table.
         rets = daily_returns(prices)
+        qt = quant_metrics_table(prices, None, years, returns=rets)
         qt["Beta"] = ann_beta(
             rets, state.universe_prices.get(quant.bench_dd["Beta"].value), years
         )
@@ -853,6 +854,9 @@ def build_app(verbose: bool = True) -> W.VBox:
             pd.DataFrame(),
             meta,
         )
+        # No selection -> no view holds current data; the lazy picker observer
+        # no-ops while cur_prep is None, so picks just swap to cleared figures.
+        pane.fresh = set()
 
     # The four benchmark-dependent charts are each rendered by a small helper
     # over the shared `(pane, prep, win_start, win_end, errors)` signature, so
@@ -1009,6 +1013,42 @@ def build_app(verbose: bool = True) -> W.VBox:
         except Exception:
             errors.append(traceback.format_exc())
 
+    def _render_one(
+        pane: SimpleNamespace,
+        label: str,
+        prep: SimpleNamespace,
+        win_start: pd.Timestamp,
+        win_end: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
+        # Populate the single analysis view named `label` from `prep`. Lazy
+        # rendering (Workstream D) calls this for only the mounted view per
+        # recompute and builds the others on first pick.
+        if label == "Cumulative Performance":
+            _update_line(pane.line_fig, prep.perf, meta)
+        elif label == "1Y Sharpe-z Line":
+            _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
+        elif label == "Risk / Return":
+            _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
+        elif label == "Drawdown":
+            _update_drawdown(pane.dd_fig, prep.dd, meta)
+        elif label == "Return Distribution":
+            _update_return_dist(
+                pane.retdist_fig,
+                pane.retdist_stats_grid,
+                prep.rets,
+                prep.rd_stats,
+                meta,
+            )
+        elif label == "Correlation Heatmap":
+            _render_heatmap(pane, prep, win_start, win_end, errors)
+        elif label == "Rolling Correlation":
+            _render_rolling_corr(pane, prep, win_start, win_end, errors)
+        elif label == "Rolling Beta":
+            _render_rolling_beta(pane, prep, win_start, win_end, errors)
+        elif label == "Outperformance":
+            _render_outperf(pane, prep, win_start, win_end, errors)
+
     def _render_pane(
         pane: SimpleNamespace,
         prep: SimpleNamespace,
@@ -1016,21 +1056,34 @@ def build_app(verbose: bool = True) -> W.VBox:
         win_end: pd.Timestamp,
         errors: list[str],
     ) -> None:
-        _update_line(pane.line_fig, prep.perf, meta)
-        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
-        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
-        _update_drawdown(pane.dd_fig, prep.dd, meta)
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            prep.rets,
-            prep.rd_stats,
-            meta,
-        )
-        _render_heatmap(pane, prep, win_start, win_end, errors)
-        _render_rolling_corr(pane, prep, win_start, win_end, errors)
-        _render_rolling_beta(pane, prep, win_start, win_end, errors)
-        _render_outperf(pane, prep, win_start, win_end, errors)
+        # Lazy (Workstream D): render only the currently-mounted view; the other
+        # eight are built on first pick (see _bind_lazy_render) and stay fresh
+        # until the next recompute resets `pane.fresh`.
+        label = pane.picker.value
+        _render_one(pane, label, prep, win_start, win_end, errors)
+        pane.fresh = {label}
+
+    def _bind_lazy_render(pane: SimpleNamespace) -> None:
+        # On a picker change, build the newly-shown view on demand if it hasn't
+        # been rendered for the current slice yet (panes.py already swaps it into
+        # view and syncs control visibility). No-op without a valid selection or
+        # when the view is already fresh; errors are swallowed like the live
+        # benchmark observers (a real failure resurfaces on the next Refresh).
+        def _on_pick_render(change):
+            label = change["new"]
+            if state.cur_prep is None or label in pane.fresh:
+                return
+            _render_one(
+                pane,
+                label,
+                state.cur_prep,
+                state.cur_win_start,
+                state.cur_win_end,
+                [],
+            )
+            pane.fresh.add(label)
+
+        pane.picker.observe(_on_pick_render, names="value")
 
     def _bind_live_controls(pane: SimpleNamespace) -> None:
         # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
@@ -1144,11 +1197,16 @@ def build_app(verbose: bool = True) -> W.VBox:
                     state.last_sel_key = sel_key
                     win_start, win_end = date_slider.value
                     sel_window = sel_5y.loc[win_start:win_end]
+                    # Compute the selected-set returns once and thread them into
+                    # the dependents (perf_table, sz_series, cm, rd_stats) rather
+                    # than letting each recompute daily_returns.
+                    t_prep = time.perf_counter()
+                    sel_rets = daily_returns(sel_window)
                     prep = SimpleNamespace(
                         sel_window=sel_window,
-                        rets=daily_returns(sel_window),
+                        rets=sel_rets,
                         perf=cum_perf(sel_window),
-                        pt=perf_table(sel_window),
+                        pt=perf_table(sel_window, returns=sel_rets),
                         dd=drawdown_series(sel_window),
                     )
                     prep.sz_series = rolling_sharpe_zscore(prep.rets)
@@ -1159,10 +1217,16 @@ def build_app(verbose: bool = True) -> W.VBox:
                     state.cur_prep = prep
                     state.cur_win_start = win_start
                     state.cur_win_end = win_end
+                    _log(f"selected prep built in {time.perf_counter() - t_prep:.2f}s")
                     _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
+                    t_panes = time.perf_counter()
                     _render_pane(state.pane_left, prep, win_start, win_end, pane_errors)
                     _render_pane(
                         state.pane_right, prep, win_start, win_end, pane_errors
+                    )
+                    _log(
+                        "panes rendered (mounted views only) in "
+                        f"{time.perf_counter() - t_panes:.2f}s"
                     )
         except Exception:
             pane_errors.append(traceback.format_exc())
@@ -1212,6 +1276,8 @@ def build_app(verbose: bool = True) -> W.VBox:
     apply_btn.on_click(_refresh_prices)
     _bind_live_controls(state.pane_left)
     _bind_live_controls(state.pane_right)
+    _bind_lazy_render(state.pane_left)
+    _bind_lazy_render(state.pane_right)
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
