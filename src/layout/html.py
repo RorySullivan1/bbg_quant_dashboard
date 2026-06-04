@@ -44,6 +44,7 @@ STYLE_CTX = {
     "accent2": Color.ACCENT_2,
     "scrim": Color.SCRIM,
     "red": Color.RED_600,
+    "green": Color.GREEN_600,
 }
 
 

@@ -127,8 +127,119 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
-/* Workstream D — button hover/active/focus states, dark controls + grids. */
-.bbg-btn {}
-.bbg-btn-secondary {}
+/* Workstream D — button hover/active/focus states + dark form controls.
+   (`.bbg-grid` is filled by PR 5, the dark ipydatagrid theme.) */
+
+/* Tab + filter pills. Active state is the `is-active` class (toggled in
+   chrome.py), so `:hover` works — no inline button colors. */
+.bbg-app .bbg-pill {
+  background: {{chrome_bg}};
+  color: {{text_muted}};
+  border: 1px solid {{border_color}};
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.bbg-app .bbg-pill:hover {
+  background: {{surface}};
+  color: {{text_color}};
+}
+.bbg-app .bbg-pill.is-active {
+  background: {{surface2}};
+  color: {{text_color}};
+  border-color: {{accent}};
+  font-weight: 700;
+}
+.bbg-app .bbg-pill:focus-visible {
+  outline: 2px solid {{accent}};
+  outline-offset: 1px;
+}
+
+/* Primary action (Refresh prices) — green, brightness shift on hover/active. */
+.bbg-app .bbg-btn {
+  background: {{green}};
+  color: {{white}};
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: filter 0.15s ease;
+}
+.bbg-app .bbg-btn:hover { filter: brightness(1.08); }
+.bbg-app .bbg-btn:active { filter: brightness(0.92); }
+.bbg-app .bbg-btn:focus-visible {
+  outline: 2px solid {{accent}};
+  outline-offset: 2px;
+}
+
+/* Secondary action (Clear section / Clear all) — outlined/muted. */
+.bbg-app .bbg-btn-secondary {
+  background: transparent;
+  color: {{text_muted}};
+  border: 1px solid {{border_color}};
+  border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.bbg-app .bbg-btn-secondary:hover {
+  background: {{surface}};
+  color: {{text_color}};
+  border-color: {{accent}};
+}
+.bbg-app .bbg-btn-secondary:focus-visible {
+  outline: 2px solid {{accent}};
+  outline-offset: 2px;
+}
+
+/* Dark form controls — best-effort: the ipywidgets DOM class names are
+   version-fragile, so target widget roles (select/input) too. Scoped under
+   .bbg-app; additive, so a non-matching selector is a harmless no-op. */
+.bbg-app .widget-label {
+  color: {{text_color}};
+}
+.bbg-app select,
+.bbg-app input[type="text"],
+.bbg-app input[type="number"],
+.bbg-app input[type="date"] {
+  background: {{surface}};
+  color: {{text_color}};
+  border: 1px solid {{border_color}};
+  border-radius: 4px;
+}
+.bbg-app select:hover,
+.bbg-app input[type="text"]:hover,
+.bbg-app input[type="date"]:hover {
+  border-color: {{text_muted}};
+}
+.bbg-app select:focus,
+.bbg-app input[type="text"]:focus,
+.bbg-app input[type="number"]:focus,
+.bbg-app input[type="date"]:focus {
+  border-color: {{accent}};
+  outline: none;
+}
+.bbg-app input[type="checkbox"] {
+  accent-color: {{accent}};
+}
+.bbg-app input::placeholder {
+  color: {{text_muted}};
+}
+/* ToggleButtons (heatmap regime direction). */
+.bbg-app .widget-toggle-buttons .jupyter-button {
+  background: {{surface}};
+  color: {{text_muted}};
+  border: 1px solid {{border_color}};
+}
+.bbg-app .widget-toggle-buttons .jupyter-button.mod-active {
+  background: {{surface2}};
+  color: {{text_color}};
+  border-color: {{accent}};
+}
+/* Filters accordion header (best-effort across Notebook/Lab/Voila DOMs). */
+.bbg-app .jupyter-widget-Collapse-header,
+.bbg-app .lm-AccordionPanel > h3 {
+  background: {{surface}};
+  color: {{text_color}};
+}
+
+/* Workstream D (PR 5) — dark ipydatagrid theme. */
 .bbg-grid {}
 </style>
