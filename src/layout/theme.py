@@ -69,6 +69,20 @@ def _h_ref(y: float) -> dict:
     )
 
 
+def _v_ref(x: float) -> dict:
+    """Dashed vertical reference line spanning the chart's full height."""
+    return dict(
+        type="line",
+        xref="x",
+        x0=x,
+        x1=x,
+        yref="paper",
+        y0=0,
+        y1=1,
+        line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1),
+    )
+
+
 def _palette_color(i: int) -> str:
     return LINE_PALETTE[i % len(LINE_PALETTE)]
 
