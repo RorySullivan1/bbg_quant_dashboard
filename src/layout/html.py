@@ -42,6 +42,8 @@ STYLE_CTX = {
     "text_muted": Color.TEXT_MUTED,
     "accent": Color.ACCENT,
     "accent2": Color.ACCENT_2,
+    "scrim": Color.SCRIM,
+    "red": Color.RED_600,
 }
 
 

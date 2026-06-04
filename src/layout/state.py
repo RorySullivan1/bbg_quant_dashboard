@@ -29,7 +29,8 @@ class DashboardState:
 
     # --- widget handles (set once at construction in build_app) ---
     ticker_w: W.SelectMultiple
-    status_w: W.HTML
+    status_w: W.HTML  # post-load summary toast (v0.6.5: was the status banner)
+    overlay_w: W.HTML  # dimmed loading overlay + staged progress (v0.6.5)
     universe_grid: object  # ipydatagrid.DataGrid
     selected_perf_grid: object  # ipydatagrid.DataGrid
     pane_left: object  # SimpleNamespace analysis pane

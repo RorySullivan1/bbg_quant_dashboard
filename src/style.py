@@ -82,6 +82,8 @@ class Color(StrEnum):
     ACCENT = "#FFA000"
     # Secondary accent — Barclays cyan (LINE_PALETTE[1]).
     ACCENT_2 = "#00B5E2"
+    # Dimmed loading-overlay backdrop — CHROME_BG at ~90% alpha (8-digit hex).
+    SCRIM = "#0d1117e6"
 
 
 class Font(StrEnum):

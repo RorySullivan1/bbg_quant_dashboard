@@ -47,9 +47,85 @@
   gap: 16px;
 }
 
-/* Workstream C — loading overlay + staged progress bar. */
-.bbg-overlay {}
-.bbg-progress {}
+/* Workstream C — loading overlay + staged progress bar + post-load toast. */
+.bbg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: {{scrim}};
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+.bbg-overlay.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.bbg-overlay-card {
+  background: {{surface}};
+  border: 1px solid {{border_color}};
+  border-radius: 8px;
+  padding: 24px 32px;
+  min-width: 340px;
+  text-align: center;
+}
+.bbg-overlay-title {
+  color: {{text_color}};
+  font-size: {{h3_size}};
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+.bbg-overlay-label {
+  color: {{text_muted}};
+  font-family: {{mono}};
+  font-size: {{label_size}};
+  margin-top: 4px;
+}
+.bbg-overlay-pct {
+  color: {{text_muted}};
+  font-family: {{mono}};
+  font-size: {{caption_size}};
+}
+.bbg-progress {
+  background: {{surface2}};
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 14px 0 6px;
+}
+.bbg-progress-fill {
+  background: {{accent}};
+  height: 100%;
+  transition: width 0.25s ease;
+}
+.bbg-overlay.is-error .bbg-progress-fill {
+  background: {{red}};
+}
+
+/* Post-load summary toast — slim, fixed bottom-right, auto-fading (replaces
+   the old permanent in-flow status banner). */
+.bbg-toast {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  z-index: 9998;
+  background: {{surface}};
+  color: {{text_color}};
+  border: 1px solid {{border_color}};
+  border-left: 3px solid {{accent}};
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-family: {{mono}};
+  font-size: {{label_size}};
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: bbg-toast-fade 6s ease forwards;
+}
+@keyframes bbg-toast-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
 
 /* Workstream D — button hover/active/focus states, dark controls + grids. */
 .bbg-btn {}
