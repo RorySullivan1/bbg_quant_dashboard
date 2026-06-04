@@ -14,9 +14,13 @@ RSI_WINDOW = 14  # Wilder RSI lookback in trading days
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 
-# On-disk parquet cache for the single startup BQL fetch. Keyed by the
-# `end` date (one file per trading day). `CACHE_TTL_HOURS` bounds how
-# stale a same-day cache can be before it's treated as a miss.
+# Price cache for the single startup BQL fetch. Two tiers: an in-memory
+# session cache (checked first, so a read-only filesystem is never required)
+# backed by a best-effort on-disk parquet cache keyed by the `end` date (one
+# file per trading day). `CACHE_TTL_HOURS` bounds how stale a same-day disk
+# cache can be before it's treated as a miss. If the parquet directory is
+# unwritable, the disk tier is skipped and the in-memory cache carries the
+# session (see `src/bql_client.py`).
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
 CACHE_TTL_HOURS = 12
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -19,6 +20,23 @@ except Exception:
 
 BQL_FIELD_KEY = "px_last"
 
+# In-memory session cache for fetched prices, checked before the on-disk
+# parquet so the BQuant filesystem (which may be read-only) is never required.
+# Keyed by ``(tuple(sorted(tickers)), start, end)`` → the wide price frame.
+_MEM_CACHE: dict[tuple, pd.DataFrame] = {}
+
+# Tri-state writability of the on-disk parquet cache: ``None`` until probed,
+# then ``True``/``False``. Once ``False`` (e.g. a read-only filesystem) we stop
+# attempting disk writes for the rest of the session.
+_disk_cache_writable: bool | None = None
+
+
+def _clear_caches() -> None:
+    """Reset the in-memory cache and disk-writability probe (test hook)."""
+    global _disk_cache_writable
+    _MEM_CACHE.clear()
+    _disk_cache_writable = None
+
 
 def fetch_prices(
     tickers: list[str],
@@ -34,17 +52,24 @@ def fetch_prices(
     Falls back to a deterministic synthetic series when bql is unavailable
     (off-terminal development), so the dashboard renders end-to-end.
 
-    When `use_cache=True` (default) and a same-day parquet under
-    `CACHE_DIR` covers every requested ticker within `CACHE_TTL_HOURS`,
-    it's returned without hitting BQL. On a miss or with `use_cache=False`
-    the live fetch result is written to the cache before returning.
+    When `use_cache=True` (default) the in-memory session cache is checked
+    first, then a same-day parquet under `CACHE_DIR` that covers every
+    requested ticker within `CACHE_TTL_HOURS`; either is returned without
+    hitting BQL. On a miss or with `use_cache=False` the live fetch result is
+    written to both caches before returning. Disk writes are best-effort: on a
+    read-only filesystem the in-memory cache still serves the session.
     """
     if not tickers:
         return pd.DataFrame(), "cache"
 
+    key = (tuple(sorted(tickers)), start, end)
     if use_cache:
+        mem = _MEM_CACHE.get(key)
+        if mem is not None:
+            return mem.reindex(columns=tickers), "cache"
         cached = _cache_read(end, tickers)
         if cached is not None:
+            _MEM_CACHE[key] = cached
             return cached, "cache"
 
     if _HAS_BQL:
@@ -54,6 +79,7 @@ def fetch_prices(
         df = _mock_prices(tickers, start, end)
         source = "mock"
     _cache_write(end, df)
+    _MEM_CACHE[key] = df
     return df, source
 
 
@@ -65,10 +91,15 @@ def _cache_read(day: date, tickers: list[str]) -> pd.DataFrame | None:
     path = _cache_path(day)
     if not path.exists():
         return None
-    age_hours = (time.time() - path.stat().st_mtime) / 3600
-    if age_hours >= CACHE_TTL_HOURS:
+    # Treat any read failure (corrupt parquet, vanished file, I/O error) as a
+    # clean miss rather than crashing the load.
+    try:
+        age_hours = (time.time() - path.stat().st_mtime) / 3600
+        if age_hours >= CACHE_TTL_HOURS:
+            return None
+        df = pd.read_parquet(path)
+    except Exception:
         return None
-    df = pd.read_parquet(path)
     missing = set(tickers) - set(df.columns)
     if missing:
         return None
@@ -76,10 +107,23 @@ def _cache_read(day: date, tickers: list[str]) -> pd.DataFrame | None:
 
 
 def _cache_write(day: date, df: pd.DataFrame) -> None:
-    if df.empty:
+    # Best-effort: skip empties, and once the filesystem is known to be
+    # unwritable (e.g. a read-only BQuant terminal) don't keep retrying — the
+    # in-memory cache carries the session.
+    global _disk_cache_writable
+    if df.empty or _disk_cache_writable is False:
         return
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(_cache_path(day), engine="pyarrow")
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(_cache_path(day), engine="pyarrow")
+        _disk_cache_writable = True
+    except Exception as exc:
+        _disk_cache_writable = False
+        warnings.warn(
+            f"Disk price cache is unwritable ({CACHE_DIR}): {exc}. "
+            "Continuing with the in-memory session cache only.",
+            stacklevel=2,
+        )
 
 
 def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:

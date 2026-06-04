@@ -108,8 +108,9 @@ dashboard always renders end-to-end.
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
-| `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
+| `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Two-tier cache (v0.6.9): an in-memory `_MEM_CACHE` checked before a per-trading-day parquet under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. Disk writes are best-effort (`_disk_cache_writable` tri-state; warns once and degrades to in-memory on a read-only FS). `_clear_caches()` resets both tiers for tests. |
 | `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
+| `src/cache.py`        | `LRUCache` — a tiny bounded LRU (`OrderedDict`-backed, stdlib only) with `get_or_compute(key, fn)` / `clear()`. Leaf module (no project imports). Memoizes the benchmark-dependent chart results (v0.6.9 Workstream B); reusable for future live controls. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
@@ -121,16 +122,16 @@ dashboard always renders end-to-end.
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
 | `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
-| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
+| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`, and the v0.6.9 live-render slice `cur_prep` / `cur_win_start` / `cur_win_end`, plus the `memo` `LRUCache` for benchmark-dependent results). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/templates/` | Component HTML templates rendered by `render_template` (`app_css` — the global `<style>` injected once, carrying the dark-chrome `.bbg-*` classes; `loading_overlay`; banner masthead; status — now the toast; section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.6.0`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.6.9`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
-| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.0`. |
+| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.6.9`. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -185,7 +186,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.6.5`.
+- **Current version**: `v0.6.9`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -198,7 +199,7 @@ live paths return the same shape.
     so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
     `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.6.5/...`).
+  open new branches under the new prefix (e.g. `v0.7.0/...`).
 
 ## Development workflow
 
@@ -231,12 +232,22 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   Every visualization — including the all-catalog grid, the commentary,
   and the Rolling Correlation / Rolling Beta tabs — slices from that
   cache.
-- **On-disk trading-day cache**. `fetch_prices` reads/writes
-  `data/.cache/prices_{YYYY-MM-DD}.parquet`. On cold start the call
-  hits BQL/mock and writes the parquet; subsequent same-day startups
-  within `CACHE_TTL_HOURS` read it back without hitting BQL. A stale
-  TTL, a missing file, or a cache that doesn't cover every requested
-  ticker all fall through to a live fetch. The directory is gitignored.
+- **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
+  fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
+  `(tuple(sorted(tickers)), start, end)`) checked **before** the
+  **on-disk trading-day** parquet `data/.cache/prices_{YYYY-MM-DD}.parquet`.
+  On cold start the call hits BQL/mock and writes both tiers; subsequent
+  same-day startups within `CACHE_TTL_HOURS` read back from memory or the
+  parquet without hitting BQL. A stale TTL, a missing/corrupt file, or a
+  cache that doesn't cover every requested ticker all fall through to a
+  live fetch. The disk write is **best-effort**: on a read-only filesystem
+  (or any write failure) `_cache_write` warns once, sets
+  `_disk_cache_writable = False`, and the in-memory cache carries the
+  session — the app never crashes on a read-only FS. (An in-memory hit
+  reports `source="cache"` with no parquet, so `_format_loaded`'s mtime
+  stamp is best-effort.) `_cache_read` swallows read errors as a clean
+  miss. `_clear_caches()` resets both tiers for tests. The directory is
+  gitignored.
 - **Refresh prices button** (formerly Apply): re-fetches from BQL with
   `use_cache=False`, overwrites the parquet, then recomputes everything.
   Filter-only re-slicing (today the button always refetches) will be
@@ -276,11 +287,18 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   only — that's the user's focus area. The whole-catalog scalar
   `sharpe_zscore` still feeds the highlights cards in the commentary
   block.
-- **Per-pane figures are pre-allocated**: each `AnalysisPane` owns one
-  fresh plotly `FigureWidget` per analysis type. Each FigureWidget is a
-  unique widget instance, so the two panes never share. Picker changes
-  swap `pane.stack.children` to the relevant pre-built view — no
-  recompute, no BQL fetch.
+- **Per-pane figures are pre-allocated, populated lazily (v0.6.9
+  Workstream D)**: each `AnalysisPane` owns one fresh plotly `FigureWidget`
+  per analysis type (unique instances, so the two panes never share). The
+  `FigureWidget`s are pre-built but **not** all populated on recompute —
+  `_render_pane` renders only the **currently-mounted** view per pane and
+  records it in `pane.fresh`; the other eight are populated on **first
+  pick** by `_bind_lazy_render`'s `pane.picker` observer (then added to
+  `pane.fresh`), so a revisit is a free `pane.stack.children` swap. Picker
+  changes still never fetch; the swap (in `panes.py` `_on_pick`) is
+  unchanged. `pane.fresh` is reset on every recompute (only the mounted
+  view is re-rendered) and emptied by `_clear_pane`; the lazy observer
+  no-ops while `state.cur_prep is None`.
 - **Chart updates go through `fig.batch_update()`**: every `_update_*`
   helper mutates the FigureWidget inside a `batch_update()` block so the
   frontend sees a single atomic frame. Trace replacement uses
@@ -295,17 +313,51 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   `layout.shapes` at factory time. The four analysis-pane benchmark
   dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
   share `_build_info_block` + `_apply_grid_styling`.
-- **Pane recompute is eager**: every Refresh-prices click preps the
-  selected-set data slice once and renders BOTH panes against it. Each
-  pane reads its own Rolling Correlation / Rolling Beta benchmark
-  dropdown, plus its Correlation-Heatmap Regime-filter checkbox /
-  benchmark / direction / tail controls, at recompute time only;
-  changing any of these alone does not trigger a recompute — the user
-  clicks Refresh prices to refresh. (The heatmap Regime checkbox does
-  toggle the visibility of its sub-controls immediately, but the matrix
-  itself only updates on the next Refresh prices.) The unchecked default
+- **Pane recompute preps once, renders the mounted views**: every
+  Refresh-prices click preps the selected-set data slice once
+  (`prep`, with `daily_returns` computed a single time and threaded into
+  `perf_table`/`sz_series`/`cm`/`rd_stats` — v0.6.9 Workstream D) and
+  renders the **currently-mounted** view of each pane against it; the
+  off-screen views build lazily on first pick (see the pre-allocated/lazy
+  bullet above).
+- **Benchmark / regime controls re-render live (v0.6.9 Workstream C)**:
+  each per-pane benchmark dropdown (Rolling Correlation / Rolling Beta /
+  Outperformance) plus the Correlation-Heatmap Regime-filter checkbox /
+  benchmark / direction / tail controls re-render **only their own chart,
+  immediately**, from the selected-set slice persisted on
+  `DashboardState` at the last recompute (`state.cur_prep` /
+  `cur_win_start` / `cur_win_end`) — no BQL fetch, no full recompute, the
+  other pane untouched. The four benchmark-dependent chart blocks live in
+  the shared `_render_heatmap` / `_render_rolling_corr` /
+  `_render_rolling_beta` / `_render_outperf` closures, called by both
+  `_render_pane` (full recompute) and `_bind_live_controls` (the live
+  `.observe` handlers). Live observers no-op when `state.cur_prep is None`
+  (no valid selection) and swallow per-chart errors (the chart's own
+  except-branch leaves it safe; a broken benchmark still surfaces on the
+  next Refresh prices, where errors flow into the commentary block). The
+  heatmap Regime checkbox keeps its separate visibility-sync observer (in
+  `panes.py`); the data re-render is added on top. The unchecked default
   uses the shared full-sample `prep.cm`; the regime path is computed
-  per-pane so the two panes stay independent.
+  per-pane so the two panes stay independent. **Refresh prices remains the
+  only path that hits BQL and the only path that re-runs filters /
+  multi-strategy selection / the analysis-date-range re-slice.**
+- **Benchmark-dependent results are memoized (v0.6.9 Workstream B)**. The
+  four heavy computes behind the live charts — `rolling_correlation`,
+  `rolling_beta`, `excess_cum_return`, and the regime `regime_corr_matrix`
+  — route through `state.memo` (a `src/cache.py` `LRUCache`) via
+  `get_or_compute`, keyed by `("rcorr"|"rbeta"|"outperf", benchmark)` or
+  `("heatmap", benchmark, direction, pct)`. The result depends only on
+  `cur_prep` (the selection slice) + benchmark, **not** the pane, so the
+  memo is **shared across both panes** (a second pane on the same benchmark
+  is a hit) and flipping **back** to a previously-viewed benchmark is an
+  instant hit — no recompute. The memo is **invalidated at the top of
+  `_recompute`** (the single point that rebuilds `cur_prep`: Refresh /
+  initial load / the no-selection guards), so it only ever holds
+  current-slice results; benchmark flips don't call `_recompute`, so the
+  memo survives across them. The non-regime heatmap stays on the
+  already-computed `prep.cm` (no memo). Validation (benchmark-has-data)
+  lives inside the memoized `compute` so a real miss still raises into the
+  chart's `except`; a hit skips both the slice and the compute.
 - **Analysis date range scopes the selected set, on Refresh prices.**
   Unlike the metadata filters (which only narrow the ticker dropdown),
   the date-range slider re-slices the already-fetched `universe_prices`
@@ -536,12 +588,15 @@ renders the full dashboard without a Bloomberg session. Verify by:
   pane's to MXWO, then clicking Refresh prices, produces two
   independently-titled charts.
 - On the Correlation Heatmap view, ticking **Regime filter** reveals a
-  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown;
-  clicking Refresh prices recomputes the matrix over the selected
-  benchmark-return tail and adds the benchmark as a row/column, with the
-  title noting e.g. "SPX Index worst 20% days". Flipping Down→Up or
-  changing the % (then Refresh prices) changes the matrix; the other
-  pane is unaffected. Unticking reverts to the full-sample correlation.
+  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown and
+  **immediately** recomputes the matrix over the selected benchmark-return
+  tail (v0.6.9 live control — no Refresh needed), adding the benchmark as a
+  row/column, with the title noting e.g. "SPX Index worst 20% days".
+  Flipping Down→Up or changing the % re-renders that one heatmap live; the
+  other pane is unaffected. Unticking reverts to the full-sample
+  correlation. (Each per-pane benchmark dropdown — Rolling Correlation /
+  Rolling Beta / Outperformance — likewise re-titles and re-renders its
+  chart live on change, with no BQL fetch.)
 - The performance disclaimer below the tab content shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
