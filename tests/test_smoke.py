@@ -84,3 +84,29 @@ def test_app_css_has_overlay_and_toast_rules():
         assert rule in css
     assert "#FFA000" in css  # Color.ACCENT, tokens substituted
     assert "{{" not in css
+
+
+def test_tab_button_classes():
+    from src.layout.chrome import _make_tab_button, _style_tab_button
+
+    active = _make_tab_button("X", active=True)
+    assert "bbg-pill" in active._dom_classes
+    assert "is-active" in active._dom_classes
+
+    inactive = _make_tab_button("Y", active=False)
+    assert "bbg-pill" in inactive._dom_classes
+    assert "is-active" not in inactive._dom_classes
+
+    # State is a class toggle, not inline `.style`.
+    _style_tab_button(active, active=False)
+    assert "is-active" not in active._dom_classes
+    _style_tab_button(inactive, active=True)
+    assert "is-active" in inactive._dom_classes
+
+
+def test_app_css_has_button_and_control_rules():
+    css = render_template("app_css", **STYLE_CTX)
+    for rule in (".bbg-btn", ".bbg-btn-secondary", ".bbg-pill", ".bbg-app select"):
+        assert rule in css
+    assert "#16a34a" in css  # Color.GREEN_600 (primary button), substituted
+    assert "{{" not in css

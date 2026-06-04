@@ -274,10 +274,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         description="Refresh prices",
         layout=W.Layout(flex="1 1 auto"),
     )
-    # Green so the primary refresh action stands out from the secondary clear
-    # buttons. Colour comes from the centralized style token, not button_style.
-    apply_btn.style.button_color = Color.GREEN_600
-    apply_btn.style.text_color = Color.WHITE
+    # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
+    # states — styled via CSS class, not inline `.style`, so `:hover` works.
+    apply_btn.add_class("bbg-btn")
     clear_section_btn = W.Button(
         description="Clear section",
         tooltip="Clear the active filter's selections",
@@ -288,6 +287,9 @@ def build_app(verbose: bool = True) -> W.VBox:
         tooltip="Clear all filters and the search box",
         layout=W.Layout(width="auto"),
     )
+    # Secondary (outlined/muted) action style with hover/focus — via CSS class.
+    clear_section_btn.add_class("bbg-btn-secondary")
+    clear_all_btn.add_class("bbg-btn-secondary")
     status_w = _status_banner()
 
     def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
@@ -419,7 +421,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="38%",
             padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
             display="flex",
             flex_flow="column",
         ),
@@ -544,7 +546,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="60%",
             padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
         ),
     )
     filter_box = W.HBox(
@@ -567,7 +569,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             width="100%",
             padding="8px",
             margin="6px 0 0 0",
-            border=f"1px solid {Color.SLATE_200}",
+            border=f"1px solid {Color.BORDER}",
         ),
     )
     # The whole filter UI — the Strategies multi-select on the left, the
@@ -648,7 +650,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(
             width="100%",
             padding="10px 16px 4px 16px",
-            border_bottom=f"1px solid {Color.SLATE_200}",
+            border_bottom=f"1px solid {Color.BORDER}",
         ),
     )
     top_tab_content = W.Box(

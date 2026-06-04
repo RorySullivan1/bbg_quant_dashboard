@@ -5,7 +5,7 @@ import html
 import ipywidgets as W
 
 from ..config import LOGO_PATH
-from ..style import StatusTone, TabButtonTone
+from ..style import StatusTone
 from .html import STYLE_CTX, render_template
 
 
@@ -86,10 +86,13 @@ def _render_overlay(
 
 
 def _style_tab_button(btn: W.Button, *, active: bool) -> None:
-    tone = TabButtonTone.ACTIVE if active else TabButtonTone.INACTIVE
-    btn.style.button_color = tone.bg
-    btn.style.text_color = tone.fg
-    btn.style.font_weight = tone.weight
+    # Active state is a CSS class toggle (`.bbg-pill.is-active`), not inline
+    # `.style` — inline button colors would block the `:hover`/`:focus` states
+    # defined in app_css.html.
+    if active:
+        btn.add_class("is-active")
+    else:
+        btn.remove_class("is-active")
 
 
 def _make_tab_button(
@@ -103,5 +106,6 @@ def _make_tab_button(
             margin="0 6px 0 0",
         ),
     )
+    btn.add_class("bbg-pill")
     _style_tab_button(btn, active=active)
     return btn
