@@ -121,7 +121,7 @@ dashboard always renders end-to-end.
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid`, `_build_info_block`, `_perf_renderers`, `_apply_grid_styling`, `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights`, `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
 | `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
-| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
+| `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`, and the v0.6.9 live-render slice `cur_prep` / `cur_win_start` / `cur_win_end`). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). Leaf module. |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/templates/` | Component HTML templates rendered by `render_template` (`app_css` — the global `<style>` injected once, carrying the dark-chrome `.bbg-*` classes; `loading_overlay`; banner masthead; status — now the toast; section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
@@ -296,16 +296,28 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
   share `_build_info_block` + `_apply_grid_styling`.
 - **Pane recompute is eager**: every Refresh-prices click preps the
-  selected-set data slice once and renders BOTH panes against it. Each
-  pane reads its own Rolling Correlation / Rolling Beta benchmark
-  dropdown, plus its Correlation-Heatmap Regime-filter checkbox /
-  benchmark / direction / tail controls, at recompute time only;
-  changing any of these alone does not trigger a recompute — the user
-  clicks Refresh prices to refresh. (The heatmap Regime checkbox does
-  toggle the visibility of its sub-controls immediately, but the matrix
-  itself only updates on the next Refresh prices.) The unchecked default
+  selected-set data slice once and renders BOTH panes against it.
+- **Benchmark / regime controls re-render live (v0.6.9 Workstream C)**:
+  each per-pane benchmark dropdown (Rolling Correlation / Rolling Beta /
+  Outperformance) plus the Correlation-Heatmap Regime-filter checkbox /
+  benchmark / direction / tail controls re-render **only their own chart,
+  immediately**, from the selected-set slice persisted on
+  `DashboardState` at the last recompute (`state.cur_prep` /
+  `cur_win_start` / `cur_win_end`) — no BQL fetch, no full recompute, the
+  other pane untouched. The four benchmark-dependent chart blocks live in
+  the shared `_render_heatmap` / `_render_rolling_corr` /
+  `_render_rolling_beta` / `_render_outperf` closures, called by both
+  `_render_pane` (full recompute) and `_bind_live_controls` (the live
+  `.observe` handlers). Live observers no-op when `state.cur_prep is None`
+  (no valid selection) and swallow per-chart errors (the chart's own
+  except-branch leaves it safe; a broken benchmark still surfaces on the
+  next Refresh prices, where errors flow into the commentary block). The
+  heatmap Regime checkbox keeps its separate visibility-sync observer (in
+  `panes.py`); the data re-render is added on top. The unchecked default
   uses the shared full-sample `prep.cm`; the regime path is computed
-  per-pane so the two panes stay independent.
+  per-pane so the two panes stay independent. **Refresh prices remains the
+  only path that hits BQL and the only path that re-runs filters /
+  multi-strategy selection / the analysis-date-range re-slice.**
 - **Analysis date range scopes the selected set, on Refresh prices.**
   Unlike the metadata filters (which only narrow the ticker dropdown),
   the date-range slider re-slices the already-fetched `universe_prices`
@@ -536,12 +548,15 @@ renders the full dashboard without a Bloomberg session. Verify by:
   pane's to MXWO, then clicking Refresh prices, produces two
   independently-titled charts.
 - On the Correlation Heatmap view, ticking **Regime filter** reveals a
-  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown;
-  clicking Refresh prices recomputes the matrix over the selected
-  benchmark-return tail and adds the benchmark as a row/column, with the
-  title noting e.g. "SPX Index worst 20% days". Flipping Down→Up or
-  changing the % (then Refresh prices) changes the matrix; the other
-  pane is unaffected. Unticking reverts to the full-sample correlation.
+  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown and
+  **immediately** recomputes the matrix over the selected benchmark-return
+  tail (v0.6.9 live control — no Refresh needed), adding the benchmark as a
+  row/column, with the title noting e.g. "SPX Index worst 20% days".
+  Flipping Down→Up or changing the % re-renders that one heatmap live; the
+  other pane is unaffected. Unticking reverts to the full-sample
+  correlation. (Each per-pane benchmark dropdown — Rolling Correlation /
+  Rolling Beta / Outperformance — likewise re-titles and re-renders its
+  chart live on change, with no BQL fetch.)
 - The performance disclaimer below the tab content shows the
   app-load date window (e.g. "2021-05-20 to 2026-05-20"); the bottom
   legal block renders justified.
