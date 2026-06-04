@@ -301,10 +301,17 @@ def build_app(verbose: bool = True) -> W.VBox:
         n_tickers = df.shape[1]
         n_days = df.shape[0]
         if source == "cache":
-            mtime = _cache_path(today).stat().st_mtime
-            stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
+            # An in-memory cache hit can report "cache" with no parquet on disk
+            # (e.g. a read-only filesystem), so the mtime stamp is best-effort.
+            try:
+                mtime = _cache_path(today).stat().st_mtime
+                stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
+                suffix = f" ({stamp})"
+            except OSError:
+                suffix = ""
             return (
-                f"Loaded {n_tickers} indices · {n_days} trading days from cache ({stamp})",
+                f"Loaded {n_tickers} indices · {n_days} trading days "
+                f"from cache{suffix}",
                 StatusTone.SUCCESS,
             )
         src_label = "BQL" if source == "bql" else "mock prices"

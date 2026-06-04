@@ -108,7 +108,7 @@ dashboard always renders end-to-end.
 | `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
-| `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Reads/writes a per-trading-day parquet cache under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. |
+| `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Two-tier cache (v0.6.9): an in-memory `_MEM_CACHE` checked before a per-trading-day parquet under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. Disk writes are best-effort (`_disk_cache_writable` tri-state; warns once and degrades to in-memory on a read-only FS). `_clear_caches()` resets both tiers for tests. |
 | `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf`, `universe_perf`. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
@@ -231,12 +231,22 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   Every visualization — including the all-catalog grid, the commentary,
   and the Rolling Correlation / Rolling Beta tabs — slices from that
   cache.
-- **On-disk trading-day cache**. `fetch_prices` reads/writes
-  `data/.cache/prices_{YYYY-MM-DD}.parquet`. On cold start the call
-  hits BQL/mock and writes the parquet; subsequent same-day startups
-  within `CACHE_TTL_HOURS` read it back without hitting BQL. A stale
-  TTL, a missing file, or a cache that doesn't cover every requested
-  ticker all fall through to a live fetch. The directory is gitignored.
+- **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
+  fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
+  `(tuple(sorted(tickers)), start, end)`) checked **before** the
+  **on-disk trading-day** parquet `data/.cache/prices_{YYYY-MM-DD}.parquet`.
+  On cold start the call hits BQL/mock and writes both tiers; subsequent
+  same-day startups within `CACHE_TTL_HOURS` read back from memory or the
+  parquet without hitting BQL. A stale TTL, a missing/corrupt file, or a
+  cache that doesn't cover every requested ticker all fall through to a
+  live fetch. The disk write is **best-effort**: on a read-only filesystem
+  (or any write failure) `_cache_write` warns once, sets
+  `_disk_cache_writable = False`, and the in-memory cache carries the
+  session — the app never crashes on a read-only FS. (An in-memory hit
+  reports `source="cache"` with no parquet, so `_format_loaded`'s mtime
+  stamp is best-effort.) `_cache_read` swallows read errors as a clean
+  miss. `_clear_caches()` resets both tiers for tests. The directory is
+  gitignored.
 - **Refresh prices button** (formerly Apply): re-fetches from BQL with
   `use_cache=False`, overwrites the parquet, then recomputes everything.
   Filter-only re-slicing (today the button always refetches) will be
