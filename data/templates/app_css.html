@@ -39,8 +39,13 @@
    Defined-but-minimal so B/C/D can fill them in without re-touching the
    CSS mount point. */
 
-/* Workstream B — masthead accent rule. */
-.bbg-masthead {}
+/* Workstream B — dark masthead: surface bg + accent rule spanning logo+text. */
+.bbg-masthead {
+  background: {{surface}};
+  border-bottom: 3px solid {{accent}};
+  padding: 14px 20px;
+  gap: 16px;
+}
 
 /* Workstream C — loading overlay + staged progress bar. */
 .bbg-overlay {}

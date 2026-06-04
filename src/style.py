@@ -94,7 +94,8 @@ class Font(StrEnum):
 class FontSize(StrEnum):
     """Typography scale. Pick the smallest semantic name that fits."""
 
-    HERO = "22px"  # page-banner title
+    TITLE = "32px"  # masthead title (v0.6.5) — largest in the scale
+    HERO = "22px"  # page-banner title (secondary)
     DISPLAY = "20px"  # highlight-card value
     H3 = "15px"  # section heading
     BODY = "14px"  # default body / commentary

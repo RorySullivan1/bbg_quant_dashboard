@@ -35,6 +35,18 @@ def test_build_app_renders_expected_tree():
     assert isinstance(legal, W.HTML)
 
 
+def test_masthead_renders():
+    app = build_app(verbose=False)
+    banner = app.children[1]
+    # The masthead HBox opts into the dark `.bbg-masthead` chrome class.
+    assert "bbg-masthead" in banner._dom_classes
+    # Its trailing HTML child holds the title block; tokens must be substituted.
+    masthead_html = banner.children[-1].value
+    assert "Index Catalog Dashboard" in masthead_html
+    assert "32px" in masthead_html  # FontSize.TITLE
+    assert "{{" not in masthead_html
+
+
 def test_build_app_reports_successful_load():
     app = build_app(verbose=False)
     status_html = app.children[2].value
