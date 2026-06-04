@@ -89,6 +89,43 @@ _PERF_METRIC_WIDTHS: dict[str, int] = {
 _PERF_INFO_TEXT_COLS: frozenset[str] = frozenset({"Name", "Asset Class", "Theme"})
 
 
+# v0.7.0 Workstream A — the all-catalog grid's dynamic z-score supercolumn name
+# and the diverging-heatmap thresholds for its conditional-formatted columns.
+ZSCORE_SUPERCOL: str = "Z-Score"
+# Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
+_SHARPE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-0.5, 0.0, 0.5, 1.0)
+# Z-Score column: already centered at 0, so the bands are symmetric.
+_ZSCORE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-1.5, -0.5, 0.5, 1.5)
+
+
+def _zebra_expr() -> str:
+    """VegaExpr fragment for the row-parity zebra background, so neutral / blank
+    heatmap cells blend into the grid_style striping instead of overriding it."""
+    return f"(cell.row % 2 === 0 ? '{Color.CHROME_BG}' : '{Color.SURFACE}')"
+
+
+def _diverging_bg_renderer(
+    thresholds: tuple[float, float, float, float],
+) -> TextRenderer:
+    """A 2dp numeric renderer whose background is a diverging red→neutral→green
+    ramp keyed to `cell.value` via the existing VegaExpr mechanism. NaN/null and
+    the neutral band (between the two middle thresholds) fall back to the zebra
+    so empty / middling cells read normally."""
+    t0, t1, t2, t3 = thresholds
+    zebra = _zebra_expr()
+    expr = (
+        f"(cell.value == null || isNaN(cell.value)) ? {zebra} : "
+        f"cell.value < {t0} ? '{Color.HEAT_NEG_STRONG}' : "
+        f"cell.value < {t1} ? '{Color.HEAT_NEG_SOFT}' : "
+        f"cell.value < {t2} ? {zebra} : "
+        f"cell.value < {t3} ? '{Color.HEAT_POS_SOFT}' : "
+        f"'{Color.HEAT_POS_STRONG}'"
+    )
+    return TextRenderer(
+        format=".2f", text_color=Color.TEXT, background_color=VegaExpr(expr)
+    )
+
+
 def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
     """Map each MultiIndex column to a pixel width, keyed by ipydatagrid's
     "<level0>,<level1>" comma-joined field name (e.g. "Info,Name",
@@ -155,16 +192,25 @@ def _build_info_block(
     return info.rename(columns=rename)
 
 
-def _perf_renderers(columns: pd.Index) -> dict:
+def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
     # Bright text on the dark body; no background_color so the `grid_style`
     # zebra (`row_background_color`) shows through. The color-swatch keeps its
     # VegaExpr bg/text (a renderer's own background overrides grid_style).
+    # `sharpe_heatmap` (all-catalog grid only) swaps the plain 2dp renderer for
+    # a diverging-background one on the Sharpe leaves + the Z-Score column,
+    # leaving the selected-strategy grid (defaults off) visually unchanged.
     text = TextRenderer(text_color=Color.TEXT)
     pct = TextRenderer(format=".2%", text_color=Color.TEXT)
     f2 = TextRenderer(format=".2f", text_color=Color.TEXT)
     color_swatch = TextRenderer(
         background_color=VegaExpr("cell.value"),
         text_color=VegaExpr("cell.value"),
+    )
+    sharpe_renderer = (
+        _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
+    )
+    zscore_renderer = (
+        _diverging_bg_renderer(_ZSCORE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
     )
     renderers: dict = {}
     for col in columns:
@@ -173,12 +219,14 @@ def _perf_renderers(columns: pd.Index) -> dict:
         # (e.g. ("1Y", "Sharpe")). Match on the metric leaf either way so
         # `.endswith` is only ever called on a string.
         leaf = col[-1] if isinstance(col, tuple) else col
-        if leaf == PERF_COLOR_COLUMN_NAME:
+        if isinstance(col, tuple) and col[0] == ZSCORE_SUPERCOL:
+            renderers[col] = zscore_renderer
+        elif leaf == PERF_COLOR_COLUMN_NAME:
             renderers[col] = color_swatch
         elif leaf in _PERF_INFO_TEXT_COLS:
             renderers[col] = text
         elif leaf == "Sharpe" or leaf.endswith(" Sharpe"):
-            renderers[col] = f2
+            renderers[col] = sharpe_renderer
         elif leaf in ("Return", "Vol", "Max DD") or leaf.endswith(
             (" Return", " Vol", " Max DD")
         ):
@@ -189,13 +237,18 @@ def _perf_renderers(columns: pd.Index) -> dict:
 
 
 def _apply_grid_styling(
-    grid: DataGrid, columns: pd.Index, *, widths: bool = False
+    grid: DataGrid,
+    columns: pd.Index,
+    *,
+    widths: bool = False,
+    sharpe_heatmap: bool = False,
 ) -> None:
     """Wire the shared per-column renderers (text / pct / 2dp / color-swatch)
     onto a grid, and — for the selected-strategy grid — the hand-tuned
     MultiIndex column widths. The all-catalog grid uses uniform
-    `base_column_size`, so it leaves `widths` off."""
-    grid.renderers = _perf_renderers(columns)
+    `base_column_size` (so it leaves `widths` off) and opts into the diverging
+    Sharpe / Z-Score `sharpe_heatmap`."""
+    grid.renderers = _perf_renderers(columns, sharpe_heatmap=sharpe_heatmap)
     if widths:
         grid.column_widths = _build_perf_column_widths(columns)
 
@@ -213,10 +266,23 @@ def _universe_grid() -> DataGrid:
     return grid
 
 
-def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) -> None:
+def _build_universe_frame(
+    meta: pd.DataFrame,
+    up: pd.DataFrame,
+    *,
+    zcol: pd.Series | None = None,
+    zlabel: str | None = None,
+) -> pd.DataFrame:
+    """Assemble the all-catalog grid's DataFrame (pure — no grid side effects).
+
+    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y → SI, all
+    under 2-level MultiIndex supercolumns. When a `zcol` (per-ticker z-score
+    Series) + `zlabel` are given, a `(ZSCORE_SUPERCOL, zlabel)` column is
+    inserted right after the Info block — it's the headline ranking column, so
+    it sits next to the names — and the whole frame is sorted by it descending
+    (insufficient-history tickers, NaN z, sink to the bottom)."""
     if meta.empty:
-        grid.data = pd.DataFrame()
-        return
+        return pd.DataFrame()
     info = _build_info_block(
         meta,
         None,
@@ -233,19 +299,40 @@ def _update_universe_grid(grid: DataGrid, meta: pd.DataFrame, up: pd.DataFrame) 
     )
     info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
 
-    if up.empty:
-        combined = info
-    else:
+    blocks = [info]
+    z_key: tuple[str, str] | None = None
+    if zcol is not None and zlabel is not None:
+        z_key = (ZSCORE_SUPERCOL, zlabel)
+        zframe = pd.DataFrame({zlabel: zcol.reindex(info.index)})
+        zframe.columns = pd.MultiIndex.from_product([[ZSCORE_SUPERCOL], zframe.columns])
+        blocks.append(zframe)
+
+    if not up.empty:
         up_norm = up.copy()
         up_norm.columns = pd.MultiIndex.from_tuples(
             [(str(a), str(b)) for a, b in up_norm.columns]
         )
-        # Order: Info block first, then 1Y, 3Y, 5Y, SI.
+        # Order: 1Y, 3Y, 5Y, SI.
         period_order = ["1Y", "3Y", "5Y", "SI"]
         present = [p for p in period_order if p in up_norm.columns.get_level_values(0)]
         up_norm = up_norm.reindex(columns=present, level=0)
-        combined = info.join(up_norm.reindex(info.index))
+        blocks.append(up_norm.reindex(info.index))
 
+    combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
+    if z_key is not None:
+        combined = combined.sort_values(z_key, ascending=False, na_position="last")
     combined.index.name = "Ticker"
+    return combined
+
+
+def _update_universe_grid(
+    grid: DataGrid,
+    meta: pd.DataFrame,
+    up: pd.DataFrame,
+    *,
+    zcol: pd.Series | None = None,
+    zlabel: str | None = None,
+) -> None:
+    combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
     grid.data = combined
-    _apply_grid_styling(grid, combined.columns)
+    _apply_grid_styling(grid, combined.columns, sharpe_heatmap=True)

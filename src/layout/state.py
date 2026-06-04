@@ -44,6 +44,11 @@ class DashboardState:
     # ARP-only view (benchmark columns reindexed out).
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     arp_universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # The all-catalog perf table (universe_perf of arp_universe_prices), cached
+    # at load/refresh so the Platform grid's Metric/Window/Lookback dropdowns
+    # re-rank by recomputing only the z-score column — no universe_perf rerun,
+    # no BQL (v0.7.0 Workstream A).
+    universe_up: pd.DataFrame = field(default_factory=pd.DataFrame)
     # Tracebacks from the initial fetch / perf compute, surfaced in commentary.
     init_errors: list[str] = field(default_factory=list)
     # Currently visible filter dimension — drives "Clear section".
