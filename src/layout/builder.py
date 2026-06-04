@@ -847,25 +847,19 @@ def build_app(verbose: bool = True) -> W.VBox:
             meta,
         )
 
-    def _render_pane(
+    # The four benchmark-dependent charts are each rendered by a small helper
+    # over the shared `(pane, prep, win_start, win_end, errors)` signature, so
+    # the same code serves both the full recompute (`_render_pane`) and the
+    # live benchmark/regime observers (`_bind_live_controls`). Each slices its
+    # benchmark series from the already-fetched `state.universe_prices` — no
+    # BQL fetch.
+    def _render_heatmap(
         pane: SimpleNamespace,
         prep: SimpleNamespace,
         win_start: pd.Timestamp,
         win_end: pd.Timestamp,
         errors: list[str],
     ) -> None:
-        _update_line(pane.line_fig, prep.perf, meta)
-        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
-        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
-        _update_drawdown(pane.dd_fig, prep.dd, meta)
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            prep.rets,
-            prep.rd_stats,
-            meta,
-        )
-
         # Correlation heatmap: optionally conditioned on a benchmark-return
         # regime, with the benchmark added to the matrix. Computed per-pane so
         # the two panes stay independent (like the rolling-corr/beta blocks).
@@ -904,6 +898,13 @@ def build_app(verbose: bool = True) -> W.VBox:
                 title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
             )
 
+    def _render_rolling_corr(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        win_start: pd.Timestamp,
+        win_end: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
         rc_bench_ticker = pane.rcorr_dd.value
         try:
             rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
@@ -922,6 +923,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         except Exception:
             errors.append(traceback.format_exc())
 
+    def _render_rolling_beta(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        win_start: pd.Timestamp,
+        win_end: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
         rb_bench_ticker = pane.rbeta_dd.value
         try:
             rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
@@ -940,6 +948,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         except Exception:
             errors.append(traceback.format_exc())
 
+    def _render_outperf(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        win_start: pd.Timestamp,
+        win_end: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
         # Outperformance: cumulative excess return vs the benchmark (prices,
         # not returns — every strategy series starts at 0).
         op_bench_ticker = pane.outperf_dd.value
@@ -957,6 +972,61 @@ def build_app(verbose: bool = True) -> W.VBox:
             )
         except Exception:
             errors.append(traceback.format_exc())
+
+    def _render_pane(
+        pane: SimpleNamespace,
+        prep: SimpleNamespace,
+        win_start: pd.Timestamp,
+        win_end: pd.Timestamp,
+        errors: list[str],
+    ) -> None:
+        _update_line(pane.line_fig, prep.perf, meta)
+        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
+        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
+        _update_drawdown(pane.dd_fig, prep.dd, meta)
+        _update_return_dist(
+            pane.retdist_fig,
+            pane.retdist_stats_grid,
+            prep.rets,
+            prep.rd_stats,
+            meta,
+        )
+        _render_heatmap(pane, prep, win_start, win_end, errors)
+        _render_rolling_corr(pane, prep, win_start, win_end, errors)
+        _render_rolling_beta(pane, prep, win_start, win_end, errors)
+        _render_outperf(pane, prep, win_start, win_end, errors)
+
+    def _bind_live_controls(pane: SimpleNamespace) -> None:
+        # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
+        # controls so changing one re-renders only its own chart, immediately,
+        # from the slice persisted on `state` at the last recompute — no BQL
+        # fetch, no full recompute, the other pane untouched. (Refresh prices
+        # stays the only path that refetches and re-runs filters/selection.)
+        def _make(render_fn):
+            def _handler(_change):
+                if state.cur_prep is None:
+                    return  # no valid selection — nothing to redraw, no fetch
+                # A single live chart swallows its errors: the helper's own
+                # except-branch leaves the chart in a safe state, and a
+                # genuinely broken benchmark still surfaces on the next
+                # Refresh prices (where errors flow into the commentary block).
+                render_fn(
+                    pane,
+                    state.cur_prep,
+                    state.cur_win_start,
+                    state.cur_win_end,
+                    [],
+                )
+
+            return _handler
+
+        pane.rcorr_dd.observe(_make(_render_rolling_corr), names="value")
+        pane.rbeta_dd.observe(_make(_render_rolling_beta), names="value")
+        pane.outperf_dd.observe(_make(_render_outperf), names="value")
+        # The regime checkbox keeps its visibility-sync observer (in panes.py);
+        # this adds the data re-render on top.
+        for ctrl in (pane.heat_regime_chk, pane.heat_dd, pane.heat_dir, pane.heat_pct):
+            ctrl.observe(_make(_render_heatmap), names="value")
 
     def _recompute(_btn=None):
         highlights_html = ""
@@ -988,12 +1058,14 @@ def build_app(verbose: bool = True) -> W.VBox:
             tickers = list(state.ticker_w.value)
             if len(tickers) < 1:
                 state.last_sel_key = None
+                state.cur_prep = None
                 _set_slider_options(None, reset=True)
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
                 _clear_pane(state.pane_left)
                 _clear_pane(state.pane_right)
             elif state.universe_prices.empty:
                 state.last_sel_key = None
+                state.cur_prep = None
                 _set_slider_options(None, reset=True)
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
@@ -1006,6 +1078,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                 sel_5y = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_5y.dropna(how="all").empty:
                     state.last_sel_key = None
+                    state.cur_prep = None
                     _set_slider_options(None, reset=True)
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
@@ -1039,6 +1112,11 @@ def build_app(verbose: bool = True) -> W.VBox:
                     prep.sz_series = rolling_sharpe_zscore(prep.rets)
                     prep.cm = corr_matrix(prep.rets)
                     prep.rd_stats = return_distribution_stats(prep.rets)
+                    # Persist the slice so the live benchmark/regime observers
+                    # can re-render a single chart without a refetch.
+                    state.cur_prep = prep
+                    state.cur_win_start = win_start
+                    state.cur_win_end = win_end
                     _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
                     _render_pane(state.pane_left, prep, win_start, win_end, pane_errors)
                     _render_pane(
@@ -1090,6 +1168,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         _set_progress(100, "Ready", hidden=True)
 
     apply_btn.on_click(_refresh_prices)
+    _bind_live_controls(state.pane_left)
+    _bind_live_controls(state.pane_right)
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(

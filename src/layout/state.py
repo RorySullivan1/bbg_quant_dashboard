@@ -52,3 +52,10 @@ class DashboardState:
     # Suppresses the bidirectional date-range observers during programmatic
     # slider/box updates.
     sync_guard: bool = False
+    # The selected-set data slice from the last recompute, plus its window
+    # bounds, persisted so the live benchmark/regime chart observers can
+    # re-render a single chart without a refetch or full recompute. ``None``
+    # means there is no valid selection, so the live observers no-op.
+    cur_prep: object | None = None  # SimpleNamespace built in _recompute
+    cur_win_start: pd.Timestamp | None = None
+    cur_win_end: pd.Timestamp | None = None
