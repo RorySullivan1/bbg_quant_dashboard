@@ -89,7 +89,12 @@ from .html import (
     render_template,
 )
 from .panes import _make_analysis_pane
-from .platform import _factor_beta_scatter, _update_factor_scatter
+from .platform import (
+    _factor_beta_scatter,
+    _treemap,
+    _update_factor_scatter,
+    _update_treemap,
+)
 from .state import DashboardState
 
 
@@ -673,6 +678,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="Factor exposures")
     )
     factor_scatter_fig = _factor_beta_scatter()
+    treemap_header = W.HTML(
+        render_template("grid_header", **STYLE_CTX, text="Risk-adjusted strength map")
+    )
+    treemap_fig = _treemap()
 
     pane_left = _make_analysis_pane("left")
     pane_right = _make_analysis_pane("right")
@@ -724,6 +733,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             lookback_row,
             scatter_header,
             factor_scatter_fig,
+            treemap_header,
+            treemap_fig,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
@@ -805,7 +816,28 @@ def build_app(verbose: bool = True) -> W.VBox:
                 f"factor-beta scatter render failed:\n{traceback.format_exc()}"
             )
 
-    lookback_selector.observe(_render_factor_scatter, names="value")
+    def _render_treemap(_change=None) -> None:
+        """Render the Platform asset class → theme → ticker treemap (sized by
+        z(6M Sharpe), colored by z(1M Sharpe)) at the current lookback. Computes
+        live from the ARP-only cache via `platform_treemap_frame` — the lookback
+        toggle re-slices only, no BQL."""
+        if state.arp_universe_prices.empty:
+            return
+        try:
+            _update_treemap(
+                treemap_fig,
+                state.arp_universe_prices,
+                meta,
+                lookback=lookback_selector.value,
+                title=f"Risk-adjusted strength — {lookback_selector.label}",
+            )
+        except Exception:
+            state.init_errors.append(
+                f"treemap render failed:\n{traceback.format_exc()}"
+            )
+
+    for _render in (_render_factor_scatter, _render_treemap):
+        lookback_selector.observe(_render, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal — the
@@ -856,6 +888,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             t_grid = time.perf_counter()
             _render_universe_grid()
             _render_factor_scatter()
+            _render_treemap()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -1404,6 +1437,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             state.universe_up = universe_perf(state.arp_universe_prices)
             _render_universe_grid()
             _render_factor_scatter()
+            _render_treemap()
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"

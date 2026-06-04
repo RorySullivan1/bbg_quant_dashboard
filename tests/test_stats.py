@@ -373,17 +373,19 @@ def test_platform_treemap_frame_columns_and_join(multiyear_prices):
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
+            "theme": ["Growth", "Credit", "Energy"],
         }
     )
     frame = stats.platform_treemap_frame(multiyear_prices, meta, lookback=252)
-    assert list(frame.columns) == ["asset_class", "size_z", "color_z"]
+    assert list(frame.columns) == ["asset_class", "theme", "size_z", "color_z"]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
+    assert frame.loc["BBB Index", "theme"] == "Credit"
     assert frame["size_z"].notna().any()
 
 
 def test_platform_treemap_frame_empty_safe():
-    meta = pd.DataFrame({"ticker": [], "asset_class": []})
+    meta = pd.DataFrame({"ticker": [], "asset_class": [], "theme": []})
     out = stats.platform_treemap_frame(pd.DataFrame(), meta, lookback=252)
-    assert list(out.columns) == ["asset_class", "size_z", "color_z"]
+    assert list(out.columns) == ["asset_class", "theme", "size_z", "color_z"]
     assert out.empty

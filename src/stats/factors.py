@@ -22,7 +22,7 @@ from ._common import daily_returns
 from .risk import ann_beta
 from .rolling import rolling_metric_zscore
 
-_TREEMAP_COLUMNS = ["asset_class", "size_z", "color_z"]
+_TREEMAP_COLUMNS = ["asset_class", "theme", "size_z", "color_z"]
 
 
 def _factor_spread(prices: pd.DataFrame, long_leg: str, short_leg: str) -> pd.Series:
@@ -76,11 +76,13 @@ def factor_beta(
 def platform_treemap_frame(
     prices: pd.DataFrame, meta: pd.DataFrame, *, lookback: int = SHARPE_ZSCORE_WINDOW
 ) -> pd.DataFrame:
-    """Per-ticker ``asset_class`` + ``size_z`` + ``color_z`` for the Platform
-    treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1M Sharpe,
-    lookback) — both **raw** z-scores (can be negative). The non-negative
-    size transform for ``go.Treemap.values`` is the renderer's concern, not
-    this frame's. ``lookback`` is the z-normalization window in trading days.
+    """Per-ticker ``asset_class`` + ``theme`` + ``size_z`` + ``color_z`` for the
+    Platform treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1M
+    Sharpe, lookback) — both **raw** z-scores (can be negative). The non-negative
+    size transform for ``go.Treemap.values`` is the renderer's concern, not this
+    frame's. ``asset_class`` and ``theme`` give the treemap's two grouping levels
+    (asset class → theme → ticker). ``lookback`` is the z-normalization window in
+    trading days.
     """
     if prices.empty:
         return pd.DataFrame(columns=_TREEMAP_COLUMNS)
@@ -91,9 +93,11 @@ def platform_treemap_frame(
         prices, metric="sharpe", window=MONTH_WINDOW, zscore_window=lookback
     )
     frame = pd.DataFrame({"size_z": size_z, "color_z": color_z})
-    if "ticker" in meta.columns and "asset_class" in meta.columns:
-        ac = meta.set_index("ticker")["asset_class"]
-        frame.insert(0, "asset_class", frame.index.map(ac))
-    else:
-        frame.insert(0, "asset_class", pd.NA)
+    has_ticker = "ticker" in meta.columns
+    for level in ("asset_class", "theme"):
+        if has_ticker and level in meta.columns:
+            mapping = meta.set_index("ticker")[level]
+            frame[level] = frame.index.map(mapping)
+        else:
+            frame[level] = pd.NA
     return frame[_TREEMAP_COLUMNS]

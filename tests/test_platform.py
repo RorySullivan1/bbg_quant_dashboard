@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from src.layout.platform import _factor_beta_scatter, _update_factor_scatter
+from src.layout.platform import (
+    _factor_beta_scatter,
+    _treemap,
+    _update_factor_scatter,
+    _update_treemap,
+)
 from src.layout.theme import _v_ref
 from src.style import ASSET_CLASS_COLORS
 
@@ -75,5 +80,47 @@ def test_update_factor_scatter_empty_clears_traces():
     _update_factor_scatter(
         fig, pd.DataFrame(), pd.DataFrame(), _meta(), years=1, title="empty"
     )
+    assert fig.data == ()
+    assert fig.layout.title.text == "empty"
+
+
+def _treemap_meta() -> pd.DataFrame:
+    # Two themes under one asset class → a 3-level Equity → theme → ticker tree.
+    return pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index"],
+            "asset_class": ["Equity", "Equity"],
+            "theme": ["Growth", "Value"],
+        }
+    )
+
+
+def test_update_treemap_builds_asset_theme_ticker_hierarchy():
+    fig = _treemap()
+    universe = _universe()
+    arp = universe[["AAA Index", "BBB Index"]]
+    _update_treemap(
+        fig, arp, _treemap_meta(), lookback=252, title="Risk-adjusted strength — 1Y"
+    )
+
+    assert fig.layout.title.text == "Risk-adjusted strength — 1Y"
+    assert len(fig.data) == 1
+    tm = fig.data[0]
+    nodes = dict(zip(tm.ids, tm.parents, strict=True))
+    # asset-class node is a root; theme nodes hang off it; leaves off the themes.
+    assert nodes["Equity"] == ""
+    assert nodes["Equity / Growth"] == "Equity"
+    assert nodes["Equity / Value"] == "Equity"
+    assert nodes["AAA Index"] == "Equity / Growth"
+    assert nodes["BBB Index"] == "Equity / Value"
+    # Sizes are non-negative; one color + customdata per node.
+    assert all(v >= 0 for v in tm.values)
+    assert len(tm.marker.colors) == len(tm.ids)
+    assert len(tm.customdata) == len(tm.ids)
+
+
+def test_update_treemap_empty_clears_traces():
+    fig = _treemap()
+    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252, title="empty")
     assert fig.data == ()
     assert fig.layout.title.text == "empty"
