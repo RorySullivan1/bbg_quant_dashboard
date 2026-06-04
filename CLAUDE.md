@@ -287,11 +287,18 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   only — that's the user's focus area. The whole-catalog scalar
   `sharpe_zscore` still feeds the highlights cards in the commentary
   block.
-- **Per-pane figures are pre-allocated**: each `AnalysisPane` owns one
-  fresh plotly `FigureWidget` per analysis type. Each FigureWidget is a
-  unique widget instance, so the two panes never share. Picker changes
-  swap `pane.stack.children` to the relevant pre-built view — no
-  recompute, no BQL fetch.
+- **Per-pane figures are pre-allocated, populated lazily (v0.6.9
+  Workstream D)**: each `AnalysisPane` owns one fresh plotly `FigureWidget`
+  per analysis type (unique instances, so the two panes never share). The
+  `FigureWidget`s are pre-built but **not** all populated on recompute —
+  `_render_pane` renders only the **currently-mounted** view per pane and
+  records it in `pane.fresh`; the other eight are populated on **first
+  pick** by `_bind_lazy_render`'s `pane.picker` observer (then added to
+  `pane.fresh`), so a revisit is a free `pane.stack.children` swap. Picker
+  changes still never fetch; the swap (in `panes.py` `_on_pick`) is
+  unchanged. `pane.fresh` is reset on every recompute (only the mounted
+  view is re-rendered) and emptied by `_clear_pane`; the lazy observer
+  no-ops while `state.cur_prep is None`.
 - **Chart updates go through `fig.batch_update()`**: every `_update_*`
   helper mutates the FigureWidget inside a `batch_update()` block so the
   frontend sees a single atomic frame. Trace replacement uses
@@ -306,8 +313,13 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   `layout.shapes` at factory time. The four analysis-pane benchmark
   dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
   share `_build_info_block` + `_apply_grid_styling`.
-- **Pane recompute is eager**: every Refresh-prices click preps the
-  selected-set data slice once and renders BOTH panes against it.
+- **Pane recompute preps once, renders the mounted views**: every
+  Refresh-prices click preps the selected-set data slice once
+  (`prep`, with `daily_returns` computed a single time and threaded into
+  `perf_table`/`sz_series`/`cm`/`rd_stats` — v0.6.9 Workstream D) and
+  renders the **currently-mounted** view of each pane against it; the
+  off-screen views build lazily on first pick (see the pre-allocated/lazy
+  bullet above).
 - **Benchmark / regime controls re-render live (v0.6.9 Workstream C)**:
   each per-pane benchmark dropdown (Rolling Correlation / Rolling Beta /
   Outperformance) plus the Correlation-Heatmap Regime-filter checkbox /

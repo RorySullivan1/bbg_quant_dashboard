@@ -338,6 +338,10 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         picker=picker,
         stack=stack,
         views=views,
+        # Labels whose figure is populated for the current slice (Workstream D
+        # lazy rendering). The builder renders only the mounted view per
+        # recompute and adds others here on first pick.
+        fresh=set(),
         line_fig=line_fig,
         outperf_fig=outperf_fig,
         outperf_dd=outperf_benchmark_dd,

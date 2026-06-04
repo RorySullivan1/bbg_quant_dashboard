@@ -80,15 +80,21 @@ def ann_sharpe(returns: pd.DataFrame, prices: pd.DataFrame, years: float) -> pd.
 def perf_table(
     prices: pd.DataFrame,
     years: tuple[int, ...] = PERF_TABLE_YEARS,
+    *,
+    returns: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return / Vol / Sharpe / Max DD per ticker across the given year windows.
 
     Rows: tickers. Columns: MultiIndex (period_label, metric).
     Cells where the ticker lacks enough history are NaN.
+
+    ``returns`` may be passed when the caller already holds
+    ``daily_returns(prices)`` (e.g. the selected-set ``prep.rets`` or the
+    universe returns), to skip recomputing it here.
     """
     if prices.empty:
         return pd.DataFrame()
-    rets = daily_returns(prices)
+    rets = daily_returns(prices) if returns is None else returns
     blocks: list[pd.DataFrame] = []
     for y in years:
         ret = ann_return(prices, y)
@@ -146,6 +152,13 @@ def universe_perf(
     """1Y / 3Y / 5Y window stats plus Since-Inception, in one MultiIndex frame."""
     if prices.empty:
         return pd.DataFrame()
+    # Compute the universe returns once and thread them into perf_table
+    # instead of letting it recompute daily_returns internally.
+    rets = daily_returns(prices)
     return pd.concat(
-        [perf_table(prices, years=years), since_inception_perf(prices)], axis=1
+        [
+            perf_table(prices, years=years, returns=rets),
+            since_inception_perf(prices),
+        ],
+        axis=1,
     )
