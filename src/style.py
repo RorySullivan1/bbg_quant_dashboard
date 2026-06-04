@@ -129,26 +129,6 @@ class StatusTone(Enum):
         return self.value[2]
 
 
-class TabButtonTone(Enum):
-    """Active / inactive state for the top-level pill tab buttons.
-    Bundles `(background, foreground, font-weight)`."""
-
-    ACTIVE = (Color.BRAND_NAVY, Color.WHITE, "600")
-    INACTIVE = (Color.SLATE_100, Color.SLATE_600, "500")
-
-    @property
-    def bg(self) -> str:
-        return self.value[0]
-
-    @property
-    def fg(self) -> str:
-        return self.value[1]
-
-    @property
-    def weight(self) -> str:
-        return self.value[2]
-
-
 class Sentiment(StrEnum):
     """Highlight-card sentiment colors."""
 

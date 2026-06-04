@@ -1,12 +1,12 @@
 name: CI
 
-# Lint, format-check, and test on the v0.6.0 integration branch and any PR
-# targeting it. Mirrors the local commands documented in CLAUDE.md.
+# Lint, format-check, and test on the current integration branch (and main) and
+# any PR targeting them. Mirrors the local commands documented in CLAUDE.md.
 on:
   push:
-    branches: ["v0.6.0"]
+    branches: ["v0.6.5", "main"]
   pull_request:
-    branches: ["v0.6.0"]
+    branches: ["v0.6.5", "main"]
 
 jobs:
   checks:
