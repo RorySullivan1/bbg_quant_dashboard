@@ -70,6 +70,9 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert toggles[0].label == "1Y"
     assert isinstance(scatter, go.FigureWidget)
     assert isinstance(treemap, go.FigureWidget)
+    # v0.7.1: the scatter is 3D (Scatter3d traces) with no in-figure title.
+    assert scatter.data and all(isinstance(tr, go.Scatter3d) for tr in scatter.data)
+    assert not scatter.layout.title.text
 
 
 def test_masthead_renders():

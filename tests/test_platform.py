@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 from src.data import load_metadata
 from src.layout.platform import (
     _asset_class_colors,
@@ -22,13 +23,15 @@ from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
 def _universe(n: int = 400) -> pd.DataFrame:
-    """Seeded prices: the three factor proxy tickers + two strategies."""
+    """Seeded prices: the factor proxy tickers (equity / long / short / trend)
+    + two strategies."""
     idx = pd.bdate_range("2022-01-03", periods=n)
     rng = np.random.default_rng(3)
     specs = {
         "SPX Index": (0.0004, 0.011),
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
+        "BSLXAT Index": (0.0001, 0.006),
         "AAA Index": (0.0003, 0.012),
         "BBB Index": (0.0002, 0.008),
     }
@@ -61,20 +64,20 @@ def test_update_factor_scatter_one_trace_per_asset_class():
     fig = _factor_beta_scatter()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
-    _update_factor_scatter(
-        fig, arp, universe, _meta(), years=1, title="Equity vs term-premium β — 1Y"
-    )
+    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
 
-    assert fig.layout.title.text == "Equity vs term-premium β — 1Y"
+    # No in-figure title (v0.7.1) — the section header stands alone.
+    assert not fig.layout.title.text
     # AAA → Equity, BBB → Fixed Income → one trace each.
     by_name = {tr.name: tr for tr in fig.data}
     assert set(by_name) == {"Equity", "Fixed Income"}
     assert by_name["Equity"].marker.color == ASSET_CLASS_COLORS["Equity"]
     assert by_name["Fixed Income"].marker.color == ASSET_CLASS_COLORS["Fixed Income"]
-    # Each group has its single strategy plotted with finite betas.
+    # 3D traces — one strategy each, finite betas on all three axes.
     for tr in fig.data:
-        assert len(tr.x) == 1 and len(tr.y) == 1
-        assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0])
+        assert isinstance(tr, go.Scatter3d)
+        assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
+        assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
 
 
 def test_catalog_asset_classes_get_distinct_non_fallback_colors():
@@ -99,11 +102,8 @@ def test_asset_class_colors_unmapped_class_avoids_fallback():
 
 def test_update_factor_scatter_empty_clears_traces():
     fig = _factor_beta_scatter()
-    _update_factor_scatter(
-        fig, pd.DataFrame(), pd.DataFrame(), _meta(), years=1, title="empty"
-    )
+    _update_factor_scatter(fig, pd.DataFrame(), pd.DataFrame(), _meta(), years=1)
     assert fig.data == ()
-    assert fig.layout.title.text == "empty"
 
 
 def _treemap_meta() -> pd.DataFrame:

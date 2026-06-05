@@ -795,11 +795,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         _dd.observe(_render_universe_grid, names="value")
 
     def _render_factor_scatter(_change=None) -> None:
-        """Render the Platform factor-beta scatter (β to the equity risk premium
-        vs β to the term premium, per strategy, colored by asset class) at the
-        currently-selected lookback. Computes live from the fetched cache — the
-        factor series from `universe_prices`, per-strategy returns from
-        `arp_universe_prices` — so the lookback toggle re-slices only, no BQL."""
+        """Render the Platform 3D factor-beta scatter (β to the equity risk
+        premium, term premium, and trend factor, per strategy, colored by asset
+        class) at the currently-selected lookback. Computes live from the
+        fetched cache — the factor series from `universe_prices`, per-strategy
+        returns from `arp_universe_prices` — so the lookback toggle re-slices
+        only, no BQL. No in-figure title; the "Factor exposures" section header
+        stands alone (v0.7.1)."""
         if state.arp_universe_prices.empty or state.universe_prices.empty:
             return
         try:
@@ -809,7 +811,6 @@ def build_app(verbose: bool = True) -> W.VBox:
                 state.universe_prices,
                 meta,
                 years=lookback_selector.value / TRADING_DAYS_PER_YEAR,
-                title=f"Equity vs term-premium β — {lookback_selector.label}",
             )
         except Exception:
             state.init_errors.append(

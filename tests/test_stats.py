@@ -260,6 +260,7 @@ def _factor_frame(idx) -> pd.DataFrame:
         "SPX Index": (0.0004, 0.011),
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
+        "BSLXAT Index": (0.0001, 0.006),
         "AAA Index": (0.0003, 0.012),
     }
     data = {
@@ -351,6 +352,15 @@ def test_factor_builders_missing_columns_return_empty():
     prices = pd.DataFrame({"AAA Index": [100.0, 101.0, 102.0]})
     assert stats.equity_risk_premium(prices).empty
     assert stats.term_premium(prices).empty
+    assert stats.trend_returns(prices).empty
+
+
+def test_trend_returns_is_trend_column_pct_change(bdays):
+    prices = _factor_frame(bdays(300))
+    tr = stats.trend_returns(prices)
+    expected = stats.daily_returns(prices[["BSLXAT Index"]])["BSLXAT Index"]
+    pd.testing.assert_series_equal(tr, expected, check_names=False)
+    assert tr.name == "trend"
 
 
 def test_factor_beta_matches_ann_beta(bdays):

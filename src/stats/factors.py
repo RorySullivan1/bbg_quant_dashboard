@@ -16,6 +16,7 @@ from ..config import (
     LONG_TREASURY_TICKER,
     SHARPE_ZSCORE_WINDOW,
     SHORT_RATE_TICKER,
+    TREND_TICKER,
     WEEK_WINDOW,
 )
 from ._common import daily_returns
@@ -59,6 +60,19 @@ def term_premium(
 ) -> pd.Series:
     """Daily term-premium factor return ≈ long-Treasury TR − short-rate TR."""
     return _factor_spread(prices, long_bond, short_rate).rename("term_premium")
+
+
+def trend_returns(prices: pd.DataFrame, *, trend: str = TREND_TICKER) -> pd.Series:
+    """Daily return series of the cross-asset trend factor.
+
+    Unlike the equity-risk / term premia (short-rate spreads), the trend factor
+    β is taken vs the index's own returns, so this is a plain ``daily_returns``
+    of the trend column. Returns an empty float Series when the column is
+    missing so a partial/mock frame never raises.
+    """
+    if prices.empty or trend not in prices.columns:
+        return pd.Series(dtype=float)
+    return daily_returns(prices[[trend]])[trend].rename("trend")
 
 
 def factor_beta(
