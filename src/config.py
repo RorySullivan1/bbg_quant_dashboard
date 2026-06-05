@@ -66,4 +66,8 @@ DEFAULT_BENCHMARK = "SPX Index"
 EQUITY_FACTOR_TICKER = "SPX Index"  # equity proxy (also in BENCHMARK_TICKERS)
 LONG_TREASURY_TICKER = "LUTLTRUU Index"  # Bloomberg US Long Treasury TR
 SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
-FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER]
+# Trend factor (v0.7.1): the Bloomberg cross-asset trend index. The Platform
+# factor scatter's 3D z-axis is each strategy's β to this index's *returns*
+# directly (not a short-rate spread, unlike the two premia above).
+TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
+FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]

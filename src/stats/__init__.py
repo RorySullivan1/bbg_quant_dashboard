@@ -25,6 +25,7 @@ from .factors import (
     factor_beta,
     platform_treemap_frame,
     term_premium,
+    trend_returns,
 )
 from .performance import (
     ann_return,
@@ -111,6 +112,7 @@ __all__ = [
     # factors / platform
     "equity_risk_premium",
     "term_premium",
+    "trend_returns",
     "factor_beta",
     "platform_treemap_frame",
 ]
