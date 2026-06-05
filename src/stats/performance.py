@@ -149,16 +149,16 @@ def universe_perf(
     prices: pd.DataFrame,
     years: tuple[int, ...] = PERF_TABLE_YEARS,
 ) -> pd.DataFrame:
-    """1Y / 3Y / 5Y window stats plus Since-Inception, in one MultiIndex frame."""
+    """1Y / 3Y / 5Y window stats, in one MultiIndex frame.
+
+    The Since-Inception block was dropped in v0.7.2 (it added width and its
+    full-history window is the least comparable across indices of differing
+    ages). ``since_inception_perf`` remains a tested pure util for potential
+    reuse, just no longer wired into the all-catalog grid.
+    """
     if prices.empty:
         return pd.DataFrame()
     # Compute the universe returns once and thread them into perf_table
     # instead of letting it recompute daily_returns internally.
     rets = daily_returns(prices)
-    return pd.concat(
-        [
-            perf_table(prices, years=years, returns=rets),
-            since_inception_perf(prices),
-        ],
-        axis=1,
-    )
+    return perf_table(prices, years=years, returns=rets)

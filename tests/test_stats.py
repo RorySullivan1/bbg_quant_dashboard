@@ -232,17 +232,12 @@ def test_perf_table_returns_param_matches_internal(multiyear_prices):
     )
 
 
-def test_universe_perf_threads_returns_unchanged(multiyear_prices):
-    # universe_perf now computes daily_returns once and threads it into
-    # perf_table; the result must equal the plain concat it replaced.
-    expected = pd.concat(
-        [
-            stats.perf_table(multiyear_prices),
-            stats.since_inception_perf(multiyear_prices),
-        ],
-        axis=1,
-    )
-    pd.testing.assert_frame_equal(stats.universe_perf(multiyear_prices), expected)
+def test_universe_perf_is_windows_only_no_since_inception(multiyear_prices):
+    # v0.7.2: universe_perf returns only the 1Y/3Y/5Y windowed block (it threads
+    # daily_returns once into perf_table); the Since-Inception block is dropped.
+    up = stats.universe_perf(multiyear_prices)
+    pd.testing.assert_frame_equal(up, stats.perf_table(multiyear_prices))
+    assert "SI" not in up.columns.get_level_values(0)
 
 
 def test_quant_metrics_table_returns_param_matches_internal(
