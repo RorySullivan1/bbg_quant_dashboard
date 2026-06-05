@@ -167,7 +167,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     combined = pd.concat([info_block, perf], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
-    _apply_grid_styling(grid, combined.columns, widths=True)
+    _apply_grid_styling(grid, combined.columns, widths=True, sharpe_heatmap=True)
 
 
 def _build_info_block(
