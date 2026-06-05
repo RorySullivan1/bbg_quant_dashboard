@@ -70,9 +70,9 @@ tabs:
   `quant_metrics_table` / `zscore_cross_section`,
   computed live from the already-fetched prices, no BQL. Below the two
   panels, still inside the Filters accordion, a full-width **"Analysis
-  date range"** row holds a `SelectionRangeSlider` flanked by two
-  `DatePicker` boxes, two-way linked (move the slider → boxes update;
-  type/pick a date → slider snaps to the nearest day). Its bounds fit the
+  date range"** row holds two hyphen-separated `DatePicker` boxes (the
+  `SelectionRangeSlider` was dropped in v0.7.5, leaving just the two boxes,
+  min ≤ max linked). Its bounds fit the
   **overlap window of the selected strategies** — `bound_start = max(each
   ticker's first-valid date)`, `bound_end = min(each ticker's last-valid
   date)` via `common_window_bounds` — and the selected sub-range scopes
@@ -126,7 +126,7 @@ dashboard always renders end-to-end.
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Two-tier cache (v0.6.9): an in-memory `_MEM_CACHE` checked before a per-trading-day parquet under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. Disk writes are best-effort (`_disk_cache_writable` tri-state; warns once and degrades to in-memory on a read-only FS). `_clear_caches()` resets both tiers for tests. |
-| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` — plus `factors` (v0.7.0) — with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range slider bounds), `perf_table`, `since_inception_perf` (pure util; **unwired from the grid in v0.7.2** but kept + tested), `universe_perf` (1Y / 3Y / 5Y windows only — Since-Inception dropped in v0.7.2). **v0.7.0 Platform additions:** `rolling_return` / `rolling_volatility` / `rolling_sortino` (alongside `rolling_sharpe`), `rolling_metric_zscore` (generalizes `sharpe_zscore` over metric/window/lookback) in `rolling`; and in `factors` — `equity_risk_premium` / `term_premium` (daily factor-return proxies from the fetched factor tickers, return spreads since BQL is `px_last`-only), `trend_returns` (v0.7.1: daily returns of the `TREND_TICKER` — the trend β is taken vs the index's own returns, not a spread), `factor_beta` (thin `ann_beta` wrapper vs a factor-return series), and `platform_treemap_frame` (per-ticker `asset_class` + size-z `z(6M Sharpe, lookback)` + color-z `z(1W Sharpe, lookback)` — color window retuned 1M → 1W in v0.7.3). |
+| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` — plus `factors` (v0.7.0) — with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range box bounds), `perf_table`, `since_inception_perf` (pure util; **unwired from the grid in v0.7.2** but kept + tested), `universe_perf` (1Y / 3Y / 5Y windows only — Since-Inception dropped in v0.7.2). **v0.7.0 Platform additions:** `rolling_return` / `rolling_volatility` / `rolling_sortino` (alongside `rolling_sharpe`), `rolling_metric_zscore` (generalizes `sharpe_zscore` over metric/window/lookback) in `rolling`; and in `factors` — `equity_risk_premium` / `term_premium` (daily factor-return proxies from the fetched factor tickers, return spreads since BQL is `px_last`-only), `trend_returns` (v0.7.1: daily returns of the `TREND_TICKER` — the trend β is taken vs the index's own returns, not a spread), `factor_beta` (thin `ann_beta` wrapper vs a factor-return series), and `platform_treemap_frame` (per-ticker `asset_class` + size-z `z(6M Sharpe, lookback)` + color-z `z(1W Sharpe, lookback)` — color window retuned 1M → 1W in v0.7.3). |
 | `src/cache.py`        | `LRUCache` — a tiny bounded LRU (`OrderedDict`-backed, stdlib only) with `get_or_compute(key, fn)` / `clear()`. Leaf module (no project imports). Memoizes the benchmark-dependent chart results (v0.6.9 Workstream B); reusable for future live controls. |
 | `src/commentary.py`   | `build_commentary` — rule-based bullets + recent-launch callout; always called with whole-universe inputs. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
@@ -383,22 +383,20 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   chart's `except`; a hit skips both the slice and the compute.
 - **Analysis date range scopes the selected set, on Refresh prices.**
   Unlike the metadata filters (which only narrow the ticker dropdown),
-  the date-range slider re-slices the already-fetched `universe_prices`
-  (still no BQL) and feeds the narrowed `sel_window` into both the perf
+  the date-range **boxes** re-slice the already-fetched `universe_prices`
+  (still no BQL) and feed the narrowed `sel_window` into both the perf
   grid and every pane chart, with benchmark series sliced to the **same**
-  `[win_start, win_end]`. Moving the slider / editing a date box only
-  syncs the three controls — the re-slice happens on the next Refresh
-  prices. Bounds re-derive from the selection on every Refresh: a
-  `last_sel_key` closure tracks the rendered ticker set, so a **changed**
-  basket resets the slider to the new full overlap, while an **unchanged**
-  basket preserves the user's narrowed range (clamped to current bounds).
-  The slider's option list is the overlap window's trading days (values
-  are `pd.Timestamp`); the placeholder option is a string sentinel, never
-  `pd.NaT` (NaT fails ipywidgets' selection validator). `Clear all` snaps
-  the range back to its full span; `Clear section` leaves it untouched
-  (it is not a filter pill). All of this lives in `build_app`'s closures
-  in `src/layout/builder.py` (`_set_slider_options`, `_on_slider_change`,
-  `_on_range_box`).
+  `[win_start, win_end]`. Editing a date box only enforces `min ≤ max`
+  (v0.7.5: the `SelectionRangeSlider` was removed) — the re-slice happens
+  on the next Refresh prices. Bounds re-derive from the selection on every
+  Refresh: a `last_sel_key` closure tracks the rendered ticker set, so a
+  **changed** basket resets the boxes to the new full overlap, while an
+  **unchanged** basket preserves the user's narrowed range (clamped to
+  current bounds). The overlap window's ends are persisted on
+  `DashboardState.cur_bound_start` / `cur_bound_end`; `Clear all` snaps the
+  boxes back to that full span; `Clear section` leaves them untouched (it
+  is not a filter pill). All of this lives in `build_app`'s closures in
+  `src/layout/builder.py` (`_set_date_bounds`, `_on_range_box`).
 - **Inline HTML lives in `data/templates/`, not Python.** Every HTML
   snippet the UI builds (banner, status banner, section labels, quant-row
   labels, highlight cards + wrapper, error box, weekly-commentary wrapper +
@@ -570,15 +568,14 @@ renders the full dashboard without a Bloomberg session. Verify by:
   — the dropdown narrows to substring matches on ticker or name;
   already-selected tickers stay visible.
 - The **Analysis date range** row (full-width, below the two panels):
-  select a basket → Refresh prices → the slider spans the overlap window
-  and both date boxes show its ends. Dragging the slider or editing a
-  date box mirrors the other controls live but does **not** redraw;
-  clicking Refresh prices re-slices the perf grid + all pane charts to the
-  chosen window. Refreshing the **same** basket preserves a narrowed
-  range; changing the basket resets the slider to the new full overlap.
-  Pairing a recently-launched index with SPX shrinks the bounds to the
-  short overlap. `Clear all` snaps the range to full span. A single-ticker
-  or non-overlapping basket renders without a traceback.
+  select a basket → Refresh prices → the two hyphen-separated date boxes
+  span the overlap window. Editing a box enforces `min ≤ max` but does
+  **not** redraw; clicking Refresh prices re-slices the perf grid + all
+  pane charts to the chosen window. Refreshing the **same** basket
+  preserves a narrowed range; changing the basket resets the boxes to the
+  new full overlap. Pairing a recently-launched index with SPX shrinks the
+  bounds to the short overlap. `Clear all` snaps the range to full span. A
+  single-ticker or non-overlapping basket renders without a traceback.
 - Cold start (no `data/.cache/`) — the loading overlay advances through its
   stages then dismisses; the post-load toast reads `Loaded N indices · M
   trading days · fetched from mock prices in X.Ys`; a `prices_<today>.parquet`

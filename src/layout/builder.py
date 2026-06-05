@@ -266,19 +266,9 @@ def build_app(verbose: bool = True) -> W.VBox:
     # programmatic updates.
     range_min_box = W.DatePicker(layout=W.Layout(width="160px"))
     range_max_box = W.DatePicker(layout=W.Layout(width="160px"))
-    # Placeholder option is a plain string sentinel, not pd.NaT — a NaT value
-    # fails ipywidgets' selection validator (NaT != NaT → "value not found").
-    date_slider = W.SelectionRangeSlider(
-        options=[("—", "—")],
-        index=(0, 0),
-        continuous_update=False,
-        readout=True,
-        disabled=True,
-        layout=W.Layout(width="100%", flex="1 1 auto"),
-    )
     # `state.sync_guard` suppresses the bidirectional observers during
     # programmatic updates; `state.last_sel_key` tracks the ticker set rendered
-    # on the last recompute — when it changes the slider bounds + value reset to
+    # on the last recompute — when it changes the box bounds + values reset to
     # the new overlap, when it's unchanged (same basket, user only narrowed the
     # range) the range is preserved. Both live on `DashboardState` (built below).
 
@@ -347,91 +337,62 @@ def build_app(verbose: bool = True) -> W.VBox:
         ),
     )
 
-    # --- Analysis date-range slider plumbing -----------------------------
-    def _slider_options(index: pd.DatetimeIndex) -> list[tuple[str, pd.Timestamp]]:
-        return [
-            (pd.Timestamp(ts).strftime("%Y-%m-%d"), pd.Timestamp(ts)) for ts in index
-        ]
-
-    def _nearest_opt_index(values: list[pd.Timestamp], target) -> int | None:
-        if target is None or pd.isna(target):
-            return None
-        t = pd.Timestamp(target)
-        return min(range(len(values)), key=lambda i: abs(values[i] - t))
-
-    def _set_slider_options(index, reset: bool, *, keep=None) -> None:
-        """Rebuild the slider's option list to ``index`` and position the
-        handles. On ``reset`` (or a missing/degenerate ``keep``) the range
-        snaps to the full span; otherwise the prior ``keep`` range is clamped
-        to the new options. Guarded so the bidirectional observers stay quiet.
+    # --- Analysis date-range box plumbing --------------------------------
+    def _set_date_bounds(index, reset: bool, *, keep=None) -> None:
+        """Set the two date boxes to the selection's overlap window. On
+        ``reset`` (or a missing/degenerate ``keep``) the range snaps to the full
+        span; otherwise the prior ``keep`` range is clamped into the window.
+        Guarded so the min ≤ max observers stay quiet. ``keep`` is a
+        ``(min, max)`` pair of ``datetime.date`` / ``None`` (the boxes' values).
         """
         state.sync_guard = True
         try:
             if index is None or len(index) == 0:
-                date_slider.options = [("—", "—")]
-                date_slider.index = (0, 0)
-                date_slider.disabled = True
+                state.cur_bound_start = None
+                state.cur_bound_end = None
                 range_min_box.value = None
                 range_max_box.value = None
                 return
-            opts = _slider_options(index)
-            values = [v for _, v in opts]
-            last = len(values) - 1
-            date_slider.disabled = last < 1
-            date_slider.options = opts
-            degenerate = keep is None or any(pd.isna(k) for k in keep)
-            if reset or degenerate:
-                lo, hi = 0, last
-            else:
-                lo = _nearest_opt_index(values, keep[0]) or 0
-                hi = _nearest_opt_index(values, keep[1])
-                hi = last if hi is None else hi
-                if lo > hi:
-                    lo, hi = 0, last
-            date_slider.index = (lo, hi)
-            range_min_box.value = values[lo].date()
-            range_max_box.value = values[hi].date()
-        finally:
-            state.sync_guard = False
+            lo_b = pd.Timestamp(index[0]).date()
+            hi_b = pd.Timestamp(index[-1]).date()
+            state.cur_bound_start = lo_b
+            state.cur_bound_end = hi_b
 
-    def _on_slider_change(change) -> None:
-        if state.sync_guard:
-            return
-        lo, hi = date_slider.value
-        if not isinstance(lo, pd.Timestamp) or not isinstance(hi, pd.Timestamp):
-            return  # placeholder sentinel — nothing to mirror
-        state.sync_guard = True
-        try:
-            range_min_box.value = lo.date()
-            range_max_box.value = hi.date()
+            def _clamp(d):
+                return min(max(d, lo_b), hi_b)
+
+            degenerate = keep is None or any(k is None or pd.isna(k) for k in keep)
+            if reset or degenerate:
+                lo, hi = lo_b, hi_b
+            else:
+                lo = _clamp(pd.Timestamp(keep[0]).date())
+                hi = _clamp(pd.Timestamp(keep[1]).date())
+                if lo > hi:
+                    lo, hi = lo_b, hi_b
+            range_min_box.value = lo
+            range_max_box.value = hi
         finally:
             state.sync_guard = False
 
     def _on_range_box(change, *, is_min: bool) -> None:
+        # Keep min ≤ max: editing one box past the other drags the other to it.
+        # (DatePicker.min/max traits aren't relied on — the overlap window is
+        # enforced by `_set_date_bounds` on Refresh and by the `.loc` slice.)
         if state.sync_guard or change["new"] is None:
             return
-        values = [v for _, v in date_slider.options]
-        if len(values) < 2 or pd.isna(values[0]):
+        lo = range_min_box.value
+        hi = range_max_box.value
+        if lo is None or hi is None or lo <= hi:
             return
-        target = _nearest_opt_index(values, change["new"])
-        if target is None:
-            return
-        lo, hi = date_slider.index
-        if is_min:
-            lo = target
-            hi = max(hi, lo)
-        else:
-            hi = target
-            lo = min(lo, hi)
         state.sync_guard = True
         try:
-            date_slider.index = (lo, hi)
-            range_min_box.value = values[lo].date()
-            range_max_box.value = values[hi].date()
+            if is_min:
+                range_max_box.value = lo
+            else:
+                range_min_box.value = hi
         finally:
             state.sync_guard = False
 
-    date_slider.observe(_on_slider_change, names="value")
     range_min_box.observe(lambda c: _on_range_box(c, is_min=True), names="value")
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
@@ -546,11 +507,15 @@ def build_app(verbose: bool = True) -> W.VBox:
         currency_dd.value = "All"
         _clear_quant()
         search_w.value = ""
-        # Snap the analysis date range back to its full span. The bounds
+        # Snap the analysis date range back to its full overlap span. The bounds
         # themselves re-derive from the selection on the next Refresh prices.
-        n_opts = len(date_slider.options)
-        if n_opts > 1 and not date_slider.disabled:
-            date_slider.index = (0, n_opts - 1)
+        if state.cur_bound_start is not None and state.cur_bound_end is not None:
+            state.sync_guard = True
+            try:
+                range_min_box.value = state.cur_bound_start
+                range_max_box.value = state.cur_bound_end
+            finally:
+                state.sync_guard = False
 
     clear_section_btn.on_click(_clear_section)
     clear_all_btn.on_click(_clear_all)
@@ -580,7 +545,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         [
             _section_label("Analysis date range"),
             W.HBox(
-                [range_min_box, date_slider, range_max_box],
+                [
+                    range_min_box,
+                    W.HTML("<div style='padding:0 6px;font-size:16px;'>–</div>"),
+                    range_max_box,
+                ],
                 layout=W.Layout(width="100%", align_items="center"),
             ),
         ],
@@ -1329,14 +1298,14 @@ def build_app(verbose: bool = True) -> W.VBox:
             if len(tickers) < 1:
                 state.last_sel_key = None
                 state.cur_prep = None
-                _set_slider_options(None, reset=True)
+                _set_date_bounds(None, reset=True)
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
                 _clear_pane(state.pane_left)
                 _clear_pane(state.pane_right)
             elif state.universe_prices.empty:
                 state.last_sel_key = None
                 state.cur_prep = None
-                _set_slider_options(None, reset=True)
+                _set_date_bounds(None, reset=True)
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
@@ -1349,7 +1318,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                 if sel_5y.dropna(how="all").empty:
                     state.last_sel_key = None
                     state.cur_prep = None
-                    _set_slider_options(None, reset=True)
+                    _set_date_bounds(None, reset=True)
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
@@ -1364,13 +1333,14 @@ def build_app(verbose: bool = True) -> W.VBox:
                         bound_start, bound_end = sel_5y.index.min(), sel_5y.index.max()
                     window_index = sel_5y.loc[bound_start:bound_end].index
                     sel_key = tuple(tickers)
-                    _set_slider_options(
+                    _set_date_bounds(
                         window_index,
                         reset=(sel_key != state.last_sel_key),
-                        keep=date_slider.value,
+                        keep=(range_min_box.value, range_max_box.value),
                     )
                     state.last_sel_key = sel_key
-                    win_start, win_end = date_slider.value
+                    win_start = pd.Timestamp(range_min_box.value)
+                    win_end = pd.Timestamp(range_max_box.value)
                     sel_window = sel_5y.loc[win_start:win_end]
                     # Compute the selected-set returns once and thread them into
                     # the dependents (perf_table, sz_series, cm, rd_stats) rather

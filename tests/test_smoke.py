@@ -75,6 +75,33 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert not scatter.layout.title.text
 
 
+def _walk(widget):
+    """Yield the widget and all its descendants (children / .child)."""
+    yield widget
+    for child in getattr(widget, "children", ()):
+        yield from _walk(child)
+
+
+def test_analysis_date_range_is_two_boxes_no_slider():
+    # v0.7.5 Workstream B: the analysis date range is two DatePicker boxes
+    # (hyphen-separated), no SelectionRangeSlider. The Multi-Strategy panel
+    # mounts only when its tab is selected, so click that tab first.
+    app = build_app(verbose=False)
+    tab_bar = app.children[4]
+    ms_btn = next(
+        b
+        for b in tab_bar.children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms_btn.click()
+    panel = app.children[5].children[0]  # tab_content → mounted Multi-Strategy
+    widgets = list(_walk(panel))
+    assert not any(isinstance(w, W.SelectionRangeSlider) for w in widgets)
+    # The two analysis-range boxes + the Characteristics launch-date pair are
+    # DatePickers, so at least two exist with the slider class absent.
+    assert sum(isinstance(w, W.DatePicker) for w in widgets) >= 2
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]
