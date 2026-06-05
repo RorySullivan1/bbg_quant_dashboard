@@ -10,6 +10,8 @@ price cache — no BQL.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -20,8 +22,30 @@ from ..stats import (
     platform_treemap_frame,
     term_premium,
 )
-from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, Color
+from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
 from .theme import _chart_layout, _h_ref, _short_ticker, _v_ref
+
+
+def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
+    """Distinct color per asset class for the factor scatter legend.
+
+    Curated `ASSET_CLASS_COLORS` tokens come first; any class not in that map
+    is assigned the next unused `LINE_PALETTE` color (so an unmapped class still
+    renders distinctly rather than collapsing onto the grey fallback), and only
+    falls back to `ASSET_CLASS_FALLBACK_COLOR` once the palette is exhausted.
+    Deterministic in the sorted order of the present classes."""
+    used = set(ASSET_CLASS_COLORS.values())
+    spare = [c for c in LINE_PALETTE if c not in used]
+    out: dict[str, str] = {}
+    for ac in sorted({str(c) for c in classes}):
+        if ac in ASSET_CLASS_COLORS:
+            out[ac] = ASSET_CLASS_COLORS[ac]
+        elif spare:
+            out[ac] = spare.pop(0)
+        else:
+            out[ac] = ASSET_CLASS_FALLBACK_COLOR
+    return out
+
 
 _FACTOR_HOVER = (
     "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}<extra></extra>"
@@ -101,6 +125,7 @@ def _update_factor_scatter(
         (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
     ]
 
+    color_for = _asset_class_colors(frame["ac"])
     traces = []
     for ac, grp in frame.groupby("ac"):
         traces.append(
@@ -111,7 +136,7 @@ def _update_factor_scatter(
                 y=grp["y"].to_numpy(),
                 marker=dict(
                     size=12,
-                    color=ASSET_CLASS_COLORS.get(ac, ASSET_CLASS_FALLBACK_COLOR),
+                    color=color_for[str(ac)],
                     line=dict(width=0),
                 ),
                 text=[_short_ticker(t) for t in grp.index],

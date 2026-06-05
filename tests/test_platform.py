@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from src.data import load_metadata
 from src.layout.platform import (
+    _asset_class_colors,
     _factor_beta_scatter,
     _treemap,
     _update_factor_scatter,
     _update_treemap,
 )
 from src.layout.theme import _v_ref
-from src.style import ASSET_CLASS_COLORS
+from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
 def _universe(n: int = 400) -> pd.DataFrame:
@@ -73,6 +75,26 @@ def test_update_factor_scatter_one_trace_per_asset_class():
     for tr in fig.data:
         assert len(tr.x) == 1 and len(tr.y) == 1
         assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0])
+
+
+def test_catalog_asset_classes_get_distinct_non_fallback_colors():
+    """Every distinct AssetClass in the catalog maps to a distinct, non-fallback
+    color — guards against the all-grey legend (driven off the loaded metadata,
+    so future catalog additions are covered too)."""
+    classes = sorted(load_metadata()["asset_class"].dropna().unique())
+    colors = _asset_class_colors(classes)
+    assert set(colors) == set(classes)
+    assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
+    assert len(set(colors.values())) == len(classes)  # all distinct
+
+
+def test_asset_class_colors_unmapped_class_avoids_fallback():
+    """An unmapped class still gets a distinct palette color, not the grey
+    fallback, as long as the palette isn't exhausted."""
+    colors = _asset_class_colors(["Equity", "Crypto"])
+    assert colors["Equity"] == ASSET_CLASS_COLORS["Equity"]
+    assert colors["Crypto"] != ASSET_CLASS_FALLBACK_COLOR
+    assert colors["Crypto"] != colors["Equity"]
 
 
 def test_update_factor_scatter_empty_clears_traces():
