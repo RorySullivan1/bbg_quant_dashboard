@@ -28,8 +28,11 @@ def _meta() -> pd.DataFrame:
 
 
 def _up(tickers) -> pd.DataFrame:
-    """A `universe_perf`-shaped frame: (period, metric) MultiIndex columns."""
-    periods = ["1Y", "3Y", "5Y", "SI"]
+    """A `universe_perf`-shaped frame: (period, metric) MultiIndex columns.
+
+    v0.7.2: no Since-Inception block, mirroring `universe_perf`.
+    """
+    periods = ["1Y", "3Y", "5Y"]
     metrics = ["Return", "Vol", "Sharpe", "Max DD"]
     cols = pd.MultiIndex.from_product([periods, metrics])
     data = np.arange(len(tickers) * len(cols), dtype=float).reshape(
@@ -46,7 +49,7 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
 
     # Z-Score supercolumn present, immediately after the Info block.
     level0 = list(dict.fromkeys(frame.columns.get_level_values(0)))
-    assert level0 == ["Info", ZSCORE_SUPERCOL, "1Y", "3Y", "5Y", "SI"]
+    assert level0 == ["Info", ZSCORE_SUPERCOL, "1Y", "3Y", "5Y"]
     assert (ZSCORE_SUPERCOL, "Sharpe 1M/1Y") in frame.columns
     # Sorted by z descending: BBB (2.0) > AAA (0.5) > CCC (-1.0).
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
@@ -65,7 +68,7 @@ def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
     up = _up(meta["ticker"])
     frame = _build_universe_frame(meta, up)
     level0 = list(dict.fromkeys(frame.columns.get_level_values(0)))
-    assert level0 == ["Info", "1Y", "3Y", "5Y", "SI"]
+    assert level0 == ["Info", "1Y", "3Y", "5Y"]
     assert ZSCORE_SUPERCOL not in frame.columns.get_level_values(0)
     # No sort applied → original metadata order preserved.
     assert list(frame.index) == list(meta["ticker"])

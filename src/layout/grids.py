@@ -275,7 +275,7 @@ def _build_universe_frame(
 ) -> pd.DataFrame:
     """Assemble the all-catalog grid's DataFrame (pure — no grid side effects).
 
-    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y → SI, all
+    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y, all
     under 2-level MultiIndex supercolumns. When a `zcol` (per-ticker z-score
     Series) + `zlabel` are given, a `(ZSCORE_SUPERCOL, zlabel)` column is
     inserted right after the Info block — it's the headline ranking column, so
@@ -312,8 +312,8 @@ def _build_universe_frame(
         up_norm.columns = pd.MultiIndex.from_tuples(
             [(str(a), str(b)) for a, b in up_norm.columns]
         )
-        # Order: 1Y, 3Y, 5Y, SI.
-        period_order = ["1Y", "3Y", "5Y", "SI"]
+        # Order: 1Y, 3Y, 5Y (Since-Inception dropped in v0.7.2).
+        period_order = ["1Y", "3Y", "5Y"]
         present = [p for p in period_order if p in up_norm.columns.get_level_values(0)]
         up_norm = up_norm.reindex(columns=present, level=0)
         blocks.append(up_norm.reindex(info.index))

@@ -840,8 +840,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         lookback_selector.observe(_render, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
-    # fetch (e.g. back to oldest live date) is too slow on the terminal — the
-    # SI column in the all-catalog grid is therefore bounded by this window.
+    # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
+    # all-catalog grid's windows are likewise bounded by this lookback.
     today = date.today()
     universe_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
 
