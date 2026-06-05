@@ -93,10 +93,12 @@ tabs:
   (`Outperformance` is the cumulative excess return — strategy minus
   benchmark cumulative % return, in percentage points off a zero
   baseline.) `Correlation Heatmap` additionally carries a per-pane
-  **Regime filter** checkbox on that row; ticking it reveals a benchmark
-  dropdown, a Down/Up tail-direction toggle, and a 0–100% (step 5) tail
-  size, and conditions the matrix on that benchmark-return regime while
-  adding the benchmark as a row/column (see `regime_corr_matrix`).
+  **Benchmark** checkbox on that row; ticking it reveals a benchmark
+  dropdown and a nested **Regime** checkbox; ticking **Regime** reveals a
+  **`>` / `<`** tail-direction dropdown (`<` = worst / below-pct tail,
+  `>` = best) beside a 0–100% (step 5) tail size, and conditions the matrix
+  on that benchmark-return regime while adding the benchmark as a
+  row/column (see `regime_corr_matrix`; v0.7.5 restructured these controls).
   Every chart inside a pane renders at the same
   `CHART_HEIGHT` (520px) so the two panes always line up.
 
@@ -345,8 +347,8 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   bullet above).
 - **Benchmark / regime controls re-render live (v0.6.9 Workstream C)**:
   each per-pane benchmark dropdown (Rolling Correlation / Rolling Beta /
-  Outperformance) plus the Correlation-Heatmap Regime-filter checkbox /
-  benchmark / direction / tail controls re-render **only their own chart,
+  Outperformance) plus the Correlation-Heatmap Benchmark / Regime checkboxes
+  (v0.7.5) / benchmark / `>`/`<` direction / tail controls re-render **only their own chart,
   immediately**, from the selected-set slice persisted on
   `DashboardState` at the last recompute (`state.cur_prep` /
   `cur_win_start` / `cur_win_end`) — no BQL fetch, no full recompute, the
@@ -358,8 +360,9 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   (no valid selection) and swallow per-chart errors (the chart's own
   except-branch leaves it safe; a broken benchmark still surfaces on the
   next Refresh prices, where errors flow into the commentary block). The
-  heatmap Regime checkbox keeps its separate visibility-sync observer (in
-  `panes.py`); the data re-render is added on top. The unchecked default
+  heatmap Benchmark / Regime checkboxes keep their separate visibility-sync
+  observers (in `panes.py`, with the cascade Benchmark → benchmark dd +
+  Regime → `>`/`<` + tail); the data re-render is added on top. The unchecked default
   uses the shared full-sample `prep.cm`; the regime path is computed
   per-pane so the two panes stay independent. **Refresh prices remains the
   only path that hits BQL and the only path that re-runs filters /
@@ -607,14 +610,15 @@ renders the full dashboard without a Bloomberg session. Verify by:
   dropdown — setting the left pane's benchmark to SPX and the right
   pane's to MXWO, then clicking Refresh prices, produces two
   independently-titled charts.
-- On the Correlation Heatmap view, ticking **Regime filter** reveals a
-  benchmark dropdown, a Down/Up toggle, and a 0–100% tail dropdown and
+- On the Correlation Heatmap view, ticking **Benchmark** reveals a
+  benchmark dropdown and a nested **Regime** checkbox; ticking **Regime**
+  reveals a **`>` / `<`** dropdown and a 0–100% tail dropdown and
   **immediately** recomputes the matrix over the selected benchmark-return
   tail (v0.6.9 live control — no Refresh needed), adding the benchmark as a
   row/column, with the title noting e.g. "SPX Index worst 20% days".
-  Flipping Down→Up or changing the % re-renders that one heatmap live; the
-  other pane is unaffected. Unticking reverts to the full-sample
-  correlation. (Each per-pane benchmark dropdown — Rolling Correlation /
+  Flipping `<`→`>` or changing the % re-renders that one heatmap live; the
+  other pane is unaffected. Unticking **Regime** (or **Benchmark**) reverts
+  to the full-sample correlation. (Each per-pane benchmark dropdown — Rolling Correlation /
   Rolling Beta / Outperformance — likewise re-titles and re-renders its
   chart live on change, with no BQL fetch.)
 - The performance disclaimer below the tab content shows the

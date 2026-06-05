@@ -1018,9 +1018,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         # Correlation heatmap: optionally conditioned on a benchmark-return
         # regime, with the benchmark added to the matrix. Computed per-pane so
         # the two panes stay independent (like the rolling-corr/beta blocks).
+        # The regime path is gated on the nested Regime checkbox (v0.7.5);
+        # Benchmark-on / Regime-off stays plain full-sample correlation.
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
-            direction = "up" if pane.heat_dir.value == "Up" else "down"
+            direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
             pct_int = pane.heat_pct.value
             try:
 
@@ -1256,9 +1258,16 @@ def build_app(verbose: bool = True) -> W.VBox:
         pane.rcorr_dd.observe(_make(_render_rolling_corr), names="value")
         pane.rbeta_dd.observe(_make(_render_rolling_beta), names="value")
         pane.outperf_dd.observe(_make(_render_outperf), names="value")
-        # The regime checkbox keeps its visibility-sync observer (in panes.py);
-        # this adds the data re-render on top.
-        for ctrl in (pane.heat_regime_chk, pane.heat_dd, pane.heat_dir, pane.heat_pct):
+        # The Benchmark/Regime checkboxes keep their visibility-sync observers
+        # (in panes.py); this adds the data re-render on top. Toggling Benchmark
+        # off re-renders plain full-sample (it also clears Regime in panes.py).
+        for ctrl in (
+            pane.heat_benchmark_chk,
+            pane.heat_regime_chk,
+            pane.heat_dd,
+            pane.heat_dir,
+            pane.heat_pct,
+        ):
             ctrl.observe(_make(_render_heatmap), names="value")
 
     def _recompute(_btn=None):
