@@ -149,9 +149,9 @@ dashboard always renders end-to-end.
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.7.0`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.7.5`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
-| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.0`. |
+| `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
 
 ## Data contract — `data/indexdb.json`
 
@@ -206,7 +206,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.7.0`.
+- **Current version**: `v0.7.5`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
