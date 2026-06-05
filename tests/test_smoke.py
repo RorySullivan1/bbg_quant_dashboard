@@ -75,6 +75,35 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert not scatter.layout.title.text
 
 
+def test_correlation_benchmark_regime_controls():
+    # v0.7.5 Workstream C: a pane exposes a Benchmark checkbox and a nested
+    # Regime checkbox; the tail-direction control is a >/< dropdown whose values
+    # map straight to regime_corr_matrix's direction ("<" worst, ">" best).
+    from src.layout.panes import _make_analysis_pane
+
+    pane = _make_analysis_pane("left")
+    assert isinstance(pane.heat_benchmark_chk, W.Checkbox)
+    assert pane.heat_benchmark_chk.description == "Benchmark"
+    assert isinstance(pane.heat_regime_chk, W.Checkbox)
+    assert pane.heat_regime_chk.description == "Regime"
+    assert isinstance(pane.heat_dir, W.Dropdown)
+    assert dict(pane.heat_dir.options) == {"<": "down", ">": "up"}
+
+    # Benchmark off → benchmark dropdown + Regime checkbox hidden; ticking
+    # Benchmark reveals them; ticking Regime reveals the >/< + tail controls.
+    assert pane.heat_dd.layout.display == "none"
+    pane.picker.value = "Correlation Heatmap"
+    pane.heat_benchmark_chk.value = True
+    assert pane.heat_dd.layout.display == ""
+    assert pane.heat_regime_chk.layout.display == ""
+    assert pane.heat_dir.layout.display == "none"
+    pane.heat_regime_chk.value = True
+    assert pane.heat_dir.layout.display == ""
+    # Unticking Benchmark clears Regime so the chart reverts to plain.
+    pane.heat_benchmark_chk.value = False
+    assert pane.heat_regime_chk.value is False
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]
