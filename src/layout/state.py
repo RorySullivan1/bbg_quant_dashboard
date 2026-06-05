@@ -54,11 +54,17 @@ class DashboardState:
     # Currently visible filter dimension — drives "Clear section".
     active_filter: str = "Asset Class"
     # The ticker set rendered on the last recompute; when it changes the
-    # analysis date-range slider resets to the new overlap window.
+    # analysis date-range boxes reset to the new overlap window.
     last_sel_key: tuple | None = None
     # Suppresses the bidirectional date-range observers during programmatic
-    # slider/box updates.
+    # box updates.
     sync_guard: bool = False
+    # The selection's current overlap-window bounds (datetime.date), set when
+    # the date boxes are re-bounded on Refresh; `Clear all` snaps the boxes back
+    # to this full span (v0.7.5: the SelectionRangeSlider's option list used to
+    # carry this).
+    cur_bound_start: object | None = None
+    cur_bound_end: object | None = None
     # The selected-set data slice from the last recompute, plus its window
     # bounds, persisted so the live benchmark/regime chart observers can
     # re-render a single chart without a refetch or full recompute. ``None``
