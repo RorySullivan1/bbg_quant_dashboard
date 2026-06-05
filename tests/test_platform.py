@@ -121,11 +121,10 @@ def test_update_treemap_builds_asset_theme_ticker_hierarchy():
     fig = _treemap()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
-    _update_treemap(
-        fig, arp, _treemap_meta(), lookback=252, title="Risk-adjusted strength — 1Y"
-    )
+    _update_treemap(fig, arp, _treemap_meta(), lookback=252)
 
-    assert fig.layout.title.text == "Risk-adjusted strength — 1Y"
+    # No in-figure title (v0.7.3) — the section header stands alone.
+    assert not fig.layout.title.text
     assert len(fig.data) == 1
     tm = fig.data[0]
     nodes = dict(zip(tm.ids, tm.parents, strict=True))
@@ -143,6 +142,5 @@ def test_update_treemap_builds_asset_theme_ticker_hierarchy():
 
 def test_update_treemap_empty_clears_traces():
     fig = _treemap()
-    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252, title="empty")
+    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252)
     assert fig.data == ()
-    assert fig.layout.title.text == "empty"

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from src import stats
-from src.config import TRADING_DAYS_PER_YEAR
+from src.config import HALF_YEAR_WINDOW, TRADING_DAYS_PER_YEAR, WEEK_WINDOW
 
 # --- basics ----------------------------------------------------------------
 
@@ -377,6 +377,19 @@ def test_platform_treemap_frame_columns_and_join(multiyear_prices):
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
     assert frame.loc["BBB Index", "theme"] == "Credit"
     assert frame["size_z"].notna().any()
+    # v0.7.3: size = z(6M Sharpe), color = z(1W Sharpe) — pin both windows.
+    size_expected = stats.rolling_metric_zscore(
+        multiyear_prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=252
+    )
+    color_expected = stats.rolling_metric_zscore(
+        multiyear_prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=252
+    )
+    pd.testing.assert_series_equal(
+        frame["size_z"], size_expected.reindex(frame.index), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        frame["color_z"], color_expected.reindex(frame.index), check_names=False
+    )
 
 
 def test_platform_treemap_frame_empty_safe():

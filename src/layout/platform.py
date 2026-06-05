@@ -62,7 +62,7 @@ _TREEMAP_COLORSCALE = [
 ]
 _TREEMAP_HOVER = (
     "%{label}<br>size z(6M Sharpe) %{customdata:.2f}"
-    "<br>color z(1M Sharpe) %{color:.2f}<extra></extra>"
+    "<br>color z(1W Sharpe) %{color:.2f}<extra></extra>"
 )
 
 
@@ -152,11 +152,12 @@ def _update_factor_scatter(
 
 def _treemap() -> go.FigureWidget:
     """Asset-class → theme → ticker treemap, sized by z(6M Sharpe) and colored
-    by z(1M Sharpe). Built empty; `_update_treemap` fills it. The diverging
-    colorbar is the color legend."""
+    by z(1W Sharpe). Built empty; `_update_treemap` fills it. No in-figure title
+    — the "Risk-adjusted strength map" section header stands alone (v0.7.3); the
+    diverging colorbar is the color legend."""
     return go.FigureWidget(
         layout=_chart_layout(
-            title="Risk-adjusted strength",
+            title="",
             margin=dict(t=44, b=10, l=10, r=10),
         )
     )
@@ -168,11 +169,10 @@ def _update_treemap(
     meta: pd.DataFrame,
     *,
     lookback: int,
-    title: str,
 ) -> None:
     """Populate the treemap from `platform_treemap_frame`: a 3-level
     asset class → theme → ticker hierarchy. Tiles are sized by a non-negative
-    shift of z(6M Sharpe) and colored by raw z(1M Sharpe); parent nodes
+    shift of z(6M Sharpe) and colored by raw z(1W Sharpe); parent nodes
     aggregate (size = sum of children, color = mean of leaf z). No BQL — pure
     compute over the already-fetched cache."""
     frame = platform_treemap_frame(prices, meta, lookback=lookback).dropna(
@@ -180,7 +180,6 @@ def _update_treemap(
     )
     if frame.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
@@ -249,11 +248,10 @@ def _update_treemap(
             cmax=2,
             line=dict(width=1, color=Color.CHART_BG.value),
             showscale=True,
-            colorbar=dict(title=dict(text="z(1M Sharpe)")),
+            colorbar=dict(title=dict(text="z(1W Sharpe)")),
         ),
         hovertemplate=_TREEMAP_HOVER,
     )
     with fig.batch_update():
-        fig.layout.title.text = title
         fig.data = ()
         fig.add_traces([treemap])

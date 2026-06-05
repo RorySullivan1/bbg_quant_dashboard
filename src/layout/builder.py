@@ -818,9 +818,10 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     def _render_treemap(_change=None) -> None:
         """Render the Platform asset class → theme → ticker treemap (sized by
-        z(6M Sharpe), colored by z(1M Sharpe)) at the current lookback. Computes
+        z(6M Sharpe), colored by z(1W Sharpe)) at the current lookback. Computes
         live from the ARP-only cache via `platform_treemap_frame` — the lookback
-        toggle re-slices only, no BQL."""
+        toggle re-slices only, no BQL. No in-figure title; the "Risk-adjusted
+        strength map" section header stands alone (v0.7.3)."""
         if state.arp_universe_prices.empty:
             return
         try:
@@ -829,7 +830,6 @@ def build_app(verbose: bool = True) -> W.VBox:
                 state.arp_universe_prices,
                 meta,
                 lookback=lookback_selector.value,
-                title=f"Risk-adjusted strength — {lookback_selector.label}",
             )
         except Exception:
             state.init_errors.append(
