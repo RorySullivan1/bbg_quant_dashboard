@@ -21,9 +21,10 @@ from ..stats import (
     factor_beta,
     platform_treemap_frame,
     term_premium,
+    trend_returns,
 )
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
-from .theme import _chart_layout, _h_ref, _short_ticker, _v_ref
+from .theme import _chart_layout, _short_ticker
 
 
 def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
@@ -48,7 +49,8 @@ def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
 
 
 _FACTOR_HOVER = (
-    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}<extra></extra>"
+    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}"
+    "<br>Trend β %{{z:.2f}}<extra></extra>"
 )
 
 # Treemap hierarchy separator (asset class → theme), diverging colorscale, and
@@ -67,20 +69,24 @@ _TREEMAP_HOVER = (
 
 
 def _factor_beta_scatter() -> go.FigureWidget:
-    """Factor-beta scatter: x = β to the equity risk premium, y = β to the term
-    premium, one marker per strategy (colored by asset class). Built empty;
-    `_update_factor_scatter` fills it. Dashed zero crosshair via `layout.shapes`;
-    the legend is on (unlike the pane charts, this chart has no grid legend to
-    key its asset-class colors)."""
+    """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
+    term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
+    marker per strategy (colored by asset class). Built empty;
+    `_update_factor_scatter` fills it. No in-figure title — the "Factor
+    exposures" section header stands alone (v0.7.1). The legend is on (unlike
+    the pane charts, this chart has no grid legend to key its asset-class
+    colors); each scene axis carries a zero line (paper shapes don't apply to a
+    3D scene)."""
     return go.FigureWidget(
         layout=_chart_layout(
-            title="Equity vs term-premium β",
-            hovermode="closest",
+            title="",
             showlegend=True,
             legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            xaxis=dict(title="Equity risk-premium β", zeroline=False),
-            yaxis=dict(title="Term-premium β", zeroline=False),
-            shapes=[_h_ref(0.0), _v_ref(0.0)],
+            scene=dict(
+                xaxis=dict(title="Equity risk-premium β", zeroline=True),
+                yaxis=dict(title="Term-premium β", zeroline=True),
+                zaxis=dict(title="Trend Exposure", zeroline=True),
+            ),
         )
     )
 
@@ -92,31 +98,30 @@ def _update_factor_scatter(
     meta: pd.DataFrame,
     *,
     years: float,
-    title: str,
 ) -> None:
-    """Populate the factor-beta scatter from the cached prices: per-strategy
-    betas to the equity-risk-premium and term-premium factor series, one trace
-    per asset class (so the colors carry a legend). No BQL — pure compute over
-    the already-fetched cache."""
+    """Populate the 3D factor-beta scatter from the cached prices: per-strategy
+    betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
+    series, one trace per asset class (so the colors carry a legend). No BQL —
+    pure compute over the already-fetched cache."""
     if arp_prices.empty or universe_prices.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
     erp = equity_risk_premium(universe_prices)
     tp = term_premium(universe_prices)
+    trend = trend_returns(universe_prices)
     rets = daily_returns(arp_prices)
     frame = pd.DataFrame(
         {
             "x": factor_beta(rets, erp, years),
             "y": factor_beta(rets, tp, years),
+            "z": factor_beta(rets, trend, years),
         }
     ).dropna()
 
     if frame.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
@@ -129,13 +134,14 @@ def _update_factor_scatter(
     traces = []
     for ac, grp in frame.groupby("ac"):
         traces.append(
-            go.Scatter(
+            go.Scatter3d(
                 mode="markers",
                 name=str(ac),
                 x=grp["x"].to_numpy(),
                 y=grp["y"].to_numpy(),
+                z=grp["z"].to_numpy(),
                 marker=dict(
-                    size=12,
+                    size=5,
                     color=color_for[str(ac)],
                     line=dict(width=0),
                 ),
@@ -145,7 +151,6 @@ def _update_factor_scatter(
         )
 
     with fig.batch_update():
-        fig.layout.title.text = title
         fig.data = ()
         fig.add_traces(traces)
 
