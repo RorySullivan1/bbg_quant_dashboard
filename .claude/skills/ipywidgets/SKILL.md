@@ -192,8 +192,8 @@ container.
 
 ## In this repo (brief)
 
-`build_app()` in `src/layout.py` assembles the whole widget tree; style
-tokens (colors/fonts/sizes) live in `src/style.py` — reference them, don't
-inline hex. Tabular data grids use the **separate** `ipydatagrid` package
+`build_app()` (in the `src/layout/` package — `src/layout/builder.py`) assembles
+the whole widget tree; style tokens (colors/fonts/sizes) live in `src/style.py`
+— reference them, don't inline hex. Tabular data grids use the **separate** `ipydatagrid` package
 (not core ipywidgets). See `CLAUDE.md` for the project's layout contract and
 conventions, and the `plotly` skill for chart widgets.

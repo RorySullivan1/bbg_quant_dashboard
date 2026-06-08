@@ -132,7 +132,9 @@ via `config={"displayModeBar": True, "modeBarButtonsToRemove": [...]}` (on
 
 ## In this repo (brief)
 
-Charts are `go.FigureWidget` instances built and mutated in `src/layout.py`;
-the dark theme comes from `_chart_layout()`, and traces are colored
-positionally from `LINE_PALETTE` in `src/style.py`. See `CLAUDE.md` for the
-chart conventions, and the `ipywidgets` skill for the surrounding UI.
+Charts are `go.FigureWidget` instances built and mutated in the `src/layout/`
+package (the analysis-pane figures in `src/layout/panes.py` + `charts.py`, the
+Platform visuals in `platform.py`); the dark theme comes from `_chart_layout()`
+in `src/layout/theme.py`, and traces are colored positionally from
+`LINE_PALETTE` in `src/style.py`. See `CLAUDE.md` for the chart conventions, and
+the `ipywidgets` skill for the surrounding UI.

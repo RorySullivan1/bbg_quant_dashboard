@@ -2,7 +2,10 @@
 
 Forward-looking roadmap for `bbg_quant_dashboard`. Each `vX.Y.Z.md` file
 in this directory is a stub for a planned release — fill it in as the
-scope for that version firms up (goals, scope, status, related PRs).
+scope for that version firms up (goals, scope, status, related PRs). Start a
+new stub by copying [`TEMPLATE.md`](TEMPLATE.md) (the reusable section skeleton)
+to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
+below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
   (`0.7.5`). Keep that file and the "Branching" section of `CLAUDE.md`

@@ -148,7 +148,9 @@ dashboard always renders end-to-end.
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
 | `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
-| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up. |
+| `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up, plus a reusable `TEMPLATE.md` stub skeleton new versions copy from. |
+| `.claude/hooks/`                   | PreToolUse(Bash) enforcement scripts wired in `.claude/settings.json`: `quality-gates.sh` (blocks `git commit` unless ruff/black/pytest pass) + `block-main-push.sh` (blocks pushes to `main`/`master`). `README.md` documents both and points at the portable templates. |
+| `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + a generic `skills/workstream/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
 | `.meta/VERSION`                    | Canonical current shipped version (`0.7.5`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
@@ -487,7 +489,12 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   came from `RorySullivan1/claude-skills-library`; `ipywidgets` and
   `plotly` are project-authored against the conventions in this file
   (prefer them for UI/chart work). The forward roadmap is
-  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs). The canonical
+  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs, and a reusable
+  `TEMPLATE.md` skeleton new stubs copy from). The PreToolUse enforcement
+  scripts live in `.claude/hooks/` (documented in `.claude/hooks/README.md`),
+  and `.claude/templates/` holds portable, repo-agnostic copies of the hooks +
+  `workstream` skill for lifting into other repos (not auto-loaded — the active
+  ones stay under `.claude/hooks/` and `.claude/skills/`). The canonical
   shipped version is `.meta/VERSION` — bump it together with the
   "Branching" section below.
 - **Session state lives on `DashboardState`** (`src/layout/state.py`), built
