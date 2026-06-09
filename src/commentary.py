@@ -13,11 +13,16 @@ from .stats import (
     _slice_last_years,
     ann_sharpe,
     ann_volatility,
+    calmar_ratio,
     corr_matrix,
+    historical_var,
+    longest_down_streak,
     longest_up_streak,
+    ma_spread,
     max_drawdown,
     period_return,
     rsi,
+    sortino_ratio,
     trend_strength,
 )
 
@@ -36,7 +41,8 @@ def build_superlatives(
     ``window_days`` from the already-fetched prices/returns (no BQL). Names
     with insufficient history surface as NaN and are skipped rather than
     erroring; ties break deterministically by ticker. Each card is
-    ``{label, value, name, ticker, sentiment, detail}``.
+    ``{label, value, name, ticker, sentiment, description}`` (the description is
+    a plain-English explanation rendered as the card's hover tooltip).
     """
     if prices.empty or returns.empty:
         return []
@@ -54,10 +60,15 @@ def build_superlatives(
     pr = period_return(prices, window_days=window_days)
     ts = trend_strength(prices, window_days=window_days)
     streak = longest_up_streak(returns, window_days=window_days)
+    down_streak = longest_down_streak(returns, window_days=window_days)
     sharpe = ann_sharpe(returns, prices, years)
+    sortino = sortino_ratio(returns, prices, years)
+    calmar = calmar_ratio(prices, years)
     vol = ann_volatility(returns, years)
+    var = historical_var(returns, years)
     mdd = max_drawdown(prices, years)
     momentum = rsi(prices)
+    mas = ma_spread(prices, window_days=window_days)
 
     # Best diversifier = lowest average pairwise correlation (self excluded).
     cm = corr_matrix(m1_rets)
@@ -74,7 +85,7 @@ def build_superlatives(
 
     cards: list[dict] = []
 
-    def add(label, series, *, mode, fmt, sentiment, detail=""):
+    def add(label, series, *, mode, fmt, sentiment, description=""):
         s = series.dropna()
         if s.empty:
             return
@@ -87,20 +98,24 @@ def build_superlatives(
                 "name": name_of(ticker),
                 "ticker": ticker,
                 "sentiment": sentiment,
-                "detail": detail,
+                "description": description,
             }
         )
 
     def pct(v: float) -> str:
         return f"{v:+.1%}"
 
+    def num2(v: float) -> str:
+        return f"{v:.2f}"
+
+    # --- performance / trend ---
     add(
         "Top performer",
         pr,
         mode="max",
         fmt=pct,
         sentiment="positive",
-        detail="1M return",
+        description="Highest simple price return over the selected window.",
     )
     add(
         "Weakest performer",
@@ -108,7 +123,7 @@ def build_superlatives(
         mode="min",
         fmt=pct,
         sentiment="negative",
-        detail="1M return",
+        description="Lowest (most negative) price return over the selected window.",
     )
     add(
         "Strongest trend",
@@ -116,7 +131,7 @@ def build_superlatives(
         mode="max",
         fmt=lambda v: f"{v * 100:+.2f}",
         sentiment="positive",
-        detail="Trend score",
+        description="Cleanest, most persistent uptrend (log-price slope × R²).",
     )
     add(
         "Longest bull run",
@@ -124,47 +139,7 @@ def build_superlatives(
         mode="max",
         fmt=lambda v: f"{int(v)}d",
         sentiment="positive",
-        detail="Consecutive up days",
-    )
-    add(
-        "Best risk-adjusted",
-        sharpe,
-        mode="max",
-        fmt=lambda v: f"{v:.2f}",
-        sentiment="positive",
-        detail="Sharpe (1M)",
-    )
-    add(
-        "Steadiest",
-        vol,
-        mode="min",
-        fmt=lambda v: f"{v:.1%}",
-        sentiment="neutral",
-        detail="Ann. vol (1M)",
-    )
-    add(
-        "Most resilient",
-        mdd,
-        mode="max",
-        fmt=pct,
-        sentiment="positive",
-        detail="Shallowest drawdown",
-    )
-    add(
-        "Strongest momentum",
-        momentum,
-        mode="max",
-        fmt=lambda v: f"{v:.0f}",
-        sentiment="positive",
-        detail="RSI",
-    )
-    add(
-        "Best diversifier",
-        mean_corr,
-        mode="min",
-        fmt=lambda v: f"{v:.2f}",
-        sentiment="neutral",
-        detail="Avg correlation",
+        description="Most consecutive up days within the window.",
     )
     add(
         "Biggest turnaround",
@@ -172,7 +147,122 @@ def build_superlatives(
         mode="max",
         fmt=pct,
         sentiment="positive",
-        detail="Rebound off low",
+        description="Largest rebound from the window's low to the latest price.",
+    )
+    add(
+        "Most extended",
+        mas,
+        mode="max",
+        fmt=pct,
+        sentiment="positive",
+        description="Trades furthest above its moving average over the window.",
+    )
+    # --- risk-adjusted ---
+    add(
+        "Best risk-adjusted",
+        sharpe,
+        mode="max",
+        fmt=num2,
+        sentiment="positive",
+        description="Highest annualized Sharpe ratio over the window.",
+    )
+    add(
+        "Best Sortino",
+        sortino,
+        mode="max",
+        fmt=num2,
+        sentiment="positive",
+        description="Highest Sortino ratio — return per unit of downside risk.",
+    )
+    add(
+        "Highest Calmar",
+        calmar,
+        mode="max",
+        fmt=num2,
+        sentiment="positive",
+        description="Highest return per unit of maximum drawdown.",
+    )
+    add(
+        "Strongest momentum",
+        momentum,
+        mode="max",
+        fmt=lambda v: f"{v:.0f}",
+        sentiment="positive",
+        description="Highest 14-day RSI — strongest momentum.",
+    )
+    # --- stability / resilience ---
+    add(
+        "Steadiest",
+        vol,
+        mode="min",
+        fmt=lambda v: f"{v:.1%}",
+        sentiment="neutral",
+        description="Lowest annualized volatility over the window.",
+    )
+    add(
+        "Most resilient",
+        mdd,
+        mode="max",
+        fmt=pct,
+        sentiment="positive",
+        description="Shallowest peak-to-trough drawdown over the window.",
+    )
+    add(
+        "Lowest tail risk",
+        var,
+        mode="min",
+        fmt=lambda v: f"{v:.1%}",
+        sentiment="positive",
+        description="Smallest 95% one-day Value-at-Risk over the window.",
+    )
+    add(
+        "Best diversifier",
+        mean_corr,
+        mode="min",
+        fmt=num2,
+        sentiment="neutral",
+        description="Lowest average correlation to the rest of the catalog.",
+    )
+    # --- weakness / stress ---
+    add(
+        "Most volatile",
+        vol,
+        mode="max",
+        fmt=lambda v: f"{v:.1%}",
+        sentiment="negative",
+        description="Highest annualized volatility — the wildest ride.",
+    )
+    add(
+        "Hardest hit",
+        mdd,
+        mode="min",
+        fmt=pct,
+        sentiment="negative",
+        description="Deepest peak-to-trough drawdown over the window.",
+    )
+    add(
+        "Longest losing streak",
+        down_streak,
+        mode="max",
+        fmt=lambda v: f"{int(v)}d",
+        sentiment="negative",
+        description="Most consecutive down days within the window.",
+    )
+    add(
+        "Most oversold",
+        momentum,
+        mode="min",
+        fmt=lambda v: f"{v:.0f}",
+        sentiment="negative",
+        description="Lowest 14-day RSI — most oversold, a potential rebound.",
+    )
+    add(
+        "Most below trend",
+        mas,
+        mode="min",
+        fmt=pct,
+        sentiment="negative",
+        description="Trades furthest below its moving average over the window.",
     )
     return cards
 

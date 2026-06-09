@@ -118,7 +118,7 @@ def _render_superlative_cards(cards: list[dict]) -> str:
             value=html.escape(c["value"]),
             name=html.escape(c.get("name", "")),
             ticker=html.escape(c["ticker"]),
-            detail=html.escape(c.get("detail", "")),
+            description=html.escape(c.get("description", "")),
         )
         for c in cards
     )
@@ -146,16 +146,24 @@ def _render_launch_cards(cards: list[dict]) -> str:
     )
 
 
-def _render_highlights(superlatives: list[dict], launches: list[dict]) -> str:
-    """Two-section highlights: left = monthly superlatives, right = new launches.
+def _render_highlights(
+    superlatives: list[dict],
+    launches: list[dict],
+    *,
+    window_label: str = "Past Month",
+) -> str:
+    """Two-section highlights: left = window superlatives, right = new launches.
 
-    Returns ``""`` when there is nothing to show yet (initial empty widget /
-    no data), so the commentary block collapses cleanly."""
+    ``window_label`` (e.g. "Past Week"/"Past Month") titles the Superlatives
+    board to match the live window toggle. Returns ``""`` when there is nothing
+    to show yet (initial empty widget / no data), so the commentary block
+    collapses cleanly."""
     if not superlatives and not launches:
         return ""
     return render_template(
         "highlights_two_col",
         **STYLE_CTX,
+        window_label=html.escape(window_label),
         superlatives=_render_superlative_cards(superlatives),
         launches=_render_launch_cards(launches),
     )

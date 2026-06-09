@@ -25,6 +25,7 @@ from ..config import (
     QUARTER_WINDOW,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
+    WEEK_WINDOW,
 )
 from ..data import apply_filters, load_metadata, unique_values
 from ..stats import (
@@ -578,6 +579,23 @@ def build_app(verbose: bool = True) -> W.VBox:
         _render_weekly_commentary(_load_weekly_commentary(), date.today())
     )
     highlights_w = W.HTML(_render_highlights([], []))
+    errors_w = W.HTML("")  # init/pane-error boxes (kept out of highlights_w)
+    # Live window for the Market Superlatives board — recomputes the panel from
+    # the cache on change (no BQL), like the Platform lookback toggle.
+    superlative_window = W.ToggleButtons(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=SUPERLATIVE_WINDOW_DAYS,
+        layout=W.Layout(width="auto"),
+    )
+    superlative_window_row = W.HBox(
+        [_section_label("Superlatives window"), superlative_window],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
     universe_grid = _universe_grid()
 
     # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
@@ -674,6 +692,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         pane_left=pane_left,
         pane_right=pane_right,
         highlights_w=highlights_w,
+        errors_w=errors_w,
     )
 
     selected_perf_header = W.HTML(
@@ -687,7 +706,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     commentary_box = W.VBox(
-        [weekly_w, highlights_w],
+        [weekly_w, errors_w, superlative_window_row, highlights_w],
         layout=W.Layout(width="100%", padding="12px 16px"),
     )
 
@@ -1270,6 +1289,46 @@ def build_app(verbose: bool = True) -> W.VBox:
         ):
             ctrl.observe(_make(_render_heatmap), names="value")
 
+    _WINDOW_LABELS = {
+        WEEK_WINDOW: "Past Week",
+        MONTH_WINDOW: "Past Month",
+        QUARTER_WINDOW: "Past Quarter",
+        HALF_YEAR_WINDOW: "Past 6 Months",
+    }
+
+    def _render_highlights_panel(window_days):
+        """Render the whole-catalog Key Highlights panel at ``window_days``.
+
+        Builds the superlatives (at the chosen window) + new-launch cards from
+        the already-fetched ARP cache and writes ``state.highlights_w`` — no
+        BQL, no selection. Shared by ``_recompute`` (initial/Refresh) and the
+        live window-toggle observer; a compute failure surfaces in-place rather
+        than blanking the panel."""
+        try:
+            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+            universe_window = state.arp_universe_prices.loc[
+                state.arp_universe_prices.index >= window_start
+            ]
+            if universe_window.empty:
+                state.highlights_w.value = _render_highlights([], [])
+                return
+            universe_rets = daily_returns(universe_window)
+            superlatives = build_superlatives(
+                meta, universe_window, universe_rets, window_days=window_days
+            )
+            launches = build_launch_cards(meta, state.arp_universe_prices, as_of=today)
+            state.highlights_w.value = _render_highlights(
+                superlatives,
+                launches,
+                window_label=_WINDOW_LABELS.get(window_days, "Past Month"),
+            )
+        except Exception:
+            state.highlights_w.value = _render_error(traceback.format_exc())
+
+    superlative_window.observe(
+        lambda c: _render_highlights_panel(c["new"]), names="value"
+    )
+
     def _recompute(_btn=None):
         # A recompute rebuilds the selection slice (`cur_prep`), so every
         # memoized benchmark-dependent result is stale — drop them all. This is
@@ -1277,35 +1336,20 @@ def build_app(verbose: bool = True) -> W.VBox:
         # no-selection guard branches below). Benchmark flips don't call
         # _recompute, so the memo survives across them within a stable slice.
         state.memo.clear()
-        highlights_html = ""
+        error_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
         for err in state.init_errors:
-            highlights_html += _render_error(err)
-        # Highlights are always whole-catalog (ARP only), regardless of selection.
+            error_html += _render_error(err)
+        # Highlights are always whole-catalog (ARP only), regardless of
+        # selection. Render the panel at the currently-selected window; the
+        # toggle re-renders it live (no BQL) via the same closure.
+        _render_highlights_panel(superlative_window.value)
+
+        # 5Y bound for the selected-set slice below.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(
             years=LOOKBACK_YEARS
         )
-        try:
-            if not state.arp_universe_prices.empty:
-                universe_window = state.arp_universe_prices.loc[
-                    state.arp_universe_prices.index >= universe_window_start
-                ]
-                if not universe_window.empty:
-                    universe_rets = daily_returns(universe_window)
-                    superlatives = build_superlatives(
-                        meta,
-                        universe_window,
-                        universe_rets,
-                        window_days=SUPERLATIVE_WINDOW_DAYS,
-                    )
-                    launches = build_launch_cards(
-                        meta, state.arp_universe_prices, as_of=today
-                    )
-                    highlights_html += _render_highlights(superlatives, launches)
-        except Exception:
-            highlights_html += _render_error(traceback.format_exc())
-
         pane_errors: list[str] = []
         try:
             tickers = list(state.ticker_w.value)
@@ -1391,9 +1435,9 @@ def build_app(verbose: bool = True) -> W.VBox:
             pane_errors.append(traceback.format_exc())
 
         for err in pane_errors:
-            highlights_html += _render_error(err)
+            error_html += _render_error(err)
 
-        state.highlights_w.value = highlights_html or _render_highlights([], [])
+        state.errors_w.value = error_html
 
     def _refresh_prices(_btn=None):
         # Re-show the overlay (it's already in the tree — just re-render its

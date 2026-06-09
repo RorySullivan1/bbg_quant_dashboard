@@ -37,7 +37,9 @@ class DashboardState:
     selected_perf_grid: object  # ipydatagrid.DataGrid
     pane_left: object  # SimpleNamespace analysis pane
     pane_right: object  # SimpleNamespace analysis pane
-    highlights_w: W.HTML
+    highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)
+    errors_w: W.HTML  # init/pane-error boxes, kept out of highlights_w so the
+    # live superlatives-window toggle never wipes them (v0.8.x)
 
     # --- mutable session state ---
     # The single startup BQL/mock fetch (benchmarks included) and its
