@@ -54,6 +54,11 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   symmetric best/worst, technical/character indicators (return autocorrelation,
   MACD, drawup, recovery speed, win-rate, skew) with cross-asset-neutral
   asset-class-demeaned z-score ranking and calculation-only tooltips.
+- [ ] `v0.8.5` — Regime Analysis: a Platform-tab tabbed section (Risk vs Return /
+  Correlation) between the factor scatter and the treemap, with a regime-type
+  dropdown (volatility / trend / liquidity / rate-level) and conditional buckets
+  (e.g. VIX buckets) that condition each chart — volatility wired this cycle, the
+  rest scaffolded.
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
