@@ -50,6 +50,10 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 - [ ] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
   statistical-superlatives board (top performer, longest bull run, strongest
   trend, …) and a new-launches board with metadata.
+- [ ] `v0.8.4` — Superlatives Redo: rebuild the superlatives board around
+  symmetric best/worst, technical/character indicators (return autocorrelation,
+  MACD, drawup, recovery speed, win-rate, skew) with cross-asset-neutral
+  asset-class-demeaned z-score ranking and calculation-only tooltips.
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
