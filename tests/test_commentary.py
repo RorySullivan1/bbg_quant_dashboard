@@ -28,12 +28,21 @@ SUPERLATIVE_LABELS = {
     "Weakest performer",
     "Strongest trend",
     "Longest bull run",
+    "Biggest turnaround",
+    "Most extended",
     "Best risk-adjusted",
+    "Best Sortino",
+    "Highest Calmar",
+    "Strongest momentum",
     "Steadiest",
     "Most resilient",
-    "Strongest momentum",
+    "Lowest tail risk",
     "Best diversifier",
-    "Biggest turnaround",
+    "Most volatile",
+    "Hardest hit",
+    "Longest losing streak",
+    "Most oversold",
+    "Most below trend",
 }
 
 
@@ -63,12 +72,22 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
 
     assert {c["label"] for c in cards} == SUPERLATIVE_LABELS
     for c in cards:
-        assert set(c) >= {"label", "value", "name", "ticker", "sentiment", "detail"}
+        assert set(c) >= {
+            "label",
+            "value",
+            "name",
+            "ticker",
+            "sentiment",
+            "description",
+        }
+        assert c["description"]  # every card carries a hover description
 
     by_label = {c["label"]: c for c in cards}
     assert by_label["Top performer"]["ticker"] == "AAA Index"
     assert by_label["Top performer"]["name"] == "Alpha"
     assert by_label["Weakest performer"]["ticker"] == "BBB Index"
+    # Opposite-extreme pairs pick opposite tickers.
+    assert by_label["Most volatile"]["ticker"] != by_label["Steadiest"]["ticker"]
 
 
 def test_build_superlatives_empty_inputs():
@@ -111,6 +130,35 @@ def test_build_superlatives_tie_break_by_ticker(bdays):
     top = next(c for c in cards if c["label"] == "Top performer")
     # Identical paths → tie broken deterministically by sorted ticker.
     assert top["ticker"] == "AAA Index"
+
+
+def test_build_superlatives_window_sensitivity(bdays):
+    # An index that fell early then rallied late should be the top performer on
+    # a short window but not on a long one — proving the window toggle matters.
+    idx = bdays(80)
+    n = len(idx)
+    # REBOUND falls 100→70 then rallies to 95 (net -5% over the full window, but
+    # a strong recent rally); STEADY drifts 100→106 (+6%) throughout.
+    early_down_late_up = np.concatenate(
+        [np.linspace(100.0, 70.0, n - 10), np.linspace(70.0, 95.0, 10)]
+    )
+    steady = np.linspace(100.0, 106.0, n)
+    prices = pd.DataFrame(
+        {"REBOUND Index": early_down_late_up, "STEADY Index": steady}, index=idx
+    )
+    meta = _meta(
+        [
+            {"ticker": "REBOUND Index", "name": "Rebound", "live_date": "2010-01-01"},
+            {"ticker": "STEADY Index", "name": "Steady", "live_date": "2010-01-01"},
+        ]
+    )
+    returns = daily_returns(prices)
+    short = commentary.build_superlatives(meta, prices, returns, window_days=5)
+    long = commentary.build_superlatives(meta, prices, returns, window_days=n)
+    short_top = next(c for c in short if c["label"] == "Top performer")["ticker"]
+    long_top = next(c for c in long if c["label"] == "Top performer")["ticker"]
+    assert short_top == "REBOUND Index"  # the late rally dominates a 1W window
+    assert long_top == "STEADY Index"  # the full-window drawdown sinks REBOUND
 
 
 def test_build_launch_cards_metadata_and_order(bdays):

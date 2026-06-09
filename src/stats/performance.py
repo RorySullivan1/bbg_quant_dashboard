@@ -74,6 +74,50 @@ def longest_up_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Ser
     return pd.Series(out, dtype=float).rename("longest_up_streak")
 
 
+def longest_down_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker longest run of consecutive negative daily returns in the window.
+
+    Mirror of ``longest_up_streak`` for strictly-negative days (NaN/zero days
+    break the run). Columns with no valid data in the window are NaN; the rest
+    are non-negative integer-valued floats. Powers the "Longest losing streak"
+    superlative.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    window = returns.tail(window_days)
+    out: dict[str, float] = {}
+    for col in window.columns:
+        series = window[col]
+        if series.notna().sum() == 0:
+            out[col] = np.nan
+            continue
+        best = cur = 0
+        for is_down in (series < 0).to_numpy():
+            cur = cur + 1 if is_down else 0
+            best = max(best, cur)
+        out[col] = float(best)
+    return pd.Series(out, dtype=float).rename("longest_down_streak")
+
+
+def ma_spread(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker spread of the last price vs its trailing moving average.
+
+    ``last_price / SMA(window_days) - 1`` (a percentage), where the SMA is the
+    simple mean of the last ``window_days`` observations. A large positive value
+    means the index trades well above its recent average ("most extended"); a
+    large negative value means it trades well below ("most below trend").
+    Columns with fewer than ``window_days`` valid observations are NaN.
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    window = prices.tail(window_days)
+    sma = window.mean()
+    last = window.ffill().iloc[-1]
+    out = last / sma - 1.0
+    out[window.notna().sum() < window_days] = np.nan
+    return out.rename("ma_spread")
+
+
 def trend_strength(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     """Per-ticker trend quality over the trailing window.
 

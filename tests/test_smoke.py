@@ -131,6 +131,35 @@ def test_correlation_benchmark_regime_controls():
     assert pane.heat_regime_chk.value is False
 
 
+def test_superlatives_window_toggle_re_renders_live():
+    # v0.8.x: a 1W/1M/3M/6M ToggleButtons drives the Market Superlatives board;
+    # changing it re-renders the panel live from the cache (no BQL) with the
+    # matching window label. The board carries the 19 superlative cards.
+    app = build_app(verbose=False)
+    widgets = list(_walk(app))
+    toggle = next(
+        w
+        for w in widgets
+        if isinstance(w, W.ToggleButtons)
+        and [o[0] for o in w.options] == ["1W", "1M", "3M", "6M"]
+    )
+    panel = next(
+        w
+        for w in widgets
+        if isinstance(w, W.HTML) and "Market Superlatives" in (w.value or "")
+    )
+    before = panel.value
+    assert "Past Month" in before
+    assert before.count("bbg-superlative") == 19  # all 19 cards rendered
+    assert "title='" in before  # hover descriptions present
+
+    toggle.value = 5  # WEEK_WINDOW → fires the observer
+    after = panel.value
+    assert "Past Week" in after
+    assert after.count("bbg-superlative") == 19
+    assert after != before  # the board recomputed for the new window
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]

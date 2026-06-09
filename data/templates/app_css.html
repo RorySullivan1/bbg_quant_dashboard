@@ -247,4 +247,16 @@
   border-radius: 6px;
   overflow: hidden;
 }
+
+/* v0.8.x — Key Highlights superlative cards: subtle hover lift + accent edge.
+   Inline styles can't express :hover, so the affordance lives here; the cards
+   carry class='bbg-superlative'. */
+.bbg-superlative {
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+.bbg-superlative:hover {
+  border-color: {{accent}};
+  transform: translateY(-1px);
+  cursor: default;
+}
 </style>

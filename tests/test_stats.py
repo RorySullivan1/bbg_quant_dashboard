@@ -489,3 +489,53 @@ def test_trend_strength_short_history_is_nan(bdays):
     idx = bdays(2)
     prices = pd.DataFrame({"X Index": [100.0, 101.0]}, index=idx)
     assert np.isnan(stats.trend_strength(prices, window_days=21)["X Index"])
+
+
+# --- v0.8.x superlative helpers: down-streak / ma-spread --------------------
+
+
+def test_longest_down_streak_counts_consecutive_losses(bdays):
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "DOWN Index": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01],  # all down → 6
+            "MIX Index": [-0.01, -0.01, 0.01, -0.01, -0.01, -0.01],  # longest run → 3
+            "UP Index": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # never down → 0
+        },
+        index=idx,
+    )
+    streak = stats.longest_down_streak(rets, window_days=21)
+    assert streak["DOWN Index"] == 6.0
+    assert streak["MIX Index"] == 3.0
+    assert streak["UP Index"] == 0.0
+
+
+def test_longest_down_streak_all_nan_is_nan(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [np.nan, np.nan, np.nan, np.nan]}, index=idx)
+    assert np.isnan(stats.longest_down_streak(rets, window_days=21)["X Index"])
+
+
+def test_ma_spread_known_value(bdays):
+    idx = bdays(5)
+    # SMA of [100,102,104,106,108] = 104; last = 108 → 108/104 - 1.
+    prices = pd.DataFrame({"X Index": [100.0, 102.0, 104.0, 106.0, 108.0]}, index=idx)
+    spread = stats.ma_spread(prices, window_days=5)
+    assert spread["X Index"] == pytest.approx(108.0 / 104.0 - 1.0)
+
+
+def test_ma_spread_flat_series_is_zero(bdays):
+    idx = bdays(30)
+    prices = pd.DataFrame({"FLAT Index": np.full(len(idx), 100.0)}, index=idx)
+    assert stats.ma_spread(prices, window_days=21)["FLAT Index"] == pytest.approx(0.0)
+
+
+def test_ma_spread_insufficient_history_is_nan(bdays):
+    idx = bdays(10)
+    # Only 10 rows but a 21-day window requested → not enough → NaN.
+    prices = pd.DataFrame({"X Index": np.linspace(100.0, 110.0, len(idx))}, index=idx)
+    assert np.isnan(stats.ma_spread(prices, window_days=21)["X Index"])
+
+
+def test_ma_spread_empty_passthrough():
+    assert stats.ma_spread(pd.DataFrame(), window_days=21).empty
