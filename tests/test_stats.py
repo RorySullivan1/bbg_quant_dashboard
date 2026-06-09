@@ -682,3 +682,90 @@ def test_win_rate_excludes_nan_days(bdays):
 
 def test_win_rate_empty_passthrough():
     assert stats.win_rate(pd.DataFrame(), window_days=21).empty
+
+
+# --- v0.8.5 regime analytics: mask / risk-return / correlation --------------
+
+
+def test_regime_mask_half_open_and_nan(bdays):
+    idx = bdays(6)
+    ind = pd.Series([10.0, 15.0, 24.999, 25.0, np.nan, 40.0], index=idx)
+    m = stats.regime_mask(ind, 15.0, 25.0)
+    # [15, 25): 15.0 in, 24.999 in; 10 below, 25.0 at the (excluded) upper edge,
+    # 40 above, NaN excluded.
+    assert list(m) == [False, True, True, False, False, False]
+
+
+def test_regime_mask_open_ends(bdays):
+    idx = bdays(3)
+    ind = pd.Series([5.0, 14.9, 100.0], index=idx)
+    assert list(stats.regime_mask(ind, -np.inf, 15.0)) == [True, True, False]
+    assert list(stats.regime_mask(ind, 35.0, np.inf)) == [False, False, True]
+
+
+def test_regime_mask_empty():
+    assert stats.regime_mask(pd.Series(dtype=float), 0.0, 1.0).empty
+
+
+def test_regime_risk_return_over_masked_days(bdays):
+    idx = bdays(10)
+    rng = np.random.default_rng(0)
+    rets = pd.DataFrame(
+        {
+            "A Index": rng.normal(0.001, 0.01, 10),
+            "B Index": rng.normal(0.0, 0.02, 10),
+        },
+        index=idx,
+    )
+    mask = pd.Series([True] * 5 + [False] * 5, index=idx)
+    frame = stats.regime_risk_return(rets, mask)
+    assert list(frame.columns) == ["vol", "ret", "sharpe"]
+    assert list(frame.index) == ["A Index", "B Index"]
+    sub = rets.iloc[:5]  # only the masked days
+    np.testing.assert_allclose(
+        frame["vol"].to_numpy(),
+        (sub.std() * np.sqrt(TRADING_DAYS_PER_YEAR)).to_numpy(),
+        rtol=1e-9,
+    )
+    np.testing.assert_allclose(
+        frame["ret"].to_numpy(),
+        (sub.mean() * TRADING_DAYS_PER_YEAR).to_numpy(),  # mean-based, not CAGR
+        rtol=1e-9,
+    )
+
+
+def test_regime_risk_return_too_few_days_is_empty(bdays):
+    idx = bdays(5)
+    rets = pd.DataFrame({"A Index": [0.01] * 5}, index=idx)
+    mask = pd.Series([True] + [False] * 4, index=idx)  # one day → empty
+    out = stats.regime_risk_return(rets, mask)
+    assert out.empty
+    assert list(out.columns) == ["vol", "ret", "sharpe"]
+
+
+def test_regime_correlation_subset_and_mask(bdays):
+    idx = bdays(8)
+    base = np.linspace(-0.02, 0.02, 8)
+    rets = pd.DataFrame(
+        {"A Index": base, "B Index": 2.0 * base, "C Index": -base}, index=idx
+    )
+    mask = pd.Series([True] * 6 + [False] * 2, index=idx)
+    cm = stats.regime_correlation(rets, mask, columns=["A Index", "B Index"])
+    # Only the theme's columns; B = 2A → perfectly correlated over masked days.
+    assert list(cm.columns) == ["A Index", "B Index"]
+    assert cm.loc["A Index", "B Index"] == pytest.approx(1.0)
+
+
+def test_regime_correlation_degenerate_is_empty(bdays):
+    idx = bdays(5)
+    rets = pd.DataFrame(
+        {
+            "A Index": np.linspace(-0.01, 0.01, 5),
+            "B Index": np.linspace(0.01, -0.01, 5),
+        },
+        index=idx,
+    )
+    mask = pd.Series([True] * 5, index=idx)
+    assert stats.regime_correlation(rets, mask, columns=["A Index"]).empty  # <2 cols
+    one_day = pd.Series([True] + [False] * 4, index=idx)
+    assert stats.regime_correlation(rets, one_day).empty  # <2 days
