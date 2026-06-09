@@ -32,6 +32,78 @@ def weekly_change(prices: pd.DataFrame) -> pd.Series:
     return (last / prior - 1).rename("weekly_change")
 
 
+def period_return(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Simple cumulative return over the trailing ``window_days`` rows.
+
+    The intuitive "past-month return" used by the superlative cards — a plain
+    last/first - 1 over the window, **not** annualized. Columns with fewer than
+    two valid observations in the window are NaN.
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    tail = prices.tail(window_days + 1)
+    first = tail.bfill().iloc[0]
+    last = tail.ffill().iloc[-1]
+    out = last / first - 1.0
+    out[tail.notna().sum() < 2] = np.nan
+    return out.rename("period_return")
+
+
+def longest_up_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker longest run of consecutive positive daily returns in the window.
+
+    Slices ``returns`` to the trailing ``window_days`` and counts the longest
+    streak of strictly-positive days per ticker (NaN/zero days break the run).
+    Columns with no valid data in the window are NaN; the rest are non-negative
+    integer-valued floats. Powers the "Longest bull run" superlative.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    window = returns.tail(window_days)
+    out: dict[str, float] = {}
+    for col in window.columns:
+        series = window[col]
+        if series.notna().sum() == 0:
+            out[col] = np.nan
+            continue
+        best = cur = 0
+        for is_up in (series > 0).to_numpy():
+            cur = cur + 1 if is_up else 0
+            best = max(best, cur)
+        out[col] = float(best)
+    return pd.Series(out, dtype=float).rename("longest_up_streak")
+
+
+def trend_strength(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker trend quality over the trailing window.
+
+    OLS slope of log price vs time, scaled by the fit's R² (slope·R²), so a
+    clean, persistent uptrend ranks above a noisy one of the same average
+    slope. Columns with fewer than three valid points are NaN; a perfectly
+    flat series is 0. Powers the "Strongest trend" superlative.
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    window = prices.tail(window_days)
+    out: dict[str, float] = {}
+    for col in window.columns:
+        series = window[col].dropna()
+        if len(series) < 3:
+            out[col] = np.nan
+            continue
+        y = np.log(series.to_numpy())
+        if np.std(y) < 1e-12:  # flat (no trend) — guard fp noise, not just ==0
+            out[col] = 0.0
+            continue
+        x = np.arange(len(y), dtype=float)
+        slope, intercept = np.polyfit(x, y, 1)
+        resid = y - (slope * x + intercept)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r2 = 1.0 - np.sum(resid**2) / ss_tot if ss_tot > 0 else 0.0
+        out[col] = float(slope * r2)
+    return pd.Series(out, dtype=float).rename("trend_strength")
+
+
 def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFrame:
     """Cumulative excess return vs a benchmark, in percentage points.
 

@@ -407,3 +407,85 @@ def test_platform_treemap_frame_empty_safe():
     out = stats.platform_treemap_frame(pd.DataFrame(), meta, lookback=252)
     assert list(out.columns) == ["asset_class", "theme", "size_z", "color_z"]
     assert out.empty
+
+
+# --- v0.8.0 superlative helpers: period_return / streak / trend -------------
+
+
+def test_period_return_simple_cumulative(tiny_prices):
+    # window covers the whole 4-row frame: AAA 100→133.1, BBB 100→150.
+    pr = stats.period_return(tiny_prices, window_days=21)
+    assert pr["AAA Index"] == pytest.approx(0.331)
+    assert pr["BBB Index"] == pytest.approx(0.5)
+
+
+def test_period_return_respects_window(tiny_prices):
+    # window_days=2 → tail(3) rows [110, 121, 133.1] for AAA → 133.1/110 - 1.
+    pr = stats.period_return(tiny_prices, window_days=2)
+    assert pr["AAA Index"] == pytest.approx(133.1 / 110.0 - 1.0)
+
+
+def test_period_return_empty_passthrough():
+    assert stats.period_return(pd.DataFrame(), window_days=21).empty
+
+
+def test_period_return_insufficient_history_is_nan(bdays):
+    idx = bdays(3)
+    # Only one valid observation in the window → NaN.
+    prices = pd.DataFrame({"X Index": [np.nan, np.nan, 100.0]}, index=idx)
+    assert np.isnan(stats.period_return(prices, window_days=21)["X Index"])
+
+
+def test_longest_up_streak_counts_consecutive_gains(bdays):
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "UP Index": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # all up → 6
+            "MIX Index": [0.01, 0.01, -0.01, 0.01, 0.01, 0.01],  # longest run → 3
+            "DOWN Index": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01],  # never up → 0
+        },
+        index=idx,
+    )
+    streak = stats.longest_up_streak(rets, window_days=21)
+    assert streak["UP Index"] == 6.0
+    assert streak["MIX Index"] == 3.0
+    assert streak["DOWN Index"] == 0.0
+
+
+def test_longest_up_streak_respects_window(bdays):
+    idx = bdays(6)
+    # First three days up, then flat/down — a 3-day window sees no full streak.
+    rets = pd.DataFrame({"X Index": [0.01, 0.01, 0.01, -0.01, 0.0, -0.01]}, index=idx)
+    assert stats.longest_up_streak(rets, window_days=3)["X Index"] == 0.0
+
+
+def test_longest_up_streak_all_nan_is_nan(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [np.nan, np.nan, np.nan, np.nan]}, index=idx)
+    assert np.isnan(stats.longest_up_streak(rets, window_days=21)["X Index"])
+
+
+def test_trend_strength_clean_beats_noisy(bdays):
+    idx = bdays(40)
+    n = len(idx)
+    clean = 100.0 * 1.01 ** np.arange(n)  # perfectly log-linear uptrend → R²≈1
+    rng = np.random.default_rng(3)
+    noisy = clean * np.exp(rng.normal(0.0, 0.05, n))  # same drift, added noise
+    prices = pd.DataFrame({"CLEAN Index": clean, "NOISY Index": noisy}, index=idx)
+    ts = stats.trend_strength(prices, window_days=40)
+    # A clean persistent uptrend outranks a noisy one of similar slope.
+    assert ts["CLEAN Index"] > ts["NOISY Index"]
+    # Clean log-linear series: slope·R² ≈ ln(1.01).
+    assert ts["CLEAN Index"] == pytest.approx(np.log(1.01), rel=1e-6)
+
+
+def test_trend_strength_flat_series_is_zero(bdays):
+    idx = bdays(30)
+    prices = pd.DataFrame({"FLAT Index": np.full(len(idx), 100.0)}, index=idx)
+    assert stats.trend_strength(prices, window_days=21)["FLAT Index"] == 0.0
+
+
+def test_trend_strength_short_history_is_nan(bdays):
+    idx = bdays(2)
+    prices = pd.DataFrame({"X Index": [100.0, 101.0]}, index=idx)
+    assert np.isnan(stats.trend_strength(prices, window_days=21)["X Index"])
