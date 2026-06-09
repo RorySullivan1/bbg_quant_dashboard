@@ -226,17 +226,27 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     # size. When on, the heatmap is conditioned on the benchmark-return tail
     # and the benchmark is added to the matrix (see `_render_pane`). Read at
     # Refresh-prices time only, like the other per-pane benchmark dropdowns.
-    heat_regime_chk = W.Checkbox(
+    # v0.7.5: a "Benchmark" checkbox reveals the benchmark dropdown + a nested
+    # "Regime" checkbox; ticking "Regime" reveals the >/< tail-direction
+    # dropdown + the tail size. `heat_dir` value is the direction string passed
+    # straight to `regime_corr_matrix` (`<` = worst/below-pct, `>` = best).
+    heat_benchmark_chk = W.Checkbox(
         value=False,
-        description="Regime filter",
+        description="Benchmark",
         indent=False,
-        layout=W.Layout(width="140px"),
+        layout=W.Layout(width="120px"),
     )
     heat_benchmark_dd = _make_benchmark_dropdown()
-    heat_dir = W.ToggleButtons(
-        options=["Down", "Up"],
-        value="Down",
-        layout=W.Layout(width="auto"),
+    heat_regime_chk = W.Checkbox(
+        value=False,
+        description="Regime",
+        indent=False,
+        layout=W.Layout(width="110px"),
+    )
+    heat_dir = W.Dropdown(
+        options=[("<", "down"), (">", "up")],
+        value="down",
+        layout=W.Layout(width="70px"),
     )
     heat_pct = W.Dropdown(
         options=[(f"{p}%", p) for p in range(0, 101, 5)],
@@ -273,11 +283,16 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     )
 
     def _sync_regime_controls() -> None:
-        # The benchmark / direction / tail controls only matter on the
-        # Correlation Heatmap view and only when the regime checkbox is on.
-        show = picker.value == "Correlation Heatmap" and heat_regime_chk.value
-        for w in (heat_benchmark_dd, heat_dir, heat_pct):
-            w.layout.display = "" if show else "none"
+        # Cascade (Correlation Heatmap only): Benchmark on → show the benchmark
+        # dropdown + the nested Regime checkbox; Regime on → show the >/< tail
+        # dropdown + the tail size.
+        is_heat = picker.value == "Correlation Heatmap"
+        bench_on = is_heat and heat_benchmark_chk.value
+        regime_on = bench_on and heat_regime_chk.value
+        for w in (heat_benchmark_dd, heat_regime_chk):
+            w.layout.display = "" if bench_on else "none"
+        for w in (heat_dir, heat_pct):
+            w.layout.display = "" if regime_on else "none"
 
     def _sync_benchmark_visibility(label: str) -> None:
         rcorr_benchmark_dd.layout.display = (
@@ -287,12 +302,20 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         outperf_benchmark_dd.layout.display = (
             "" if label == "Outperformance" else "none"
         )
-        heat_regime_chk.layout.display = (
+        heat_benchmark_chk.layout.display = (
             "" if label == "Correlation Heatmap" else "none"
         )
         _sync_regime_controls()
 
+    def _on_benchmark_chk(_c) -> None:
+        # Unticking Benchmark also clears Regime so the chart reverts to plain
+        # full-sample correlation (the nested control can't outlive its parent).
+        if not heat_benchmark_chk.value and heat_regime_chk.value:
+            heat_regime_chk.value = False
+        _sync_regime_controls()
+
     _sync_benchmark_visibility(default_label)
+    heat_benchmark_chk.observe(_on_benchmark_chk, names="value")
     heat_regime_chk.observe(lambda _c: _sync_regime_controls(), names="value")
 
     header_row = W.HBox(
@@ -301,8 +324,9 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
             rcorr_benchmark_dd,
             rbeta_benchmark_dd,
             outperf_benchmark_dd,
-            heat_regime_chk,
+            heat_benchmark_chk,
             heat_benchmark_dd,
+            heat_regime_chk,
             heat_dir,
             heat_pct,
         ],
@@ -347,6 +371,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         outperf_dd=outperf_benchmark_dd,
         sharpe_fig=sharpe_fig,
         heat_fig=heat_fig,
+        heat_benchmark_chk=heat_benchmark_chk,
         heat_regime_chk=heat_regime_chk,
         heat_dd=heat_benchmark_dd,
         heat_dir=heat_dir,

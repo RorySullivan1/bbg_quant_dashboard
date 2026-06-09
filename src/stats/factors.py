@@ -14,9 +14,10 @@ from ..config import (
     EQUITY_FACTOR_TICKER,
     HALF_YEAR_WINDOW,
     LONG_TREASURY_TICKER,
-    MONTH_WINDOW,
     SHARPE_ZSCORE_WINDOW,
     SHORT_RATE_TICKER,
+    TREND_TICKER,
+    WEEK_WINDOW,
 )
 from ._common import daily_returns
 from .risk import ann_beta
@@ -61,6 +62,19 @@ def term_premium(
     return _factor_spread(prices, long_bond, short_rate).rename("term_premium")
 
 
+def trend_returns(prices: pd.DataFrame, *, trend: str = TREND_TICKER) -> pd.Series:
+    """Daily return series of the cross-asset trend factor.
+
+    Unlike the equity-risk / term premia (short-rate spreads), the trend factor
+    β is taken vs the index's own returns, so this is a plain ``daily_returns``
+    of the trend column. Returns an empty float Series when the column is
+    missing so a partial/mock frame never raises.
+    """
+    if prices.empty or trend not in prices.columns:
+        return pd.Series(dtype=float)
+    return daily_returns(prices[[trend]])[trend].rename("trend")
+
+
 def factor_beta(
     returns: pd.DataFrame, factor_returns: pd.Series, years: float
 ) -> pd.Series:
@@ -77,7 +91,7 @@ def platform_treemap_frame(
     prices: pd.DataFrame, meta: pd.DataFrame, *, lookback: int = SHARPE_ZSCORE_WINDOW
 ) -> pd.DataFrame:
     """Per-ticker ``asset_class`` + ``theme`` + ``size_z`` + ``color_z`` for the
-    Platform treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1M
+    Platform treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1W
     Sharpe, lookback) — both **raw** z-scores (can be negative). The non-negative
     size transform for ``go.Treemap.values`` is the renderer's concern, not this
     frame's. ``asset_class`` and ``theme`` give the treemap's two grouping levels
@@ -90,7 +104,7 @@ def platform_treemap_frame(
         prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=lookback
     )
     color_z = rolling_metric_zscore(
-        prices, metric="sharpe", window=MONTH_WINDOW, zscore_window=lookback
+        prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=lookback
     )
     frame = pd.DataFrame({"size_z": size_z, "color_z": color_z})
     has_ticker = "ticker" in meta.columns

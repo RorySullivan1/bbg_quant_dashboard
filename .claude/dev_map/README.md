@@ -2,10 +2,13 @@
 
 Forward-looking roadmap for `bbg_quant_dashboard`. Each `vX.Y.Z.md` file
 in this directory is a stub for a planned release — fill it in as the
-scope for that version firms up (goals, scope, status, related PRs).
+scope for that version firms up (goals, scope, status, related PRs). Start a
+new stub by copying [`TEMPLATE.md`](TEMPLATE.md) (the reusable section skeleton)
+to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
+below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.7.0`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.7.5`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -33,15 +36,17 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   grid with a dynamic z-score column, a factor-beta scatter (equity risk
   premium vs term premium), and an asset class → theme → ticker treemap
   (shipped).
-- [ ] `v0.7.1` — Platform scatter: drop the duplicative chart title, expand to a
+- [x] `v0.7.1` — Platform scatter: drop the duplicative chart title, expand to a
   **3D** factor scatter (z-axis = β to BSLXAT "Trend Exposure"), and color
-  markers by asset class instead of grey.
-- [ ] `v0.7.2` — Platform performance table: remove the Since-Inception columns.
-- [ ] `v0.7.3` — Platform treemap: color tiles by **z(1W Sharpe)** (was 1M),
-  size stays z(6M Sharpe), and drop the duplicative chart title.
-- [ ] `v0.7.5` — Multi-Strategy tab fixes: Sharpe color-coding in the selected
+  markers by asset class instead of grey (shipped).
+- [x] `v0.7.2` — Platform performance table: remove the Since-Inception columns
+  (shipped).
+- [x] `v0.7.3` — Platform treemap: color tiles by **z(1W Sharpe)** (was 1M),
+  size stays z(6M Sharpe), and drop the duplicative chart title (shipped).
+- [x] `v0.7.5` — Multi-Strategy tab fixes: Sharpe color-coding in the selected
   perf grid, replace the analysis date slider with two side-by-side date boxes,
-  and restructure the correlation Benchmark/Regime controls (>/< dropdown).
+  and restructure the correlation Benchmark/Regime controls (>/< dropdown)
+  (shipped).
 - [ ] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
   statistical-superlatives board (top performer, longest bull run, strongest
   trend, …) and a new-launches board with metadata.

@@ -1,0 +1,40 @@
+# quality-gates.conf — optional config for the portable quality-gates.sh hook.
+#
+# Copy to `.claude/hooks/quality-gates.conf` and edit. The hook sources this
+# file (shell syntax) after applying its built-in defaults, so you only need to
+# set what you want to change. Delete this file to fall back to the defaults
+# (ruff/black/pytest over `src tests`).
+
+# Paths the `{paths}` token in a gate command expands to. Members that don't
+# exist on disk are dropped automatically, so listing an absent dir is harmless.
+QG_PATHS="src tests"
+
+# Gates, one per line: "label|binary|command".
+#   - label   : shown in skip/block messages.
+#   - binary  : the gate runs only if this is on PATH (else it's skipped).
+#   - command : the shell command; `{paths}` is replaced by the existing QG_PATHS.
+# A non-zero exit from any present gate blocks the commit.
+QG_GATES="$(cat <<'EOF'
+lint|ruff|ruff check {paths}
+format|black|black --check {paths}
+tests|python|python -m pytest -q
+EOF
+)"
+
+# --- Examples for other toolchains (uncomment / adapt) ---
+#
+# flake8 + isort + unittest:
+# QG_GATES="$(cat <<'EOF'
+# lint|flake8|flake8 {paths}
+# imports|isort|isort --check-only {paths}
+# tests|python|python -m unittest discover
+# EOF
+# )"
+#
+# Node (eslint + prettier + jest), with QG_PATHS="src test":
+# QG_GATES="$(cat <<'EOF'
+# lint|npx|npx eslint {paths}
+# format|npx|npx prettier --check {paths}
+# tests|npx|npx jest
+# EOF
+# )"

@@ -10,6 +10,8 @@ price cache — no BQL.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -19,12 +21,36 @@ from ..stats import (
     factor_beta,
     platform_treemap_frame,
     term_premium,
+    trend_returns,
 )
-from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, Color
-from .theme import _chart_layout, _h_ref, _short_ticker, _v_ref
+from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
+from .theme import _chart_layout, _short_ticker
+
+
+def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
+    """Distinct color per asset class for the factor scatter legend.
+
+    Curated `ASSET_CLASS_COLORS` tokens come first; any class not in that map
+    is assigned the next unused `LINE_PALETTE` color (so an unmapped class still
+    renders distinctly rather than collapsing onto the grey fallback), and only
+    falls back to `ASSET_CLASS_FALLBACK_COLOR` once the palette is exhausted.
+    Deterministic in the sorted order of the present classes."""
+    used = set(ASSET_CLASS_COLORS.values())
+    spare = [c for c in LINE_PALETTE if c not in used]
+    out: dict[str, str] = {}
+    for ac in sorted({str(c) for c in classes}):
+        if ac in ASSET_CLASS_COLORS:
+            out[ac] = ASSET_CLASS_COLORS[ac]
+        elif spare:
+            out[ac] = spare.pop(0)
+        else:
+            out[ac] = ASSET_CLASS_FALLBACK_COLOR
+    return out
+
 
 _FACTOR_HOVER = (
-    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}<extra></extra>"
+    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}"
+    "<br>Trend β %{{z:.2f}}<extra></extra>"
 )
 
 # Treemap hierarchy separator (asset class → theme), diverging colorscale, and
@@ -38,25 +64,29 @@ _TREEMAP_COLORSCALE = [
 ]
 _TREEMAP_HOVER = (
     "%{label}<br>size z(6M Sharpe) %{customdata:.2f}"
-    "<br>color z(1M Sharpe) %{color:.2f}<extra></extra>"
+    "<br>color z(1W Sharpe) %{color:.2f}<extra></extra>"
 )
 
 
 def _factor_beta_scatter() -> go.FigureWidget:
-    """Factor-beta scatter: x = β to the equity risk premium, y = β to the term
-    premium, one marker per strategy (colored by asset class). Built empty;
-    `_update_factor_scatter` fills it. Dashed zero crosshair via `layout.shapes`;
-    the legend is on (unlike the pane charts, this chart has no grid legend to
-    key its asset-class colors)."""
+    """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
+    term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
+    marker per strategy (colored by asset class). Built empty;
+    `_update_factor_scatter` fills it. No in-figure title — the "Factor
+    exposures" section header stands alone (v0.7.1). The legend is on (unlike
+    the pane charts, this chart has no grid legend to key its asset-class
+    colors); each scene axis carries a zero line (paper shapes don't apply to a
+    3D scene)."""
     return go.FigureWidget(
         layout=_chart_layout(
-            title="Equity vs term-premium β",
-            hovermode="closest",
+            title="",
             showlegend=True,
             legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            xaxis=dict(title="Equity risk-premium β", zeroline=False),
-            yaxis=dict(title="Term-premium β", zeroline=False),
-            shapes=[_h_ref(0.0), _v_ref(0.0)],
+            scene=dict(
+                xaxis=dict(title="Equity risk-premium β", zeroline=True),
+                yaxis=dict(title="Term-premium β", zeroline=True),
+                zaxis=dict(title="Trend Exposure", zeroline=True),
+            ),
         )
     )
 
@@ -68,31 +98,30 @@ def _update_factor_scatter(
     meta: pd.DataFrame,
     *,
     years: float,
-    title: str,
 ) -> None:
-    """Populate the factor-beta scatter from the cached prices: per-strategy
-    betas to the equity-risk-premium and term-premium factor series, one trace
-    per asset class (so the colors carry a legend). No BQL — pure compute over
-    the already-fetched cache."""
+    """Populate the 3D factor-beta scatter from the cached prices: per-strategy
+    betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
+    series, one trace per asset class (so the colors carry a legend). No BQL —
+    pure compute over the already-fetched cache."""
     if arp_prices.empty or universe_prices.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
     erp = equity_risk_premium(universe_prices)
     tp = term_premium(universe_prices)
+    trend = trend_returns(universe_prices)
     rets = daily_returns(arp_prices)
     frame = pd.DataFrame(
         {
             "x": factor_beta(rets, erp, years),
             "y": factor_beta(rets, tp, years),
+            "z": factor_beta(rets, trend, years),
         }
     ).dropna()
 
     if frame.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
@@ -101,17 +130,19 @@ def _update_factor_scatter(
         (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
     ]
 
+    color_for = _asset_class_colors(frame["ac"])
     traces = []
     for ac, grp in frame.groupby("ac"):
         traces.append(
-            go.Scatter(
+            go.Scatter3d(
                 mode="markers",
                 name=str(ac),
                 x=grp["x"].to_numpy(),
                 y=grp["y"].to_numpy(),
+                z=grp["z"].to_numpy(),
                 marker=dict(
-                    size=12,
-                    color=ASSET_CLASS_COLORS.get(ac, ASSET_CLASS_FALLBACK_COLOR),
+                    size=5,
+                    color=color_for[str(ac)],
                     line=dict(width=0),
                 ),
                 text=[_short_ticker(t) for t in grp.index],
@@ -120,18 +151,18 @@ def _update_factor_scatter(
         )
 
     with fig.batch_update():
-        fig.layout.title.text = title
         fig.data = ()
         fig.add_traces(traces)
 
 
 def _treemap() -> go.FigureWidget:
     """Asset-class → theme → ticker treemap, sized by z(6M Sharpe) and colored
-    by z(1M Sharpe). Built empty; `_update_treemap` fills it. The diverging
-    colorbar is the color legend."""
+    by z(1W Sharpe). Built empty; `_update_treemap` fills it. No in-figure title
+    — the "Risk-adjusted strength map" section header stands alone (v0.7.3); the
+    diverging colorbar is the color legend."""
     return go.FigureWidget(
         layout=_chart_layout(
-            title="Risk-adjusted strength",
+            title="",
             margin=dict(t=44, b=10, l=10, r=10),
         )
     )
@@ -143,11 +174,10 @@ def _update_treemap(
     meta: pd.DataFrame,
     *,
     lookback: int,
-    title: str,
 ) -> None:
     """Populate the treemap from `platform_treemap_frame`: a 3-level
     asset class → theme → ticker hierarchy. Tiles are sized by a non-negative
-    shift of z(6M Sharpe) and colored by raw z(1M Sharpe); parent nodes
+    shift of z(6M Sharpe) and colored by raw z(1W Sharpe); parent nodes
     aggregate (size = sum of children, color = mean of leaf z). No BQL — pure
     compute over the already-fetched cache."""
     frame = platform_treemap_frame(prices, meta, lookback=lookback).dropna(
@@ -155,7 +185,6 @@ def _update_treemap(
     )
     if frame.empty:
         with fig.batch_update():
-            fig.layout.title.text = title
             fig.data = ()
         return
 
@@ -224,11 +253,10 @@ def _update_treemap(
             cmax=2,
             line=dict(width=1, color=Color.CHART_BG.value),
             showscale=True,
-            colorbar=dict(title=dict(text="z(1M Sharpe)")),
+            colorbar=dict(title=dict(text="z(1W Sharpe)")),
         ),
         hovertemplate=_TREEMAP_HOVER,
     )
     with fig.batch_update():
-        fig.layout.title.text = title
         fig.data = ()
         fig.add_traces([treemap])

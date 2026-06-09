@@ -8,9 +8,10 @@ TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
 # Short metric windows (trading days) for the v0.7.0 Platform z-score views.
-# The treemap sizes by z(6M Sharpe, lookback) and colors by z(1M Sharpe,
+# The treemap sizes by z(6M Sharpe, lookback) and colors by z(1W Sharpe,
 # lookback); the grid z-score column offers 1M / 3M / 6M as the short window.
-MONTH_WINDOW = 21  # ~1 month  (treemap color window)
+WEEK_WINDOW = 5  # ~1 week  (treemap color window)
+MONTH_WINDOW = 21  # ~1 month
 QUARTER_WINDOW = 63  # ~3 months
 HALF_YEAR_WINDOW = 126  # ~6 months (treemap size window)
 
@@ -66,4 +67,8 @@ DEFAULT_BENCHMARK = "SPX Index"
 EQUITY_FACTOR_TICKER = "SPX Index"  # equity proxy (also in BENCHMARK_TICKERS)
 LONG_TREASURY_TICKER = "LUTLTRUU Index"  # Bloomberg US Long Treasury TR
 SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
-FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER]
+# Trend factor (v0.7.1): the Bloomberg cross-asset trend index. The Platform
+# factor scatter's 3D z-axis is each strategy's β to this index's *returns*
+# directly (not a short-rate spread, unlike the two premia above).
+TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
+FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]

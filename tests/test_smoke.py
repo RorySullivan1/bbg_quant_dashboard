@@ -70,6 +70,65 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert toggles[0].label == "1Y"
     assert isinstance(scatter, go.FigureWidget)
     assert isinstance(treemap, go.FigureWidget)
+    # v0.7.1: the scatter is 3D (Scatter3d traces) with no in-figure title.
+    assert scatter.data and all(isinstance(tr, go.Scatter3d) for tr in scatter.data)
+    assert not scatter.layout.title.text
+
+
+def _walk(widget):
+    """Yield the widget and all its descendants (children / .child)."""
+    yield widget
+    for child in getattr(widget, "children", ()):
+        yield from _walk(child)
+
+
+def test_analysis_date_range_is_two_boxes_no_slider():
+    # v0.7.5 Workstream B: the analysis date range is two DatePicker boxes
+    # (hyphen-separated), no SelectionRangeSlider. The Multi-Strategy panel
+    # mounts only when its tab is selected, so click that tab first.
+    app = build_app(verbose=False)
+    tab_bar = app.children[4]
+    ms_btn = next(
+        b
+        for b in tab_bar.children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms_btn.click()
+    panel = app.children[5].children[0]  # tab_content → mounted Multi-Strategy
+    widgets = list(_walk(panel))
+    assert not any(isinstance(w, W.SelectionRangeSlider) for w in widgets)
+    # The two analysis-range boxes + the Characteristics launch-date pair are
+    # DatePickers, so at least two exist with the slider class absent.
+    assert sum(isinstance(w, W.DatePicker) for w in widgets) >= 2
+
+
+def test_correlation_benchmark_regime_controls():
+    # v0.7.5 Workstream C: a pane exposes a Benchmark checkbox and a nested
+    # Regime checkbox; the tail-direction control is a >/< dropdown whose values
+    # map straight to regime_corr_matrix's direction ("<" worst, ">" best).
+    from src.layout.panes import _make_analysis_pane
+
+    pane = _make_analysis_pane("left")
+    assert isinstance(pane.heat_benchmark_chk, W.Checkbox)
+    assert pane.heat_benchmark_chk.description == "Benchmark"
+    assert isinstance(pane.heat_regime_chk, W.Checkbox)
+    assert pane.heat_regime_chk.description == "Regime"
+    assert isinstance(pane.heat_dir, W.Dropdown)
+    assert dict(pane.heat_dir.options) == {"<": "down", ">": "up"}
+
+    # Benchmark off → benchmark dropdown + Regime checkbox hidden; ticking
+    # Benchmark reveals them; ticking Regime reveals the >/< + tail controls.
+    assert pane.heat_dd.layout.display == "none"
+    pane.picker.value = "Correlation Heatmap"
+    pane.heat_benchmark_chk.value = True
+    assert pane.heat_dd.layout.display == ""
+    assert pane.heat_regime_chk.layout.display == ""
+    assert pane.heat_dir.layout.display == "none"
+    pane.heat_regime_chk.value = True
+    assert pane.heat_dir.layout.display == ""
+    # Unticking Benchmark clears Regime so the chart reverts to plain.
+    pane.heat_benchmark_chk.value = False
+    assert pane.heat_regime_chk.value is False
 
 
 def test_masthead_renders():

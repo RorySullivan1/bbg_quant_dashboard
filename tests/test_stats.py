@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from src import stats
-from src.config import TRADING_DAYS_PER_YEAR
+from src.config import HALF_YEAR_WINDOW, TRADING_DAYS_PER_YEAR, WEEK_WINDOW
 
 # --- basics ----------------------------------------------------------------
 
@@ -232,17 +232,12 @@ def test_perf_table_returns_param_matches_internal(multiyear_prices):
     )
 
 
-def test_universe_perf_threads_returns_unchanged(multiyear_prices):
-    # universe_perf now computes daily_returns once and threads it into
-    # perf_table; the result must equal the plain concat it replaced.
-    expected = pd.concat(
-        [
-            stats.perf_table(multiyear_prices),
-            stats.since_inception_perf(multiyear_prices),
-        ],
-        axis=1,
-    )
-    pd.testing.assert_frame_equal(stats.universe_perf(multiyear_prices), expected)
+def test_universe_perf_is_windows_only_no_since_inception(multiyear_prices):
+    # v0.7.2: universe_perf returns only the 1Y/3Y/5Y windowed block (it threads
+    # daily_returns once into perf_table); the Since-Inception block is dropped.
+    up = stats.universe_perf(multiyear_prices)
+    pd.testing.assert_frame_equal(up, stats.perf_table(multiyear_prices))
+    assert "SI" not in up.columns.get_level_values(0)
 
 
 def test_quant_metrics_table_returns_param_matches_internal(
@@ -265,6 +260,7 @@ def _factor_frame(idx) -> pd.DataFrame:
         "SPX Index": (0.0004, 0.011),
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
+        "BSLXAT Index": (0.0001, 0.006),
         "AAA Index": (0.0003, 0.012),
     }
     data = {
@@ -356,6 +352,15 @@ def test_factor_builders_missing_columns_return_empty():
     prices = pd.DataFrame({"AAA Index": [100.0, 101.0, 102.0]})
     assert stats.equity_risk_premium(prices).empty
     assert stats.term_premium(prices).empty
+    assert stats.trend_returns(prices).empty
+
+
+def test_trend_returns_is_trend_column_pct_change(bdays):
+    prices = _factor_frame(bdays(300))
+    tr = stats.trend_returns(prices)
+    expected = stats.daily_returns(prices[["BSLXAT Index"]])["BSLXAT Index"]
+    pd.testing.assert_series_equal(tr, expected, check_names=False)
+    assert tr.name == "trend"
 
 
 def test_factor_beta_matches_ann_beta(bdays):
@@ -382,6 +387,19 @@ def test_platform_treemap_frame_columns_and_join(multiyear_prices):
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
     assert frame.loc["BBB Index", "theme"] == "Credit"
     assert frame["size_z"].notna().any()
+    # v0.7.3: size = z(6M Sharpe), color = z(1W Sharpe) — pin both windows.
+    size_expected = stats.rolling_metric_zscore(
+        multiyear_prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=252
+    )
+    color_expected = stats.rolling_metric_zscore(
+        multiyear_prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=252
+    )
+    pd.testing.assert_series_equal(
+        frame["size_z"], size_expected.reindex(frame.index), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        frame["color_z"], color_expected.reindex(frame.index), check_names=False
+    )
 
 
 def test_platform_treemap_frame_empty_safe():
