@@ -11,7 +11,7 @@ from IPython import get_ipython
 from IPython.display import display
 
 from ..bql_client import _cache_path, fetch_prices
-from ..commentary import build_highlights
+from ..commentary import build_launch_cards, build_superlatives
 from ..config import (
     ARP_SOLUTION_VALUES,
     BENCHMARK_TICKERS,
@@ -23,6 +23,7 @@ from ..config import (
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
+    SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
 )
 from ..data import apply_filters, load_metadata, unique_values
@@ -43,7 +44,6 @@ from ..stats import (
     rolling_correlation,
     rolling_metric_zscore,
     rolling_sharpe_zscore,
-    sharpe_zscore,
     treynor_ratio,
     universe_perf,
     zscore_cross_section,
@@ -577,7 +577,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     weekly_w = W.HTML(
         _render_weekly_commentary(_load_weekly_commentary(), date.today())
     )
-    highlights_w = W.HTML(_render_highlights([]))
+    highlights_w = W.HTML(_render_highlights([], []))
     universe_grid = _universe_grid()
 
     # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
@@ -1293,11 +1293,16 @@ def build_app(verbose: bool = True) -> W.VBox:
                 ]
                 if not universe_window.empty:
                     universe_rets = daily_returns(universe_window)
-                    universe_sz = sharpe_zscore(universe_rets)
-                    cards = build_highlights(
-                        meta, universe_window, universe_rets, universe_sz
+                    superlatives = build_superlatives(
+                        meta,
+                        universe_window,
+                        universe_rets,
+                        window_days=SUPERLATIVE_WINDOW_DAYS,
                     )
-                    highlights_html += _render_highlights(cards)
+                    launches = build_launch_cards(
+                        meta, state.arp_universe_prices, as_of=today
+                    )
+                    highlights_html += _render_highlights(superlatives, launches)
         except Exception:
             highlights_html += _render_error(traceback.format_exc())
 
@@ -1388,7 +1393,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         for err in pane_errors:
             highlights_html += _render_error(err)
 
-        state.highlights_w.value = highlights_html or _render_highlights([])
+        state.highlights_w.value = highlights_html or _render_highlights([], [])
 
     def _refresh_prices(_btn=None):
         # Re-show the overlay (it's already in the tree — just re-render its

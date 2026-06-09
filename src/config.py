@@ -2,6 +2,10 @@ from pathlib import Path
 
 LOOKBACK_YEARS = 5
 NEW_LAUNCH_DAYS = 30
+# Trailing window (trading days) for the v0.8.0 monthly "Market Superlatives"
+# board — ~1 month. The superlative cards are computed whole-catalog over this
+# window from the already-fetched prices (no extra BQL call).
+SUPERLATIVE_WINDOW_DAYS = 21
 SHARPE_WINDOW = 252
 SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
