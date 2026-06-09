@@ -19,7 +19,6 @@ from .stats import (
     max_drawdown,
     max_drawup,
     period_return,
-    recovery_days,
     return_autocorr,
     return_skew,
     rsi,
@@ -36,8 +35,8 @@ def build_superlatives(
 ) -> list[dict]:
     """Whole-catalog "Market Superlatives" over the trailing window.
 
-    A board of **symmetric best/worst** pairs plus two singles, built from
-    technical / character-based indicators (persistence, momentum, recovery,
+    A board of **symmetric best/worst** pairs plus a single (Lowest VaR), built
+    from technical / character-based indicators (persistence, momentum,
     win-rate, skew) and computed over the trailing ``window_days`` from the
     already-fetched prices/returns (no BQL). Each card names the single most
     extreme index across the catalog.
@@ -83,7 +82,6 @@ def build_superlatives(
     wr = win_rate(returns, window_days=window_days)
     skew = return_skew(returns, window_days=window_days)
     var = historical_var(returns, years)
-    recovery = recovery_days(prices, window_days=window_days)
     # Fixed-lookback oscillators (window-toggle-independent).
     momentum = rsi(prices)
     macd = macd_histogram(prices)
@@ -303,7 +301,7 @@ def build_superlatives(
         sentiment="negative",
         description=skew_desc,
     )
-    # --- singles ---
+    # --- tail risk (asset-class-demeaned z-rank, single) ---
     add(
         "Lowest VaR",
         var,
@@ -313,15 +311,6 @@ def build_superlatives(
         description="5th-percentile of daily returns over the window (historical "
         "95% one-day VaR); ranked by asset-class-demeaned z-score.",
         rank_by=acz(var),
-    )
-    add(
-        "Fastest recovery",
-        recovery,
-        mode="min",
-        fmt=lambda v: f"{int(v)}d",
-        sentiment="positive",
-        description="Days from the largest drawdown's trough until price regains "
-        "its prior peak.",
     )
     return cards
 

@@ -43,7 +43,6 @@ SUPERLATIVE_LABELS = {
     "Most positive skew",
     "Most negative skew",
     "Lowest VaR",
-    "Fastest recovery",
 }
 
 
@@ -71,11 +70,7 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
     )
     cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
 
-    labels = {c["label"] for c in cards}
-    assert labels <= SUPERLATIVE_LABELS  # only known superlatives are emitted
-    # Every card except the optional "Fastest recovery" (which needs a recovered
-    # drawdown inside the window) is defined for this small fixture.
-    assert SUPERLATIVE_LABELS - {"Fastest recovery"} <= labels
+    assert {c["label"] for c in cards} == SUPERLATIVE_LABELS
     for c in cards:
         assert set(c) >= {
             "label",

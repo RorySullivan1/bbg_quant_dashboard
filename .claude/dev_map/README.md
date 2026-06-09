@@ -8,7 +8,7 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.7.5`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.8.4`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -47,13 +47,13 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   perf grid, replace the analysis date slider with two side-by-side date boxes,
   and restructure the correlation Benchmark/Regime controls (>/< dropdown)
   (shipped).
-- [ ] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
+- [x] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
   statistical-superlatives board (top performer, longest bull run, strongest
-  trend, …) and a new-launches board with metadata.
-- [ ] `v0.8.4` — Superlatives Redo: rebuild the superlatives board around
+  trend, …) and a new-launches board with metadata (shipped).
+- [x] `v0.8.4` — Superlatives Redo: rebuild the superlatives board around
   symmetric best/worst, technical/character indicators (return autocorrelation,
   MACD, drawup, recovery speed, win-rate, skew) with cross-asset-neutral
-  asset-class-demeaned z-score ranking and calculation-only tooltips.
+  asset-class-demeaned z-score ranking and calculation-only tooltips (shipped).
 - [ ] `v0.8.5` — Regime Analysis: a Platform-tab tabbed section (Risk vs Return /
   Correlation) between the factor scatter and the treemap, with a regime-type
   dropdown (volatility / trend / liquidity / rate-level) and conditional buckets
