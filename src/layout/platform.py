@@ -56,6 +56,69 @@ _FACTOR_HOVER = (
     "<br>Trend β %{{z:.2f}}<extra></extra>"
 )
 
+# Opacity of the factor scatter's translucent zero-reference planes (x=0, y=0,
+# z=0). Faint enough to read the marker cloud through, solid enough to locate 0.
+_ZERO_PLANE_OPACITY = 0.12
+
+
+def _axis_bounds(
+    values: pd.Series, *, pad: float = 0.1, fallback: float = 1.0
+) -> tuple[float, float]:
+    """``(low, high)`` span for one factor axis, always bracketing 0 and padded.
+
+    The span is stretched to include 0 (so a zero plane sits inside it) then
+    padded by ``pad`` on each side; a degenerate span (single point / all-equal /
+    all-zero betas) falls back to ``±fallback`` so the plane stays visible.
+    """
+    lo = min(float(values.min()), 0.0)
+    hi = max(float(values.max()), 0.0)
+    span = hi - lo
+    if span <= 0:
+        return (-fallback, fallback)
+    margin = span * pad
+    return (lo - margin, hi + margin)
+
+
+def _quad_mesh(
+    name: str, xs: list[float], ys: list[float], zs: list[float]
+) -> go.Mesh3d:
+    """A flat 4-vertex quad (two triangles) as a translucent reference plane."""
+    return go.Mesh3d(
+        name=name,
+        x=xs,
+        y=ys,
+        z=zs,
+        i=[0, 0],
+        j=[1, 2],
+        k=[2, 3],
+        color=Color.CHART_AXIS.value,
+        opacity=_ZERO_PLANE_OPACITY,
+        flatshading=True,
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+
+def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
+    """Three translucent zero-reference planes (x=0, y=0, z=0), sized to the
+    point cloud, so the origin is legible in every dimension of the 3D scatter.
+
+    Each plane spans the padded data bounds of its other two axes (see
+    ``_axis_bounds``), so it covers the marker cloud and crosses 0.
+    """
+    xlo, xhi = _axis_bounds(frame["x"])
+    ylo, yhi = _axis_bounds(frame["y"])
+    zlo, zhi = _axis_bounds(frame["z"])
+    return [
+        # x = 0: spans y × z
+        _quad_mesh("x=0", [0, 0, 0, 0], [ylo, yhi, yhi, ylo], [zlo, zlo, zhi, zhi]),
+        # y = 0: spans x × z
+        _quad_mesh("y=0", [xlo, xhi, xhi, xlo], [0, 0, 0, 0], [zlo, zlo, zhi, zhi]),
+        # z = 0: spans x × y
+        _quad_mesh("z=0", [xlo, xhi, xhi, xlo], [ylo, ylo, yhi, yhi], [0, 0, 0, 0]),
+    ]
+
+
 # Treemap hierarchy separator (asset class → theme), diverging colorscale, and
 # the shared per-node hover. The colorscale matches the all-catalog grid's
 # red<0 → neutral → green>0 sentiment and is token-driven (no inline hex).
@@ -75,11 +138,12 @@ def _factor_beta_scatter() -> go.FigureWidget:
     """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
     term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
     marker per strategy (colored by asset class). Built empty;
-    `_update_factor_scatter` fills it. No in-figure title — the "Factor
-    exposures" section header stands alone (v0.7.1). The legend is on (unlike
-    the pane charts, this chart has no grid legend to key its asset-class
-    colors); each scene axis carries a zero line (paper shapes don't apply to a
-    3D scene)."""
+    `_update_factor_scatter` fills it — markers plus three translucent
+    zero-reference planes (x=0/y=0/z=0, v0.8.6) that mark the origin in every
+    dimension. No in-figure title — the "Factor exposures" section header stands
+    alone (v0.7.1). The legend is on (unlike the pane charts, this chart has no
+    grid legend to key its asset-class colors); each scene axis also carries a
+    zero line on the scene wall (paper shapes don't apply to a 3D scene)."""
     return go.FigureWidget(
         layout=_chart_layout(
             title="",
@@ -104,8 +168,9 @@ def _update_factor_scatter(
 ) -> None:
     """Populate the 3D factor-beta scatter from the cached prices: per-strategy
     betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
-    series, one trace per asset class (so the colors carry a legend). No BQL —
-    pure compute over the already-fetched cache."""
+    series, one trace per asset class (so the colors carry a legend), over three
+    translucent zero-reference planes (x=0/y=0/z=0) that mark the origin in every
+    dimension. No BQL — pure compute over the already-fetched cache."""
     if arp_prices.empty or universe_prices.empty:
         with fig.batch_update():
             fig.data = ()
@@ -155,7 +220,8 @@ def _update_factor_scatter(
 
     with fig.batch_update():
         fig.data = ()
-        fig.add_traces(traces)
+        # Planes first so the markers render over them.
+        fig.add_traces([*_zero_planes(frame), *traces])
 
 
 def _treemap() -> go.FigureWidget:

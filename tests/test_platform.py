@@ -72,16 +72,45 @@ def test_update_factor_scatter_one_trace_per_asset_class():
 
     # No in-figure title (v0.7.1) — the section header stands alone.
     assert not fig.layout.title.text
-    # AAA → Equity, BBB → Fixed Income → one trace each.
-    by_name = {tr.name: tr for tr in fig.data}
+    # AAA → Equity, BBB → Fixed Income → one marker trace each (the figure also
+    # holds the three Mesh3d zero planes, filtered out here).
+    by_name = {tr.name: tr for tr in fig.data if isinstance(tr, go.Scatter3d)}
     assert set(by_name) == {"Equity", "Fixed Income"}
     assert by_name["Equity"].marker.color == ASSET_CLASS_COLORS["Equity"]
     assert by_name["Fixed Income"].marker.color == ASSET_CLASS_COLORS["Fixed Income"]
-    # 3D traces — one strategy each, finite betas on all three axes.
-    for tr in fig.data:
-        assert isinstance(tr, go.Scatter3d)
+    # 3D marker traces — one strategy each, finite betas on all three axes.
+    for tr in by_name.values():
         assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
         assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
+
+
+def test_factor_scatter_has_three_zero_planes():
+    fig = _factor_beta_scatter()
+    universe = _universe()
+    arp = universe[["AAA Index", "BBB Index"]]
+    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+
+    planes = {tr.name: tr for tr in fig.data if isinstance(tr, go.Mesh3d)}
+    assert set(planes) == {"x=0", "y=0", "z=0"}
+    # Each plane is a faint, legend-less, non-hovering reference surface.
+    for tr in planes.values():
+        assert tr.showlegend is False
+        assert 0 < tr.opacity < 1
+
+    # Each plane is constant 0 on its own axis...
+    assert all(v == 0 for v in planes["x=0"].x)
+    assert all(v == 0 for v in planes["y=0"].y)
+    assert all(v == 0 for v in planes["z=0"].z)
+
+    # ...and spans (covers) the marker cloud on its other two axes.
+    markers = [tr for tr in fig.data if isinstance(tr, go.Scatter3d)]
+    xs = [v for tr in markers for v in tr.x]
+    ys = [v for tr in markers for v in tr.y]
+    zs = [v for tr in markers for v in tr.z]
+    assert min(planes["x=0"].y) <= min(ys) and max(planes["x=0"].y) >= max(ys)
+    assert min(planes["x=0"].z) <= min(zs) and max(planes["x=0"].z) >= max(zs)
+    assert min(planes["y=0"].x) <= min(xs) and max(planes["y=0"].x) >= max(xs)
+    assert min(planes["z=0"].x) <= min(xs) and max(planes["z=0"].x) >= max(xs)
 
 
 def test_catalog_asset_classes_get_distinct_non_fallback_colors():

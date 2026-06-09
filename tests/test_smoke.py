@@ -74,8 +74,12 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert isinstance(scatter, go.FigureWidget)
     assert isinstance(treemap, go.FigureWidget)
     assert isinstance(regime_section, W.VBox)
-    # v0.7.1: the scatter is 3D (Scatter3d traces) with no in-figure title.
-    assert scatter.data and all(isinstance(tr, go.Scatter3d) for tr in scatter.data)
+    # v0.7.1: the scatter is 3D (Scatter3d markers) with no in-figure title.
+    # v0.8.6: plus three translucent Mesh3d zero-reference planes (x=0/y=0/z=0).
+    assert scatter.data
+    assert [tr for tr in scatter.data if isinstance(tr, go.Scatter3d)]
+    planes = {tr.name for tr in scatter.data if isinstance(tr, go.Mesh3d)}
+    assert planes == {"x=0", "y=0", "z=0"}
     assert not scatter.layout.title.text
 
 

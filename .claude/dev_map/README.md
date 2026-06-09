@@ -59,6 +59,9 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   dropdown (volatility / trend / liquidity / rate-level) and conditional buckets
   (e.g. VIX buckets) that condition each chart — volatility wired this cycle, the
   rest scaffolded.
+- [ ] `v0.8.6` — Factor Scatter Zero Planes: three translucent zero-reference
+  planes (x=0/y=0/z=0) through the Platform 3D factor-beta scatter so the origin
+  reads in every dimension (small enhancement; slated to ship ahead of v0.8.5).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
