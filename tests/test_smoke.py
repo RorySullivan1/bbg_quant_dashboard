@@ -134,7 +134,7 @@ def test_correlation_benchmark_regime_controls():
 def test_superlatives_window_toggle_re_renders_live():
     # v0.8.x: a 1W/1M/3M/6M ToggleButtons drives the Market Superlatives board;
     # changing it re-renders the panel live from the cache (no BQL) with the
-    # matching window label. The board carries the 19 superlative cards.
+    # matching window label. The v0.8.4 board carries 20 superlative cards.
     app = build_app(verbose=False)
     widgets = list(_walk(app))
     toggle = next(
@@ -150,13 +150,13 @@ def test_superlatives_window_toggle_re_renders_live():
     )
     before = panel.value
     assert "Past Month" in before
-    assert before.count("bbg-superlative") == 19  # all 19 cards rendered
+    assert before.count("bbg-superlative") == 20  # all 20 cards rendered
     assert "title='" in before  # hover descriptions present
 
     toggle.value = 5  # WEEK_WINDOW → fires the observer
     after = panel.value
     assert "Past Week" in after
-    assert after.count("bbg-superlative") == 19
+    assert after.count("bbg-superlative") == 20
     assert after != before  # the board recomputed for the new window
 
 

@@ -24,25 +24,26 @@ def _meta(rows: list[dict]) -> pd.DataFrame:
 
 
 SUPERLATIVE_LABELS = {
-    "Top performer",
-    "Weakest performer",
-    "Strongest trend",
+    "Best performer",
+    "Worst performer",
+    "Most trending",
+    "Most mean-reverting",
     "Longest bull run",
-    "Biggest turnaround",
-    "Most extended",
-    "Best risk-adjusted",
-    "Best Sortino",
-    "Highest Calmar",
-    "Strongest momentum",
-    "Steadiest",
-    "Most resilient",
-    "Lowest tail risk",
-    "Best diversifier",
-    "Most volatile",
-    "Hardest hit",
-    "Longest losing streak",
+    "Longest bear run",
+    "Most overbought",
     "Most oversold",
-    "Most below trend",
+    "Most extended up",
+    "Most extended down",
+    "Largest drawup",
+    "Deepest drawdown",
+    "Best risk-adjusted",
+    "Worst risk-adjusted",
+    "Highest win rate",
+    "Lowest win rate",
+    "Most positive skew",
+    "Most negative skew",
+    "Lowest VaR",
+    "Fastest recovery",
 }
 
 
@@ -70,7 +71,11 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
     )
     cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
 
-    assert {c["label"] for c in cards} == SUPERLATIVE_LABELS
+    labels = {c["label"] for c in cards}
+    assert labels <= SUPERLATIVE_LABELS  # only known superlatives are emitted
+    # Every card except the optional "Fastest recovery" (which needs a recovered
+    # drawdown inside the window) is defined for this small fixture.
+    assert SUPERLATIVE_LABELS - {"Fastest recovery"} <= labels
     for c in cards:
         assert set(c) >= {
             "label",
@@ -83,11 +88,72 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
         assert c["description"]  # every card carries a hover description
 
     by_label = {c["label"]: c for c in cards}
-    assert by_label["Top performer"]["ticker"] == "AAA Index"
-    assert by_label["Top performer"]["name"] == "Alpha"
-    assert by_label["Weakest performer"]["ticker"] == "BBB Index"
+    # No asset_class column → all tickers share one cohort, so the demeaned
+    # z-rank is monotonic in the raw metric and the extremes match the raw ones.
+    assert by_label["Best performer"]["ticker"] == "AAA Index"
+    assert by_label["Best performer"]["name"] == "Alpha"
+    assert by_label["Worst performer"]["ticker"] == "BBB Index"
     # Opposite-extreme pairs pick opposite tickers.
-    assert by_label["Most volatile"]["ticker"] != by_label["Steadiest"]["ticker"]
+    assert (
+        by_label["Best risk-adjusted"]["ticker"]
+        != by_label["Worst risk-adjusted"]["ticker"]
+    )
+
+
+def test_build_superlatives_z_ranked_value_is_raw_metric(bdays):
+    # Two asset classes: Equity sits structurally higher than Bond. The raw top
+    # performer is the high-class name (EQ2, +12%), but the asset-class-demeaned
+    # z-rank crowns the biggest *cohort-relative* mover (BD2, +6% vs a low Bond
+    # cohort). The "Best performer" card must name BD2 while still displaying
+    # BD2's raw return — proving value uses the raw metric, winner uses the z-rank.
+    idx = bdays(30)
+
+    def ramp(target: float) -> np.ndarray:
+        return np.linspace(100.0, 100.0 * (1.0 + target), len(idx))
+
+    prices = pd.DataFrame(
+        {
+            "EQ1 Index": ramp(0.10),
+            "EQ2 Index": ramp(0.12),
+            "BD1 Index": ramp(0.01),
+            "BD2 Index": ramp(0.06),
+        },
+        index=idx,
+    )
+    meta = _meta(
+        [
+            {
+                "ticker": "EQ1 Index",
+                "name": "E1",
+                "asset_class": "Equity",
+                "live_date": "2010-01-01",
+            },
+            {
+                "ticker": "EQ2 Index",
+                "name": "E2",
+                "asset_class": "Equity",
+                "live_date": "2010-01-01",
+            },
+            {
+                "ticker": "BD1 Index",
+                "name": "B1",
+                "asset_class": "Bond",
+                "live_date": "2010-01-01",
+            },
+            {
+                "ticker": "BD2 Index",
+                "name": "B2",
+                "asset_class": "Bond",
+                "live_date": "2010-01-01",
+            },
+        ]
+    )
+    cards = commentary.build_superlatives(
+        meta, prices, daily_returns(prices), window_days=len(idx)
+    )
+    best = next(c for c in cards if c["label"] == "Best performer")
+    assert best["ticker"] == "BD2 Index"  # cohort-relative winner, not the raw max
+    assert best["value"] == "+6.0%"  # but the displayed value is BD2's raw return
 
 
 def test_build_superlatives_empty_inputs():
@@ -97,10 +163,10 @@ def test_build_superlatives_empty_inputs():
     )
 
 
-def test_build_superlatives_skips_undefined_metric(bdays):
-    # A single-ticker universe has no pairwise correlation, so "Best
-    # diversifier" must be skipped rather than erroring; the per-ticker
-    # cards still render.
+def test_build_superlatives_single_ticker_renders(bdays):
+    # A single-ticker universe has a degenerate cross-section (the demeaned
+    # z-rank is undefined), so the z-ranked cards fall back to the raw metric
+    # rather than erroring; the board still renders without a traceback.
     rng = np.random.default_rng(2)
     idx = bdays(40)
     prices = pd.DataFrame(
@@ -110,8 +176,13 @@ def test_build_superlatives_skips_undefined_metric(bdays):
     meta = _meta([{"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"}])
     cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
     labels = {c["label"] for c in cards}
-    assert "Best diversifier" not in labels  # needs >= 2 tickers
-    assert "Top performer" in labels  # well-defined → present
+    # The lone ticker is its own extreme on every defined metric (z-ranked cards
+    # fall back to the raw value).
+    assert "Best performer" in labels
+    assert "Best risk-adjusted" in labels
+    # Dropped v0.8.0 cards are gone.
+    assert "Best diversifier" not in labels
+    assert "Steadiest" not in labels
 
 
 def test_build_superlatives_tie_break_by_ticker(bdays):
@@ -127,7 +198,7 @@ def test_build_superlatives_tie_break_by_ticker(bdays):
         ]
     )
     cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
-    top = next(c for c in cards if c["label"] == "Top performer")
+    top = next(c for c in cards if c["label"] == "Best performer")
     # Identical paths → tie broken deterministically by sorted ticker.
     assert top["ticker"] == "AAA Index"
 
@@ -155,8 +226,8 @@ def test_build_superlatives_window_sensitivity(bdays):
     returns = daily_returns(prices)
     short = commentary.build_superlatives(meta, prices, returns, window_days=5)
     long = commentary.build_superlatives(meta, prices, returns, window_days=n)
-    short_top = next(c for c in short if c["label"] == "Top performer")["ticker"]
-    long_top = next(c for c in long if c["label"] == "Top performer")["ticker"]
+    short_top = next(c for c in short if c["label"] == "Best performer")["ticker"]
+    long_top = next(c for c in long if c["label"] == "Best performer")["ticker"]
     assert short_top == "REBOUND Index"  # the late rally dominates a 1W window
     assert long_top == "STEADY Index"  # the full-window drawdown sinks REBOUND
 
