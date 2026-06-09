@@ -76,3 +76,37 @@ SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 # directly (not a short-rate spread, unlike the two premia above).
 TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
 FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]
+
+# Regime indicators for the v0.8.5 Platform "Regime Analysis" section. Like the
+# benchmarks/factors, these ride the *single* startup fetch and are excluded
+# from ARP-universe views (the `reindex(columns=meta["ticker"])` drops them).
+# Only the Volatility regime (VIX buckets) is wired this cycle; Trend /
+# Liquidity / Rate-level are scaffolded (ticker=None) and leave the charts on
+# the unconditioned all-days view until a later version supplies them.
+VIX_TICKER = "VIX Index"
+REGIME_TICKERS: list[str] = [VIX_TICKER]
+
+# Tickers whose mock series must be an absolute *level* (not a compounding
+# price) so the absolute buckets below actually partition the off-terminal
+# mock — see `_mock_prices` in `src/bql_client.py`.
+LEVEL_INDICATOR_TICKERS: frozenset[str] = frozenset({VIX_TICKER})
+
+_REGIME_INF = float("inf")
+# regime label -> {"ticker": indicator ticker or None, "buckets": [(label, low,
+# high), ...]} over the indicator's daily level, each a half-open [low, high)
+# range (±inf for the open ends). Populated only for Volatility this cycle; the
+# scaffolded regimes carry no ticker and no buckets.
+REGIME_SPECS: dict[str, dict] = {
+    "Volatility": {
+        "ticker": VIX_TICKER,
+        "buckets": [
+            ("VIX < 15", -_REGIME_INF, 15.0),
+            ("15 ≤ VIX < 25", 15.0, 25.0),
+            ("25 ≤ VIX < 35", 25.0, 35.0),
+            ("VIX ≥ 35", 35.0, _REGIME_INF),
+        ],
+    },
+    "Trend": {"ticker": None, "buckets": []},
+    "Liquidity": {"ticker": None, "buckets": []},
+    "Rate-level": {"ticker": None, "buckets": []},
+}

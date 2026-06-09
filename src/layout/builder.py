@@ -23,6 +23,7 @@ from ..config import (
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
+    REGIME_TICKERS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
     WEEK_WINDOW,
@@ -844,7 +845,10 @@ def build_app(verbose: bool = True) -> W.VBox:
     # equity factor proxy is also a benchmark) while preserving order.
     fetch_tickers = list(
         dict.fromkeys(
-            list(meta["ticker"]) + list(BENCHMARK_TICKERS) + list(FACTOR_TICKERS)
+            list(meta["ticker"])
+            + list(BENCHMARK_TICKERS)
+            + list(FACTOR_TICKERS)
+            + list(REGIME_TICKERS)
         )
     )
     _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
