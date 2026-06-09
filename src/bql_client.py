@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import CACHE_DIR, CACHE_TTL_HOURS
+from .config import CACHE_DIR, CACHE_TTL_HOURS, LEVEL_INDICATOR_TICKERS
 
 try:
     import bql  # type: ignore
@@ -189,6 +189,19 @@ def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
     out = pd.DataFrame(index=idx)
     for ticker in tickers:
         rng = np.random.default_rng(abs(hash(ticker)) % (2**32))
+        if ticker in LEVEL_INDICATOR_TICKERS:
+            # Mean-reverting absolute *level* (VIX-like): hovers ~18 with
+            # occasional spikes, clipped to [9, 60] so the absolute regime
+            # buckets (VIX<15 / 15–25 / 25–35 / ≥35) all get populated.
+            mean = 18.0
+            level = mean
+            vals = np.empty(len(idx))
+            for t in range(len(idx)):
+                level += 0.05 * (mean - level) + rng.normal(0.0, 1.5)
+                level = min(max(level, 9.0), 60.0)
+                vals[t] = level
+            out[ticker] = vals
+            continue
         drift = rng.uniform(0.02, 0.10) / 252
         vol = rng.uniform(0.08, 0.30) / np.sqrt(252)
         steps = rng.normal(loc=drift, scale=vol, size=len(idx))

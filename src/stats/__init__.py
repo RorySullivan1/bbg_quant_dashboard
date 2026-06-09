@@ -49,6 +49,11 @@ from .performance import (
     weekly_change,
     win_rate,
 )
+from .regime import (
+    regime_correlation,
+    regime_mask,
+    regime_risk_return,
+)
 from .risk import (
     ann_beta,
     calmar_ratio,
@@ -123,6 +128,10 @@ __all__ = [
     "historical_var",
     "rsi",
     "quant_metrics_table",
+    # regime
+    "regime_mask",
+    "regime_risk_return",
+    "regime_correlation",
     # rolling
     "rolling_return",
     "rolling_volatility",

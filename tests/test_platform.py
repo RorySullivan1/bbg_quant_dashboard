@@ -14,8 +14,12 @@ from src.data import load_metadata
 from src.layout.platform import (
     _asset_class_colors,
     _factor_beta_scatter,
+    _regime_heatmap,
+    _regime_scatter,
     _treemap,
     _update_factor_scatter,
+    _update_regime_heatmap,
+    _update_regime_scatter,
     _update_treemap,
 )
 from src.layout.theme import _v_ref
@@ -144,3 +148,89 @@ def test_update_treemap_empty_clears_traces():
     fig = _treemap()
     _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252)
     assert fig.data == ()
+
+
+# --- v0.8.5 Regime Analysis: regime scatter + heatmap ----------------------
+
+
+def _regime_universe(n: int = 300):
+    """Three strategies + a VIX-like indicator series (levels in ~[15, 40))."""
+    idx = pd.bdate_range("2022-01-03", periods=n)
+    rng = np.random.default_rng(7)
+    arp = pd.DataFrame(
+        {
+            "AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0003, 0.012, n)),
+            "BBB Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0002, 0.008, n)),
+            "CCC Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0001, 0.010, n)),
+        },
+        index=idx,
+    )
+    vix = pd.Series(
+        15.0 + 8.0 * np.abs(rng.normal(0, 1, n)), index=idx, name="VIX Index"
+    )
+    return arp, vix
+
+
+def _regime_meta() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "asset_class": ["Equity", "Equity", "Fixed Income"],
+            "theme": ["Growth", "Growth", "Carry"],
+        }
+    )
+
+
+def test_update_regime_scatter_one_trace_per_asset_class():
+    fig = _regime_scatter()
+    arp, vix = _regime_universe()
+    _update_regime_scatter(
+        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    assert not fig.layout.title.text
+    by_name = {tr.name: tr for tr in fig.data}
+    assert set(by_name) == {"Equity", "Fixed Income"}
+    for tr in fig.data:
+        assert isinstance(tr, go.Scatter)
+        assert len(tr.x) == len(tr.y) >= 1
+        assert all(np.isfinite(v) for v in tr.x)
+
+
+def test_update_regime_scatter_unconditioned_when_no_indicator():
+    # A scaffolded regime passes no indicator / no bucket → all-days view.
+    fig = _regime_scatter()
+    arp, _ = _regime_universe()
+    _update_regime_scatter(
+        fig, arp, None, _regime_meta(), low=None, high=None, lookback=200
+    )
+    assert fig.data  # renders over the full window
+
+
+def test_update_regime_scatter_empty_clears():
+    fig = _regime_scatter()
+    _update_regime_scatter(
+        fig, pd.DataFrame(), None, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    assert fig.data == ()
+
+
+def test_update_regime_heatmap_theme_scoped():
+    fig = _regime_heatmap()
+    arp, vix = _regime_universe()
+    _update_regime_heatmap(
+        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, theme="Growth", lookback=200
+    )
+    assert len(fig.data) == 1
+    hm = fig.data[0]
+    assert isinstance(hm, go.Heatmap)
+    # Growth = AAA + BBB → a 2×2 per-ticker matrix.
+    assert len(hm.x) == 2 and len(hm.y) == 2
+
+
+def test_update_regime_heatmap_single_ticker_theme_clears():
+    fig = _regime_heatmap()
+    arp, vix = _regime_universe()
+    _update_regime_heatmap(
+        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, theme="Carry", lookback=200
+    )
+    assert fig.data == ()  # Carry has only CCC → < 2 columns

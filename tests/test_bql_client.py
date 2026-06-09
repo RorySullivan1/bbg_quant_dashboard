@@ -20,6 +20,7 @@ from datetime import date
 import pandas as pd
 import pytest
 import src.bql_client as bc
+from src.config import VIX_TICKER
 
 
 @pytest.fixture(autouse=True)
@@ -105,3 +106,17 @@ def test_use_cache_false_refetches(monkeypatch):
     bc.fetch_prices(_TICKERS, _START, _END, use_cache=False)  # Refresh prices
 
     assert calls["n"] == 2  # use_cache=False bypasses the cache reads
+
+
+def test_mock_vix_is_a_bounded_level_spanning_buckets():
+    # v0.8.5: the VIX regime indicator mocks as a bounded mean-reverting *level*
+    # (not a compounding price), so the absolute VIX buckets partition it.
+    df = bc._mock_prices([VIX_TICKER, "AAA Index"], date(2020, 1, 1), date(2024, 1, 1))
+    vix = df[VIX_TICKER]
+    assert vix.min() >= 9.0 and vix.max() <= 60.0
+    assert vix.mean() < 40.0  # hovers low, unlike the ~100+ GBM strategies
+    # Crosses the lower regime buckets so they actually partition the mock.
+    assert (vix < 15).any()
+    assert ((vix >= 15) & (vix < 25)).any()
+    # A normal strategy still compounds around 100 (the level branch is scoped).
+    assert df["AAA Index"].iloc[0] > 50
