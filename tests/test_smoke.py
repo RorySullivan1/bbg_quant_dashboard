@@ -52,6 +52,8 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
+    # v0.8.5: a Regime Analysis section sits between the factor scatter and the
+    # treemap header.
     (
         header,
         controls,
@@ -59,6 +61,7 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
         lookback_row,
         scatter_header,
         scatter,
+        regime_section,
         treemap_header,
         treemap,
     ) = platform_panel.children
@@ -70,9 +73,72 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert toggles[0].label == "1Y"
     assert isinstance(scatter, go.FigureWidget)
     assert isinstance(treemap, go.FigureWidget)
+    assert isinstance(regime_section, W.VBox)
     # v0.7.1: the scatter is 3D (Scatter3d traces) with no in-figure title.
     assert scatter.data and all(isinstance(tr, go.Scatter3d) for tr in scatter.data)
     assert not scatter.layout.title.text
+
+
+def test_regime_analysis_section_conditions_live():
+    # v0.8.5: a Regime Analysis section (between the factor scatter and the
+    # treemap) with shared regime controls driving two sub-tabs. Volatility
+    # (VIX buckets) conditions the charts live from the cache; the scaffolded
+    # regimes are inert (unconditioned, no traceback).
+    import plotly.graph_objects as go
+    from src.data import load_metadata
+
+    app = build_app(verbose=False)
+    platform_panel = app.children[5].children[0]
+    regime_section = platform_panel.children[6]
+    assert isinstance(regime_section, W.VBox)
+
+    controls = regime_section.children[1]
+    regime_dds = [c for c in controls.children if isinstance(c, W.Dropdown)]
+    regime_type, bucket_dd = regime_dds[0], regime_dds[1]
+    assert list(regime_type.options) == [
+        "Volatility",
+        "Trend",
+        "Liquidity",
+        "Rate-level",
+    ]
+    assert regime_type.value == "Volatility"
+    assert bucket_dd.layout.display == ""  # Volatility shows the VIX-bucket dd
+
+    # Risk/Return sub-tab is the default content → a 2D scatter conditioned on
+    # the default VIX bucket renders markers.
+    content = regime_section.children[3]
+    scatter_fig = content.children[0]
+    assert isinstance(scatter_fig, go.FigureWidget)
+    assert scatter_fig.data
+    assert all(isinstance(t, go.Scatter) for t in scatter_fig.data)
+    rr_bucketed = [tuple(t.x) for t in scatter_fig.data]
+
+    # A scaffolded regime hides the bucket dd and reverts to the unconditioned
+    # (all-days) view without a traceback — and the conditioning visibly changed
+    # the chart (subset days vs all days → different vols).
+    regime_type.value = "Trend"
+    assert bucket_dd.layout.display == "none"
+    assert scatter_fig.data
+    assert [tuple(t.x) for t in scatter_fig.data] != rr_bucketed
+
+    # The Correlation sub-tab swaps in a Theme dropdown + a heatmap; scoping to a
+    # theme with ≥2 tickers (over a populated VIX bucket) yields a heatmap trace.
+    corr_btn = regime_section.children[2].children[1]
+    corr_btn.click()
+    corr_view = content.children[0]
+    theme_dd = next(
+        c for c in corr_view.children[0].children if isinstance(c, W.Dropdown)
+    )
+    heatmap_fig = corr_view.children[1]
+    assert isinstance(heatmap_fig, go.FigureWidget)
+
+    counts = load_metadata()["theme"].dropna().value_counts()
+    multi = [t for t in theme_dd.options if t in counts.index and counts[t] >= 2]
+    if multi:
+        regime_type.value = "Volatility"  # re-condition on VIX < 15 (many days)
+        theme_dd.value = multi[0]
+        assert heatmap_fig.data
+        assert isinstance(heatmap_fig.data[0], go.Heatmap)
 
 
 def _walk(widget):

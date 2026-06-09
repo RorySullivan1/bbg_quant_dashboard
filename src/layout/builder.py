@@ -23,6 +23,7 @@ from ..config import (
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
+    REGIME_SPECS,
     REGIME_TICKERS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
@@ -93,8 +94,12 @@ from .html import (
 from .panes import _make_analysis_pane
 from .platform import (
     _factor_beta_scatter,
+    _regime_heatmap,
+    _regime_scatter,
     _treemap,
     _update_factor_scatter,
+    _update_regime_heatmap,
+    _update_regime_scatter,
     _update_treemap,
 )
 from .state import DashboardState
@@ -671,6 +676,62 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     treemap_fig = _treemap()
 
+    # --- v0.8.5 Regime Analysis section (sits between the factor scatter and the
+    # treemap): a pill-tabbed Risk-vs-Return / Correlation pair conditioned on a
+    # market-regime bucket. Volatility (VIX buckets) is wired; Trend / Liquidity /
+    # Rate-level are scaffolded (inert) dropdown entries that leave the charts
+    # unconditioned. Shared regime controls drive both sub-tabs.
+    regime_header = W.HTML(
+        render_template("grid_header", **STYLE_CTX, text="Regime analysis")
+    )
+    regime_scatter_fig = _regime_scatter()
+    regime_heatmap_fig = _regime_heatmap()
+    regime_type_dd = W.Dropdown(
+        options=list(REGIME_SPECS.keys()),
+        value="Volatility",
+        layout=W.Layout(width="150px"),
+    )
+    _vol_buckets = REGIME_SPECS["Volatility"]["buckets"]
+    regime_bucket_dd = W.Dropdown(
+        options=[(label, (low, high)) for label, low, high in _vol_buckets],
+        value=(_vol_buckets[0][1], _vol_buckets[0][2]),
+        layout=W.Layout(width="160px"),
+    )
+    _regime_themes = sorted(meta["theme"].dropna().astype(str).unique())
+    regime_theme_dd = W.Dropdown(
+        options=_regime_themes or ["—"],
+        value=(_regime_themes[0] if _regime_themes else "—"),
+        layout=W.Layout(width="220px"),
+    )
+    regime_controls = W.HBox(
+        [_section_label("Regime"), regime_type_dd, regime_bucket_dd],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
+    regime_rr_btn = _make_tab_button(
+        "Risk vs Return", active=True, width="170px", height="32px"
+    )
+    regime_corr_btn = _make_tab_button(
+        "Correlation", active=False, width="170px", height="32px"
+    )
+    regime_tab_bar = W.HBox(
+        [regime_rr_btn, regime_corr_btn], layout=W.Layout(padding="2px 0")
+    )
+    regime_corr_view = W.VBox(
+        [
+            W.HBox(
+                [_section_label("Theme"), regime_theme_dd],
+                layout=W.Layout(align_items="center", padding="2px 0"),
+            ),
+            regime_heatmap_fig,
+        ],
+        layout=W.Layout(width="100%"),
+    )
+    regime_content = W.Box([regime_scatter_fig], layout=W.Layout(width="100%"))
+    regime_section = W.VBox(
+        [regime_header, regime_controls, regime_tab_bar, regime_content],
+        layout=W.Layout(width="100%"),
+    )
+
     pane_left = _make_analysis_pane("left")
     pane_right = _make_analysis_pane("right")
     analysis_pane_row = W.HBox(
@@ -722,6 +783,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             lookback_row,
             scatter_header,
             factor_scatter_fig,
+            regime_section,
             treemap_header,
             treemap_fig,
         ],
@@ -826,7 +888,100 @@ def build_app(verbose: bool = True) -> W.VBox:
                 f"treemap render failed:\n{traceback.format_exc()}"
             )
 
-    for _render in (_render_factor_scatter, _render_treemap):
+    # --- Regime Analysis closures (v0.8.5): live re-slice of the cache on the
+    # regime/bucket/theme dropdowns and the shared lookback toggle — no BQL.
+    def _resolve_regime_bucket() -> tuple[float | None, float | None]:
+        """The (low, high) bounds for the active regime bucket, or (None, None)
+        for a scaffolded regime with no buckets (→ unconditioned all-days view)."""
+        if not REGIME_SPECS.get(regime_type_dd.value, {}).get("buckets"):
+            return (None, None)
+        low, high = regime_bucket_dd.value
+        return (low, high)
+
+    def _regime_indicator() -> pd.Series | None:
+        """The regime indicator series from the cache, or None (scaffolded regime
+        or an indicator absent from the fetch → unconditioned)."""
+        ticker = REGIME_SPECS.get(regime_type_dd.value, {}).get("ticker")
+        if not ticker or ticker not in state.universe_prices.columns:
+            return None
+        return state.universe_prices[ticker]
+
+    def _render_regime_scatter(_change=None) -> None:
+        """Render the regime risk/return scatter at the current regime bucket +
+        lookback, live from the cache (no BQL)."""
+        if state.arp_universe_prices.empty:
+            return
+        try:
+            low, high = _resolve_regime_bucket()
+            _update_regime_scatter(
+                regime_scatter_fig,
+                state.arp_universe_prices,
+                _regime_indicator(),
+                meta,
+                low=low,
+                high=high,
+                lookback=lookback_selector.value,
+            )
+        except Exception:
+            state.init_errors.append(
+                f"regime scatter render failed:\n{traceback.format_exc()}"
+            )
+
+    def _render_regime_heatmap(_change=None) -> None:
+        """Render the theme-scoped regime correlation heatmap at the current
+        regime bucket + theme + lookback, live from the cache (no BQL)."""
+        if state.arp_universe_prices.empty:
+            return
+        try:
+            low, high = _resolve_regime_bucket()
+            _update_regime_heatmap(
+                regime_heatmap_fig,
+                state.arp_universe_prices,
+                _regime_indicator(),
+                meta,
+                low=low,
+                high=high,
+                theme=regime_theme_dd.value,
+                lookback=lookback_selector.value,
+            )
+        except Exception:
+            state.init_errors.append(
+                f"regime heatmap render failed:\n{traceback.format_exc()}"
+            )
+
+    def _sync_regime_controls(_change=None) -> None:
+        # The VIX-bucket dropdown shows only for a regime with populated buckets;
+        # scaffolded regimes hide it and leave the charts unconditioned.
+        has_buckets = bool(REGIME_SPECS.get(regime_type_dd.value, {}).get("buckets"))
+        regime_bucket_dd.layout.display = "" if has_buckets else "none"
+
+    def _on_regime_type(_change=None) -> None:
+        _sync_regime_controls()
+        _render_regime_scatter()
+        _render_regime_heatmap()
+
+    def _activate_regime_tab(which: str) -> None:
+        is_rr = which == "rr"
+        _style_tab_button(regime_rr_btn, active=is_rr)
+        _style_tab_button(regime_corr_btn, active=not is_rr)
+        regime_content.children = (regime_scatter_fig if is_rr else regime_corr_view,)
+
+    regime_type_dd.observe(_on_regime_type, names="value")
+    regime_bucket_dd.observe(
+        lambda _c: (_render_regime_scatter(), _render_regime_heatmap()),
+        names="value",
+    )
+    regime_theme_dd.observe(lambda _c: _render_regime_heatmap(), names="value")
+    regime_rr_btn.on_click(lambda _b: _activate_regime_tab("rr"))
+    regime_corr_btn.on_click(lambda _b: _activate_regime_tab("corr"))
+    _sync_regime_controls()
+
+    for _render in (
+        _render_factor_scatter,
+        _render_treemap,
+        _render_regime_scatter,
+        _render_regime_heatmap,
+    ):
         lookback_selector.observe(_render, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
@@ -882,6 +1037,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             _render_universe_grid()
             _render_factor_scatter()
             _render_treemap()
+            _render_regime_scatter()
+            _render_regime_heatmap()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -1471,6 +1628,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             _render_universe_grid()
             _render_factor_scatter()
             _render_treemap()
+            _render_regime_scatter()
+            _render_regime_heatmap()
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
