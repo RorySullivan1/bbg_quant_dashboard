@@ -160,6 +160,38 @@ def test_superlatives_window_toggle_re_renders_live():
     assert after != before  # the board recomputed for the new window
 
 
+def test_highlights_sections_are_height_capped_and_scrollable():
+    # v0.8.x: each highlights section's card area is bounded (~45vh) and scrolls
+    # past it, so a tall board doesn't push the page down. The headers stay
+    # outside the scroll regions.
+    from src.layout.html import _render_highlights
+
+    sup = [
+        {
+            "label": "Top performer",
+            "value": "+5.0%",
+            "name": "Alpha",
+            "ticker": "AAA",
+            "sentiment": "positive",
+            "description": "Highest return.",
+        }
+    ]
+    launches = [
+        {
+            "name": "New One",
+            "ticker": "NEW",
+            "meta": "Equity · Trend · USD",
+            "live_date": "2026-05-30",
+            "days_ago": 10,
+            "since_return": "+2.0%",
+        }
+    ]
+    html = _render_highlights(sup, launches)
+    # Both panels' card areas are capped + scrollable (one per section).
+    assert html.count("max-height:45vh") == 2
+    assert html.count("overflow-y:auto") == 2
+
+
 def test_masthead_renders():
     app = build_app(verbose=False)
     banner = app.children[1]
