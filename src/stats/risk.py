@@ -73,6 +73,54 @@ def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
+def return_skew(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker skewness of daily returns over the trailing window.
+
+    Positive = a right tail (occasional large gains); negative = a left tail
+    (occasional large losses). Columns with fewer than three valid points in
+    the window are NaN. Powers the "Most positive / Most negative skew"
+    superlatives.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    window = returns.tail(window_days)
+    out = window.skew()
+    out[window.notna().sum() < 3] = np.nan
+    return out.rename("return_skew")
+
+
+def recovery_days(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker days to recover from the window's largest drawdown.
+
+    For each ticker, finds the deepest peak-to-trough drawdown in the trailing
+    ``window_days`` and counts the trading days from that trough until price
+    first regains the pre-drawdown peak. NaN when there is no drawdown in the
+    window or the drawdown has not recovered by the window's end. "Fastest
+    recovery" = the minimum across the catalog.
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    window = prices.tail(window_days)
+    out: dict[str, float] = {}
+    for col in window.columns:
+        series = window[col].dropna()
+        if len(series) < 2:
+            out[col] = np.nan
+            continue
+        running_max = series.cummax()
+        dd = series / running_max - 1.0
+        if dd.min() >= -1e-12:  # no meaningful drawdown
+            out[col] = np.nan
+            continue
+        trough_pos = int(dd.to_numpy().argmin())
+        peak_val = running_max.iloc[trough_pos]
+        after = series.iloc[trough_pos:].to_numpy()
+        recovered = np.flatnonzero(after >= peak_val)
+        recovered = recovered[recovered > 0]  # strictly after the trough
+        out[col] = float(recovered[0]) if recovered.size else np.nan
+    return pd.Series(out, dtype=float).rename("recovery_days")
+
+
 # ---- Quantitative filter metrics (per-ticker scalars) ---------------------
 
 

@@ -539,3 +539,146 @@ def test_ma_spread_insufficient_history_is_nan(bdays):
 
 def test_ma_spread_empty_passthrough():
     assert stats.ma_spread(pd.DataFrame(), window_days=21).empty
+
+
+# --- v0.8.4 superlative-redo helpers ---------------------------------------
+
+
+def test_max_drawup_window(tiny_prices):
+    du = stats.max_drawup(tiny_prices, years=10)  # window covers all rows
+    # AAA only rises → biggest run-up is the whole ramp: 133.1/100 - 1.
+    assert du["AAA Index"] == pytest.approx(0.331)
+    # BBB: cummin hits 90 → 150/90 - 1 is the largest run-up off the trough.
+    assert du["BBB Index"] == pytest.approx(150.0 / 90.0 - 1.0)
+
+
+def test_max_drawup_empty_safe():
+    assert stats.max_drawup(pd.DataFrame(), years=1).empty
+
+
+def test_asset_class_demeaned_zscore_neutralizes_class_level():
+    # Equity sits structurally higher than Bond. The raw winner is an equity
+    # name, but after demeaning each class the biggest cohort-relative mover is
+    # a bond name → the demeaned-z winner differs from the raw idxmax.
+    series = pd.Series(
+        {"E1 Index": 10.0, "E2 Index": 12.0, "B1 Index": 1.0, "B2 Index": 5.0}
+    )
+    asset_class = pd.Series(
+        {
+            "E1 Index": "Equity",
+            "E2 Index": "Equity",
+            "B1 Index": "Bond",
+            "B2 Index": "Bond",
+        }
+    )
+    z = stats.asset_class_demeaned_zscore(series, asset_class)
+    assert series.idxmax() == "E2 Index"  # raw winner is the high-class name
+    assert z.idxmax() == "B2 Index"  # cohort-relative winner after demeaning
+    assert z["B2 Index"] > z["E2 Index"]
+
+
+def test_asset_class_demeaned_zscore_empty():
+    assert stats.asset_class_demeaned_zscore(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    ).empty
+
+
+def test_return_autocorr_trending_is_positive(bdays):
+    idx = bdays(30)
+    # Perfectly monotonic returns → lag-1 autocorrelation 1.0 (max persistence).
+    rets = pd.DataFrame({"X Index": np.linspace(0.001, 0.030, len(idx))}, index=idx)
+    assert stats.return_autocorr(rets, window_days=30)["X Index"] == pytest.approx(1.0)
+
+
+def test_return_autocorr_alternating_is_negative(bdays):
+    idx = bdays(30)
+    vals = np.tile([0.01, -0.01], len(idx) // 2)  # perfectly mean-reverting
+    rets = pd.DataFrame({"X Index": vals}, index=idx)
+    assert stats.return_autocorr(rets, window_days=30)["X Index"] == pytest.approx(-1.0)
+
+
+def test_return_autocorr_short_history_is_nan(bdays):
+    idx = bdays(3)  # 3 points < lag + 3 = 4 → NaN
+    rets = pd.DataFrame({"X Index": [0.01, -0.01, 0.01]}, index=idx)
+    assert np.isnan(stats.return_autocorr(rets, window_days=21)["X Index"])
+
+
+def test_return_autocorr_empty_passthrough():
+    assert stats.return_autocorr(pd.DataFrame(), window_days=21).empty
+
+
+def test_macd_histogram_recent_up_positive_recent_down_negative(bdays):
+    idx = bdays(80)
+    # Flat for 60 days then a sharp recent move — the histogram reflects the
+    # latest momentum direction (MACD above/below its signal line).
+    up_vals = np.concatenate([np.full(60, 100.0), np.linspace(100.0, 130.0, 20)])
+    dn_vals = np.concatenate([np.full(60, 100.0), np.linspace(100.0, 70.0, 20)])
+    up = pd.DataFrame({"UP Index": up_vals}, index=idx)
+    dn = pd.DataFrame({"DN Index": dn_vals}, index=idx)
+    assert stats.macd_histogram(up)["UP Index"] > 0
+    assert stats.macd_histogram(dn)["DN Index"] < 0
+
+
+def test_macd_histogram_short_history_is_nan(bdays):
+    idx = bdays(20)  # fewer than slow=26 observations → NaN
+    prices = pd.DataFrame({"X Index": np.linspace(100.0, 120.0, len(idx))}, index=idx)
+    assert np.isnan(stats.macd_histogram(prices)["X Index"])
+
+
+def test_macd_histogram_empty_passthrough():
+    assert stats.macd_histogram(pd.DataFrame()).empty
+
+
+def test_recovery_days_counts_trough_to_recovery(bdays):
+    idx = bdays(5)
+    # peak 110 (day1) → trough 90 (day2) → regains 110 at day4 → 2 days later.
+    prices = pd.DataFrame({"X Index": [100.0, 110.0, 90.0, 100.0, 110.0]}, index=idx)
+    assert stats.recovery_days(prices, window_days=21)["X Index"] == pytest.approx(2.0)
+
+
+def test_recovery_days_no_drawdown_is_nan(bdays):
+    idx = bdays(5)
+    prices = pd.DataFrame({"X Index": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+    assert np.isnan(stats.recovery_days(prices, window_days=21)["X Index"])
+
+
+def test_recovery_days_unrecovered_is_nan(bdays):
+    idx = bdays(4)
+    # Drops to 90 and only claws back to 95 — never regains the 110 peak.
+    prices = pd.DataFrame({"X Index": [100.0, 110.0, 90.0, 95.0]}, index=idx)
+    assert np.isnan(stats.recovery_days(prices, window_days=21)["X Index"])
+
+
+def test_return_skew_sign(bdays):
+    idx = bdays(10)
+    right = pd.DataFrame({"R Index": [-0.01] * 9 + [0.2]}, index=idx)  # right tail
+    left = pd.DataFrame({"L Index": [0.01] * 9 + [-0.2]}, index=idx)  # left tail
+    assert stats.return_skew(right, window_days=21)["R Index"] > 0
+    assert stats.return_skew(left, window_days=21)["L Index"] < 0
+
+
+def test_return_skew_short_history_is_nan(bdays):
+    idx = bdays(2)  # fewer than 3 points → skew undefined → NaN
+    rets = pd.DataFrame({"X Index": [0.01, -0.01]}, index=idx)
+    assert np.isnan(stats.return_skew(rets, window_days=21)["X Index"])
+
+
+def test_return_skew_empty_passthrough():
+    assert stats.return_skew(pd.DataFrame(), window_days=21).empty
+
+
+def test_win_rate_fraction_of_up_days(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [0.01, 0.01, -0.01, 0.02]}, index=idx)
+    assert stats.win_rate(rets, window_days=21)["X Index"] == pytest.approx(0.75)
+
+
+def test_win_rate_excludes_nan_days(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [0.01, np.nan, -0.01, 0.02]}, index=idx)
+    # valid days = 3, up days = 2 → 2/3.
+    assert stats.win_rate(rets, window_days=21)["X Index"] == pytest.approx(2.0 / 3.0)
+
+
+def test_win_rate_empty_passthrough():
+    assert stats.win_rate(pd.DataFrame(), window_days=21).empty

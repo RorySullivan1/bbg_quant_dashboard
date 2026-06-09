@@ -148,6 +148,74 @@ def trend_strength(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     return pd.Series(out, dtype=float).rename("trend_strength")
 
 
+def return_autocorr(
+    returns: pd.DataFrame, *, window_days: int = 21, lag: int = 1
+) -> pd.Series:
+    """Per-ticker lag-``lag`` autocorrelation of daily returns over the window.
+
+    Pearson correlation between each ticker's daily returns and their own
+    ``lag``-shifted copy over the trailing ``window_days``. A positive value
+    means returns persist (trending); a negative value means they reverse
+    (mean-reverting). Columns with fewer than ``lag + 3`` valid points — or
+    zero return variance — are NaN. Powers the "Most trending / Most
+    mean-reverting" superlatives.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    window = returns.tail(window_days)
+    out: dict[str, float] = {}
+    for col in window.columns:
+        series = window[col].dropna()
+        if len(series) < lag + 3:
+            out[col] = np.nan
+            continue
+        out[col] = series.autocorr(lag=lag)
+    return pd.Series(out, dtype=float).rename("return_autocorr")
+
+
+def macd_histogram(
+    prices: pd.DataFrame, *, fast: int = 12, slow: int = 26, signal: int = 9
+) -> pd.Series:
+    """Per-ticker MACD histogram (latest value, normalized by price).
+
+    MACD line = ``EMA(fast) - EMA(slow)``; signal = ``EMA(signal)`` of the MACD
+    line; histogram = ``MACD - signal``, divided by the last price so the value
+    is comparable across tickers of different price levels. Returns the latest
+    value per ticker over the **full history** — a fixed-lookback oscillator
+    (12/26/9) that is **independent of the window toggle**. Columns with fewer
+    than ``slow`` valid observations are NaN. Powers the "Most extended up /
+    down" superlatives.
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    ema_fast = prices.ewm(span=fast, adjust=False).mean()
+    ema_slow = prices.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    hist = (macd_line - signal_line).ffill().iloc[-1]
+    last = prices.ffill().iloc[-1]
+    out = hist.divide(last.replace(0, np.nan))
+    out[prices.notna().sum() < slow] = np.nan
+    return out.rename("macd_histogram")
+
+
+def win_rate(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
+    """Per-ticker fraction of up days over the trailing window.
+
+    ``mean(returns > 0)`` over the last ``window_days`` (strictly-positive days
+    divided by the count of valid days; NaN days are excluded from both). In
+    [0, 1]; columns with no valid data in the window are NaN. Powers the
+    "Highest / Lowest win rate" superlatives.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    window = returns.tail(window_days)
+    valid = window.notna().sum()
+    wins = (window > 0).sum()
+    out = wins.divide(valid.replace(0, np.nan))
+    return out.rename("win_rate")
+
+
 def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFrame:
     """Cumulative excess return vs a benchmark, in percentage points.
 
