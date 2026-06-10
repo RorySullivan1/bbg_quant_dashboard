@@ -58,11 +58,10 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
     assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
 
-    # The analytics card is a bordered box: header, controls row (tab bar +
-    # shared lookback), and the swappable tab content.
+    # The analytics card is a bordered box: header, tab bar (pills only), then
+    # the body = HBox[left control column, chart box].
     assert analytics_card._dom_classes == ("bbg-card",)
-    _card_header, controls_row, content = analytics_card.children
-    tab_bar = controls_row.children[0]
+    _card_header, tab_bar, body = analytics_card.children
     pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
     assert [p.description for p in pills] == [
         "Sunburst",
@@ -72,25 +71,28 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert [p.description for p in pills if "is-active" in p._dom_classes] == [
         "Sunburst"
     ]
-    # The shared lookback toggle (defaults to 1Y) sits on the same row.
-    toggles = [c for c in controls_row.children if isinstance(c, W.ToggleButtons)]
+    left_col, chart_box = body.children
+    # The shared lookback toggle (defaults to 1Y) sits at the TOP of the left
+    # control column, above the active tab's controls box.
+    toggles = [c for c in left_col.children if isinstance(c, W.ToggleButtons)]
     assert len(toggles) == 1 and toggles[0].label == "1Y"
+    tab_controls_box = left_col.children[-1]
 
-    # Default tab = sunburst: left column stacks Metric + Window (no Lookback),
-    # the figure fills the rest with a Sunburst trace (z(1W Sharpe) default).
-    left_col, chart_box = content.children[0].children
-    sb_dds = [c for c in left_col.children if isinstance(c, W.Dropdown)]
+    # Default tab = sunburst: the controls box stacks Metric + Window (the
+    # lookback above is shared); the figure fills the rest with a Sunburst trace.
+    sb_dds = [
+        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
+    ]
     assert [d.label for d in sb_dds] == ["Sharpe", "1W"]
     sunburst = chart_box.children[0]
     assert isinstance(sunburst, go.FigureWidget)
     assert sunburst.data and isinstance(sunburst.data[0], go.Sunburst)
 
-    # Factor exposures tab: the 3D scatter (Scatter3d markers + the three Mesh3d
-    # zero planes), chart-only (no left control column).
+    # Factor exposures tab: chart swaps to the 3D scatter (Scatter3d markers +
+    # the three Mesh3d zero planes); its controls box is empty (lookback only).
     pills[2].click()
-    factor_tab = content.children[0]
-    assert len(factor_tab.children) == 1  # chart box only
-    scatter = factor_tab.children[0].children[0]
+    assert len(tab_controls_box.children[0].children) == 0
+    scatter = chart_box.children[0]
     assert isinstance(scatter, go.FigureWidget)
     assert [tr for tr in scatter.data if isinstance(tr, go.Scatter3d)]
     planes = {tr.name for tr in scatter.data if isinstance(tr, go.Mesh3d)}
@@ -109,13 +111,15 @@ def test_regime_analysis_section_conditions_live():
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
     analytics_card = platform_panel.children[3]
-    controls_row, content = analytics_card.children[1], analytics_card.children[2]
-    pills = [c for c in controls_row.children[0].children if isinstance(c, W.Button)]
+    tab_bar, body = analytics_card.children[1], analytics_card.children[2]
+    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
     pills[1].click()  # activate the Regime analysis tab
 
-    regime_tab = content.children[0]
-    left_col, chart_box = regime_tab.children
-    regime_dds = [c for c in left_col.children if isinstance(c, W.Dropdown)]
+    left_col, chart_box = body.children
+    tab_controls_box = left_col.children[-1]
+    regime_dds = [
+        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
+    ]
     regime_type, selector_dd, bucket_dd = regime_dds
     assert list(regime_type.options) == [
         "Volatility",
