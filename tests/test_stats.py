@@ -14,7 +14,6 @@ import pandas as pd
 import pytest
 from src import stats
 from src.config import (
-    HALF_YEAR_WINDOW,
     MONTH_WINDOW,
     TRADING_DAYS_PER_YEAR,
     WEEK_WINDOW,
@@ -378,7 +377,7 @@ def test_factor_beta_matches_ann_beta(bdays):
     )
 
 
-def test_platform_treemap_frame_columns_and_join(multiyear_prices):
+def test_platform_sunburst_frame_columns_and_join(multiyear_prices):
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
@@ -386,29 +385,23 @@ def test_platform_treemap_frame_columns_and_join(multiyear_prices):
             "theme": ["Growth", "Credit", "Energy"],
         }
     )
-    frame = stats.platform_treemap_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["asset_class", "theme", "z"]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
     assert frame.loc["BBB Index", "theme"] == "Credit"
-    assert frame["size_z"].notna().any()
-    # Defaults: size = z(6M Sharpe, 1Y), color = z(1W Sharpe, 1Y) — pin both.
-    size_expected = stats.rolling_metric_zscore(
-        multiyear_prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=252
-    )
-    color_expected = stats.rolling_metric_zscore(
+    assert frame["z"].notna().any()
+    # Default: z(1W Sharpe, 1Y).
+    expected = stats.rolling_metric_zscore(
         multiyear_prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=252
     )
     pd.testing.assert_series_equal(
-        frame["size_z"], size_expected.reindex(frame.index), check_names=False
-    )
-    pd.testing.assert_series_equal(
-        frame["color_z"], color_expected.reindex(frame.index), check_names=False
+        frame["z"], expected.reindex(frame.index), check_names=False
     )
 
 
-def test_platform_treemap_frame_independent_size_color_params(multiyear_prices):
-    """size_z / color_z honor independent metric/window/lookback selections."""
+def test_platform_sunburst_frame_honors_metric_params(multiyear_prices):
+    """z honors the selected metric/window/lookback."""
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
@@ -416,40 +409,28 @@ def test_platform_treemap_frame_independent_size_color_params(multiyear_prices):
             "theme": ["Growth", "Credit", "Energy"],
         }
     )
-    frame = stats.platform_treemap_frame(
+    frame = stats.platform_sunburst_frame(
         multiyear_prices,
         meta,
-        size_metric="vol",
-        size_window=MONTH_WINDOW,
-        size_lookback=TRADING_DAYS_PER_YEAR * 3,
-        color_metric="sortino",
-        color_window=WEEK_WINDOW,
-        color_lookback=TRADING_DAYS_PER_YEAR,
+        metric="sortino",
+        window=MONTH_WINDOW,
+        lookback=TRADING_DAYS_PER_YEAR * 3,
     )
-    size_expected = stats.rolling_metric_zscore(
+    expected = stats.rolling_metric_zscore(
         multiyear_prices,
-        metric="vol",
+        metric="sortino",
         window=MONTH_WINDOW,
         zscore_window=TRADING_DAYS_PER_YEAR * 3,
     )
-    color_expected = stats.rolling_metric_zscore(
-        multiyear_prices,
-        metric="sortino",
-        window=WEEK_WINDOW,
-        zscore_window=TRADING_DAYS_PER_YEAR,
-    )
     pd.testing.assert_series_equal(
-        frame["size_z"], size_expected.reindex(frame.index), check_names=False
-    )
-    pd.testing.assert_series_equal(
-        frame["color_z"], color_expected.reindex(frame.index), check_names=False
+        frame["z"], expected.reindex(frame.index), check_names=False
     )
 
 
-def test_platform_treemap_frame_empty_safe():
+def test_platform_sunburst_frame_empty_safe():
     meta = pd.DataFrame({"ticker": [], "asset_class": [], "theme": []})
-    out = stats.platform_treemap_frame(pd.DataFrame(), meta)
-    assert list(out.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    out = stats.platform_sunburst_frame(pd.DataFrame(), meta)
+    assert list(out.columns) == ["asset_class", "theme", "z"]
     assert out.empty
 
 

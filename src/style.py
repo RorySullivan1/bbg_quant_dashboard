@@ -165,7 +165,7 @@ LINE_PALETTE: tuple[str, ...] = (
 )
 
 
-# Asset-class color map for the v0.7.0 Platform factor-scatter / treemap
+# Asset-class color map for the v0.7.0 Platform factor-scatter
 # (colored by asset class). The original `AssetClassColor`/`ASSET_CLASS_COLORS`
 # were deleted in v0.6.0 Workstream G as dead code; this is a small, focused
 # reintroduction drawn from `LINE_PALETTE` so the colors stay token-driven and

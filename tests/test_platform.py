@@ -10,18 +10,21 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from src.config import HALF_YEAR_WINDOW, WEEK_WINDOW
+import pytest
+from src.config import WEEK_WINDOW
 from src.data import load_metadata
 from src.layout.platform import (
+    _SUNBURST_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_heatmap,
     _regime_scatter,
-    _treemap,
+    _sunburst,
+    _sunburst_leaf_sizes,
     _update_factor_scatter,
     _update_regime_heatmap,
     _update_regime_scatter,
-    _update_treemap,
+    _update_sunburst,
 )
 from src.layout.theme import _v_ref
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
@@ -151,54 +154,71 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
-_TREEMAP_KW = dict(
-    size_metric="sharpe",
-    size_window=HALF_YEAR_WINDOW,
-    size_lookback=252,
-    color_metric="sharpe",
-    color_window=WEEK_WINDOW,
-    color_lookback=252,
-    size_label="6M Sharpe",
-    color_label="1W Sharpe",
+_SUNBURST_KW = dict(
+    metric="sharpe", window=WEEK_WINDOW, lookback=252, label="1W Sharpe"
 )
 
 
-def test_update_treemap_builds_asset_theme_ticker_hierarchy():
-    fig = _treemap()
+def test_sunburst_leaf_sizes_magnitude_drives_arc():
+    # Arc = |z|: equal-magnitude +z/-z get equal arcs; near-zero lands on the
+    # floor; bigger |z| -> bigger arc. Sign is for color, not size.
+    z = pd.Series({"up": 2.0, "down": -2.0, "flat": 0.0})
+    sizes = _sunburst_leaf_sizes(z)
+    floor = _SUNBURST_SIZE_FLOOR * 2.0  # max |z| = 2.0
+    assert sizes["up"] == sizes["down"] == 2.0 + floor
+    assert sizes["flat"] == floor
+    assert sizes["up"] > 10 * sizes["flat"]
+    assert (sizes >= 0).all()
+
+
+def test_sunburst_leaf_sizes_all_zero_uniform():
+    # No deviation anywhere -> uniform fallback (avoids divide-by-zero floor).
+    sizes = _sunburst_leaf_sizes(pd.Series({"a": 0.0, "b": 0.0, "c": 0.0}))
+    assert (sizes == 1.0).all()
+
+
+def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
+    fig = _sunburst()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
-    _update_treemap(fig, arp, _treemap_meta(), **_TREEMAP_KW)
+    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
 
     # No in-figure title (v0.7.3) — the section header stands alone.
     assert not fig.layout.title.text
     assert len(fig.data) == 1
-    tm = fig.data[0]
-    nodes = dict(zip(tm.ids, tm.parents, strict=True))
+    sb = fig.data[0]
+    assert isinstance(sb, go.Sunburst)
+    assert sb.branchvalues == "total"
+    # maxdepth=2 hides the ticker ring until the user drills into a class/theme.
+    assert sb.maxdepth == 2
+    nodes = dict(zip(sb.ids, sb.parents, strict=True))
     # asset-class node is a root; theme nodes hang off it; leaves off the themes.
     assert nodes["Equity"] == ""
     assert nodes["Equity / Growth"] == "Equity"
     assert nodes["Equity / Value"] == "Equity"
     assert nodes["AAA Index"] == "Equity / Growth"
     assert nodes["BBB Index"] == "Equity / Value"
-    # Sizes are non-negative; one color + customdata per node.
-    assert all(v >= 0 for v in tm.values)
-    assert len(tm.marker.colors) == len(tm.ids)
-    assert len(tm.customdata) == len(tm.ids)
-    # Colorbar title reflects the selected color label.
-    assert tm.marker.colorbar.title.text == "z(1W Sharpe)"
+    # Arcs are non-negative; one color per node.
+    assert all(v >= 0 for v in sb.values)
+    assert len(sb.marker.colors) == len(sb.ids)
+    # branchvalues="total": the asset-class arc == the sum of its ticker leaves.
+    val = dict(zip(sb.ids, sb.values, strict=True))
+    assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
+    # Colorbar title reflects the selected metric label.
+    assert sb.marker.colorbar.title.text == "z(1W Sharpe)"
 
 
-def test_update_treemap_labels_drive_colorbar_title():
-    fig = _treemap()
+def test_update_sunburst_label_drives_colorbar_title():
+    fig = _sunburst()
     arp = _universe()[["AAA Index", "BBB Index"]]
-    kw = {**_TREEMAP_KW, "color_metric": "sortino", "color_label": "3M Sortino"}
-    _update_treemap(fig, arp, _treemap_meta(), **kw)
+    kw = {**_SUNBURST_KW, "metric": "sortino", "label": "3M Sortino"}
+    _update_sunburst(fig, arp, _treemap_meta(), **kw)
     assert fig.data[0].marker.colorbar.title.text == "z(3M Sortino)"
 
 
-def test_update_treemap_empty_clears_traces():
-    fig = _treemap()
-    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), **_TREEMAP_KW)
+def test_update_sunburst_empty_clears_traces():
+    fig = _sunburst()
+    _update_sunburst(fig, pd.DataFrame(), _treemap_meta(), **_SUNBURST_KW)
     assert fig.data == ()
 
 

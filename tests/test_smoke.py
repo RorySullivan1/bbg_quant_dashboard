@@ -53,8 +53,8 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
     # v0.8.5: a Regime Analysis section sits between the factor scatter and the
-    # treemap header. v0.8.x: two treemap z-score control rows (tile size + tile
-    # color) sit between the treemap header and figure.
+    # sunburst header. v0.8.x: a single sunburst Z-score control row sits between
+    # the sunburst header and figure.
     (
         header,
         controls,
@@ -63,25 +63,24 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
         scatter_header,
         scatter,
         regime_section,
-        treemap_header,
-        treemap_size_row,
-        treemap_color_row,
-        treemap,
+        sunburst_header,
+        sunburst_controls_row,
+        sunburst,
     ) = platform_panel.children
     dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
     assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
-    # Shared lookback selector (defaults to 1Y) + scatter + treemap figures.
+    # Shared lookback selector (defaults to 1Y) + scatter + sunburst figures.
     toggles = [c for c in lookback_row.children if isinstance(c, W.ToggleButtons)]
     assert len(toggles) == 1
     assert toggles[0].label == "1Y"
     assert isinstance(scatter, go.FigureWidget)
-    assert isinstance(treemap, go.FigureWidget)
-    # Treemap controls: size row defaults to z(6M Sharpe, 1Y), color to
-    # z(1W Sharpe, 1Y).
-    size_dds = [c for c in treemap_size_row.children if isinstance(c, W.Dropdown)]
-    color_dds = [c for c in treemap_color_row.children if isinstance(c, W.Dropdown)]
-    assert [d.label for d in size_dds] == ["Sharpe", "6M", "1Y"]
-    assert [d.label for d in color_dds] == ["Sharpe", "1W", "1Y"]
+    assert isinstance(sunburst, go.FigureWidget)
+    # Sunburst Z-score control defaults to z(1W Sharpe, 1Y); on mock prices the
+    # figure is populated with a Sunburst trace.
+    sb_dds = [c for c in sunburst_controls_row.children if isinstance(c, W.Dropdown)]
+    assert [d.label for d in sb_dds] == ["Sharpe", "1W", "1Y"]
+    assert sunburst.data
+    assert isinstance(sunburst.data[0], go.Sunburst)
     assert isinstance(regime_section, W.VBox)
     # v0.7.1: the scatter is 3D (Scatter3d markers) with no in-figure title.
     # v0.8.6: plus three translucent Mesh3d zero-reference planes (x=0/y=0/z=0).
