@@ -12,7 +12,6 @@ from .config import (
 from .stats import (
     ann_sharpe,
     asset_class_demeaned_zscore,
-    historical_var,
     longest_down_streak,
     longest_up_streak,
     macd_histogram,
@@ -21,7 +20,6 @@ from .stats import (
     period_return,
     return_autocorr,
     return_skew,
-    rsi,
     win_rate,
 )
 
@@ -81,9 +79,7 @@ def build_superlatives(
     sharpe = ann_sharpe(returns, prices, years)
     wr = win_rate(returns, window_days=window_days)
     skew = return_skew(returns, window_days=window_days)
-    var = historical_var(returns, years)
-    # Fixed-lookback oscillators (window-toggle-independent).
-    momentum = rsi(prices)
+    # Fixed-lookback oscillator (window-toggle-independent).
     macd = macd_histogram(prices)
 
     def acz(metric: pd.Series) -> pd.Series:
@@ -179,24 +175,6 @@ def build_superlatives(
         fmt=lambda v: f"{int(v)}d",
         sentiment="negative",
         description="Most consecutive down days (negative daily returns) in the window.",
-    )
-    # --- RSI (raw, fixed 14d lookback) ---
-    rsi_desc = "14-day Wilder RSI of daily closing levels."
-    add(
-        "Most overbought",
-        momentum,
-        mode="max",
-        fmt=lambda v: f"{v:.0f}",
-        sentiment="neutral",
-        description=rsi_desc,
-    )
-    add(
-        "Most oversold",
-        momentum,
-        mode="min",
-        fmt=lambda v: f"{v:.0f}",
-        sentiment="neutral",
-        description=rsi_desc,
     )
     # --- MACD extension (asset-class-demeaned z-rank, fixed 12/26/9 lookback) ---
     macd_desc = (
@@ -300,17 +278,6 @@ def build_superlatives(
         fmt=signed2,
         sentiment="negative",
         description=skew_desc,
-    )
-    # --- tail risk (asset-class-demeaned z-rank, single) ---
-    add(
-        "Lowest VaR",
-        var,
-        mode="min",
-        fmt=lambda v: f"{v:.1%}",
-        sentiment="positive",
-        description="5th-percentile of daily returns over the window (historical "
-        "95% one-day VaR); ranked by asset-class-demeaned z-score.",
-        rank_by=acz(var),
     )
     return cards
 

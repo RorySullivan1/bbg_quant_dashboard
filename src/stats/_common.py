@@ -120,3 +120,23 @@ def common_window_bounds(
     if pd.isna(start) or pd.isna(end) or start > end:
         return (None, None)
     return (start, end)
+
+
+def active_columns(prices: pd.DataFrame, *, window_days: int = 21) -> list[str]:
+    """Columns whose price actually *moved* over the trailing ``window_days``.
+
+    Keeps a column only when its last ``window_days`` rows carry at least two
+    distinct non-NaN values (i.e. the series isn't empty or flat). This drops
+    indices with no recent performance — delisted/stale series, including ones
+    BQL ``fill="prev"`` carried forward as a flat line, and all-NaN columns.
+    Returns the kept column names in their original order.
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return []
+    tail = prices.tail(window_days)
+    out: list[str] = []
+    for col in prices.columns:
+        s = tail[col].dropna()
+        if len(s) >= 2 and s.nunique() > 1:
+            out.append(col)
+    return out

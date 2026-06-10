@@ -30,8 +30,6 @@ SUPERLATIVE_LABELS = {
     "Most mean-reverting",
     "Longest bull run",
     "Longest bear run",
-    "Most overbought",
-    "Most oversold",
     "Most extended up",
     "Most extended down",
     "Largest drawup",
@@ -42,7 +40,6 @@ SUPERLATIVE_LABELS = {
     "Lowest win rate",
     "Most positive skew",
     "Most negative skew",
-    "Lowest VaR",
 }
 
 

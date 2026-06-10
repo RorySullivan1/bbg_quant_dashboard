@@ -129,6 +129,17 @@ def test_regime_corr_matrix_empty_when_pct_zero(multiyear_prices):
     assert stats.regime_corr_matrix(rets, bench, pct=0.0).empty
 
 
+def test_regime_corr_matrix_full_sample_includes_benchmark(multiyear_prices):
+    # v0.8.9: the Correlation-Heatmap "Benchmark on / Regime off" path calls
+    # regime_corr_matrix with pct=1.0 — all days kept, benchmark appended.
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["AAA Index"].rename("SPX Index")
+    rm = stats.regime_corr_matrix(rets, bench, pct=1.0, include_benchmark=True)
+    assert "SPX Index" in rm.columns
+    assert rm.shape[0] == rets.shape[1] + 1
+    np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
+
+
 # --- risk / momentum -------------------------------------------------------
 
 
@@ -223,6 +234,26 @@ def test_common_window_bounds_no_overlap_returns_none(bdays):
 
 def test_common_window_bounds_empty_returns_none():
     assert stats.common_window_bounds(pd.DataFrame()) == (None, None)
+
+
+def test_active_columns_drops_flat_and_empty(bdays):
+    idx = bdays(40)
+    prices = pd.DataFrame(
+        {
+            "MOVING Index": np.linspace(100.0, 130.0, len(idx)),  # trends up
+            "FLAT Index": 100.0,  # carried-forward / never moves
+            "EMPTY Index": np.nan,  # no data at all
+            "STALE Index": [100.0 + i for i in range(len(idx) - 21)]  # moved early,
+            + [200.0] * 21,  # then flat over the trailing window
+        },
+        index=idx,
+    )
+    kept = stats.active_columns(prices, window_days=21)
+    assert kept == ["MOVING Index"]  # order preserved; the rest are dropped
+
+
+def test_active_columns_empty_frame():
+    assert stats.active_columns(pd.DataFrame()) == []
 
 
 # --- v0.6.9 Workstream D: precomputed-returns threading (equivalence) -------
