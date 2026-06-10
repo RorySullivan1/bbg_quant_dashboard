@@ -196,7 +196,7 @@ dashboard always renders end-to-end.
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up, plus a reusable `TEMPLATE.md` stub skeleton new versions copy from. |
 | `.claude/hooks/`                   | PreToolUse(Bash) enforcement scripts wired in `.claude/settings.json`: `quality-gates.sh` (blocks `git commit` unless ruff/black/pytest pass) + `block-main-push.sh` (blocks pushes to `main`/`master`). `README.md` documents both and points at the portable templates. |
 | `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + a generic `skills/workstream/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.8.9`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.8.10`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
 
@@ -261,7 +261,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.8.9`.
+- **Current version**: `v0.8.10`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -540,6 +540,13 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 - **Selected tickers stay visible** in the dropdown even when the metadata
   filters or search box would otherwise hide them — so the user doesn't lose
   selection state while typing.
+- **Startup selection (v0.8.10)**: the Multi-Strategy strategies picker opens
+  pre-seeded with the **top 5 indices by z(1W Sharpe, 1Y)** (the highest-ranked
+  over the fetched cache, capped at the universe size) via `_default_selection`,
+  set right after the post-fetch prune resets `ticker_w.options` (which would
+  otherwise clear the constructor default). The initial `_recompute()` then
+  renders the selected-strategy grid + both panes populated, so the tab isn't
+  empty on load. Refresh keeps the user's own selection (it isn't reseeded).
 - **Recompute errors surface in the commentary block** as a styled traceback,
   rather than leaving the charts silently empty. See `_render_error` in
   `src/layout/html.py`.

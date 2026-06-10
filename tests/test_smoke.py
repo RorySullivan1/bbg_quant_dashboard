@@ -185,6 +185,50 @@ def test_universe_includes_smart_beta_solution():
     assert "beta" not in sols  # plain Beta stays excluded
 
 
+def test_startup_selects_top_zscore_and_populates_multi_strategy():
+    # The Multi-Strategy views load populated on startup (no manual Refresh): the
+    # default selection is the top indices by z(1W Sharpe, 1Y), capped at the
+    # universe size, so the selected-strategy grid + panes render with data.
+    import plotly.graph_objects as go
+    from src.bql_client import default_window, fetch_prices
+    from src.config import (
+        TRADING_DAYS_PER_YEAR,
+        UNIVERSE_SOLUTION_VALUES,
+        WEEK_WINDOW,
+    )
+    from src.data import load_metadata
+    from src.stats import rolling_metric_zscore
+
+    app = build_app(verbose=False)
+    ms = next(
+        b
+        for b in app.children[4].children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms.click()
+    panel = app.children[5].children[0]
+    ticker_w = next(w for w in _walk(panel) if isinstance(w, W.SelectMultiple))
+
+    # Expected: the top-5 (capped) by z(1W Sharpe, 1Y) over the fetched universe.
+    meta = load_metadata()
+    meta = meta[meta["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)]
+    start, end = default_window(5)
+    px, _ = fetch_prices(list(meta["ticker"]), start, end)
+    z = rolling_metric_zscore(
+        px, metric="sharpe", window=WEEK_WINDOW, zscore_window=TRADING_DAYS_PER_YEAR
+    ).dropna()
+    expected = set(z.nlargest(5).index)
+    assert set(ticker_w.value) == expected
+    assert 1 <= len(ticker_w.value) <= 5
+
+    # The selected-strategy perf grid is populated on load (one row per pick).
+    grid = next(w for w in _walk(panel) if w.__class__.__name__ == "DataGrid")
+    assert grid.data.shape[0] == len(ticker_w.value)
+    # Both panes' mounted figures carry data without a Refresh click.
+    figs = [w for w in _walk(panel) if isinstance(w, go.FigureWidget)]
+    assert sum(1 for f in figs if f.data) >= 1
+
+
 def _walk(widget):
     """Yield the widget and all its descendants (children / .child)."""
     yield widget
