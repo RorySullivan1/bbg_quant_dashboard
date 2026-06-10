@@ -13,11 +13,13 @@ import plotly.graph_objects as go
 from src.config import HALF_YEAR_WINDOW, WEEK_WINDOW
 from src.data import load_metadata
 from src.layout.platform import (
+    _TREEMAP_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_heatmap,
     _regime_scatter,
     _treemap,
+    _treemap_leaf_sizes,
     _update_factor_scatter,
     _update_regime_heatmap,
     _update_regime_scatter,
@@ -161,6 +163,24 @@ _TREEMAP_KW = dict(
     size_label="6M Sharpe",
     color_label="1W Sharpe",
 )
+
+
+def test_treemap_leaf_sizes_magnitude_drives_area():
+    # Area = |z|: equal-magnitude +z/-z get equal area; near-zero lands on the
+    # floor; bigger |z| -> bigger area. Sign is for color, not size.
+    z = pd.Series({"up": 2.0, "down": -2.0, "flat": 0.0})
+    sizes = _treemap_leaf_sizes(z)
+    floor = _TREEMAP_SIZE_FLOOR * 2.0  # max |z| = 2.0
+    assert sizes["up"] == sizes["down"] == 2.0 + floor
+    assert sizes["flat"] == floor
+    assert sizes["up"] > 10 * sizes["flat"]
+    assert (sizes >= 0).all()
+
+
+def test_treemap_leaf_sizes_all_zero_uniform():
+    # No deviation anywhere -> uniform fallback (avoids divide-by-zero floor).
+    sizes = _treemap_leaf_sizes(pd.Series({"a": 0.0, "b": 0.0, "c": 0.0}))
+    assert (sizes == 1.0).all()
 
 
 def test_update_treemap_builds_asset_theme_ticker_hierarchy():
