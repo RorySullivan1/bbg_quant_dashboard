@@ -135,6 +135,22 @@ _TREEMAP_HOVER = (
     "%{{label}}<br>size z({size_label}) %{{customdata:.2f}}"
     "<br>color z({color_label}) %{{color:.2f}}<extra></extra>"
 )
+# Fraction of the max positive size-z used as the minimum visible tile area.
+# Below-average indices (z<0) clip to 0 and get only this floor, so a
+# populous-but-weak group collapses instead of out-sizing a sparse-but-strong
+# one. Lower = more contrast between strong and weak tiles.
+_TREEMAP_SIZE_FLOOR = 0.02
+
+
+def _treemap_leaf_sizes(size_z: pd.Series) -> pd.Series:
+    """Map raw size z-scores to non-negative tile areas: clip z<0 to 0 so
+    below-average indices collapse, plus a small floor so every tile stays
+    visible. All-non-positive (or empty) input falls back to uniform area."""
+    pos = size_z.clip(lower=0.0)
+    hi = float(pos.max()) if len(pos) else 0.0
+    if hi <= 0:
+        return pd.Series(1.0, index=size_z.index)
+    return pos + _TREEMAP_SIZE_FLOOR * hi
 
 
 def _factor_beta_scatter() -> go.FigureWidget:
@@ -256,9 +272,10 @@ def _update_treemap(
     color_label: str,
 ) -> None:
     """Populate the treemap from `platform_treemap_frame`: a 3-level
-    asset class → theme → ticker hierarchy. Tiles are sized by a non-negative
-    shift of the size z-score and colored by the raw color z-score (both
-    user-selected via metric/window/lookback); parent nodes aggregate
+    asset class → theme → ticker hierarchy. Tiles are sized by the clipped,
+    floored size z-score (below-average tiles collapse so area tracks strength,
+    not count — see `_treemap_leaf_sizes`) and colored by the raw color z-score
+    (both user-selected via metric/window/lookback); parent nodes aggregate
     (size = sum of children, color = mean of leaf z). The `*_label` strings
     (e.g. "6M Sharpe") title the colorbar + hover. No BQL — pure compute over
     the already-fetched cache."""
@@ -281,12 +298,9 @@ def _update_treemap(
     frame["asset_class"] = frame["asset_class"].fillna("Other").astype(str)
     frame["theme"] = frame["theme"].fillna("Other").astype(str)
 
-    # Treemap values must be non-negative; z-scores can be negative. Shift to
-    # [0.1·range, 1.1·range] so the smallest tile stays visible (not zero-area)
-    # while preserving the relative ordering. Color uses the raw z (below).
-    s = frame["size_z"]
-    rng = float(s.max() - s.min())
-    frame["size"] = 1.0 if rng <= 0 else (s - s.min()) + 0.10 * rng
+    # Tile area: below-average (z<0) indices clip to ~0 so area tracks strength,
+    # not membership count (parents sum their children). Color uses the raw z.
+    frame["size"] = _treemap_leaf_sizes(frame["size_z"])
 
     ids: list[str] = []
     labels: list[str] = []

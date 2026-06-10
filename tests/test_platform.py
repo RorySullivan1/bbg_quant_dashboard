@@ -13,11 +13,13 @@ import plotly.graph_objects as go
 from src.config import HALF_YEAR_WINDOW, WEEK_WINDOW
 from src.data import load_metadata
 from src.layout.platform import (
+    _TREEMAP_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_heatmap,
     _regime_scatter,
     _treemap,
+    _treemap_leaf_sizes,
     _update_factor_scatter,
     _update_regime_heatmap,
     _update_regime_scatter,
@@ -161,6 +163,25 @@ _TREEMAP_KW = dict(
     size_label="6M Sharpe",
     color_label="1W Sharpe",
 )
+
+
+def test_treemap_leaf_sizes_clips_below_average_to_floor():
+    # A strong index dwarfs a weak one; below-average (z<0) lands on the floor.
+    z = pd.Series({"strong": 2.0, "flat": 0.0, "weak": -3.0})
+    sizes = _treemap_leaf_sizes(z)
+    floor = _TREEMAP_SIZE_FLOOR * 2.0  # max positive z = 2.0
+    assert sizes["weak"] == floor
+    assert sizes["flat"] == floor  # z=0 also clips to the bare floor
+    assert sizes["strong"] == 2.0 + floor
+    assert sizes["strong"] > 10 * sizes["weak"]  # strength, not count, drives area
+    assert (sizes >= 0).all()
+
+
+def test_treemap_leaf_sizes_all_non_positive_uniform():
+    # No above-average index -> uniform fallback (no group dominates on count).
+    z = pd.Series({"a": -1.0, "b": -2.0, "c": 0.0})
+    sizes = _treemap_leaf_sizes(z)
+    assert (sizes == 1.0).all()
 
 
 def test_update_treemap_builds_asset_theme_ticker_hierarchy():
