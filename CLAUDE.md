@@ -39,15 +39,20 @@ with two tabs:
   Return/Vol · Window: 1M/3M/6M · Lookback: 1Y/3Y/5Y; default *z(1M Sharpe,
   1Y)*) recomputes that column live from the already-fetched cache (via
   `rolling_metric_zscore`, no BQL) and the grid is **sorted by it**
-  descending (v0.7.0 Workstream A). Below the grid, a shared **6M / 1Y / 3Y /
-  5Y** lookback `ToggleButtons` drives a **3D factor-beta scatter** (Section 1):
+  descending (v0.7.0 Workstream A). Below the grid, the three analytics charts
+  live in one **boxed "Platform analytics" card** (`.bbg-card`, v0.8.8) as
+  **inner pill-tabs** the user cycles through — ordered **Sunburst → Regime
+  analysis → Factor exposures** — that **share one 6M / 1Y / 3Y / 5Y lookback**
+  `ToggleButtons` (on the tab-bar row, driving all three); each tab's extra
+  selection boxes **stack vertically in a left-hand column** beside the chart
+  (which flex-grows to fill the rest), and the Factor-exposures tab is
+  chart-only. The **Factor exposures** tab is a **3D factor-beta scatter**:
   per-strategy β to the equity risk premium (x) vs β to the term premium (y) vs
   β to the cross-asset trend factor (z, "Trend Exposure"), colored + legended by
   asset class, over three **translucent zero-reference planes** (x=0/y=0/z=0)
   that mark the origin in every dimension (v0.8.6) — computed live from the
   fetched cache, no BQL (v0.7.0 Workstream C+D; promoted to 3D + de-titled in
-  v0.7.1). Between the scatter and the
-  sunburst sits the **Regime Analysis** section (v0.8.5; reworked v0.8.7): a
+  v0.7.1). The **Regime analysis** tab (v0.8.5; reworked v0.8.7) is a
   single **regime-conditioned risk/return scatter** (2D per-strategy annualized
   vol-vs-return, colored by asset class) — the Correlation heatmap was removed
   (correlation stays in the Multi-Strategy tab). Controls are a **regime-type**
@@ -63,11 +68,11 @@ with two tabs:
   first-difference (Δ) of `NFCIRISK`. The scatter conditions on only the days in
   the selected bucket via `regime_mask` / `regime_risk_return`, computed live
   from the cache — all indicators ride the single startup fetch via
-  `REGIME_TICKERS`, no BQL. Section 2 is a **sunburst** nested **asset class → theme → ticker**
-  (inside out), driven by a **single Z-score control row** — Metric
-  (Sharpe/Sortino/Return/Vol) · Window (1W/1M/3M/6M) · Lookback (1Y/3Y/5Y),
-  mirroring the all-catalog grid's Z-Score ranking; default **z(1W Sharpe, 1Y)**
-  (v0.8.x, replacing the v0.7–v0.8 treemap). Each ring's arc is **sized by its
+  `REGIME_TICKERS`, no BQL. The **Sunburst** tab is a nested **asset class → theme → ticker**
+  sunburst (inside out), driven by a left-column **Metric**
+  (Sharpe/Sortino/Return/Vol) + **Window** (1W/1M/3M/6M) Z-score pair plus the
+  shared lookback; default **z(1W Sharpe, 1Y)** (v0.8.x, replacing the v0.7–v0.8
+  treemap). Each ring's arc is **sized by its
   gross-|z| share** of its parent (leaf arc = |z|, `branchvalues="total"` so an
   asset class = Σ|z| share and a theme = Σ|z| within the class) and **colored by
   the metric z, averaged up each level** (parent color = mean of its descendant
@@ -75,11 +80,11 @@ with two tabs:
   to the chosen metric/window, and the hover shows the arc's % of parent.
   `maxdepth=2` shows only the asset-class + theme rings up front — the ticker
   ring appears when the user clicks into an asset class or theme (client-side
-  drill-down). The
-  sunburst is **decoupled from the shared lookback toggle** (its own Z-score row
-  drives it); the toggle still drives the factor scatter + regime charts. The
-  factor scatter + regime charts re-render live on the shared lookback toggle,
-  the sunburst on its own three dropdowns — all no BQL.
+  drill-down). All three tabs **re-render live on the shared lookback toggle**
+  (the sunburst now shares it too — v0.8.8 dropped its own lookback dropdown);
+  the sunburst additionally re-renders on its Metric/Window controls and the
+  regime tab on its Type/Source/Bucket dropdowns — all no BQL. Switching tabs is
+  a free `.children` swap (the off-tab figures still update in place).
 - **Multi-Strategy Analysis** — the whole filter UI lives inside an
   expandable **"Filters"** accordion (expanded by default): a full-width
   filter box split into two side-by-side panels — a **left** strategies
@@ -175,11 +180,11 @@ dashboard always renders end-to-end.
 | `src/layout/chrome.py` | Page chrome: `_app_css` (mounts the global `app_css.html` stylesheet once), `_banner` (dark masthead, adds `.bbg-masthead`), `_loading_overlay`/`_render_overlay` (the staged loading overlay, v0.6.5), `_status_banner`/`_render_status` (now the post-load `.bbg-toast`), `_make_tab_button`/`_style_tab_button` (pills via the `.bbg-pill`/`is-active` CSS class). HTML via `render_template`. |
 | `src/layout/filters.py` | Filter widget factories: `_checkbox_group`, `_section_label`, `_q_row`, `_ticker_options`. |
 | `src/layout/panes.py` | `ANALYSIS_OPTIONS`, `_make_benchmark_dropdown`, the 9 chart/grid factories (`_line_chart` … `_return_dist_stats_grid`), and `_make_analysis_pane(side)` — a self-contained pane (own figure set, own benchmark dropdowns, own picker + swap container). Imports `theme`. |
-| `src/layout/platform.py` | Platform-tab standalone visuals (v0.7.0, distinct from the Multi-Strategy panes). `_factor_beta_scatter`/`_update_factor_scatter` — the **3D** factor-beta scatter (`go.Scatter3d`: x = β to the equity risk premium, y = β to the term premium, z = β to the trend factor / "Trend Exposure"; one marker per strategy, one trace + legend entry per asset class colored via `_asset_class_colors` — curated `ASSET_CLASS_COLORS` then unused `LINE_PALETTE` for unmapped classes; no in-figure title, per-`scene`-axis zerolines; v0.7.1). v0.8.6 adds three translucent `go.Mesh3d` **zero-reference planes** (x=0/y=0/z=0) via `_zero_planes`/`_quad_mesh`/`_axis_bounds` (sized to the padded data bounds, `Color.CHART_AXIS` at `_ZERO_PLANE_OPACITY`, legend-less + `hoverinfo="skip"`, added before the markers in the same `batch_update`). `_sunburst`/`_update_sunburst` — a 3-level **asset class → theme → ticker** `go.Sunburst` (inside out; arc value = |z| via `_sunburst_leaf_sizes` + `_SUNBURST_SIZE_FLOOR`, so with `branchvalues="total"` each ring's arc is its gross-|z| share of its parent; colored by the metric z averaged up each level — parent color = mean of descendant tickers' z — metric/window/lookback user-selected via the single builder Z-score row, v0.8.x; default z(1W Sharpe, 1Y); `label` re-titles the colorbar + the `_SUNBURST_HOVER` `.format()` template, whose `percentParent` shows the arc's % of parent — on a token-driven diverging colorscale + colorbar; `maxdepth=2` so only the asset-class + theme rings show until the user clicks to drill into the ticker ring; no in-figure title, the section header stands alone). Both compute live from the fetched cache (`equity_risk_premium`/`term_premium`/`factor_beta`, `platform_sunburst_frame`), no BQL. **Regime Analysis (v0.8.5, reworked v0.8.7):** `_regime_scatter`/`_update_regime_scatter` — a 2D `go.Scatter` of annualized vol vs return over the regime-bucket days (per asset-class trace, via `regime_risk_return`), taking an optional indicator series + `(low, high)` bucket via the `_regime_window_mask` helper (no indicator/bucket → unconditioned all-days view), `lookback`-windowed, no BQL. The Correlation heatmap was removed (v0.8.7). The section's regime-type / indicator-source / bucket dropdowns + live-render closures (`_regime_indicator` builds the per-mode indicator series; `_resolve_regime_bucket` derives tercile bounds via `tercile_bounds`) live in `builder.py`. Imports `theme` + `..stats` + `..style`. |
+| `src/layout/platform.py` | Platform-tab standalone visuals (v0.7.0, distinct from the Multi-Strategy panes). `_factor_beta_scatter`/`_update_factor_scatter` — the **3D** factor-beta scatter (`go.Scatter3d`: x = β to the equity risk premium, y = β to the term premium, z = β to the trend factor / "Trend Exposure"; one marker per strategy, one trace + legend entry per asset class colored via `_asset_class_colors` — curated `ASSET_CLASS_COLORS` then unused `LINE_PALETTE` for unmapped classes; no in-figure title, per-`scene`-axis zerolines; v0.7.1). v0.8.6 adds three translucent `go.Mesh3d` **zero-reference planes** (x=0/y=0/z=0) via `_zero_planes`/`_quad_mesh`/`_axis_bounds` (sized to the padded data bounds, `Color.CHART_AXIS` at `_ZERO_PLANE_OPACITY`, legend-less + `hoverinfo="skip"`, added before the markers in the same `batch_update`). `_sunburst`/`_update_sunburst` — a 3-level **asset class → theme → ticker** `go.Sunburst` (inside out; arc value = |z| via `_sunburst_leaf_sizes` + `_SUNBURST_SIZE_FLOOR`, so with `branchvalues="total"` each ring's arc is its gross-|z| share of its parent; colored by the metric z averaged up each level — parent color = mean of descendant tickers' z — metric/window user-selected via the builder left-column Z-score controls + the shared lookback (v0.8.8; was a single builder Z-score row), default z(1W Sharpe, 1Y); `label` re-titles the colorbar + the `_SUNBURST_HOVER` `.format()` template, whose `percentParent` shows the arc's % of parent — on a token-driven diverging colorscale + colorbar; `maxdepth=2` so only the asset-class + theme rings show until the user clicks to drill into the ticker ring; no in-figure title, the active tab labels it). Both compute live from the fetched cache (`equity_risk_premium`/`term_premium`/`factor_beta`, `platform_sunburst_frame`), no BQL. **Regime Analysis (v0.8.5, reworked v0.8.7):** `_regime_scatter`/`_update_regime_scatter` — a 2D `go.Scatter` of annualized vol vs return over the regime-bucket days (per asset-class trace, via `regime_risk_return`), taking an optional indicator series + `(low, high)` bucket via the `_regime_window_mask` helper (no indicator/bucket → unconditioned all-days view), `lookback`-windowed, no BQL. The Correlation heatmap was removed (v0.8.7). The section's regime-type / indicator-source / bucket dropdowns + live-render closures (`_regime_indicator` builds the per-mode indicator series; `_resolve_regime_bucket` derives tercile bounds via `tercile_bounds`) live in `builder.py`. Imports `theme` + `..stats` + `..style`. |
 | `src/layout/charts.py` | The `_update_*` chart updaters over one shared `_update_line_series` engine. Imports `theme` (+ `..stats`). |
 | `src/layout/grids.py` | `_perf_grid`/`_update_perf_grid`, `_universe_grid`/`_update_universe_grid` (thin wrapper over the pure `_build_universe_frame`, which inserts the v0.7.0 `ZSCORE_SUPERCOL` z-score column after the Info block and sorts by it), `_build_info_block`, `_perf_renderers`/`_apply_grid_styling` (both take a `sharpe_heatmap` flag — color-grades the Sharpe + Z-Score columns via `_diverging_bg_renderer`; **both** grids pass it as of v0.7.5, so the selected grid's Sharpe cells are color-graded too — the selected grid has no Z-Score column so that branch no-ops), `_build_perf_column_widths`, `PERF_*` consts, plus the v0.6.5 dark theme `_dark_grid_style`/`_dark_grid_kwargs` (token-driven `grid_style` + bright header/corner/default renderers; both grids `add_class("bbg-grid")`). Imports `theme` + `..style.Color`. |
 | `src/layout/html.py` | HTML templating: `render_template(name, /, **ctx)` (substitutes `{{key}}` in `data/templates/<name>.html`, cached read) + the `STYLE_CTX` style-token bundle; loaders/renderers `_load_disclaimer`, `_load_weekly_commentary`, `_render_weekly_commentary`, `_render_highlights(superlatives, launches, *, window_label)` (v0.8.0: two-section — `_render_superlative_cards` + `_render_launch_cards` wrapped in `highlights_two_col`; `_superlative_value_color` remaps neutral to bright chrome text for the dark cards; v0.8.x: cards carry a `description` → `title` hover tooltip and `window_label` titles the board to match the live window toggle), `_render_error` are thin callers. Imports `theme` `_sentiment_color`. |
-| `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_render_highlights_panel(window_days)` rebuilds the whole-catalog Key Highlights board from the cache at the selected window — called by `_recompute` and the `superlative_window` `1W/1M/3M/6M` ToggleButtons observer, no BQL; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
+| `src/layout/builder.py` | `build_app()` — injected `app_css` stylesheet + dark masthead banner + all-catalog commentary + top-level pill-button tab bar (Platform / Multi-Strategy Analysis) + per-tab content + disclaimers + the loading `overlay_w` (last child). The Platform panel's three analytics charts are a boxed **Platform analytics** card (`.bbg-card`) of inner pill-tabs — Sunburst / Regime analysis / Factor exposures — built by `_analytics_tab` (left control column + flex-grow chart) and swapped by `_activate_platform_tab`, all sharing the `lookback_selector` toggle (v0.8.8). Builds one `DashboardState` (below) and owns the orchestration closures that read/write it (`_recompute` preps one data slice and renders both panes; `_render_highlights_panel(window_days)` rebuilds the whole-catalog Key Highlights board from the cache at the selected window — called by `_recompute` and the `superlative_window` `1W/1M/3M/6M` ToggleButtons observer, no BQL; `_set_progress` drives the staged overlay through the load, `_render_pane`, `_refresh_prices`, `_on_filter_change`, the clear-filter handlers). Guards a transient `display(overlay_w)` on `get_ipython()` so the overlay shows during the synchronous load. Imports every sibling module. |
 | `src/layout/state.py` | `DashboardState` `@dataclass` — the explicit session state `build_app`'s closures share: key widget handles (`ticker_w`, `status_w` (post-load toast), `overlay_w` (loading overlay), the two grids, the two panes, `highlights_w`, `errors_w` (init/pane-error boxes, kept out of `highlights_w` so the live superlatives-window toggle never wipes them; v0.8.x)) plus mutable data (`universe_prices`, `arp_universe_prices`, `init_errors`, `active_filter`, `last_sel_key`, `sync_guard`, and the v0.6.9 live-render slice `cur_prep` / `cur_win_start` / `cur_win_end`, plus the `memo` `LRUCache` for benchmark-dependent results). Replaces the old `nonlocal` + list-as-cell hacks (v0.6.0 #6). |
 | `dashboard.ipynb`     | Thin entrypoint that calls `build_app()`.                              |
 | `data/templates/` | Component HTML templates rendered by `render_template` (`app_css` — the global `<style>` injected once, carrying the dark-chrome `.bbg-*` classes; `loading_overlay`; banner masthead; status — now the toast; section_label, quant_row_label, the v0.8.0 dark Key-Highlights set `superlative_card` / `launch_card` / `launch_empty` / `highlights_two_col` (replacing the old `highlight_card` / `highlights_wrapper`), error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
@@ -504,8 +509,9 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   defines the `.bbg-*` classes the chrome hangs off — base dark surface +
   scrollbars, the `.bbg-masthead`, the loading `.bbg-overlay`/`.bbg-progress`
   + post-load `.bbg-toast`, button states (`.bbg-pill`/`.bbg-pill.is-active`,
-  `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, and the
-  `.bbg-grid` frame. Widgets opt in via `widget.add_class(...)` (the
+  `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, the
+  `.bbg-grid` frame, and the `.bbg-card` boxed-grouping card (v0.8.8, used for
+  the Platform analytics tab card). Widgets opt in via `widget.add_class(...)` (the
   ipywidgets `.style` API can't express `:hover`/`:focus`). The grids' cell
   colors come from ipydatagrid's `grid_style`/renderer API, not CSS. All
   values flow from `src/style.py` tokens through `STYLE_CTX` — no inline hex.

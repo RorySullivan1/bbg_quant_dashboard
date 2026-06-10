@@ -649,10 +649,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
     )
 
-    # Shared 6M/1Y/3Y/5Y lookback selector (v0.7.0 Workstream C) — the beta
-    # window for the factor scatter + the regime charts below (the sunburst has
-    # its own Z-score row). Value is a trading-day count, like z_lookback_dd;
-    # the factor scatter converts it to years. Re-slices the cache only.
+    # Shared 6M/1Y/3Y/5Y lookback selector — drives all three Platform analytics
+    # tabs (factor scatter, regime scatter, and the sunburst). Value is a
+    # trading-day count, like z_lookback_dd; the factor scatter converts it to
+    # years. Re-slices the cache only (no BQL).
     lookback_selector = W.ToggleButtons(
         options=[
             ("6M", HALF_YEAR_WINDOW),
@@ -663,25 +663,13 @@ def build_app(verbose: bool = True) -> W.VBox:
         value=TRADING_DAYS_PER_YEAR,
         layout=W.Layout(width="auto"),
     )
-    lookback_row = W.HBox(
-        [_section_label("Lookback"), lookback_selector],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
-    )
-    scatter_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Factor exposures")
-    )
     factor_scatter_fig = _factor_beta_scatter()
-    sunburst_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Risk-adjusted strength map")
-    )
     sunburst_fig = _sunburst()
 
-    # v0.8.x: a single sunburst Z-score control (Metric · Window · Lookback,
-    # mirroring the all-catalog grid's Z-Score ranking; default z(1W Sharpe, 1Y)).
-    # The chosen z colors the arcs (averaged up each level) and its |z| drives
-    # each ring's gross-% sizing. Independent of the shared lookback toggle;
-    # re-slice the cache only (no BQL). `.value`s feed `rolling_metric_zscore`;
-    # the `.label`s build the colorbar/hover title.
+    # Sunburst Z-score controls (Metric · Window; the lookback is the shared
+    # toggle above). The chosen z colors the arcs (averaged up each level) and its
+    # |z| drives each ring's gross-% sizing. Re-slice the cache only (no BQL);
+    # `.value`s feed `rolling_metric_zscore`, the `.label`s the colorbar/hover.
     sb_metric_dd = W.Dropdown(
         options=[
             ("Sharpe", "sharpe"),
@@ -691,8 +679,8 @@ def build_app(verbose: bool = True) -> W.VBox:
         ],
         value="sharpe",
         description="Metric",
-        style={"description_width": "55px"},
-        layout=W.Layout(width="175px"),
+        style={"description_width": "60px"},
+        layout=W.Layout(width="230px"),
     )
     sb_window_dd = W.Dropdown(
         options=[
@@ -704,33 +692,15 @@ def build_app(verbose: bool = True) -> W.VBox:
         value=WEEK_WINDOW,
         description="Window",
         style={"description_width": "60px"},
-        layout=W.Layout(width="165px"),
-    )
-    sb_lookback_dd = W.Dropdown(
-        options=[
-            ("1Y", TRADING_DAYS_PER_YEAR),
-            ("3Y", TRADING_DAYS_PER_YEAR * 3),
-            ("5Y", TRADING_DAYS_PER_YEAR * 5),
-        ],
-        value=TRADING_DAYS_PER_YEAR,
-        description="Lookback",
-        style={"description_width": "70px"},
-        layout=W.Layout(width="180px"),
-    )
-    sunburst_controls_row = W.HBox(
-        [_section_label("Z-score"), sb_metric_dd, sb_window_dd, sb_lookback_dd],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+        layout=W.Layout(width="230px"),
     )
 
-    # --- Regime Analysis section (sits between the factor scatter and the
-    # sunburst): the all-catalog risk/return scatter conditioned on a
+    # --- Regime Analysis: the all-catalog risk/return scatter conditioned on a
     # market-regime bucket. Volatility uses fixed VIX-level buckets; Trend /
     # Rate-level / Risk regime split a live-computed indicator into low/mid/high
     # terciles. Trend / Rate-level carry a conditional indicator-source dropdown
-    # (benchmark / region). All conditioning is a live re-slice of the cache.
-    regime_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Regime analysis")
-    )
+    # (benchmark / region). All conditioning is a live re-slice of the cache. The
+    # controls stack in the Regime tab's left column (built below).
     regime_scatter_fig = _regime_scatter()
 
     def _regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
@@ -744,32 +714,27 @@ def build_app(verbose: bool = True) -> W.VBox:
     regime_type_dd = W.Dropdown(
         options=list(REGIME_SPECS.keys()),
         value="Volatility",
-        layout=W.Layout(width="150px"),
+        description="Type",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
     )
     # Conditional indicator-source dropdown — benchmark for Trend, region for
     # Rate-level; hidden (via `_sync_regime_controls`) for regimes with no
     # `selector` (Volatility / Risk regime).
     regime_selector_dd = W.Dropdown(
-        options=[("—", "")], value="", layout=W.Layout(width="170px")
+        options=[("—", "")],
+        value="",
+        description="Source",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
     )
     _init_buckets = _regime_bucket_options("Volatility")
     regime_bucket_dd = W.Dropdown(
         options=_init_buckets,
         value=_init_buckets[0][1],
-        layout=W.Layout(width="200px"),
-    )
-    regime_controls = W.HBox(
-        [
-            _section_label("Regime"),
-            regime_type_dd,
-            regime_selector_dd,
-            regime_bucket_dd,
-        ],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
-    )
-    regime_section = W.VBox(
-        [regime_header, regime_controls, regime_scatter_fig],
-        layout=W.Layout(width="100%"),
+        description="Bucket",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
     )
 
     pane_left = _make_analysis_pane("left")
@@ -815,18 +780,96 @@ def build_app(verbose: bool = True) -> W.VBox:
     universe_header = W.HTML(
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
+
+    # --- Platform analytics card: the three charts (sunburst / regime / factor
+    # scatter) as inner pill-tabs sharing one lookback. Each tab is an HBox of a
+    # left-hand vertical control column + the chart (which flex-grows to fill the
+    # rest); the factor tab has no extra controls so it is chart-only. The card
+    # is a bordered box (`.bbg-card`) so the grouping reads at a glance.
+    def _analytics_tab(controls: list[W.Widget] | None, fig: W.Widget) -> W.HBox:
+        chart_box = W.Box([fig], layout=W.Layout(flex="1 1 0%", width="100%"))
+        if not controls:
+            return W.HBox([chart_box], layout=W.Layout(width="100%"))
+        left_col = W.VBox(
+            controls,
+            layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
+        )
+        return W.HBox(
+            [left_col, chart_box],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+
+    sunburst_tab = _analytics_tab(
+        [_section_label("Z-score"), sb_metric_dd, sb_window_dd], sunburst_fig
+    )
+    regime_tab = _analytics_tab(
+        [
+            _section_label("Regime"),
+            regime_type_dd,
+            regime_selector_dd,
+            regime_bucket_dd,
+        ],
+        regime_scatter_fig,
+    )
+    factor_tab = _analytics_tab(None, factor_scatter_fig)
+
+    sunburst_pill = _make_tab_button(
+        "Sunburst", active=True, width="190px", height="34px"
+    )
+    regime_pill = _make_tab_button(
+        "Regime analysis", active=False, width="190px", height="34px"
+    )
+    factor_pill = _make_tab_button(
+        "Factor exposures", active=False, width="190px", height="34px"
+    )
+    analytics_tab_bar = W.HBox(
+        [sunburst_pill, regime_pill, factor_pill],
+        layout=W.Layout(width="auto"),
+    )
+    analytics_controls_row = W.HBox(
+        [
+            analytics_tab_bar,
+            W.Box(layout=W.Layout(flex="1 1 auto")),  # spacer
+            _section_label("Lookback"),
+            lookback_selector,
+        ],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0 6px 0"),
+    )
+    analytics_content = W.Box([sunburst_tab], layout=W.Layout(width="100%"))
+
+    _analytics_tabs = {
+        "sunburst": (sunburst_pill, sunburst_tab),
+        "regime": (regime_pill, regime_tab),
+        "factor": (factor_pill, factor_tab),
+    }
+
+    def _activate_platform_tab(which: str) -> None:
+        for key, (pill, _tab) in _analytics_tabs.items():
+            _style_tab_button(pill, active=(key == which))
+        analytics_content.children = (_analytics_tabs[which][1],)
+
+    sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
+    regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
+    factor_pill.on_click(lambda _b: _activate_platform_tab("factor"))
+
+    analytics_card = W.VBox(
+        [
+            W.HTML(
+                render_template("grid_header", **STYLE_CTX, text="Platform analytics")
+            ),
+            analytics_controls_row,
+            analytics_content,
+        ],
+        layout=W.Layout(width="100%"),
+    )
+    analytics_card.add_class("bbg-card")
+
     platform_panel = W.VBox(
         [
             universe_header,
             z_controls_row,
             universe_grid,
-            lookback_row,
-            scatter_header,
-            factor_scatter_fig,
-            regime_section,
-            sunburst_header,
-            sunburst_controls_row,
-            sunburst_fig,
+            analytics_card,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
@@ -911,11 +954,10 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     def _render_sunburst(_change=None) -> None:
         """Render the Platform asset class → theme → ticker sunburst from the
-        single Z-score control (Metric/Window/Lookback): arcs sized by gross-|z|
-        share, colored by the level-averaged z. Computes live from the ARP-only
-        cache via `platform_sunburst_frame` — the dropdowns re-slice only, no
-        BQL. No in-figure title; the "Risk-adjusted strength map" section header
-        stands alone (v0.7.3)."""
+        Metric/Window Z-score controls + the shared lookback: arcs sized by
+        gross-|z| share, colored by the level-averaged z. Computes live from the
+        ARP-only cache via `platform_sunburst_frame` — the controls re-slice
+        only, no BQL. No in-figure title; the active tab labels the chart."""
         if state.arp_universe_prices.empty:
             return
         try:
@@ -925,7 +967,7 @@ def build_app(verbose: bool = True) -> W.VBox:
                 meta,
                 metric=sb_metric_dd.value,
                 window=sb_window_dd.value,
-                lookback=sb_lookback_dd.value,
+                lookback=lookback_selector.value,
                 label=f"{sb_window_dd.label} {sb_metric_dd.label}",
             )
         except Exception:
@@ -1024,12 +1066,13 @@ def build_app(verbose: bool = True) -> W.VBox:
     regime_bucket_dd.observe(lambda _c: _render_regime_scatter(), names="value")
     _sync_regime_controls()
 
-    for _render in (_render_factor_scatter, _render_regime_scatter):
+    # The shared lookback drives all three analytics tabs (the sunburst now
+    # shares it too — its own lookback dropdown was removed in the tab rework).
+    for _render in (_render_factor_scatter, _render_regime_scatter, _render_sunburst):
         lookback_selector.observe(_render, names="value")
 
-    # Sunburst has its own Z-score control (decoupled from the shared lookback
-    # toggle above): any change re-renders only the sunburst, no BQL.
-    for _dd in (sb_metric_dd, sb_window_dd, sb_lookback_dd):
+    # The sunburst's own Metric/Window controls re-render only the sunburst.
+    for _dd in (sb_metric_dd, sb_window_dd):
         _dd.observe(_render_sunburst, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider

@@ -45,46 +45,53 @@ def test_build_app_renders_expected_tree():
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # v0.7.0 Workstream A: a Z-Score control row (Metric/Window/Lookback) above
-    # the grid, defaulting to z(1M Sharpe, 1Y). Workstream C+D: a 6M/1Y/3Y/5Y
-    # lookback ToggleButtons + the factor-beta scatter FigureWidget below it.
+    # the grid, defaulting to z(1M Sharpe, 1Y). The three analytics charts now
+    # live in one boxed "Platform analytics" card with inner pill-tabs sharing
+    # the lookback toggle (sunburst default tab).
     import plotly.graph_objects as go
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    # v0.8.5: a Regime Analysis section sits between the factor scatter and the
-    # sunburst header. v0.8.x: a single sunburst Z-score control row sits between
-    # the sunburst header and figure.
-    (
-        header,
-        controls,
-        grid,
-        lookback_row,
-        scatter_header,
-        scatter,
-        regime_section,
-        sunburst_header,
-        sunburst_controls_row,
-        sunburst,
-    ) = platform_panel.children
+    # Grid group (header + z-score controls + grid) then the analytics card.
+    universe_header, controls, grid, analytics_card = platform_panel.children
     dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
     assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
-    # Shared lookback selector (defaults to 1Y) + scatter + sunburst figures.
-    toggles = [c for c in lookback_row.children if isinstance(c, W.ToggleButtons)]
-    assert len(toggles) == 1
-    assert toggles[0].label == "1Y"
-    assert isinstance(scatter, go.FigureWidget)
+
+    # The analytics card is a bordered box: header, controls row (tab bar +
+    # shared lookback), and the swappable tab content.
+    assert analytics_card._dom_classes == ("bbg-card",)
+    _card_header, controls_row, content = analytics_card.children
+    tab_bar = controls_row.children[0]
+    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
+    assert [p.description for p in pills] == [
+        "Sunburst",
+        "Regime analysis",
+        "Factor exposures",
+    ]
+    assert [p.description for p in pills if "is-active" in p._dom_classes] == [
+        "Sunburst"
+    ]
+    # The shared lookback toggle (defaults to 1Y) sits on the same row.
+    toggles = [c for c in controls_row.children if isinstance(c, W.ToggleButtons)]
+    assert len(toggles) == 1 and toggles[0].label == "1Y"
+
+    # Default tab = sunburst: left column stacks Metric + Window (no Lookback),
+    # the figure fills the rest with a Sunburst trace (z(1W Sharpe) default).
+    left_col, chart_box = content.children[0].children
+    sb_dds = [c for c in left_col.children if isinstance(c, W.Dropdown)]
+    assert [d.label for d in sb_dds] == ["Sharpe", "1W"]
+    sunburst = chart_box.children[0]
     assert isinstance(sunburst, go.FigureWidget)
-    # Sunburst Z-score control defaults to z(1W Sharpe, 1Y); on mock prices the
-    # figure is populated with a Sunburst trace.
-    sb_dds = [c for c in sunburst_controls_row.children if isinstance(c, W.Dropdown)]
-    assert [d.label for d in sb_dds] == ["Sharpe", "1W", "1Y"]
-    assert sunburst.data
-    assert isinstance(sunburst.data[0], go.Sunburst)
-    assert isinstance(regime_section, W.VBox)
-    # v0.7.1: the scatter is 3D (Scatter3d markers) with no in-figure title.
-    # v0.8.6: plus three translucent Mesh3d zero-reference planes (x=0/y=0/z=0).
-    assert scatter.data
+    assert sunburst.data and isinstance(sunburst.data[0], go.Sunburst)
+
+    # Factor exposures tab: the 3D scatter (Scatter3d markers + the three Mesh3d
+    # zero planes), chart-only (no left control column).
+    pills[2].click()
+    factor_tab = content.children[0]
+    assert len(factor_tab.children) == 1  # chart box only
+    scatter = factor_tab.children[0].children[0]
+    assert isinstance(scatter, go.FigureWidget)
     assert [tr for tr in scatter.data if isinstance(tr, go.Scatter3d)]
     planes = {tr.name for tr in scatter.data if isinstance(tr, go.Mesh3d)}
     assert planes == {"x=0", "y=0", "z=0"}
@@ -92,7 +99,7 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
 
 
 def test_regime_analysis_section_conditions_live():
-    # A Regime Analysis section (between the factor scatter and the sunburst):
+    # The Regime analysis chart is the middle tab of the Platform analytics card:
     # a single regime-conditioned risk/return scatter (no Correlation sub-tab —
     # that lives in Multi-Strategy). Volatility uses fixed VIX-level buckets;
     # Trend / Rate-level / Risk regime split a live indicator into terciles, with
@@ -101,13 +108,14 @@ def test_regime_analysis_section_conditions_live():
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
-    regime_section = platform_panel.children[6]
-    assert isinstance(regime_section, W.VBox)
-    # No sub-tab bar / heatmap: header, controls, scatter.
-    assert len(regime_section.children) == 3
+    analytics_card = platform_panel.children[3]
+    controls_row, content = analytics_card.children[1], analytics_card.children[2]
+    pills = [c for c in controls_row.children[0].children if isinstance(c, W.Button)]
+    pills[1].click()  # activate the Regime analysis tab
 
-    controls = regime_section.children[1]
-    regime_dds = [c for c in controls.children if isinstance(c, W.Dropdown)]
+    regime_tab = content.children[0]
+    left_col, chart_box = regime_tab.children
+    regime_dds = [c for c in left_col.children if isinstance(c, W.Dropdown)]
     regime_type, selector_dd, bucket_dd = regime_dds
     assert list(regime_type.options) == [
         "Volatility",
@@ -125,9 +133,8 @@ def test_regime_analysis_section_conditions_live():
     ]
     assert selector_dd.layout.display == "none"
 
-    # The scatter is the section's third child — a 2D risk/return scatter
-    # conditioned on the default VIX bucket.
-    scatter_fig = regime_section.children[2]
+    # The chart is a 2D risk/return scatter conditioned on the default VIX bucket.
+    scatter_fig = chart_box.children[0]
     assert isinstance(scatter_fig, go.FigureWidget)
     assert scatter_fig.data
     assert all(

@@ -248,6 +248,16 @@
   overflow: hidden;
 }
 
+/* Boxed grouping card — frames a section (e.g. the Platform analytics tabs) so
+   the grouping reads at a glance, mirroring the Multi-Strategy bordered panels. */
+.bbg-app .bbg-card {
+  border: 1px solid {{border_color}};
+  border-radius: 8px;
+  background: {{surface}};
+  padding: 8px 12px 12px 12px;
+  margin: 8px 0;
+}
+
 /* v0.8.x — Key Highlights superlative cards: subtle hover lift + accent edge.
    Inline styles can't express :hover, so the affordance lives here; the cards
    carry class='bbg-superlative'. */

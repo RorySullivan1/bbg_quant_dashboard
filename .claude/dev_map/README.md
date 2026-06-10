@@ -67,6 +67,10 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   (uncap the top), and wire Trend (benchmark-autocorr terciles), Rate-level
   (regional-rate terciles), and a new Risk regime (ΔNFCIRISK terciles), each with
   conditional indicator-source dropdowns.
+- [ ] `v0.8.8` — Platform analytics tabs: reorganize the three Platform charts
+  (sunburst / regime / factor scatter) into one boxed `.bbg-card` of inner
+  pill-tabs sharing a single lookback toggle, each tab's extra controls stacked
+  in a left-hand column.
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
