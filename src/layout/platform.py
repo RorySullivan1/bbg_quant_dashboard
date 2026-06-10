@@ -58,7 +58,7 @@ _FACTOR_HOVER = (
 
 # Opacity of the factor scatter's translucent zero-reference planes (x=0, y=0,
 # z=0). Faint enough to read the marker cloud through, solid enough to locate 0.
-_ZERO_PLANE_OPACITY = 0.12
+_ZERO_PLANE_OPACITY = 0.20
 
 
 def _axis_bounds(
