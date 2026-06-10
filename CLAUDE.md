@@ -147,10 +147,10 @@ dashboard always renders end-to-end.
 | `data/templates/` | Component HTML templates rendered by `render_template` (`app_css` — the global `<style>` injected once, carrying the dark-chrome `.bbg-*` classes; `loading_overlay`; banner masthead; status — now the toast; section_label, quant_row_label, highlight_card, highlights_wrapper, error_box, weekly_commentary[_fallback], grid_header). `{{placeholders}}` for both style tokens (from `STYLE_CTX`) and `html.escape`'d dynamic data — **no hardcoded hex/fonts**. |
 | `data/performance_disclaimer.html` | Templated disclaimer with `{{start_date}}` / `{{end_date}}` placeholders; rendered immediately below the all-catalog grid. |
 | `data/legal_disclosure.html`       | Bulk legal copy, justified, no placeholders; rendered at the bottom of the dashboard. |
-| `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` and `plotly` skills grounded in this repo's conventions. |
+| `.claude/skills/<name>/SKILL.md`   | Reusable agent skills (folder-per-skill, auto-discovered by Claude Code). Python lifecycle + doc-drafting skills pulled from `RorySullivan1/claude-skills-library`, plus project-authored `ipywidgets` / `plotly` / `bquant-dashboard-spec` skills grounded in this repo's conventions. `bquant-dashboard-spec` is the portable platform reference for the BQL fetch contract + recommended fetch patterns + standard BQuant UI stack — load it first when touching anything that fetches from BQL or designs the dashboard. |
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up, plus a reusable `TEMPLATE.md` stub skeleton new versions copy from. |
 | `.claude/hooks/`                   | PreToolUse(Bash) enforcement scripts wired in `.claude/settings.json`: `quality-gates.sh` (blocks `git commit` unless ruff/black/pytest pass) + `block-main-push.sh` (blocks pushes to `main`/`master`). `README.md` documents both and points at the portable templates. |
-| `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + a generic `skills/workstream/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
+| `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + generic `skills/workstream/` + portable `skills/bquant-dashboard-spec/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
 | `.meta/VERSION`                    | Canonical current shipped version (`0.7.5`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
@@ -186,25 +186,14 @@ so records without a `Currency` key still load.
 
 ## BQL contract
 
-`src/bql_client.py` issues a single BQL request:
+The BQL request shape, ticker-suffix rules, case-insensitive column
+resolution, and wide-form pivot are documented in
+**`.claude/skills/bquant-dashboard-spec/SKILL.md` §2** (the platform reference).
+Project-specific hooks:
 
-```python
-bq = bql.Service()
-px = bq.data.px_last(
-    dates=bq.func.range(start.isoformat(), end.isoformat()),
-    fill="prev",
-)
-request = bql.Request(tickers, {"px_last": px})
-```
-
-`tickers` must be the full BQL identifiers (i.e. include `" Index"`).
-The response DataFrame is reset_indexed and we resolve the ID, DATE, and
-value column names case-insensitively via `_pick_column` before pivoting
-to wide form (`date` index, one column per ticker). Tickers that BQL
-returns no data for show up as all-NaN columns rather than raising.
-
-If you change this query, also update `_mock_prices` so the mock and
-live paths return the same shape.
+- `src/bql_client.py`'s case-insensitive column resolver is `_pick_column`.
+- The mock path is `_mock_prices`. If you change the BQL query, update
+  `_mock_prices` in lockstep so live and mock paths return the same shape.
 
 ## Branching
 
@@ -248,37 +237,34 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 
 ## Conventions
 
-- **One BQL call per session**. `build_app` issues a single
-  `fetch_prices(arp_tickers + BENCHMARK_TICKERS + FACTOR_TICKERS, ...)`
-  request at load time (deduped, order-preserving) and caches the result in a
-  `universe_prices` closure variable. Every visualization — including the
-  all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
-  tabs, and the v0.7.0 Platform factor scatter/treemap — slices from that
-  cache. The `FACTOR_TICKERS` (v0.7.0: a long-Treasury + short-rate TR proxy,
-  the equity leg reuses SPX; v0.7.1 adds the `TREND_TICKER` = `BSLXAT Index`
-  cross-asset trend factor for the scatter's z-axis) ride this same fetch — *no
-  second BQL call* — and, like the benchmarks, are excluded from the
-  ARP-universe views via `reindex(columns=meta["ticker"])`.
-- **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
-  fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
-  `(tuple(sorted(tickers)), start, end)`) checked **before** the
-  **on-disk trading-day** parquet `data/.cache/prices_{YYYY-MM-DD}.parquet`.
-  On cold start the call hits BQL/mock and writes both tiers; subsequent
-  same-day startups within `CACHE_TTL_HOURS` read back from memory or the
-  parquet without hitting BQL. A stale TTL, a missing/corrupt file, or a
-  cache that doesn't cover every requested ticker all fall through to a
-  live fetch. The disk write is **best-effort**: on a read-only filesystem
-  (or any write failure) `_cache_write` warns once, sets
-  `_disk_cache_writable = False`, and the in-memory cache carries the
-  session — the app never crashes on a read-only FS. (An in-memory hit
-  reports `source="cache"` with no parquet, so `_format_loaded`'s mtime
-  stamp is best-effort.) `_cache_read` swallows read errors as a clean
-  miss. `_clear_caches()` resets both tiers for tests. The directory is
-  gitignored.
-- **Refresh prices button** (formerly Apply): re-fetches from BQL with
-  `use_cache=False`, overwrites the parquet, then recomputes everything.
-  Filter-only re-slicing (today the button always refetches) will be
-  split back into a separate Apply control in a later PR.
+- **BQL fetch contract + recommended patterns** — the
+  `.claude/skills/bquant-dashboard-spec/SKILL.md` skill is the platform
+  reference for: the BQL request shape, single-call-per-session, the two-tier
+  price cache, the off-terminal mock fallback, the benchmarks/factors
+  ride-along, the Refresh-prices control, and live controls slicing rather
+  than fetching. Read it first; the bullets below are *project-specific
+  hooks* that point at the actual code:
+    - `build_app` issues the single
+      `fetch_prices(arp_tickers + BENCHMARK_TICKERS + FACTOR_TICKERS, ...)`
+      call at load time and caches it in a `universe_prices` closure
+      variable; every viz (all-catalog grid, commentary, Rolling Correlation /
+      Rolling Beta tabs, v0.7.0 Platform factor scatter/treemap) slices from
+      it.
+    - `FACTOR_TICKERS` (v0.7.0: a long-Treasury + short-rate TR proxy, the
+      equity leg reuses SPX; v0.7.1 adds `TREND_TICKER = BSLXAT Index` —
+      the cross-asset trend factor for the 3D scatter's z-axis) and
+      `BENCHMARK_TICKERS` / `DEFAULT_BENCHMARK` live in `src/config.py`.
+    - Benchmark/factor columns are scoped out of ARP-universe views via
+      `arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])`.
+    - The two-tier cache is `src/bql_client.py`'s `_MEM_CACHE` +
+      `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`),
+      with `_cache_read` / `_cache_write` / `_disk_cache_writable` for
+      read-only-FS degradation and `_clear_caches()` for tests; the
+      directory is gitignored.
+    - **Refresh prices** (formerly Apply): re-fetches with
+      `use_cache=False`, overwrites the parquet, recomputes everything.
+      Filter-only re-slicing (today the button always refetches) will
+      be split back into a separate Apply control in a later PR.
 - **Loading overlay + toast** report load progress (v0.6.5, replacing the
   old permanent status banner). A full-screen dimmed `.bbg-overlay` with a
   staged progress bar advances through the load (`_set_progress`: 0
@@ -292,12 +278,6 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   the overlay first (guarded on `get_ipython()`) and pushes stage updates as
   each step completes — best-effort in Voila (intermediate frames may
   collapse); the overlay always appears and dismisses.
-- **Benchmarks ride along the single BQL fetch** but are explicitly
-  scoped to the Rolling Correlation / Rolling Beta tabs. The
-  all-catalog grid and the whole-catalog highlights consume
-  `arp_universe_prices = universe_prices.reindex(columns=meta["ticker"])`
-  so benchmark columns never leak into ARP-universe views.
-  `BENCHMARK_TICKERS` / `DEFAULT_BENCHMARK` live in `src/config.py`.
 - **Checkbox filter groups, search box, date pickers, the currency
   dropdown, and the Quantitative ratio thresholds narrow the ticker
   dropdown only**. They do not trigger any recompute or BQL call. Their

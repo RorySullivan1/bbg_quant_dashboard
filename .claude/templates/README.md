@@ -13,6 +13,7 @@ unchanged; these are the generic siblings.
 | `hooks/quality-gates.conf.example` | Sample gate config (ruff/black/pytest default + flake8/unittest, Node variants). | Copy to `.claude/hooks/quality-gates.conf` and edit. |
 | `hooks/settings.snippet.json` | Copy-paste `hooks.PreToolUse` wiring for `.claude/settings.json`. | Merge into the target repo's settings. |
 | `skills/workstream/SKILL.md` | Project-agnostic version of the `/workstream` development loop, with `[…]` spots to fill in per project. | Copy into `.claude/skills/workstream/` and adapt the bracketed spots. |
+| `skills/bquant-dashboard-spec/SKILL.md` | Portable BQuant App platform reference — BQL fetch contract, single-call-per-session, two-tier price cache, mock fallback, benchmarks/factors ride-along, Refresh-prices control, standard UI stack (`ipywidgets` + plotly `FigureWidget` + `ipydatagrid` + Voila). | Copy into `.claude/skills/bquant-dashboard-spec/` as-is; no project-specific spots to edit. |
 
 See [`../hooks/README.md`](../hooks/README.md) for how the active hooks and these
 templates relate, and [`../dev_map/TEMPLATE.md`](../dev_map/TEMPLATE.md) for the
