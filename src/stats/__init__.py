@@ -50,9 +50,10 @@ from .performance import (
     win_rate,
 )
 from .regime import (
-    regime_correlation,
     regime_mask,
     regime_risk_return,
+    rolling_autocorr,
+    tercile_bounds,
 )
 from .risk import (
     ann_beta,
@@ -131,7 +132,8 @@ __all__ = [
     # regime
     "regime_mask",
     "regime_risk_return",
-    "regime_correlation",
+    "rolling_autocorr",
+    "tercile_bounds",
     # rolling
     "rolling_return",
     "rolling_volatility",

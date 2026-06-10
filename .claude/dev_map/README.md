@@ -62,6 +62,11 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 - [x] `v0.8.6` — Factor Scatter Zero Planes: three translucent zero-reference
   planes (x=0/y=0/z=0) through the Platform 3D factor-beta scatter so the origin
   reads in every dimension (small enhancement; shipped just after v0.8.5).
+- [ ] `v0.8.7` — Regime Analysis rework: finish the Platform regime chart — drop
+  the Correlation sub-tab (kept in Multi-Strategy), make Volatility 3 buckets
+  (uncap the top), and wire Trend (benchmark-autocorr terciles), Rate-level
+  (regional-rate terciles), and a new Risk regime (ΔNFCIRISK terciles), each with
+  conditional indicator-source dropdowns.
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).

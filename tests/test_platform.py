@@ -17,16 +17,15 @@ from src.layout.platform import (
     _SUNBURST_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
-    _regime_heatmap,
     _regime_scatter,
     _sunburst,
     _sunburst_leaf_sizes,
     _update_factor_scatter,
-    _update_regime_heatmap,
     _update_regime_scatter,
     _update_sunburst,
 )
 from src.layout.theme import _v_ref
+from src.stats import tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
@@ -222,7 +221,7 @@ def test_update_sunburst_empty_clears_traces():
     assert fig.data == ()
 
 
-# --- v0.8.5 Regime Analysis: regime scatter + heatmap ----------------------
+# --- Regime Analysis: regime-conditioned risk/return scatter ----------------
 
 
 def _regime_universe(n: int = 300):
@@ -286,23 +285,23 @@ def test_update_regime_scatter_empty_clears():
     assert fig.data == ()
 
 
-def test_update_regime_heatmap_theme_scoped():
-    fig = _regime_heatmap()
+def test_update_regime_scatter_tercile_bounds_condition_differently():
+    # The tercile modes derive (low, high) from the indicator's quantiles; the
+    # low and high thirds of the VIX-like series condition on disjoint day sets,
+    # so the scatter coordinates differ.
     arp, vix = _regime_universe()
-    _update_regime_heatmap(
-        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, theme="Growth", lookback=200
-    )
-    assert len(fig.data) == 1
-    hm = fig.data[0]
-    assert isinstance(hm, go.Heatmap)
-    # Growth = AAA + BBB → a 2×2 per-ticker matrix.
-    assert len(hm.x) == 2 and len(hm.y) == 2
+    lo_low, lo_high = tercile_bounds(vix.tail(200), "low")
+    hi_low, hi_high = tercile_bounds(vix.tail(200), "high")
 
-
-def test_update_regime_heatmap_single_ticker_theme_clears():
-    fig = _regime_heatmap()
-    arp, vix = _regime_universe()
-    _update_regime_heatmap(
-        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, theme="Carry", lookback=200
+    fig_low = _regime_scatter()
+    _update_regime_scatter(
+        fig_low, arp, vix, _regime_meta(), low=lo_low, high=lo_high, lookback=200
     )
-    assert fig.data == ()  # Carry has only CCC → < 2 columns
+    fig_high = _regime_scatter()
+    _update_regime_scatter(
+        fig_high, arp, vix, _regime_meta(), low=hi_low, high=hi_high, lookback=200
+    )
+    assert fig_low.data and fig_high.data
+    low_xy = [tuple(tr.x) for tr in fig_low.data]
+    high_xy = [tuple(tr.x) for tr in fig_high.data]
+    assert low_xy != high_xy
