@@ -11,13 +11,13 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
-# Short metric windows (trading days) for the v0.7.0 Platform z-score views.
-# The treemap sizes by z(6M Sharpe, lookback) and colors by z(1W Sharpe,
-# lookback); the grid z-score column offers 1M / 3M / 6M as the short window.
-WEEK_WINDOW = 5  # ~1 week  (treemap color window)
+# Short metric windows (trading days) for the Platform z-score views.
+# The sunburst's Z-score control offers 1W / 1M / 3M / 6M (default 1W Sharpe);
+# the all-catalog grid z-score column offers 1M / 3M / 6M.
+WEEK_WINDOW = 5  # ~1 week  (sunburst default window)
 MONTH_WINDOW = 21  # ~1 month
 QUARTER_WINDOW = 63  # ~3 months
-HALF_YEAR_WINDOW = 126  # ~6 months (treemap size window)
+HALF_YEAR_WINDOW = 126  # ~6 months
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level

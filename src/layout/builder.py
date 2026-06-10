@@ -96,11 +96,11 @@ from .platform import (
     _factor_beta_scatter,
     _regime_heatmap,
     _regime_scatter,
-    _treemap,
+    _sunburst,
     _update_factor_scatter,
     _update_regime_heatmap,
     _update_regime_scatter,
-    _update_treemap,
+    _update_sunburst,
 )
 from .state import DashboardState
 
@@ -650,8 +650,8 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     # Shared 6M/1Y/3Y/5Y lookback selector (v0.7.0 Workstream C) — the beta
-    # window for the factor scatter below (and, later, the treemap z-score
-    # normalization window). Value is a trading-day count, like z_lookback_dd;
+    # window for the factor scatter + the regime charts below (the sunburst has
+    # its own Z-score row). Value is a trading-day count, like z_lookback_dd;
     # the factor scatter converts it to years. Re-slices the cache only.
     lookback_selector = W.ToggleButtons(
         options=[
@@ -671,85 +671,59 @@ def build_app(verbose: bool = True) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="Factor exposures")
     )
     factor_scatter_fig = _factor_beta_scatter()
-    treemap_header = W.HTML(
+    sunburst_header = W.HTML(
         render_template("grid_header", **STYLE_CTX, text="Risk-adjusted strength map")
     )
-    treemap_fig = _treemap()
+    sunburst_fig = _sunburst()
 
-    # v0.8.x: per-row treemap z-score controls (mirrors the all-catalog grid's
-    # Z-Score ranking). Two rows — tile size + tile color — each Metric · Window
-    # · Lookback. Independent of the shared lookback toggle; re-slice the cache
-    # only (no BQL). Defaults reproduce z(6M Sharpe, 1Y) size / z(1W Sharpe, 1Y)
-    # color. `.value`s feed `rolling_metric_zscore`; the `.label`s build the
-    # colorbar/hover titles.
-    def _treemap_metric_dd() -> W.Dropdown:
-        return W.Dropdown(
-            options=[
-                ("Sharpe", "sharpe"),
-                ("Sortino", "sortino"),
-                ("Return", "return"),
-                ("Vol", "vol"),
-            ],
-            value="sharpe",
-            description="Metric",
-            style={"description_width": "55px"},
-            layout=W.Layout(width="175px"),
-        )
-
-    def _treemap_window_dd(value: int) -> W.Dropdown:
-        return W.Dropdown(
-            options=[
-                ("1W", WEEK_WINDOW),
-                ("1M", MONTH_WINDOW),
-                ("3M", QUARTER_WINDOW),
-                ("6M", HALF_YEAR_WINDOW),
-            ],
-            value=value,
-            description="Window",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="165px"),
-        )
-
-    def _treemap_lookback_dd() -> W.Dropdown:
-        return W.Dropdown(
-            options=[
-                ("1Y", TRADING_DAYS_PER_YEAR),
-                ("3Y", TRADING_DAYS_PER_YEAR * 3),
-                ("5Y", TRADING_DAYS_PER_YEAR * 5),
-            ],
-            value=TRADING_DAYS_PER_YEAR,
-            description="Lookback",
-            style={"description_width": "70px"},
-            layout=W.Layout(width="180px"),
-        )
-
-    tm_size_metric_dd = _treemap_metric_dd()
-    tm_size_window_dd = _treemap_window_dd(HALF_YEAR_WINDOW)
-    tm_size_lookback_dd = _treemap_lookback_dd()
-    tm_color_metric_dd = _treemap_metric_dd()
-    tm_color_window_dd = _treemap_window_dd(WEEK_WINDOW)
-    tm_color_lookback_dd = _treemap_lookback_dd()
-    treemap_size_row = W.HBox(
-        [
-            _section_label("Tile size"),
-            tm_size_metric_dd,
-            tm_size_window_dd,
-            tm_size_lookback_dd,
+    # v0.8.x: a single sunburst Z-score control (Metric · Window · Lookback,
+    # mirroring the all-catalog grid's Z-Score ranking; default z(1W Sharpe, 1Y)).
+    # The chosen z colors the arcs (averaged up each level) and its |z| drives
+    # each ring's gross-% sizing. Independent of the shared lookback toggle;
+    # re-slice the cache only (no BQL). `.value`s feed `rolling_metric_zscore`;
+    # the `.label`s build the colorbar/hover title.
+    sb_metric_dd = W.Dropdown(
+        options=[
+            ("Sharpe", "sharpe"),
+            ("Sortino", "sortino"),
+            ("Return", "return"),
+            ("Vol", "vol"),
         ],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+        value="sharpe",
+        description="Metric",
+        style={"description_width": "55px"},
+        layout=W.Layout(width="175px"),
     )
-    treemap_color_row = W.HBox(
-        [
-            _section_label("Tile color"),
-            tm_color_metric_dd,
-            tm_color_window_dd,
-            tm_color_lookback_dd,
+    sb_window_dd = W.Dropdown(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
         ],
+        value=WEEK_WINDOW,
+        description="Window",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="165px"),
+    )
+    sb_lookback_dd = W.Dropdown(
+        options=[
+            ("1Y", TRADING_DAYS_PER_YEAR),
+            ("3Y", TRADING_DAYS_PER_YEAR * 3),
+            ("5Y", TRADING_DAYS_PER_YEAR * 5),
+        ],
+        value=TRADING_DAYS_PER_YEAR,
+        description="Lookback",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="180px"),
+    )
+    sunburst_controls_row = W.HBox(
+        [_section_label("Z-score"), sb_metric_dd, sb_window_dd, sb_lookback_dd],
         layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
     )
 
     # --- v0.8.5 Regime Analysis section (sits between the factor scatter and the
-    # treemap): a pill-tabbed Risk-vs-Return / Correlation pair conditioned on a
+    # sunburst): a pill-tabbed Risk-vs-Return / Correlation pair conditioned on a
     # market-regime bucket. Volatility (VIX buckets) is wired; Trend / Liquidity /
     # Rate-level are scaffolded (inert) dropdown entries that leave the charts
     # unconditioned. Shared regime controls drive both sub-tabs.
@@ -856,10 +830,9 @@ def build_app(verbose: bool = True) -> W.VBox:
             scatter_header,
             factor_scatter_fig,
             regime_section,
-            treemap_header,
-            treemap_size_row,
-            treemap_color_row,
-            treemap_fig,
+            sunburst_header,
+            sunburst_controls_row,
+            sunburst_fig,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
@@ -942,31 +915,28 @@ def build_app(verbose: bool = True) -> W.VBox:
                 f"factor-beta scatter render failed:\n{traceback.format_exc()}"
             )
 
-    def _render_treemap(_change=None) -> None:
-        """Render the Platform asset class → theme → ticker treemap with the
-        size + color z-scores chosen on the two metric/window/lookback control
-        rows. Computes live from the ARP-only cache via `platform_treemap_frame`
-        — the dropdowns re-slice only, no BQL. No in-figure title; the
-        "Risk-adjusted strength map" section header stands alone (v0.7.3)."""
+    def _render_sunburst(_change=None) -> None:
+        """Render the Platform asset class → theme → ticker sunburst from the
+        single Z-score control (Metric/Window/Lookback): arcs sized by gross-|z|
+        share, colored by the level-averaged z. Computes live from the ARP-only
+        cache via `platform_sunburst_frame` — the dropdowns re-slice only, no
+        BQL. No in-figure title; the "Risk-adjusted strength map" section header
+        stands alone (v0.7.3)."""
         if state.arp_universe_prices.empty:
             return
         try:
-            _update_treemap(
-                treemap_fig,
+            _update_sunburst(
+                sunburst_fig,
                 state.arp_universe_prices,
                 meta,
-                size_metric=tm_size_metric_dd.value,
-                size_window=tm_size_window_dd.value,
-                size_lookback=tm_size_lookback_dd.value,
-                color_metric=tm_color_metric_dd.value,
-                color_window=tm_color_window_dd.value,
-                color_lookback=tm_color_lookback_dd.value,
-                size_label=f"{tm_size_window_dd.label} {tm_size_metric_dd.label}",
-                color_label=f"{tm_color_window_dd.label} {tm_color_metric_dd.label}",
+                metric=sb_metric_dd.value,
+                window=sb_window_dd.value,
+                lookback=sb_lookback_dd.value,
+                label=f"{sb_window_dd.label} {sb_metric_dd.label}",
             )
         except Exception:
             state.init_errors.append(
-                f"treemap render failed:\n{traceback.format_exc()}"
+                f"sunburst render failed:\n{traceback.format_exc()}"
             )
 
     # --- Regime Analysis closures (v0.8.5): live re-slice of the cache on the
@@ -1064,17 +1034,10 @@ def build_app(verbose: bool = True) -> W.VBox:
     ):
         lookback_selector.observe(_render, names="value")
 
-    # Treemap has its own per-row z-score controls (decoupled from the shared
-    # lookback toggle above): any change re-renders only the treemap, no BQL.
-    for _dd in (
-        tm_size_metric_dd,
-        tm_size_window_dd,
-        tm_size_lookback_dd,
-        tm_color_metric_dd,
-        tm_color_window_dd,
-        tm_color_lookback_dd,
-    ):
-        _dd.observe(_render_treemap, names="value")
+    # Sunburst has its own Z-score control (decoupled from the shared lookback
+    # toggle above): any change re-renders only the sunburst, no BQL.
+    for _dd in (sb_metric_dd, sb_window_dd, sb_lookback_dd):
+        _dd.observe(_render_sunburst, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
@@ -1086,7 +1049,7 @@ def build_app(verbose: bool = True) -> W.VBox:
     # DashboardState); the startup fetch below populates them.
     # Benchmarks and v0.7.0 Platform factor proxies ride along on the single
     # startup fetch so the Rolling Correlation / Rolling Beta tabs and the
-    # Platform factor scatter/treemap can slice them from the same cache. Both
+    # Platform factor scatter/sunburst can slice them from the same cache. Both
     # are excluded from the ARP-universe grid and the highlights cards via
     # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
     # equity factor proxy is also a benchmark) while preserving order.
@@ -1128,7 +1091,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             t_grid = time.perf_counter()
             _render_universe_grid()
             _render_factor_scatter()
-            _render_treemap()
+            _render_sunburst()
             _render_regime_scatter()
             _render_regime_heatmap()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
@@ -1719,7 +1682,7 @@ def build_app(verbose: bool = True) -> W.VBox:
             state.universe_up = universe_perf(state.arp_universe_prices)
             _render_universe_grid()
             _render_factor_scatter()
-            _render_treemap()
+            _render_sunburst()
             _render_regime_scatter()
             _render_regime_heatmap()
         except Exception:

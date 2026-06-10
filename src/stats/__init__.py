@@ -25,7 +25,7 @@ from ._common import (
 from .factors import (
     equity_risk_premium,
     factor_beta,
-    platform_treemap_frame,
+    platform_sunburst_frame,
     term_premium,
     trend_returns,
 )
@@ -147,5 +147,5 @@ __all__ = [
     "term_premium",
     "trend_returns",
     "factor_beta",
-    "platform_treemap_frame",
+    "platform_sunburst_frame",
 ]
