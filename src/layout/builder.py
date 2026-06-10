@@ -782,36 +782,26 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     # --- Platform analytics card: the three charts (sunburst / regime / factor
-    # scatter) as inner pill-tabs sharing one lookback. Each tab is an HBox of a
-    # left-hand vertical control column + the chart (which flex-grows to fill the
-    # rest); the factor tab has no extra controls so it is chart-only. The card
-    # is a bordered box (`.bbg-card`) so the grouping reads at a glance.
-    def _analytics_tab(controls: list[W.Widget] | None, fig: W.Widget) -> W.HBox:
-        chart_box = W.Box([fig], layout=W.Layout(flex="1 1 0%", width="100%"))
-        if not controls:
-            return W.HBox([chart_box], layout=W.Layout(width="100%"))
-        left_col = W.VBox(
-            controls,
-            layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
-        )
-        return W.HBox(
-            [left_col, chart_box],
-            layout=W.Layout(width="100%", align_items="stretch"),
-        )
-
-    sunburst_tab = _analytics_tab(
-        [_section_label("Z-score"), sb_metric_dd, sb_window_dd], sunburst_fig
+    # scatter) as inner pill-tabs sharing one lookback. The layout is a fixed
+    # left control column beside a flex-grow chart: the shared lookback sits on
+    # top of the column, then the active tab's own selection boxes swap in below
+    # it (`tab_controls_box`); the chart swaps in `chart_box`. Factor exposures
+    # has no extra controls, so its column is just the lookback. The card is a
+    # bordered box (`.bbg-card`) so the grouping reads at a glance.
+    sunburst_controls = W.VBox(
+        [_section_label("Z-score"), sb_metric_dd, sb_window_dd],
+        layout=W.Layout(width="100%"),
     )
-    regime_tab = _analytics_tab(
+    regime_controls = W.VBox(
         [
             _section_label("Regime"),
             regime_type_dd,
             regime_selector_dd,
             regime_bucket_dd,
         ],
-        regime_scatter_fig,
+        layout=W.Layout(width="100%"),
     )
-    factor_tab = _analytics_tab(None, factor_scatter_fig)
+    factor_controls = W.VBox([], layout=W.Layout(width="100%"))
 
     sunburst_pill = _make_tab_button(
         "Sunburst", active=True, width="190px", height="34px"
@@ -824,29 +814,33 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     analytics_tab_bar = W.HBox(
         [sunburst_pill, regime_pill, factor_pill],
-        layout=W.Layout(width="auto"),
+        layout=W.Layout(width="100%", padding="2px 0 6px 0"),
     )
-    analytics_controls_row = W.HBox(
-        [
-            analytics_tab_bar,
-            W.Box(layout=W.Layout(flex="1 1 auto")),  # spacer
-            _section_label("Lookback"),
-            lookback_selector,
-        ],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0 6px 0"),
+
+    # Shared lookback stacked on top of the active tab's controls (left column).
+    tab_controls_box = W.Box([sunburst_controls], layout=W.Layout(width="100%"))
+    analytics_left_col = W.VBox(
+        [_section_label("Lookback"), lookback_selector, tab_controls_box],
+        layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
     )
-    analytics_content = W.Box([sunburst_tab], layout=W.Layout(width="100%"))
+    chart_box = W.Box([sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%"))
+    analytics_body = W.HBox(
+        [analytics_left_col, chart_box],
+        layout=W.Layout(width="100%", align_items="stretch"),
+    )
 
     _analytics_tabs = {
-        "sunburst": (sunburst_pill, sunburst_tab),
-        "regime": (regime_pill, regime_tab),
-        "factor": (factor_pill, factor_tab),
+        "sunburst": (sunburst_pill, sunburst_controls, sunburst_fig),
+        "regime": (regime_pill, regime_controls, regime_scatter_fig),
+        "factor": (factor_pill, factor_controls, factor_scatter_fig),
     }
 
     def _activate_platform_tab(which: str) -> None:
-        for key, (pill, _tab) in _analytics_tabs.items():
+        for key, (pill, _controls, _fig) in _analytics_tabs.items():
             _style_tab_button(pill, active=(key == which))
-        analytics_content.children = (_analytics_tabs[which][1],)
+        _pill, controls, fig = _analytics_tabs[which]
+        tab_controls_box.children = (controls,)
+        chart_box.children = (fig,)
 
     sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
     regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
@@ -857,8 +851,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             W.HTML(
                 render_template("grid_header", **STYLE_CTX, text="Platform analytics")
             ),
-            analytics_controls_row,
-            analytics_content,
+            analytics_tab_bar,
+            analytics_body,
         ],
         layout=W.Layout(width="100%"),
     )
