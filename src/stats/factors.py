@@ -88,23 +88,33 @@ def factor_beta(
 
 
 def platform_treemap_frame(
-    prices: pd.DataFrame, meta: pd.DataFrame, *, lookback: int = SHARPE_ZSCORE_WINDOW
+    prices: pd.DataFrame,
+    meta: pd.DataFrame,
+    *,
+    size_metric: str = "sharpe",
+    size_window: int = HALF_YEAR_WINDOW,
+    size_lookback: int = SHARPE_ZSCORE_WINDOW,
+    color_metric: str = "sharpe",
+    color_window: int = WEEK_WINDOW,
+    color_lookback: int = SHARPE_ZSCORE_WINDOW,
 ) -> pd.DataFrame:
     """Per-ticker ``asset_class`` + ``theme`` + ``size_z`` + ``color_z`` for the
-    Platform treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1W
-    Sharpe, lookback) — both **raw** z-scores (can be negative). The non-negative
-    size transform for ``go.Treemap.values`` is the renderer's concern, not this
-    frame's. ``asset_class`` and ``theme`` give the treemap's two grouping levels
-    (asset class → theme → ticker). ``lookback`` is the z-normalization window in
-    trading days.
+    Platform treemap. ``size_z`` = z(``size_metric`` over ``size_window``,
+    ``size_lookback``); ``color_z`` likewise — both **raw** z-scores (can be
+    negative). The metric/window/lookback of each are user-selectable (defaults
+    reproduce the historical z(6M Sharpe, 1Y) size + z(1W Sharpe, 1Y) color).
+    The non-negative size transform for ``go.Treemap.values`` is the renderer's
+    concern, not this frame's. ``asset_class`` and ``theme`` give the treemap's
+    two grouping levels (asset class → theme → ticker). The ``*_window`` /
+    ``*_lookback`` args are trading-day counts.
     """
     if prices.empty:
         return pd.DataFrame(columns=_TREEMAP_COLUMNS)
     size_z = rolling_metric_zscore(
-        prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=lookback
+        prices, metric=size_metric, window=size_window, zscore_window=size_lookback
     )
     color_z = rolling_metric_zscore(
-        prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=lookback
+        prices, metric=color_metric, window=color_window, zscore_window=color_lookback
     )
     frame = pd.DataFrame({"size_z": size_z, "color_z": color_z})
     has_ticker = "ticker" in meta.columns

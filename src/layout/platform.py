@@ -120,8 +120,11 @@ def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
 
 
 # Treemap hierarchy separator (asset class → theme), diverging colorscale, and
-# the shared per-node hover. The colorscale matches the all-catalog grid's
-# red<0 → neutral → green>0 sentiment and is token-driven (no inline hex).
+# the per-node hover. The colorscale matches the all-catalog grid's
+# red<0 → neutral → green>0 sentiment and is token-driven (no inline hex). The
+# hover is a `.format()` template — the size/color labels are user-selected at
+# render time (the literal plotly `%{...}` placeholders are doubled to survive
+# `.format()`).
 _TREEMAP_SEP = " / "
 _TREEMAP_COLORSCALE = [
     [0.0, Color.RED_600.value],
@@ -129,8 +132,8 @@ _TREEMAP_COLORSCALE = [
     [1.0, Color.GREEN_600.value],
 ]
 _TREEMAP_HOVER = (
-    "%{label}<br>size z(6M Sharpe) %{customdata:.2f}"
-    "<br>color z(1W Sharpe) %{color:.2f}<extra></extra>"
+    "%{{label}}<br>size z({size_label}) %{{customdata:.2f}}"
+    "<br>color z({color_label}) %{{color:.2f}}<extra></extra>"
 )
 
 
@@ -225,10 +228,11 @@ def _update_factor_scatter(
 
 
 def _treemap() -> go.FigureWidget:
-    """Asset-class → theme → ticker treemap, sized by z(6M Sharpe) and colored
-    by z(1W Sharpe). Built empty; `_update_treemap` fills it. No in-figure title
-    — the "Risk-adjusted strength map" section header stands alone (v0.7.3); the
-    diverging colorbar is the color legend."""
+    """Asset-class → theme → ticker treemap, sized + colored by user-selected
+    z-scores (defaults z(6M Sharpe) size / z(1W Sharpe) color). Built empty;
+    `_update_treemap` fills it. No in-figure title — the "Risk-adjusted strength
+    map" section header stands alone (v0.7.3); the diverging colorbar is the
+    color legend."""
     return go.FigureWidget(
         layout=_chart_layout(
             title="",
@@ -242,16 +246,32 @@ def _update_treemap(
     prices: pd.DataFrame,
     meta: pd.DataFrame,
     *,
-    lookback: int,
+    size_metric: str,
+    size_window: int,
+    size_lookback: int,
+    color_metric: str,
+    color_window: int,
+    color_lookback: int,
+    size_label: str,
+    color_label: str,
 ) -> None:
     """Populate the treemap from `platform_treemap_frame`: a 3-level
     asset class → theme → ticker hierarchy. Tiles are sized by a non-negative
-    shift of z(6M Sharpe) and colored by raw z(1W Sharpe); parent nodes
-    aggregate (size = sum of children, color = mean of leaf z). No BQL — pure
-    compute over the already-fetched cache."""
-    frame = platform_treemap_frame(prices, meta, lookback=lookback).dropna(
-        subset=["size_z", "color_z"]
-    )
+    shift of the size z-score and colored by the raw color z-score (both
+    user-selected via metric/window/lookback); parent nodes aggregate
+    (size = sum of children, color = mean of leaf z). The `*_label` strings
+    (e.g. "6M Sharpe") title the colorbar + hover. No BQL — pure compute over
+    the already-fetched cache."""
+    frame = platform_treemap_frame(
+        prices,
+        meta,
+        size_metric=size_metric,
+        size_window=size_window,
+        size_lookback=size_lookback,
+        color_metric=color_metric,
+        color_window=color_window,
+        color_lookback=color_lookback,
+    ).dropna(subset=["size_z", "color_z"])
     if frame.empty:
         with fig.batch_update():
             fig.data = ()
@@ -322,9 +342,11 @@ def _update_treemap(
             cmax=2,
             line=dict(width=1, color=Color.CHART_BG.value),
             showscale=True,
-            colorbar=dict(title=dict(text="z(1W Sharpe)")),
+            colorbar=dict(title=dict(text=f"z({color_label})")),
         ),
-        hovertemplate=_TREEMAP_HOVER,
+        hovertemplate=_TREEMAP_HOVER.format(
+            size_label=size_label, color_label=color_label
+        ),
     )
     with fig.batch_update():
         fig.data = ()
