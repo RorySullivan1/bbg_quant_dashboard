@@ -207,6 +207,18 @@ def build_app(verbose: bool = True) -> W.VBox:
         value="Sharpe",
         layout=W.Layout(width="120px"),
     )
+    # Window the Z-Score's base metric is computed over (independent of the
+    # global Period); the metric is then z-scored cross-sectionally.
+    q_z_window = W.Dropdown(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=MONTH_WINDOW,
+        layout=W.Layout(width="70px"),
+    )
 
     sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
     sortino_row, sortino_op, q_sortino = _q_row("Sortino")
@@ -219,13 +231,14 @@ def build_app(verbose: bool = True) -> W.VBox:
     z_row, z_op, q_z = _q_row(
         "Z-Score",
         trailing=W.HBox(
-            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric],
+            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric, q_z_window],
             layout=W.Layout(align_items="center"),
         ),
     )
     quant = SimpleNamespace(
         period_dd=q_period,
         z_metric_dd=q_z_metric,
+        z_window_dd=q_z_window,
         # Each benchmark-based metric carries its own benchmark dropdown.
         bench_dd={
             "Beta": q_beta_bench,
@@ -1225,7 +1238,18 @@ def build_app(verbose: bool = True) -> W.VBox:
             years,
         )
         if "Z" in thresholds:
-            qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
+            # Cross-sectional z of the base metric, computed over the Z-Score's
+            # own window (independent of the Period); recompute over that window,
+            # threading the base metric's benchmark when it's Beta/Treynor/Jensen.
+            z_metric = quant.z_metric_dd.value
+            z_years = quant.z_window_dd.value / TRADING_DAYS_PER_YEAR
+            z_bench = (
+                state.universe_prices.get(quant.bench_dd[z_metric].value)
+                if z_metric in quant.bench_dd
+                else None
+            )
+            zt = quant_metrics_table(prices, z_bench, z_years, returns=rets)
+            qt["Z"] = zscore_cross_section(zt[z_metric])
         keep = qt.index
         for name, (op, value) in thresholds.items():
             col = qt[name]
@@ -1269,7 +1293,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         cb.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w, currency_dd):
         w.observe(_on_filter_change, names="value")
-    quant_inputs = [q_period, q_z_metric, *quant.bench_dd.values()]
+    quant_inputs = [q_period, q_z_metric, q_z_window, *quant.bench_dd.values()]
     for op, box in quant.specs.values():
         quant_inputs += [op, box]
     for w in quant_inputs:

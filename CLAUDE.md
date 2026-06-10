@@ -109,7 +109,9 @@ with two tabs:
   VaR % / RSI / Z-Score) of
   `[≥ or ≤ dropdown] [value box]`, with an inline parameter dropdown where
   relevant (Beta / Treynor / Jensen each carry their own benchmark
-  dropdown, Z-Score its selectable base metric) — all via
+  dropdown, Z-Score its selectable base metric **plus a window dropdown**
+  (1W/1M/3M/6M, default 1M; v0.8.11) that sets the lookback the base metric
+  is computed over before the cross-sectional z, independent of the Period) — all via
   `quant_metrics_table` / `zscore_cross_section`,
   computed live from the already-fetched prices, no BQL. Below the two
   panels, still inside the Filters accordion, a full-width **"Analysis
@@ -196,7 +198,7 @@ dashboard always renders end-to-end.
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up, plus a reusable `TEMPLATE.md` stub skeleton new versions copy from. |
 | `.claude/hooks/`                   | PreToolUse(Bash) enforcement scripts wired in `.claude/settings.json`: `quality-gates.sh` (blocks `git commit` unless ruff/black/pytest pass) + `block-main-push.sh` (blocks pushes to `main`/`master`). `README.md` documents both and points at the portable templates. |
 | `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + a generic `skills/workstream/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.8.10`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.8.11`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
 
@@ -261,7 +263,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.8.10`.
+- **Current version**: `v0.8.11`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -627,11 +629,12 @@ renders the full dashboard without a Bloomberg session. Verify by:
   one row per metric (Sharpe / Sortino / Calmar / Beta / Treynor /
   Jensen α / VaR % / RSI / Z-Score), each a `[≥/≤ dropdown] [value box]`;
   Beta, Treynor, and Jensen each carry their own benchmark dropdown, and
-  Z-Score carries its base-metric selector. Setting e.g. Sharpe
+  Z-Score carries its base-metric selector **plus a 1W/1M/3M/6M window
+  dropdown** (v0.8.11). Setting e.g. Sharpe
   `≥ 0.5` (or Sharpe `≤ 0.5`) narrows the dropdown to indices whose metric
   (computed from the already-fetched prices) clears the threshold; a blank
-  box is ignored. Changing any operator/period/benchmark/z-metric re-narrows
-  live, no BQL.
+  box is ignored. Changing any operator/period/benchmark/z-metric/z-window
+  re-narrows live, no BQL.
 - Clicking **Clear section** unticks the active pill's checkboxes (or
   clears the launch-date range + currency on Characteristics, or the
   ratio thresholds on Quantitative); **Clear all** clears every filter

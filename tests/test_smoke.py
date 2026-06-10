@@ -229,6 +229,61 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     assert sum(1 for f in figs if f.data) >= 1
 
 
+def test_quant_zscore_row_has_window_dropdown():
+    # v0.8.11: the Quantitative Z-Score row carries a window dropdown
+    # (1W/1M/3M/6M, default 1M) right after the base-metric dropdown — it sets the
+    # lookback the base metric is computed over for the cross-sectional z-score.
+    from src.config import MONTH_WINDOW
+
+    z_metrics = [
+        "Sharpe",
+        "Sortino",
+        "Calmar",
+        "Beta",
+        "Treynor",
+        "Jensen",
+        "VaR",
+        "RSI",
+    ]
+    app = build_app(verbose=False)
+    ms = next(
+        b
+        for b in app.children[4].children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms.click()
+    panel = app.children[5].children[0]
+    # Activate the Quantitative filter pill so its metric rows mount.
+    quant_pill = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Button) and w.description == "Quantitative"
+    )
+    quant_pill.click()
+
+    # The Z-Score row's trailing HBox holds: <"of"> label, base-metric dd, window dd.
+    trailing = next(
+        hb
+        for hb in _walk(panel)
+        if isinstance(hb, W.HBox)
+        and any(
+            isinstance(c, W.Dropdown) and list(c.options) == z_metrics
+            for c in hb.children
+        )
+        and any(
+            isinstance(c, W.Dropdown)
+            and [o[0] if isinstance(o, tuple) else o for o in c.options]
+            == ["1W", "1M", "3M", "6M"]
+            for c in hb.children
+        )
+    )
+    dds = [c for c in trailing.children if isinstance(c, W.Dropdown)]
+    metric_dd, window_dd = dds[0], dds[1]
+    assert list(metric_dd.options) == z_metrics  # base metric first
+    assert [o[0] for o in window_dd.options] == ["1W", "1M", "3M", "6M"]
+    assert window_dd.value == MONTH_WINDOW  # defaults to 1M
+
+
 def _walk(widget):
     """Yield the widget and all its descendants (children / .child)."""
     yield widget
@@ -315,9 +370,9 @@ def test_superlatives_window_toggle_re_renders_live():
 
 
 def test_highlights_sections_are_height_capped_and_scrollable():
-    # v0.8.x: each highlights section's card area is bounded (~45vh) and scrolls
-    # past it, so a tall board doesn't push the page down. The headers stay
-    # outside the scroll regions.
+    # v0.8.x: each highlights section's card area is bounded (~22.5vh, halved in
+    # v0.8.11) and scrolls past it, so a tall board doesn't push the page down.
+    # The headers stay outside the scroll regions.
     from src.layout.html import _render_highlights
 
     sup = [
@@ -342,7 +397,7 @@ def test_highlights_sections_are_height_capped_and_scrollable():
     ]
     html = _render_highlights(sup, launches)
     # Both panels' card areas are capped + scrollable (one per section).
-    assert html.count("max-height:45vh") == 2
+    assert html.count("max-height:22.5vh") == 2
     assert html.count("overflow-y:auto") == 2
 
 
