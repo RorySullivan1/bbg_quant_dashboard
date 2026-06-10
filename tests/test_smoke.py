@@ -92,65 +92,75 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
 
 
 def test_regime_analysis_section_conditions_live():
-    # v0.8.5: a Regime Analysis section (between the factor scatter and the
-    # treemap) with shared regime controls driving two sub-tabs. Volatility
-    # (VIX buckets) conditions the charts live from the cache; the scaffolded
-    # regimes are inert (unconditioned, no traceback).
+    # A Regime Analysis section (between the factor scatter and the sunburst):
+    # a single regime-conditioned risk/return scatter (no Correlation sub-tab —
+    # that lives in Multi-Strategy). Volatility uses fixed VIX-level buckets;
+    # Trend / Rate-level / Risk regime split a live indicator into terciles, with
+    # Trend / Rate-level carrying a conditional indicator-source dropdown.
     import plotly.graph_objects as go
-    from src.data import load_metadata
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
     regime_section = platform_panel.children[6]
     assert isinstance(regime_section, W.VBox)
+    # No sub-tab bar / heatmap: header, controls, scatter.
+    assert len(regime_section.children) == 3
 
     controls = regime_section.children[1]
     regime_dds = [c for c in controls.children if isinstance(c, W.Dropdown)]
-    regime_type, bucket_dd = regime_dds[0], regime_dds[1]
+    regime_type, selector_dd, bucket_dd = regime_dds
     assert list(regime_type.options) == [
         "Volatility",
         "Trend",
-        "Liquidity",
         "Rate-level",
+        "Risk regime",
     ]
     assert regime_type.value == "Volatility"
-    assert bucket_dd.layout.display == ""  # Volatility shows the VIX-bucket dd
+    # Volatility: fixed VIX buckets (≥35 dropped, second-highest uncapped), no
+    # indicator-source dropdown.
+    assert [lbl for lbl, _ in bucket_dd.options] == [
+        "VIX < 15",
+        "15 ≤ VIX < 25",
+        "VIX ≥ 25",
+    ]
+    assert selector_dd.layout.display == "none"
 
-    # Risk/Return sub-tab is the default content → a 2D scatter conditioned on
-    # the default VIX bucket renders markers.
-    content = regime_section.children[3]
-    scatter_fig = content.children[0]
+    # The scatter is the section's third child — a 2D risk/return scatter
+    # conditioned on the default VIX bucket.
+    scatter_fig = regime_section.children[2]
     assert isinstance(scatter_fig, go.FigureWidget)
     assert scatter_fig.data
-    assert all(isinstance(t, go.Scatter) for t in scatter_fig.data)
-    rr_bucketed = [tuple(t.x) for t in scatter_fig.data]
-
-    # A scaffolded regime hides the bucket dd and reverts to the unconditioned
-    # (all-days) view without a traceback — and the conditioning visibly changed
-    # the chart (subset days vs all days → different vols).
-    regime_type.value = "Trend"
-    assert bucket_dd.layout.display == "none"
-    assert scatter_fig.data
-    assert [tuple(t.x) for t in scatter_fig.data] != rr_bucketed
-
-    # The Correlation sub-tab swaps in a Theme dropdown + a heatmap; scoping to a
-    # theme with ≥2 tickers (over a populated VIX bucket) yields a heatmap trace.
-    corr_btn = regime_section.children[2].children[1]
-    corr_btn.click()
-    corr_view = content.children[0]
-    theme_dd = next(
-        c for c in corr_view.children[0].children if isinstance(c, W.Dropdown)
+    assert all(
+        isinstance(t, go.Scatter) and not isinstance(t, go.Scatter3d)
+        for t in scatter_fig.data
     )
-    heatmap_fig = corr_view.children[1]
-    assert isinstance(heatmap_fig, go.FigureWidget)
+    vol_bucketed = [tuple(t.x) for t in scatter_fig.data]
 
-    counts = load_metadata()["theme"].dropna().value_counts()
-    multi = [t for t in theme_dd.options if t in counts.index and counts[t] >= 2]
-    if multi:
-        regime_type.value = "Volatility"  # re-condition on VIX < 15 (many days)
-        theme_dd.value = multi[0]
-        assert heatmap_fig.data
-        assert isinstance(heatmap_fig.data[0], go.Heatmap)
+    # Trend: a benchmark dropdown appears, buckets become terciles, and the
+    # conditioning visibly changes the scatter (no traceback).
+    regime_type.value = "Trend"
+    assert selector_dd.layout.display == ""
+    assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
+    assert scatter_fig.data
+    trend_low = [tuple(t.x) for t in scatter_fig.data]
+    assert trend_low != vol_bucketed
+    bucket_dd.value = "high"
+    assert [tuple(t.x) for t in scatter_fig.data] != trend_low
+
+    # Rate-level: a region dropdown (US / EU / JP) appears with terciles.
+    regime_type.value = "Rate-level"
+    assert selector_dd.layout.display == ""
+    assert [lbl for lbl, _ in selector_dd.options] == [
+        "US (FEDL01)",
+        "EU (EONIA)",
+        "JP (MUTKCALM)",
+    ]
+
+    # Risk regime: terciles of NFCIRISK Δ, no indicator-source dropdown.
+    regime_type.value = "Risk regime"
+    assert selector_dd.layout.display == "none"
+    assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
+    assert scatter_fig.data
 
 
 def _walk(widget):

@@ -709,7 +709,7 @@ def test_win_rate_empty_passthrough():
     assert stats.win_rate(pd.DataFrame(), window_days=21).empty
 
 
-# --- v0.8.5 regime analytics: mask / risk-return / correlation --------------
+# --- regime analytics: mask / risk-return / rolling autocorr / terciles -----
 
 
 def test_regime_mask_half_open_and_nan(bdays):
@@ -768,29 +768,39 @@ def test_regime_risk_return_too_few_days_is_empty(bdays):
     assert list(out.columns) == ["vol", "ret", "sharpe"]
 
 
-def test_regime_correlation_subset_and_mask(bdays):
-    idx = bdays(8)
-    base = np.linspace(-0.02, 0.02, 8)
-    rets = pd.DataFrame(
-        {"A Index": base, "B Index": 2.0 * base, "C Index": -base}, index=idx
-    )
-    mask = pd.Series([True] * 6 + [False] * 2, index=idx)
-    cm = stats.regime_correlation(rets, mask, columns=["A Index", "B Index"])
-    # Only the theme's columns; B = 2A → perfectly correlated over masked days.
-    assert list(cm.columns) == ["A Index", "B Index"]
-    assert cm.loc["A Index", "B Index"] == pytest.approx(1.0)
+def test_rolling_autocorr_trending_vs_reverting(bdays):
+    idx = bdays(40)
+    # A persistently rising return stream → positive trailing autocorrelation;
+    # a perfectly alternating stream → negative. The series is NaN over the
+    # leading warmup window, defined thereafter.
+    trend = pd.Series(np.linspace(0.001, 0.040, len(idx)), index=idx)
+    revert = pd.Series(np.tile([0.01, -0.01], len(idx) // 2), index=idx)
+    ac_trend = stats.rolling_autocorr(trend, window=21)
+    ac_revert = stats.rolling_autocorr(revert, window=21)
+    assert ac_trend.iloc[:20].isna().all()  # warmup
+    assert ac_trend.iloc[-1] > 0.5  # trending
+    assert ac_revert.iloc[-1] < -0.5  # mean-reverting
 
 
-def test_regime_correlation_degenerate_is_empty(bdays):
-    idx = bdays(5)
-    rets = pd.DataFrame(
-        {
-            "A Index": np.linspace(-0.01, 0.01, 5),
-            "B Index": np.linspace(0.01, -0.01, 5),
-        },
-        index=idx,
-    )
-    mask = pd.Series([True] * 5, index=idx)
-    assert stats.regime_correlation(rets, mask, columns=["A Index"]).empty  # <2 cols
-    one_day = pd.Series([True] + [False] * 4, index=idx)
-    assert stats.regime_correlation(rets, one_day).empty  # <2 days
+def test_rolling_autocorr_empty_passthrough():
+    assert stats.rolling_autocorr(pd.Series(dtype=float)).empty
+
+
+def test_tercile_bounds_split_at_thirds():
+    s = pd.Series(np.arange(0, 99, dtype=float))  # 0..98, q⅓≈32.67, q⅔≈65.33
+    lo_low, lo_high = stats.tercile_bounds(s, "low")
+    mid_low, mid_high = stats.tercile_bounds(s, "mid")
+    hi_low, hi_high = stats.tercile_bounds(s, "high")
+    assert lo_low == -np.inf and hi_high == np.inf
+    # The three buckets are contiguous and split at the same quantiles.
+    assert lo_high == pytest.approx(mid_low)
+    assert mid_high == pytest.approx(hi_low)
+    assert lo_high == pytest.approx(s.quantile(1 / 3))
+    assert hi_low == pytest.approx(s.quantile(2 / 3))
+
+
+def test_tercile_bounds_degenerate_selects_all():
+    # Empty / no-spread series → (-inf, +inf) so the bucket selects every day.
+    assert stats.tercile_bounds(pd.Series(dtype=float), "low") == (-np.inf, np.inf)
+    flat = pd.Series([5.0] * 10)
+    assert stats.tercile_bounds(flat, "high") == (-np.inf, np.inf)

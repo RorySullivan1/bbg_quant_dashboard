@@ -20,7 +20,6 @@ from ..stats import (
     equity_risk_premium,
     factor_beta,
     platform_sunburst_frame,
-    regime_correlation,
     regime_mask,
     regime_risk_return,
     term_premium,
@@ -352,15 +351,12 @@ def _update_sunburst(
         fig.add_traces([sunburst])
 
 
-# --- v0.8.5 Regime Analysis: regime-conditioned scatter + heatmap ----------
+# --- Regime Analysis: regime-conditioned risk/return scatter ----------------
 
 _REGIME_RR_HOVER = (
     "%{{text}}<br>{ac}<br>Vol %{{x:.1%}}<br>Return %{{y:.1%}}"
     "<br>Sharpe %{{customdata:.2f}}<extra></extra>"
 )
-# Correlation heatmap diverging scale: reuse the sunburst's red<0 → neutral →
-# green>0 sentiment, mapped over ρ ∈ [-1, 1] (zmid=0).
-_REGIME_CORR_COLORSCALE = _SUNBURST_COLORSCALE
 
 
 def _regime_window_mask(
@@ -381,7 +377,7 @@ def _regime_scatter() -> go.FigureWidget:
     """Regime-conditioned risk/return scatter — annualized vol (x) vs return (y)
     over only the selected regime bucket's days, one marker per strategy colored
     by asset class. Built empty; `_update_regime_scatter` fills it. No in-figure
-    title — the section header + sub-tab pills stand alone."""
+    title — the section header + regime controls stand alone."""
     return go.FigureWidget(
         layout=_chart_layout(
             title="",
@@ -444,61 +440,3 @@ def _update_regime_scatter(
     with fig.batch_update():
         fig.data = ()
         fig.add_traces(traces)
-
-
-def _regime_heatmap() -> go.FigureWidget:
-    """Regime-conditioned correlation heatmap — per-ticker correlation within a
-    selected theme over only the regime bucket's days. Built empty;
-    `_update_regime_heatmap` fills it. No in-figure title."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            xaxis=dict(showgrid=False, side="bottom"),
-            yaxis=dict(showgrid=False, autorange="reversed"),
-        )
-    )
-
-
-def _update_regime_heatmap(
-    fig: go.FigureWidget,
-    arp_prices: pd.DataFrame,
-    indicator: pd.Series | None,
-    meta: pd.DataFrame,
-    *,
-    low: float | None,
-    high: float | None,
-    theme: str | None,
-    lookback: int,
-) -> None:
-    """Populate the regime correlation heatmap: `regime_correlation` over the
-    lookback window's regime-bucket days, scoped to the selected theme's tickers
-    (so the per-ticker matrix stays small). No BQL."""
-    if arp_prices.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    rets = daily_returns(arp_prices.tail(lookback))
-    mask = _regime_window_mask(indicator, rets.index, low, high)
-    theme_tickers = None
-    if theme is not None and "theme" in meta:
-        theme_tickers = meta.loc[meta["theme"] == theme, "ticker"].tolist()
-    cm = regime_correlation(rets, mask, columns=theme_tickers)
-    if cm.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    labels = [_short_ticker(t) for t in cm.columns]
-    heat = go.Heatmap(
-        z=cm.to_numpy(),
-        x=labels,
-        y=labels,
-        zmin=-1.0,
-        zmax=1.0,
-        zmid=0.0,
-        colorscale=_REGIME_CORR_COLORSCALE,
-        colorbar=dict(title=dict(text="ρ")),
-        hovertemplate="%{y} · %{x}<br>ρ %{z:.2f}<extra></extra>",
-    )
-    with fig.batch_update():
-        fig.data = ()
-        fig.add_traces([heat])

@@ -77,36 +77,84 @@ SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
 FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]
 
-# Regime indicators for the v0.8.5 Platform "Regime Analysis" section. Like the
+# Regime indicators for the Platform "Regime Analysis" section. Like the
 # benchmarks/factors, these ride the *single* startup fetch and are excluded
 # from ARP-universe views (the `reindex(columns=meta["ticker"])` drops them).
-# Only the Volatility regime (VIX buckets) is wired this cycle; Trend /
-# Liquidity / Rate-level are scaffolded (ticker=None) and leave the charts on
-# the unconditioned all-days view until a later version supplies them.
+# Each regime classifies the trailing days into buckets the catalog scatter is
+# conditioned on:
+#   - Volatility: fixed VIX-level buckets.
+#   - Trend / Rate-level / Risk regime: terciles (low / middle / high thirds) of
+#     a live-computed indicator series — see `src/stats/regime.py` + builder.
 VIX_TICKER = "VIX Index"
-REGIME_TICKERS: list[str] = [VIX_TICKER]
+NFCIRISK_TICKER = "NFCIRISK Index"  # Chicago Fed NFCI risk subindex (straddles 0)
+# Regional risk-free overnight rates for the Rate-level regime (region dropdown).
+RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
+    ("US (FEDL01)", "FEDL01 Index"),  # US fed funds effective rate
+    ("EU (EONIA)", "EONIA Index"),  # euro overnight rate
+    ("JP (MUTKCALM)", "MUTKCALM Index"),  # Japan call rate
+]
+REGIME_TICKERS: list[str] = [
+    VIX_TICKER,
+    NFCIRISK_TICKER,
+    *(t for _, t in RATE_LEVEL_TICKERS),
+]
 
-# Tickers whose mock series must be an absolute *level* (not a compounding
-# price) so the absolute buckets below actually partition the off-terminal
-# mock — see `_mock_prices` in `src/bql_client.py`.
-LEVEL_INDICATOR_TICKERS: frozenset[str] = frozenset({VIX_TICKER})
+# Mock-price shapes for indicator tickers whose off-terminal series must be an
+# absolute *level* (not a compounding price) so the regime buckets actually
+# partition the mock. Maps ticker -> (mean, vol, lo, hi) for a clipped
+# mean-reverting level — see `_mock_prices` in `src/bql_client.py`.
+LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
+    VIX_TICKER: (18.0, 1.5, 9.0, 60.0),  # VIX-like, hovers ~18
+    NFCIRISK_TICKER: (0.0, 0.30, -3.0, 3.0),  # risk subindex, straddles 0
+    **{t: (2.0, 0.10, 0.0, 8.0) for _, t in RATE_LEVEL_TICKERS},  # short rates
+}
 
 _REGIME_INF = float("inf")
-# regime label -> {"ticker": indicator ticker or None, "buckets": [(label, low,
-# high), ...]} over the indicator's daily level, each a half-open [low, high)
-# range (±inf for the open ends). Populated only for Volatility this cycle; the
-# scaffolded regimes carry no ticker and no buckets.
+# regime label -> spec. Two bucket *modes*:
+#   - "level": fixed buckets over the indicator ticker's raw daily level, each a
+#     half-open [low, high) range (±inf for the open ends).
+#   - "*_tercile": the indicator series is computed live (see builder) and split
+#     into low / middle / high thirds by its 1/3 & 2/3 quantiles.
+# Tercile modes carry `bucket_labels` ((display, key) for the three thirds) and a
+# `selector` list of (label, ticker) for a conditional indicator-source dropdown
+# (benchmark for Trend, region for Rate-level); `autocorr_window` is the rolling
+# window for the Trend benchmark-return autocorrelation.
 REGIME_SPECS: dict[str, dict] = {
     "Volatility": {
+        "mode": "level",
         "ticker": VIX_TICKER,
         "buckets": [
             ("VIX < 15", -_REGIME_INF, 15.0),
             ("15 ≤ VIX < 25", 15.0, 25.0),
-            ("25 ≤ VIX < 35", 25.0, 35.0),
-            ("VIX ≥ 35", 35.0, _REGIME_INF),
+            ("VIX ≥ 25", 25.0, _REGIME_INF),
         ],
     },
-    "Trend": {"ticker": None, "buckets": []},
-    "Liquidity": {"ticker": None, "buckets": []},
-    "Rate-level": {"ticker": None, "buckets": []},
+    "Trend": {
+        "mode": "autocorr_tercile",
+        "selector": [(t.replace(" Index", ""), t) for t in BENCHMARK_TICKERS],
+        "autocorr_window": 21,
+        "bucket_labels": [
+            ("Low (mean-reverting)", "low"),
+            ("Middle", "mid"),
+            ("High (trending)", "high"),
+        ],
+    },
+    "Rate-level": {
+        "mode": "level_tercile",
+        "selector": list(RATE_LEVEL_TICKERS),
+        "bucket_labels": [
+            ("Low rates", "low"),
+            ("Middle", "mid"),
+            ("High rates", "high"),
+        ],
+    },
+    "Risk regime": {
+        "mode": "change_tercile",
+        "ticker": NFCIRISK_TICKER,
+        "bucket_labels": [
+            ("Falling (Δ low)", "low"),
+            ("Middle", "mid"),
+            ("Rising (Δ high)", "high"),
+        ],
+    },
 }
