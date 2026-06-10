@@ -75,6 +75,9 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   to the correlation matrix on the Benchmark check; drop the overbought/oversold
   + VaR superlatives; add Smart Beta + Risk Management solutions to the universe;
   prune indices with no recent price movement (shipped).
+- [x] `v0.8.10` — Startup selection: seed the Multi-Strategy picker with the top 5
+  indices by z(1W Sharpe, 1Y) so the tab loads populated (fixes the v0.8.9 prune
+  clearing the default selection) (shipped).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).

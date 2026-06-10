@@ -929,6 +929,29 @@ def build_app(verbose: bool = True) -> W.VBox:
     for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
         _dd.observe(_render_universe_grid, names="value")
 
+    def _default_selection() -> tuple[str, ...]:
+        """The startup strategy selection: the 5 indices with the highest
+        z-score of (1W Sharpe, 1Y) over the fetched cache, so the Multi-Strategy
+        views load populated. Falls back to the first available tickers when the
+        z-score is unavailable/degenerate."""
+        opt = [o[1] if isinstance(o, tuple) else o for o in state.ticker_w.options]
+        if not opt:
+            return ()
+        if not state.arp_universe_prices.empty:
+            try:
+                z = rolling_metric_zscore(
+                    state.arp_universe_prices,
+                    metric="sharpe",
+                    window=WEEK_WINDOW,
+                    zscore_window=TRADING_DAYS_PER_YEAR,
+                ).dropna()
+                top = [t for t in z.nlargest(5).index if t in opt]
+                if top:
+                    return tuple(top)
+            except Exception:
+                pass
+        return tuple(opt[:5])
+
     def _render_factor_scatter(_change=None) -> None:
         """Render the Platform 3D factor-beta scatter (β to the equity risk
         premium, term premium, and trend factor, per strategy, colored by asset
@@ -1121,6 +1144,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             active_columns(state.universe_prices.reindex(columns=meta_all["ticker"]))
         )
         meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+        # Resetting the options clears `ticker_w.value`; reselect below once the
+        # cache (and so the z-score ranking) is available.
         state.ticker_w.options = _ticker_options(meta)
         _log(f"pruned to {len(meta)} indices with recent performance")
         # ARP universe view of the cache — used for the all-catalog grid and
@@ -1128,6 +1153,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
+        # Startup selection: the top 5 indices by z(1W Sharpe, 1Y) so the
+        # Multi-Strategy views render populated on load (the initial _recompute
+        # below reads this selection).
+        state.ticker_w.value = _default_selection()
         t_perf = time.perf_counter()
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
