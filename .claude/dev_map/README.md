@@ -8,7 +8,7 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.8.4`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.8.6`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -54,14 +54,14 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   symmetric best/worst, technical/character indicators (return autocorrelation,
   MACD, drawup, recovery speed, win-rate, skew) with cross-asset-neutral
   asset-class-demeaned z-score ranking and calculation-only tooltips (shipped).
-- [ ] `v0.8.5` — Regime Analysis: a Platform-tab tabbed section (Risk vs Return /
+- [x] `v0.8.5` — Regime Analysis: a Platform-tab tabbed section (Risk vs Return /
   Correlation) between the factor scatter and the treemap, with a regime-type
   dropdown (volatility / trend / liquidity / rate-level) and conditional buckets
   (e.g. VIX buckets) that condition each chart — volatility wired this cycle, the
-  rest scaffolded.
-- [ ] `v0.8.6` — Factor Scatter Zero Planes: three translucent zero-reference
+  rest scaffolded (shipped).
+- [x] `v0.8.6` — Factor Scatter Zero Planes: three translucent zero-reference
   planes (x=0/y=0/z=0) through the Platform 3D factor-beta scatter so the origin
-  reads in every dimension (small enhancement; slated to ship ahead of v0.8.5).
+  reads in every dimension (small enhancement; shipped just after v0.8.5).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
