@@ -271,8 +271,10 @@ def _update_sunburst(
     asset class → theme → ticker hierarchy. Each arc is sized by |z| (so with
     `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
     colored by the metric z-score, averaged up each level (parent color = mean of
-    its descendant tickers' z). `label` (e.g. "1W Sharpe") titles the colorbar +
-    hover. No BQL — pure compute over the already-fetched cache."""
+    its descendant tickers' z). `maxdepth=2` shows only the asset-class + theme
+    rings up front; the ticker ring appears when the user clicks into an asset
+    class or theme (client-side drill-down). `label` (e.g. "1W Sharpe") titles
+    the colorbar + hover. No BQL — pure compute over the already-fetched cache."""
     frame = platform_sunburst_frame(
         prices, meta, metric=metric, window=window, lookback=lookback
     ).dropna(subset=["z"])
@@ -328,6 +330,10 @@ def _update_sunburst(
         parents=parents,
         values=values,
         branchvalues="total",
+        # Show only 2 rings from the current center (asset class + theme), so the
+        # ticker ring stays hidden until the user clicks into an asset class or
+        # theme to drill in (client-side zoom, no recompute).
+        maxdepth=2,
         insidetextorientation="radial",
         marker=dict(
             colors=colors,

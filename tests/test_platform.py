@@ -189,6 +189,8 @@ def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
     sb = fig.data[0]
     assert isinstance(sb, go.Sunburst)
     assert sb.branchvalues == "total"
+    # maxdepth=2 hides the ticker ring until the user drills into a class/theme.
+    assert sb.maxdepth == 2
     nodes = dict(zip(sb.ids, sb.parents, strict=True))
     # asset-class node is a root; theme nodes hang off it; leaves off the themes.
     assert nodes["Equity"] == ""
