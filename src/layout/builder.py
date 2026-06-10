@@ -13,7 +13,6 @@ from IPython.display import display
 from ..bql_client import _cache_path, fetch_prices
 from ..commentary import build_launch_cards, build_superlatives
 from ..config import (
-    ARP_SOLUTION_VALUES,
     BENCHMARK_TICKERS,
     DEFAULT_BENCHMARK,
     FACTOR_TICKERS,
@@ -27,10 +26,12 @@ from ..config import (
     REGIME_TICKERS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
+    UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
 )
 from ..data import apply_filters, load_metadata, unique_values
 from ..stats import (
+    active_columns,
     ann_beta,
     common_window_bounds,
     corr_matrix,
@@ -130,10 +131,15 @@ def build_app(verbose: bool = True) -> W.VBox:
         display(overlay_w)
     _set_progress(0, "Initializing…")
 
-    meta = load_metadata()
-    meta = meta[
-        meta["solution"].astype(str).str.lower().isin(ARP_SOLUTION_VALUES)
+    # `meta_all` is the full in-universe catalog (by solution); the displayed
+    # `meta` is later narrowed to indices with recent price movement (post-fetch,
+    # via `_prune_stale`). `meta_all` drives the fetch so a ticker that resumes
+    # trading can be re-admitted on a later Refresh.
+    meta_all = load_metadata()
+    meta_all = meta_all[
+        meta_all["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)
     ].reset_index(drop=True)
+    meta = meta_all
     _log(f"loaded metadata: {len(meta)} tickers")
     _set_progress(25, f"Loaded {len(meta)} indices")
 
@@ -977,7 +983,6 @@ def build_app(verbose: bool = True) -> W.VBox:
         unconditioned all-days view):
 
         - ``level`` — the raw indicator level (Volatility = VIX).
-        - ``change_tercile`` — the indicator's daily first difference (Risk = ΔNFCI).
         - ``autocorr_tercile`` — the selected benchmark's rolling return autocorr.
         - ``level_tercile`` — the selected region's rate level.
         """
@@ -995,8 +1000,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
         if not ticker or ticker not in prices.columns:
             return None
-        series = prices[ticker]
-        return series.diff() if mode == "change_tercile" else series
+        return prices[ticker]
 
     def _resolve_regime_bucket() -> tuple[float | None, float | None]:
         """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
@@ -1109,6 +1113,16 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
 
     if not state.universe_prices.empty:
+        # Drop indices with no recent price movement (stale / delisted / all-NaN)
+        # from the displayed `meta`; `meta_all` (everything fetched) is kept so a
+        # resumed ticker can be re-admitted on a later Refresh. Then refresh the
+        # strategies dropdown so the dropped tickers leave it too.
+        live = set(
+            active_columns(state.universe_prices.reindex(columns=meta_all["ticker"]))
+        )
+        meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+        state.ticker_w.options = _ticker_options(meta)
+        _log(f"pruned to {len(meta)} indices with recent performance")
         # ARP universe view of the cache — used for the all-catalog grid and
         # the whole-catalog highlights so benchmark columns never leak in.
         state.arp_universe_prices = state.universe_prices.reindex(
@@ -1279,11 +1293,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         win_end: pd.Timestamp,
         errors: list[str],
     ) -> None:
-        # Correlation heatmap: optionally conditioned on a benchmark-return
-        # regime, with the benchmark added to the matrix. Computed per-pane so
-        # the two panes stay independent (like the rolling-corr/beta blocks).
-        # The regime path is gated on the nested Regime checkbox (v0.7.5);
-        # Benchmark-on / Regime-off stays plain full-sample correlation.
+        # Correlation heatmap, three cases (per-pane, so the panes stay
+        # independent): Regime on → conditioned on the benchmark-return tail with
+        # the benchmark in the matrix; Benchmark on / Regime off → full-sample
+        # correlation with the benchmark added (v0.8.9); neither → plain
+        # full-sample correlation of the selected strategies (`prep.cm`).
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
             direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
@@ -1318,6 +1332,43 @@ def build_app(verbose: bool = True) -> W.VBox:
                     f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
                 )
                 _update_heatmap(pane.heat_fig, cm, title=title)
+            except Exception:
+                errors.append(traceback.format_exc())
+                _update_heatmap(pane.heat_fig, pd.DataFrame())
+        elif pane.heat_benchmark_chk.value:
+            # Benchmark on, Regime off: full-sample correlation with the
+            # benchmark added as a row/column (no regime conditioning).
+            hm_bench_ticker = pane.heat_dd.value
+            try:
+
+                def _compute_incl():
+                    hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
+                    if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                        raise ValueError(
+                            f"No price data for benchmark {hm_bench_ticker!r}."
+                        )
+                    hm_bench_window = hm_bench_prices.loc[win_start:win_end]
+                    hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[
+                        :, 0
+                    ]
+                    # pct=1.0 keeps every day (no tail); include_benchmark appends it.
+                    return regime_corr_matrix(
+                        prep.rets,
+                        hm_bench_returns,
+                        1.0,
+                        direction="down",
+                        include_benchmark=True,
+                    )
+
+                cm = state.memo.get_or_compute(
+                    ("heatmap", hm_bench_ticker, "incl", 100),
+                    _compute_incl,
+                )
+                _update_heatmap(
+                    pane.heat_fig,
+                    cm,
+                    title=f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)",
+                )
             except Exception:
                 errors.append(traceback.format_exc())
                 _update_heatmap(pane.heat_fig, pd.DataFrame())
@@ -1685,6 +1736,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         state.errors_w.value = error_html
 
     def _refresh_prices(_btn=None):
+        nonlocal meta
         # Re-show the overlay (it's already in the tree — just re-render its
         # value visible) and re-run the staged bar.
         _set_progress(0, "Refreshing…")
@@ -1704,6 +1756,16 @@ def build_app(verbose: bool = True) -> W.VBox:
             _recompute()
             return
         elapsed = time.perf_counter() - t_refresh
+        # Re-prune stale indices from the full catalog against the fresh cache
+        # (a resumed ticker can return), then refresh the strategies dropdown.
+        if not state.universe_prices.empty:
+            live = set(
+                active_columns(
+                    state.universe_prices.reindex(columns=meta_all["ticker"])
+                )
+            )
+            meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+            _on_filter_change()
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )

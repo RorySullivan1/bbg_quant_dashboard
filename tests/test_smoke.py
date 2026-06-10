@@ -104,8 +104,8 @@ def test_regime_analysis_section_conditions_live():
     # The Regime analysis chart is the middle tab of the Platform analytics card:
     # a single regime-conditioned risk/return scatter (no Correlation sub-tab —
     # that lives in Multi-Strategy). Volatility uses fixed VIX-level buckets;
-    # Trend / Rate-level / Risk regime split a live indicator into terciles, with
-    # Trend / Rate-level carrying a conditional indicator-source dropdown.
+    # Trend / Rate-level split a live indicator into terciles, with each carrying
+    # a conditional indicator-source dropdown.
     import plotly.graph_objects as go
 
     app = build_app(verbose=False)
@@ -125,7 +125,6 @@ def test_regime_analysis_section_conditions_live():
         "Volatility",
         "Trend",
         "Rate-level",
-        "Risk regime",
     ]
     assert regime_type.value == "Volatility"
     # Volatility: fixed VIX buckets (≥35 dropped, second-highest uncapped), no
@@ -166,12 +165,24 @@ def test_regime_analysis_section_conditions_live():
         "EU (EONIA)",
         "JP (MUTKCALM)",
     ]
-
-    # Risk regime: terciles of NFCIRISK Δ, no indicator-source dropdown.
-    regime_type.value = "Risk regime"
-    assert selector_dd.layout.display == "none"
     assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
     assert scatter_fig.data
+
+
+def test_universe_includes_smart_beta_solution():
+    # v0.8.9: the dashboard universe now spans ARP + Smart Beta + Risk Management
+    # solutions (plain "Beta" stays excluded).
+    from src.config import UNIVERSE_SOLUTION_VALUES
+    from src.data import load_metadata
+
+    assert {"smart beta", "risk management"} <= UNIVERSE_SOLUTION_VALUES
+    meta = load_metadata()
+    universe = meta[
+        meta["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)
+    ]
+    sols = set(universe["solution"].astype(str).str.lower())
+    assert "smart beta" in sols  # Smart Beta indices now enter the universe
+    assert "beta" not in sols  # plain Beta stays excluded
 
 
 def _walk(widget):
@@ -233,7 +244,7 @@ def test_correlation_benchmark_regime_controls():
 def test_superlatives_window_toggle_re_renders_live():
     # v0.8.x: a 1W/1M/3M/6M ToggleButtons drives the Market Superlatives board;
     # changing it re-renders the panel live from the cache (no BQL) with the
-    # matching window label. The v0.8.4 board carries 19 superlative cards.
+    # matching window label. v0.8.9 dropped overbought/oversold/VaR → 16 cards.
     app = build_app(verbose=False)
     widgets = list(_walk(app))
     toggle = next(
@@ -249,13 +260,13 @@ def test_superlatives_window_toggle_re_renders_live():
     )
     before = panel.value
     assert "Past Month" in before
-    assert before.count("bbg-superlative") == 19  # all 19 cards rendered
+    assert before.count("bbg-superlative") == 16  # all 16 cards rendered
     assert "title='" in before  # hover descriptions present
 
     toggle.value = 5  # WEEK_WINDOW → fires the observer
     after = panel.value
     assert "Past Week" in after
-    assert after.count("bbg-superlative") == 19
+    assert after.count("bbg-superlative") == 16
     assert after != before  # the board recomputed for the new window
 
 

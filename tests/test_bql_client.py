@@ -20,7 +20,7 @@ from datetime import date
 import pandas as pd
 import pytest
 import src.bql_client as bc
-from src.config import NFCIRISK_TICKER, RATE_LEVEL_TICKERS, VIX_TICKER
+from src.config import RATE_LEVEL_TICKERS, VIX_TICKER
 
 
 @pytest.fixture(autouse=True)
@@ -122,16 +122,12 @@ def test_mock_vix_is_a_bounded_level_spanning_buckets():
     assert df["AAA Index"].iloc[0] > 50
 
 
-def test_mock_rate_and_risk_indicators_are_levels():
-    # Regional rates mock as positive levels (terciles of level → Rate-level
-    # regime); the NFCI risk subindex straddles zero (its Δ feeds the Risk
-    # regime), unlike the strictly-positive rates / VIX / GBM strategies.
+def test_mock_rate_indicators_are_levels():
+    # Regional rates mock as positive mean-reverting levels (terciles of level →
+    # Rate-level regime), unlike the ~100+ GBM strategies.
     rate_ticker = RATE_LEVEL_TICKERS[0][1]
-    df = bc._mock_prices(
-        [rate_ticker, NFCIRISK_TICKER], date(2018, 1, 1), date(2024, 1, 1)
-    )
+    df = bc._mock_prices([rate_ticker, "AAA Index"], date(2018, 1, 1), date(2024, 1, 1))
     rate = df[rate_ticker]
     assert (rate >= 0.0).all() and rate.max() <= 8.0
     assert rate.std() > 0  # actually moves, so its terciles partition the mock
-    risk = df[NFCIRISK_TICKER]
-    assert (risk < 0).any() and (risk > 0).any()  # straddles zero
+    assert df["AAA Index"].iloc[0] > 50  # a normal strategy still compounds ~100

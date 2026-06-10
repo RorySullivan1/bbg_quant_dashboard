@@ -36,11 +36,14 @@ DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
 CACHE_TTL_HOURS = 12
 
-# Solution values that count as "Alternative Risk Premia" — compared
-# case-insensitively against the metadata `solution` column. The dataset
-# currently uses the short form "ARP"; the long form is kept here so the
-# filter survives a future JSON rename.
-ARP_SOLUTION_VALUES = frozenset({"arp", "alternative risk premia"})
+# Solution values that make up the dashboard universe — compared
+# case-insensitively against the metadata `solution` column. Covers Alternative
+# Risk Premia (short "ARP" / long form, kept so the filter survives a future JSON
+# rename) plus Smart Beta and Risk Management; plain "Beta" stays excluded.
+# "risk management" is forward-compatible (no records carry it yet).
+UNIVERSE_SOLUTION_VALUES = frozenset(
+    {"arp", "alternative risk premia", "smart beta", "risk management"}
+)
 WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
@@ -83,10 +86,9 @@ FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICK
 # Each regime classifies the trailing days into buckets the catalog scatter is
 # conditioned on:
 #   - Volatility: fixed VIX-level buckets.
-#   - Trend / Rate-level / Risk regime: terciles (low / middle / high thirds) of
-#     a live-computed indicator series — see `src/stats/regime.py` + builder.
+#   - Trend / Rate-level: terciles (low / middle / high thirds) of a
+#     live-computed indicator series — see `src/stats/regime.py` + builder.
 VIX_TICKER = "VIX Index"
-NFCIRISK_TICKER = "NFCIRISK Index"  # Chicago Fed NFCI risk subindex (straddles 0)
 # Regional risk-free overnight rates for the Rate-level regime (region dropdown).
 RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
     ("US (FEDL01)", "FEDL01 Index"),  # US fed funds effective rate
@@ -95,7 +97,6 @@ RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
 ]
 REGIME_TICKERS: list[str] = [
     VIX_TICKER,
-    NFCIRISK_TICKER,
     *(t for _, t in RATE_LEVEL_TICKERS),
 ]
 
@@ -105,7 +106,6 @@ REGIME_TICKERS: list[str] = [
 # mean-reverting level — see `_mock_prices` in `src/bql_client.py`.
 LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
     VIX_TICKER: (18.0, 1.5, 9.0, 60.0),  # VIX-like, hovers ~18
-    NFCIRISK_TICKER: (0.0, 0.30, -3.0, 3.0),  # risk subindex, straddles 0
     **{t: (2.0, 0.10, 0.0, 8.0) for _, t in RATE_LEVEL_TICKERS},  # short rates
 }
 
@@ -146,15 +146,6 @@ REGIME_SPECS: dict[str, dict] = {
             ("Low rates", "low"),
             ("Middle", "mid"),
             ("High rates", "high"),
-        ],
-    },
-    "Risk regime": {
-        "mode": "change_tercile",
-        "ticker": NFCIRISK_TICKER,
-        "bucket_labels": [
-            ("Falling (Δ low)", "low"),
-            ("Middle", "mid"),
-            ("Rising (Δ high)", "high"),
         ],
     },
 }

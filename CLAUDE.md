@@ -22,9 +22,10 @@ once data is loaded, leaving a slim auto-fading post-load toast.
 The screen layout is: masthead banner → all-catalog commentary
 block (always visible; Weekly Commentary, then an error strip, then a
 **Superlatives window** `1W/1M/3M/6M` toggle above a **two-section Key
-Highlights** panel — left **Market Superlatives** board (v0.8.4: **19 cards** —
-symmetric best/worst pairs of technical/character indicators plus a single
-(Lowest VaR), scale-dependent metrics ranked **cross-asset-neutrally** by an
+Highlights** panel — left **Market Superlatives** board (v0.8.9: **16 cards** —
+8 symmetric best/worst pairs of technical/character indicators (v0.8.9 dropped
+the overbought/oversold and Lowest-VaR cards), scale-dependent metrics ranked
+**cross-asset-neutrally** by an
 asset-class-demeaned z-score while showing the raw value, each with a
 calculation-only `description` as a hover tooltip; the window toggle re-renders
 the board live from the cache, no BQL), right **New Launches** board; the panel
@@ -56,16 +57,15 @@ with two tabs:
   single **regime-conditioned risk/return scatter** (2D per-strategy annualized
   vol-vs-return, colored by asset class) — the Correlation heatmap was removed
   (correlation stays in the Multi-Strategy tab). Controls are a **regime-type**
-  dropdown (Volatility / Trend / Rate-level / Risk regime), a **conditional
-  indicator-source** dropdown (benchmark for Trend / region for Rate-level;
-  hidden otherwise), and a **bucket** dropdown. **Volatility** uses fixed
-  VIX-level buckets (`VIX < 15` / `15 ≤ VIX < 25` / `VIX ≥ 25`); **Trend**,
-  **Rate-level**, and **Risk regime** split a live-computed indicator into
+  dropdown (Volatility / Trend / Rate-level; v0.8.9 dropped the Risk regime), a
+  **conditional indicator-source** dropdown (benchmark for Trend / region for
+  Rate-level; hidden otherwise), and a **bucket** dropdown. **Volatility** uses
+  fixed VIX-level buckets (`VIX < 15` / `15 ≤ VIX < 25` / `VIX ≥ 25`); **Trend**
+  and **Rate-level** split a live-computed indicator into
   **low / middle / high terciles** (1/3 & 2/3 quantiles over the lookback
   window, via `tercile_bounds`): Trend = the selected benchmark's 21-day return
   autocorrelation (`rolling_autocorr`), Rate-level = the selected regional
-  risk-free rate level (`FEDL01` / `EONIA` / `MUTKCALM`), Risk regime = the daily
-  first-difference (Δ) of `NFCIRISK`. The scatter conditions on only the days in
+  risk-free rate level (`FEDL01` / `EONIA` / `MUTKCALM`). The scatter conditions on only the days in
   the selected bucket via `regime_mask` / `regime_risk_return`, computed live
   from the cache — all indicators ride the single startup fetch via
   `REGIME_TICKERS`, no BQL. The **Sunburst** tab is a nested **asset class → theme → ticker**
@@ -137,11 +137,13 @@ with two tabs:
   benchmark cumulative % return, in percentage points off a zero
   baseline.) `Correlation Heatmap` additionally carries a per-pane
   **Benchmark** checkbox on that row; ticking it reveals a benchmark
-  dropdown and a nested **Regime** checkbox; ticking **Regime** reveals a
+  dropdown and **adds the benchmark as a row/column** to the full-sample matrix
+  (v0.8.9), plus a nested **Regime** checkbox; ticking **Regime** reveals a
   **`>` / `<`** tail-direction dropdown (`<` = worst / below-pct tail,
-  `>` = best) beside a 0–100% (step 5) tail size, and conditions the matrix
-  on that benchmark-return regime while adding the benchmark as a
-  row/column (see `regime_corr_matrix`; v0.7.5 restructured these controls).
+  `>` = best) beside a 0–100% (step 5) tail size, and **additionally** conditions
+  the matrix on that benchmark-return regime (the benchmark stays in the matrix)
+  (see `regime_corr_matrix`; v0.7.5 restructured these controls, v0.8.9 added the
+  benchmark on the Benchmark check).
   Every chart inside a pane renders at the same
   `CHART_HEIGHT` (520px) so the two panes always line up.
 
@@ -167,13 +169,13 @@ dashboard always renders end-to-end.
 
 | Module                | Owns                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
-| `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths.    |
+| `src/config.py`       | Constants: lookback, new-launch window, Sharpe windows, file paths, `UNIVERSE_SOLUTION_VALUES` (in-universe solutions), `REGIME_SPECS`/`REGIME_TICKERS`/`LEVEL_INDICATOR_MOCK`, benchmark/factor tickers. |
 | `src/style.py`        | Centralized style tokens: `Color`, `Font`, `FontSize`, `StatusTone`, `Sentiment` enums plus `LINE_PALETTE`. `Color` carries the dark-chrome group (`CHROME_BG`, `SURFACE`, `SURFACE_2`, `BORDER`, `TEXT`, `TEXT_MUTED`, `ACCENT`, `ACCENT_2`, `SCRIM`) and `FontSize.TITLE` (masthead). All inline CSS / `data/templates/` reference these — change hex/font values here, not at call sites. (v0.6.5 moved tab/filter-pill state to the `.bbg-pill.is-active` CSS class, so the old `TabButtonTone` enum was retired.) |
 | `src/data.py`         | Loads JSON metadata, filters it, lists unique values for dropdowns.    |
 | `src/bql_client.py`   | `fetch_prices(tickers, start, end, use_cache=True) -> (df, source)` — BQL when available, mock otherwise. Two-tier cache (v0.6.9): an in-memory `_MEM_CACHE` checked before a per-trading-day parquet under `data/.cache/prices_{YYYY-MM-DD}.parquet` (TTL `CACHE_TTL_HOURS`) via `_cache_read` / `_cache_write`. Disk writes are best-effort (`_disk_cache_writable` tri-state; warns once and degrades to in-memory on a read-only FS). `_clear_caches()` resets both tiers for tests. |
-| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` — plus `factors` (v0.7.0) and `regime` (v0.8.5) — with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). **v0.8.5 `regime`:** `regime_mask` (half-open `[low, high)` indicator-bucket membership, NaN-safe, ±inf open ends), `regime_risk_return` (per-ticker vol/ret/sharpe over the masked days, *mean-based* annualization since regime days are non-contiguous), `rolling_autocorr` (rolling lag-1 return autocorrelation series — drives the Trend regime), `tercile_bounds` (the `(low, high)` of an indicator's low/middle/high third by its 1/3 & 2/3 quantiles — drives the Trend / Rate-level / Risk terciles; degenerate → all-days) — the regime-conditioning generalization of `regime_corr_matrix`. (v0.8.7 dropped `regime_correlation` with the Platform Correlation sub-tab.) `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range box bounds), `perf_table`, `since_inception_perf` (pure util; **unwired from the grid in v0.7.2** but kept + tested), `universe_perf` (1Y / 3Y / 5Y windows only — Since-Inception dropped in v0.7.2). **v0.7.0 Platform additions:** `rolling_return` / `rolling_volatility` / `rolling_sortino` (alongside `rolling_sharpe`), `rolling_metric_zscore` (generalizes `sharpe_zscore` over metric/window/lookback) in `rolling`; and in `factors` — `equity_risk_premium` / `term_premium` (daily factor-return proxies from the fetched factor tickers, return spreads since BQL is `px_last`-only), `trend_returns` (v0.7.1: daily returns of the `TREND_TICKER` — the trend β is taken vs the index's own returns, not a spread), `factor_beta` (thin `ann_beta` wrapper vs a factor-return series), and `platform_sunburst_frame` (per-ticker `asset_class` + `theme` + a single `z` over a selectable metric/window/lookback — default z(1W Sharpe, 1Y); v0.8.x sunburst, replacing the two-metric `platform_treemap_frame`). |
+| `src/stats/`          | Metrics **package** (was a single `stats.py`; split in v0.6.0 G stretch into `_common` / `performance` / `risk` / `rolling` — plus `factors` (v0.7.0) and `regime` (v0.8.5) — with a flat re-exporting `__init__.py`, so `from src.stats import X` / `stats.X` is unchanged). **v0.8.5 `regime`:** `regime_mask` (half-open `[low, high)` indicator-bucket membership, NaN-safe, ±inf open ends), `regime_risk_return` (per-ticker vol/ret/sharpe over the masked days, *mean-based* annualization since regime days are non-contiguous), `rolling_autocorr` (rolling lag-1 return autocorrelation series — drives the Trend regime), `tercile_bounds` (the `(low, high)` of an indicator's low/middle/high third by its 1/3 & 2/3 quantiles — drives the Trend / Rate-level terciles; degenerate → all-days) — the regime-conditioning generalization of `regime_corr_matrix`. (v0.8.7 dropped `regime_correlation` with the Platform Correlation sub-tab.) `daily_returns`, `cum_perf`, `corr_matrix`, `rolling_sharpe`, `sharpe_zscore` (scalar, whole-catalog highlights), `rolling_sharpe_zscore` (time series, selected-set chart), `drawdown_series`, `excess_cum_return` (cumulative excess return vs a benchmark, pp), `corr_matrix`, `regime_corr_matrix` (correlation over a benchmark-return tail, benchmark added to the matrix), `rolling_correlation`, `rolling_beta`, `return_distribution_stats`, `ann_return`, `ann_volatility`, `ann_sharpe`, `calmar_ratio`, `ann_beta` (scalar beta vs a benchmark over a window), `treynor_ratio`, `jensen_alpha` (vs a benchmark, rf=0), `downside_deviation`, `sortino_ratio`, `historical_var` (positive daily VaR loss), `rsi` (Wilder RSI), `zscore_cross_section` (cross-sectional z-score of a per-ticker metric), `quant_metrics_table` (per-ticker Sharpe/Sortino/Calmar/Beta/Treynor/Jensen/VaR/RSI table for the Quantitative filter), `common_window_bounds` (overlap window across columns — max first-valid / min last-valid date — drives the Multi-Strategy date-range box bounds), `active_columns` (columns that moved over the trailing ~21 trading days — drives the v0.8.9 stale-index prune), `perf_table`, `since_inception_perf` (pure util; **unwired from the grid in v0.7.2** but kept + tested), `universe_perf` (1Y / 3Y / 5Y windows only — Since-Inception dropped in v0.7.2). **v0.7.0 Platform additions:** `rolling_return` / `rolling_volatility` / `rolling_sortino` (alongside `rolling_sharpe`), `rolling_metric_zscore` (generalizes `sharpe_zscore` over metric/window/lookback) in `rolling`; and in `factors` — `equity_risk_premium` / `term_premium` (daily factor-return proxies from the fetched factor tickers, return spreads since BQL is `px_last`-only), `trend_returns` (v0.7.1: daily returns of the `TREND_TICKER` — the trend β is taken vs the index's own returns, not a spread), `factor_beta` (thin `ann_beta` wrapper vs a factor-return series), and `platform_sunburst_frame` (per-ticker `asset_class` + `theme` + a single `z` over a selectable metric/window/lookback — default z(1W Sharpe, 1Y); v0.8.x sunburst, replacing the two-metric `platform_treemap_frame`). |
 | `src/cache.py`        | `LRUCache` — a tiny bounded LRU (`OrderedDict`-backed, stdlib only) with `get_or_compute(key, fn)` / `clear()`. Leaf module (no project imports). Memoizes the benchmark-dependent chart results (v0.6.9 Workstream B); reusable for future live controls. |
-| `src/commentary.py`   | The two whole-catalog Key Highlights builders (v0.8.0, replacing the old mixed `build_highlights`): `build_superlatives(meta, prices, returns, *, window_days)` — one card per superlative = the single most-extreme catalog index over the trailing `window_days` (v0.8.4 redo: **19 cards** — 9 symmetric best/worst pairs + 1 single, from technical/character indicators: Best/Worst performer (`period_return`), Most trending/mean-reverting (`return_autocorr`), Longest bull/bear run (`longest_up`/`down_streak`), Most overbought/oversold (`rsi`), Most extended up/down (`macd_histogram`), Largest drawup/Deepest drawdown (`max_drawup`/`max_drawdown`), Best/Worst risk-adjusted (`ann_sharpe`), Highest/Lowest win rate (`win_rate`), Most positive/negative skew (`return_skew`), Lowest VaR (`historical_var`) — the single. Scale-dependent metrics (performer, MACD, drawup/drawdown, Sharpe, VaR) pick the winner by the metric's **asset-class-demeaned z-score** (`asset_class_demeaned_zscore`) — cross-asset-neutral — while the card shows the **raw** value; the `add()` helper takes a `rank_by=` z-series, falling back to the raw metric when the z-rank is degenerate. RSI/MACD are fixed-lookback (14d / 12-26-9), toggle-independent; the rest re-scope on `window_days`. Each `description` states only how the metric is calculated (hover tooltip); NaN winners skipped, ties broken by ticker) — and `build_launch_cards` — newest-first new-launch cards (`asset_class · theme · currency`, launch date, days-since-launch, simple since-launch return). Both compute from the already-fetched prices, no BQL; the `window_days` lets the Platform-style live toggle re-scope the board. |
+| `src/commentary.py`   | The two whole-catalog Key Highlights builders (v0.8.0, replacing the old mixed `build_highlights`): `build_superlatives(meta, prices, returns, *, window_days)` — one card per superlative = the single most-extreme catalog index over the trailing `window_days` (v0.8.9: **16 cards** — 8 symmetric best/worst pairs, from technical/character indicators: Best/Worst performer (`period_return`), Most trending/mean-reverting (`return_autocorr`), Longest bull/bear run (`longest_up`/`down_streak`), Most extended up/down (`macd_histogram`), Largest drawup/Deepest drawdown (`max_drawup`/`max_drawdown`), Best/Worst risk-adjusted (`ann_sharpe`), Highest/Lowest win rate (`win_rate`), Most positive/negative skew (`return_skew`); v0.8.9 dropped the Most overbought/oversold (`rsi`) and Lowest VaR (`historical_var`) cards. Scale-dependent metrics (performer, MACD, drawup/drawdown, Sharpe) pick the winner by the metric's **asset-class-demeaned z-score** (`asset_class_demeaned_zscore`) — cross-asset-neutral — while the card shows the **raw** value; the `add()` helper takes a `rank_by=` z-series, falling back to the raw metric when the z-rank is degenerate. MACD is fixed-lookback (12-26-9), toggle-independent; the rest re-scope on `window_days`. Each `description` states only how the metric is calculated (hover tooltip); NaN winners skipped, ties broken by ticker) — and `build_launch_cards` — newest-first new-launch cards (`asset_class · theme · currency`, launch date, days-since-launch, simple since-launch return). Both compute from the already-fetched prices, no BQL; the `window_days` lets the Platform-style live toggle re-scope the board. |
 | `src/layout/`         | UI **package** (was a single `layout.py`; split in v0.6.0 #4). `__init__.py` re-exports `build_app`, so `from src.layout import build_app` is unchanged. Submodules (see table below). |
 | `src/layout/__init__.py` | `from .builder import build_app` re-export only — the package's public surface. |
 | `src/layout/theme.py` | Chart-theme primitives: `_chart_layout`, `_h_ref` (horizontal ref line), `_v_ref` (vertical ref line, v0.7.0), `_palette_color`, `_short_ticker`, `_sentiment_color`; consts `CHART_HEIGHT`, `_CHART_HEIGHT_PX`, `SHARPE_WINDOW_LABEL`. Leaf module (only `..config`/`..style`). |
@@ -194,7 +196,7 @@ dashboard always renders end-to-end.
 | `.claude/dev_map/`                 | Forward roadmap: `README.md` index + filled-in `vX.Y.Z.md` stubs (`v0.6.0`→`v1.0.0`), each refined as scope firms up, plus a reusable `TEMPLATE.md` stub skeleton new versions copy from. |
 | `.claude/hooks/`                   | PreToolUse(Bash) enforcement scripts wired in `.claude/settings.json`: `quality-gates.sh` (blocks `git commit` unless ruff/black/pytest pass) + `block-main-push.sh` (blocks pushes to `main`/`master`). `README.md` documents both and points at the portable templates. |
 | `.claude/templates/`               | Portable, repo-agnostic copies of the agent-config layer for lifting into other repos (parameterized `hooks/` + a generic `skills/workstream/`). Not auto-loaded — the active hooks/skills are the ones under `.claude/hooks/` and `.claude/skills/`. |
-| `.meta/VERSION`                    | Canonical current shipped version (`0.8.6`). Keep in sync with the "Branching" section on every bump. |
+| `.meta/VERSION`                    | Canonical current shipped version (`0.8.9`). Keep in sync with the "Branching" section on every bump. |
 | `tests/`                           | `pytest` suite: `conftest.py` (deterministic price fixtures), `test_stats.py` (pure `src/stats.py` metric units), `test_state.py` (`DashboardState` defaults/isolation), `test_smoke.py` (end-to-end `build_app()` render guard on mock prices). Run `pytest -q`. |
 | `.github/workflows/ci.yml`         | GitHub Actions CI: `ruff check` + `black --check` + `pytest -q` over `src`/`tests` on push/PR to `v0.7.5`. |
 
@@ -227,6 +229,14 @@ DataFrame also has a derived `ticker` column = `<key> + " Index"`.
 fields); `load_metadata` pads any missing `COLUMN_MAP` column with `NA`,
 so records without a `Currency` key still load.
 
+**Universe membership (v0.8.9):** `build_app` keeps only records whose
+`solution` is in `UNIVERSE_SOLUTION_VALUES` (`src/config.py`) — **ARP**,
+**Smart Beta**, and **Risk Management** (case-insensitive; plain `Beta` is
+excluded) — as `meta_all`, then **prunes indices with no recent price movement**
+(stale / delisted / all-NaN over the trailing ~21 trading days, via
+`stats.active_columns`) into the displayed `meta`. `meta_all` still drives the
+single fetch, so a resumed ticker can re-enter on a later Refresh.
+
 ## BQL contract
 
 `src/bql_client.py` issues a single BQL request:
@@ -251,7 +261,7 @@ live paths return the same shape.
 
 ## Branching
 
-- **Current version**: `v0.8.6`.
+- **Current version**: `v0.8.9`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -300,9 +310,9 @@ Every roadmap item ships through the same loop. The `/workstream` skill
   Regime Analysis charts — slices from that cache. The `FACTOR_TICKERS` (v0.7.0: a
   long-Treasury + short-rate TR proxy, the equity leg reuses SPX; v0.7.1 adds
   the `TREND_TICKER` = `BSLXAT Index` cross-asset trend factor for the scatter's
-  z-axis) and the `REGIME_TICKERS` (the Regime Analysis indicators: `VIX Index`,
-  `NFCIRISK Index`, and the regional rates `FEDL01` / `EONIA` / `MUTKCALM`;
-  v0.8.7) ride this same fetch — *no second BQL call* — and, like the
+  z-axis) and the `REGIME_TICKERS` (the Regime Analysis indicators: `VIX Index`
+  and the regional rates `FEDL01` / `EONIA` / `MUTKCALM`; v0.8.9 dropped
+  `NFCIRISK` with the Risk regime) ride this same fetch — *no second BQL call* — and, like the
   benchmarks, are excluded from the ARP-universe views via
   `reindex(columns=meta["ticker"])`.
 - **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
