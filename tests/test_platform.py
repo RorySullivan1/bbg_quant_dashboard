@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from src.config import HALF_YEAR_WINDOW, WEEK_WINDOW
 from src.data import load_metadata
 from src.layout.platform import (
     _asset_class_colors,
@@ -150,11 +151,23 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
+_TREEMAP_KW = dict(
+    size_metric="sharpe",
+    size_window=HALF_YEAR_WINDOW,
+    size_lookback=252,
+    color_metric="sharpe",
+    color_window=WEEK_WINDOW,
+    color_lookback=252,
+    size_label="6M Sharpe",
+    color_label="1W Sharpe",
+)
+
+
 def test_update_treemap_builds_asset_theme_ticker_hierarchy():
     fig = _treemap()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
-    _update_treemap(fig, arp, _treemap_meta(), lookback=252)
+    _update_treemap(fig, arp, _treemap_meta(), **_TREEMAP_KW)
 
     # No in-figure title (v0.7.3) — the section header stands alone.
     assert not fig.layout.title.text
@@ -171,11 +184,21 @@ def test_update_treemap_builds_asset_theme_ticker_hierarchy():
     assert all(v >= 0 for v in tm.values)
     assert len(tm.marker.colors) == len(tm.ids)
     assert len(tm.customdata) == len(tm.ids)
+    # Colorbar title reflects the selected color label.
+    assert tm.marker.colorbar.title.text == "z(1W Sharpe)"
+
+
+def test_update_treemap_labels_drive_colorbar_title():
+    fig = _treemap()
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    kw = {**_TREEMAP_KW, "color_metric": "sortino", "color_label": "3M Sortino"}
+    _update_treemap(fig, arp, _treemap_meta(), **kw)
+    assert fig.data[0].marker.colorbar.title.text == "z(3M Sortino)"
 
 
 def test_update_treemap_empty_clears_traces():
     fig = _treemap()
-    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252)
+    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), **_TREEMAP_KW)
     assert fig.data == ()
 
 

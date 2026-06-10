@@ -676,6 +676,78 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
     treemap_fig = _treemap()
 
+    # v0.8.x: per-row treemap z-score controls (mirrors the all-catalog grid's
+    # Z-Score ranking). Two rows — tile size + tile color — each Metric · Window
+    # · Lookback. Independent of the shared lookback toggle; re-slice the cache
+    # only (no BQL). Defaults reproduce z(6M Sharpe, 1Y) size / z(1W Sharpe, 1Y)
+    # color. `.value`s feed `rolling_metric_zscore`; the `.label`s build the
+    # colorbar/hover titles.
+    def _treemap_metric_dd() -> W.Dropdown:
+        return W.Dropdown(
+            options=[
+                ("Sharpe", "sharpe"),
+                ("Sortino", "sortino"),
+                ("Return", "return"),
+                ("Vol", "vol"),
+            ],
+            value="sharpe",
+            description="Metric",
+            style={"description_width": "55px"},
+            layout=W.Layout(width="175px"),
+        )
+
+    def _treemap_window_dd(value: int) -> W.Dropdown:
+        return W.Dropdown(
+            options=[
+                ("1W", WEEK_WINDOW),
+                ("1M", MONTH_WINDOW),
+                ("3M", QUARTER_WINDOW),
+                ("6M", HALF_YEAR_WINDOW),
+            ],
+            value=value,
+            description="Window",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="165px"),
+        )
+
+    def _treemap_lookback_dd() -> W.Dropdown:
+        return W.Dropdown(
+            options=[
+                ("1Y", TRADING_DAYS_PER_YEAR),
+                ("3Y", TRADING_DAYS_PER_YEAR * 3),
+                ("5Y", TRADING_DAYS_PER_YEAR * 5),
+            ],
+            value=TRADING_DAYS_PER_YEAR,
+            description="Lookback",
+            style={"description_width": "70px"},
+            layout=W.Layout(width="180px"),
+        )
+
+    tm_size_metric_dd = _treemap_metric_dd()
+    tm_size_window_dd = _treemap_window_dd(HALF_YEAR_WINDOW)
+    tm_size_lookback_dd = _treemap_lookback_dd()
+    tm_color_metric_dd = _treemap_metric_dd()
+    tm_color_window_dd = _treemap_window_dd(WEEK_WINDOW)
+    tm_color_lookback_dd = _treemap_lookback_dd()
+    treemap_size_row = W.HBox(
+        [
+            _section_label("Tile size"),
+            tm_size_metric_dd,
+            tm_size_window_dd,
+            tm_size_lookback_dd,
+        ],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
+    treemap_color_row = W.HBox(
+        [
+            _section_label("Tile color"),
+            tm_color_metric_dd,
+            tm_color_window_dd,
+            tm_color_lookback_dd,
+        ],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
+
     # --- v0.8.5 Regime Analysis section (sits between the factor scatter and the
     # treemap): a pill-tabbed Risk-vs-Return / Correlation pair conditioned on a
     # market-regime bucket. Volatility (VIX buckets) is wired; Trend / Liquidity /
@@ -785,6 +857,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             factor_scatter_fig,
             regime_section,
             treemap_header,
+            treemap_size_row,
+            treemap_color_row,
             treemap_fig,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
@@ -869,11 +943,11 @@ def build_app(verbose: bool = True) -> W.VBox:
             )
 
     def _render_treemap(_change=None) -> None:
-        """Render the Platform asset class → theme → ticker treemap (sized by
-        z(6M Sharpe), colored by z(1W Sharpe)) at the current lookback. Computes
-        live from the ARP-only cache via `platform_treemap_frame` — the lookback
-        toggle re-slices only, no BQL. No in-figure title; the "Risk-adjusted
-        strength map" section header stands alone (v0.7.3)."""
+        """Render the Platform asset class → theme → ticker treemap with the
+        size + color z-scores chosen on the two metric/window/lookback control
+        rows. Computes live from the ARP-only cache via `platform_treemap_frame`
+        — the dropdowns re-slice only, no BQL. No in-figure title; the
+        "Risk-adjusted strength map" section header stands alone (v0.7.3)."""
         if state.arp_universe_prices.empty:
             return
         try:
@@ -881,7 +955,14 @@ def build_app(verbose: bool = True) -> W.VBox:
                 treemap_fig,
                 state.arp_universe_prices,
                 meta,
-                lookback=lookback_selector.value,
+                size_metric=tm_size_metric_dd.value,
+                size_window=tm_size_window_dd.value,
+                size_lookback=tm_size_lookback_dd.value,
+                color_metric=tm_color_metric_dd.value,
+                color_window=tm_color_window_dd.value,
+                color_lookback=tm_color_lookback_dd.value,
+                size_label=f"{tm_size_window_dd.label} {tm_size_metric_dd.label}",
+                color_label=f"{tm_color_window_dd.label} {tm_color_metric_dd.label}",
             )
         except Exception:
             state.init_errors.append(
@@ -978,11 +1059,22 @@ def build_app(verbose: bool = True) -> W.VBox:
 
     for _render in (
         _render_factor_scatter,
-        _render_treemap,
         _render_regime_scatter,
         _render_regime_heatmap,
     ):
         lookback_selector.observe(_render, names="value")
+
+    # Treemap has its own per-row z-score controls (decoupled from the shared
+    # lookback toggle above): any change re-renders only the treemap, no BQL.
+    for _dd in (
+        tm_size_metric_dd,
+        tm_size_window_dd,
+        tm_size_lookback_dd,
+        tm_color_metric_dd,
+        tm_color_window_dd,
+        tm_color_lookback_dd,
+    ):
+        _dd.observe(_render_treemap, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
