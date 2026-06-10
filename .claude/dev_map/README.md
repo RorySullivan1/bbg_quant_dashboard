@@ -78,6 +78,10 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 - [x] `v0.8.10` — Startup selection: seed the Multi-Strategy picker with the top 5
   indices by z(1W Sharpe, 1Y) so the tab loads populated (fixes the v0.8.9 prune
   clearing the default selection) (shipped).
+- [x] `v0.8.11` — Quant Z-Score window + commentary height: add a 1W/1M/3M/6M
+  window dropdown beside the Quantitative Z-Score base-metric selector (sets the
+  base-metric lookback for the cross-sectional z, independent of the Period); and
+  halve the Key-Highlights card-area height (45vh → 22.5vh) (shipped).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
