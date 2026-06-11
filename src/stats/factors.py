@@ -3,7 +3,7 @@
 Macro-factor return proxies built from the already-fetched price cache
 (equity risk premium, term premium), a thin factor-beta wrapper over
 ``risk.ann_beta``, and the per-ticker frame backing the Platform asset-class
-treemap. Everything here is a pure function over prices — no BQL, no fetch.
+sunburst. Everything here is a pure function over prices — no BQL, no fetch.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import pandas as pd
 
 from ..config import (
     EQUITY_FACTOR_TICKER,
-    HALF_YEAR_WINDOW,
     LONG_TREASURY_TICKER,
     SHARPE_ZSCORE_WINDOW,
     SHORT_RATE_TICKER,
@@ -23,7 +22,7 @@ from ._common import daily_returns
 from .risk import ann_beta
 from .rolling import rolling_metric_zscore
 
-_TREEMAP_COLUMNS = ["asset_class", "theme", "size_z", "color_z"]
+_SUNBURST_COLUMNS = ["asset_class", "theme", "z"]
 
 
 def _factor_spread(prices: pd.DataFrame, long_leg: str, short_leg: str) -> pd.Series:
@@ -87,26 +86,27 @@ def factor_beta(
     return ann_beta(returns, factor_returns, years)
 
 
-def platform_treemap_frame(
-    prices: pd.DataFrame, meta: pd.DataFrame, *, lookback: int = SHARPE_ZSCORE_WINDOW
+def platform_sunburst_frame(
+    prices: pd.DataFrame,
+    meta: pd.DataFrame,
+    *,
+    metric: str = "sharpe",
+    window: int = WEEK_WINDOW,
+    lookback: int = SHARPE_ZSCORE_WINDOW,
 ) -> pd.DataFrame:
-    """Per-ticker ``asset_class`` + ``theme`` + ``size_z`` + ``color_z`` for the
-    Platform treemap. ``size_z`` = z(6M Sharpe, lookback); ``color_z`` = z(1W
-    Sharpe, lookback) — both **raw** z-scores (can be negative). The non-negative
-    size transform for ``go.Treemap.values`` is the renderer's concern, not this
-    frame's. ``asset_class`` and ``theme`` give the treemap's two grouping levels
-    (asset class → theme → ticker). ``lookback`` is the z-normalization window in
-    trading days.
+    """Per-ticker ``asset_class`` + ``theme`` + ``z`` for the Platform sunburst.
+    ``z`` = z(``metric`` over ``window``, ``lookback``) — the **raw** signed
+    z-score (can be negative; default z(1W Sharpe, 1Y)). The renderer derives the
+    gross-|z| arc sizes and the level-averaged colors; this frame just supplies
+    the metric and the two grouping levels (asset class → theme → ticker). The
+    ``window`` / ``lookback`` args are trading-day counts.
     """
     if prices.empty:
-        return pd.DataFrame(columns=_TREEMAP_COLUMNS)
-    size_z = rolling_metric_zscore(
-        prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=lookback
+        return pd.DataFrame(columns=_SUNBURST_COLUMNS)
+    z = rolling_metric_zscore(
+        prices, metric=metric, window=window, zscore_window=lookback
     )
-    color_z = rolling_metric_zscore(
-        prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=lookback
-    )
-    frame = pd.DataFrame({"size_z": size_z, "color_z": color_z})
+    frame = pd.DataFrame({"z": z})
     has_ticker = "ticker" in meta.columns
     for level in ("asset_class", "theme"):
         if has_ticker and level in meta.columns:
@@ -114,4 +114,4 @@ def platform_treemap_frame(
             frame[level] = frame.index.map(mapping)
         else:
             frame[level] = pd.NA
-    return frame[_TREEMAP_COLUMNS]
+    return frame[_SUNBURST_COLUMNS]

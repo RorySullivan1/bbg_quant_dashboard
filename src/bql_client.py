@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import CACHE_DIR, CACHE_TTL_HOURS
+from .config import CACHE_DIR, CACHE_TTL_HOURS, LEVEL_INDICATOR_MOCK
 
 try:
     import bql  # type: ignore
@@ -189,6 +189,20 @@ def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
     out = pd.DataFrame(index=idx)
     for ticker in tickers:
         rng = np.random.default_rng(abs(hash(ticker)) % (2**32))
+        if ticker in LEVEL_INDICATOR_MOCK:
+            # Mean-reverting absolute *level* (not a compounding price) so the
+            # regime buckets partition the off-terminal mock. Per-indicator
+            # (mean, vol, lo, hi): VIX hovers ~18 clipped [9, 60]; short rates
+            # ~2.0; the NFCI risk subindex straddles 0.
+            mean, vol, lo, hi = LEVEL_INDICATOR_MOCK[ticker]
+            level = mean
+            vals = np.empty(len(idx))
+            for t in range(len(idx)):
+                level += 0.05 * (mean - level) + rng.normal(0.0, vol)
+                level = min(max(level, lo), hi)
+                vals[t] = level
+            out[ticker] = vals
+            continue
         drift = rng.uniform(0.02, 0.10) / 252
         vol = rng.uniform(0.08, 0.30) / np.sqrt(252)
         steps = rng.normal(loc=drift, scale=vol, size=len(idx))

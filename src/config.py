@@ -2,18 +2,22 @@ from pathlib import Path
 
 LOOKBACK_YEARS = 5
 NEW_LAUNCH_DAYS = 30
+# Trailing window (trading days) for the v0.8.0 monthly "Market Superlatives"
+# board — ~1 month. The superlative cards are computed whole-catalog over this
+# window from the already-fetched prices (no extra BQL call).
+SUPERLATIVE_WINDOW_DAYS = 21
 SHARPE_WINDOW = 252
 SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
-# Short metric windows (trading days) for the v0.7.0 Platform z-score views.
-# The treemap sizes by z(6M Sharpe, lookback) and colors by z(1W Sharpe,
-# lookback); the grid z-score column offers 1M / 3M / 6M as the short window.
-WEEK_WINDOW = 5  # ~1 week  (treemap color window)
+# Short metric windows (trading days) for the Platform z-score views.
+# The sunburst's Z-score control offers 1W / 1M / 3M / 6M (default 1W Sharpe);
+# the all-catalog grid z-score column offers 1M / 3M / 6M.
+WEEK_WINDOW = 5  # ~1 week  (sunburst default window)
 MONTH_WINDOW = 21  # ~1 month
 QUARTER_WINDOW = 63  # ~3 months
-HALF_YEAR_WINDOW = 126  # ~6 months (treemap size window)
+HALF_YEAR_WINDOW = 126  # ~6 months
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
@@ -32,11 +36,14 @@ DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
 CACHE_TTL_HOURS = 12
 
-# Solution values that count as "Alternative Risk Premia" — compared
-# case-insensitively against the metadata `solution` column. The dataset
-# currently uses the short form "ARP"; the long form is kept here so the
-# filter survives a future JSON rename.
-ARP_SOLUTION_VALUES = frozenset({"arp", "alternative risk premia"})
+# Solution values that make up the dashboard universe — compared
+# case-insensitively against the metadata `solution` column. Covers Alternative
+# Risk Premia (short "ARP" / long form, kept so the filter survives a future JSON
+# rename) plus Smart Beta and Risk Management; plain "Beta" stays excluded.
+# "risk management" is forward-compatible (no records carry it yet).
+UNIVERSE_SOLUTION_VALUES = frozenset(
+    {"arp", "alternative risk premia", "smart beta", "risk management"}
+)
 WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
@@ -72,3 +79,73 @@ SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 # directly (not a short-rate spread, unlike the two premia above).
 TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
 FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]
+
+# Regime indicators for the Platform "Regime Analysis" section. Like the
+# benchmarks/factors, these ride the *single* startup fetch and are excluded
+# from ARP-universe views (the `reindex(columns=meta["ticker"])` drops them).
+# Each regime classifies the trailing days into buckets the catalog scatter is
+# conditioned on:
+#   - Volatility: fixed VIX-level buckets.
+#   - Trend / Rate-level: terciles (low / middle / high thirds) of a
+#     live-computed indicator series — see `src/stats/regime.py` + builder.
+VIX_TICKER = "VIX Index"
+# Regional risk-free overnight rates for the Rate-level regime (region dropdown).
+RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
+    ("US (FEDL01)", "FEDL01 Index"),  # US fed funds effective rate
+    ("EU (EONIA)", "EONIA Index"),  # euro overnight rate
+    ("JP (MUTKCALM)", "MUTKCALM Index"),  # Japan call rate
+]
+REGIME_TICKERS: list[str] = [
+    VIX_TICKER,
+    *(t for _, t in RATE_LEVEL_TICKERS),
+]
+
+# Mock-price shapes for indicator tickers whose off-terminal series must be an
+# absolute *level* (not a compounding price) so the regime buckets actually
+# partition the mock. Maps ticker -> (mean, vol, lo, hi) for a clipped
+# mean-reverting level — see `_mock_prices` in `src/bql_client.py`.
+LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
+    VIX_TICKER: (18.0, 1.5, 9.0, 60.0),  # VIX-like, hovers ~18
+    **{t: (2.0, 0.10, 0.0, 8.0) for _, t in RATE_LEVEL_TICKERS},  # short rates
+}
+
+_REGIME_INF = float("inf")
+# regime label -> spec. Two bucket *modes*:
+#   - "level": fixed buckets over the indicator ticker's raw daily level, each a
+#     half-open [low, high) range (±inf for the open ends).
+#   - "*_tercile": the indicator series is computed live (see builder) and split
+#     into low / middle / high thirds by its 1/3 & 2/3 quantiles.
+# Tercile modes carry `bucket_labels` ((display, key) for the three thirds) and a
+# `selector` list of (label, ticker) for a conditional indicator-source dropdown
+# (benchmark for Trend, region for Rate-level); `autocorr_window` is the rolling
+# window for the Trend benchmark-return autocorrelation.
+REGIME_SPECS: dict[str, dict] = {
+    "Volatility": {
+        "mode": "level",
+        "ticker": VIX_TICKER,
+        "buckets": [
+            ("VIX < 15", -_REGIME_INF, 15.0),
+            ("15 ≤ VIX < 25", 15.0, 25.0),
+            ("VIX ≥ 25", 25.0, _REGIME_INF),
+        ],
+    },
+    "Trend": {
+        "mode": "autocorr_tercile",
+        "selector": [(t.replace(" Index", ""), t) for t in BENCHMARK_TICKERS],
+        "autocorr_window": 21,
+        "bucket_labels": [
+            ("Low (mean-reverting)", "low"),
+            ("Middle", "mid"),
+            ("High (trending)", "high"),
+        ],
+    },
+    "Rate-level": {
+        "mode": "level_tercile",
+        "selector": list(RATE_LEVEL_TICKERS),
+        "bucket_labels": [
+            ("Low rates", "low"),
+            ("Middle", "mid"),
+            ("High rates", "high"),
+        ],
+    },
+}

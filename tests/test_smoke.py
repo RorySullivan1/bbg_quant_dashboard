@@ -45,34 +45,243 @@ def test_build_app_renders_expected_tree():
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # v0.7.0 Workstream A: a Z-Score control row (Metric/Window/Lookback) above
-    # the grid, defaulting to z(1M Sharpe, 1Y). Workstream C+D: a 6M/1Y/3Y/5Y
-    # lookback ToggleButtons + the factor-beta scatter FigureWidget below it.
+    # the grid, defaulting to z(1M Sharpe, 1Y). The three analytics charts now
+    # live in one boxed "Platform analytics" card with inner pill-tabs sharing
+    # the lookback toggle (sunburst default tab).
     import plotly.graph_objects as go
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    (
-        header,
-        controls,
-        grid,
-        lookback_row,
-        scatter_header,
-        scatter,
-        treemap_header,
-        treemap,
-    ) = platform_panel.children
+    # Grid group (header + z-score controls + grid) then the analytics card.
+    universe_header, controls, grid, analytics_card = platform_panel.children
     dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
     assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
-    # Shared lookback selector (defaults to 1Y) + scatter + treemap figures.
-    toggles = [c for c in lookback_row.children if isinstance(c, W.ToggleButtons)]
-    assert len(toggles) == 1
-    assert toggles[0].label == "1Y"
+
+    # The analytics card is a bordered box: header, tab bar (pills only), then
+    # the body = HBox[left control column, chart box].
+    assert analytics_card._dom_classes == ("bbg-card",)
+    _card_header, tab_bar, body = analytics_card.children
+    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
+    assert [p.description for p in pills] == [
+        "Sunburst",
+        "Regime analysis",
+        "Factor exposures",
+    ]
+    assert [p.description for p in pills if "is-active" in p._dom_classes] == [
+        "Sunburst"
+    ]
+    left_col, chart_box = body.children
+    # The shared lookback toggle (defaults to 1Y) sits at the TOP of the left
+    # control column, above the active tab's controls box.
+    toggles = [c for c in left_col.children if isinstance(c, W.ToggleButtons)]
+    assert len(toggles) == 1 and toggles[0].label == "1Y"
+    tab_controls_box = left_col.children[-1]
+
+    # Default tab = sunburst: the controls box stacks Metric + Window (the
+    # lookback above is shared); the figure fills the rest with a Sunburst trace.
+    sb_dds = [
+        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
+    ]
+    assert [d.label for d in sb_dds] == ["Sharpe", "1W"]
+    sunburst = chart_box.children[0]
+    assert isinstance(sunburst, go.FigureWidget)
+    assert sunburst.data and isinstance(sunburst.data[0], go.Sunburst)
+
+    # Factor exposures tab: chart swaps to the 3D scatter (Scatter3d markers +
+    # the three Mesh3d zero planes); its controls box is empty (lookback only).
+    pills[2].click()
+    assert len(tab_controls_box.children[0].children) == 0
+    scatter = chart_box.children[0]
     assert isinstance(scatter, go.FigureWidget)
-    assert isinstance(treemap, go.FigureWidget)
-    # v0.7.1: the scatter is 3D (Scatter3d traces) with no in-figure title.
-    assert scatter.data and all(isinstance(tr, go.Scatter3d) for tr in scatter.data)
+    assert [tr for tr in scatter.data if isinstance(tr, go.Scatter3d)]
+    planes = {tr.name for tr in scatter.data if isinstance(tr, go.Mesh3d)}
+    assert planes == {"x=0", "y=0", "z=0"}
     assert not scatter.layout.title.text
+
+
+def test_regime_analysis_section_conditions_live():
+    # The Regime analysis chart is the middle tab of the Platform analytics card:
+    # a single regime-conditioned risk/return scatter (no Correlation sub-tab —
+    # that lives in Multi-Strategy). Volatility uses fixed VIX-level buckets;
+    # Trend / Rate-level split a live indicator into terciles, with each carrying
+    # a conditional indicator-source dropdown.
+    import plotly.graph_objects as go
+
+    app = build_app(verbose=False)
+    platform_panel = app.children[5].children[0]
+    analytics_card = platform_panel.children[3]
+    tab_bar, body = analytics_card.children[1], analytics_card.children[2]
+    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
+    pills[1].click()  # activate the Regime analysis tab
+
+    left_col, chart_box = body.children
+    tab_controls_box = left_col.children[-1]
+    regime_dds = [
+        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
+    ]
+    regime_type, selector_dd, bucket_dd = regime_dds
+    assert list(regime_type.options) == [
+        "Volatility",
+        "Trend",
+        "Rate-level",
+    ]
+    assert regime_type.value == "Volatility"
+    # Volatility: fixed VIX buckets (≥35 dropped, second-highest uncapped), no
+    # indicator-source dropdown.
+    assert [lbl for lbl, _ in bucket_dd.options] == [
+        "VIX < 15",
+        "15 ≤ VIX < 25",
+        "VIX ≥ 25",
+    ]
+    assert selector_dd.layout.display == "none"
+
+    # The chart is a 2D risk/return scatter conditioned on the default VIX bucket.
+    scatter_fig = chart_box.children[0]
+    assert isinstance(scatter_fig, go.FigureWidget)
+    assert scatter_fig.data
+    assert all(
+        isinstance(t, go.Scatter) and not isinstance(t, go.Scatter3d)
+        for t in scatter_fig.data
+    )
+    vol_bucketed = [tuple(t.x) for t in scatter_fig.data]
+
+    # Trend: a benchmark dropdown appears, buckets become terciles, and the
+    # conditioning visibly changes the scatter (no traceback).
+    regime_type.value = "Trend"
+    assert selector_dd.layout.display == ""
+    assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
+    assert scatter_fig.data
+    trend_low = [tuple(t.x) for t in scatter_fig.data]
+    assert trend_low != vol_bucketed
+    bucket_dd.value = "high"
+    assert [tuple(t.x) for t in scatter_fig.data] != trend_low
+
+    # Rate-level: a region dropdown (US / EU / JP) appears with terciles.
+    regime_type.value = "Rate-level"
+    assert selector_dd.layout.display == ""
+    assert [lbl for lbl, _ in selector_dd.options] == [
+        "US (FEDL01)",
+        "EU (EONIA)",
+        "JP (MUTKCALM)",
+    ]
+    assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
+    assert scatter_fig.data
+
+
+def test_universe_includes_smart_beta_solution():
+    # v0.8.9: the dashboard universe now spans ARP + Smart Beta + Risk Management
+    # solutions (plain "Beta" stays excluded).
+    from src.config import UNIVERSE_SOLUTION_VALUES
+    from src.data import load_metadata
+
+    assert {"smart beta", "risk management"} <= UNIVERSE_SOLUTION_VALUES
+    meta = load_metadata()
+    universe = meta[
+        meta["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)
+    ]
+    sols = set(universe["solution"].astype(str).str.lower())
+    assert "smart beta" in sols  # Smart Beta indices now enter the universe
+    assert "beta" not in sols  # plain Beta stays excluded
+
+
+def test_startup_selects_top_zscore_and_populates_multi_strategy():
+    # The Multi-Strategy views load populated on startup (no manual Refresh): the
+    # default selection is the top indices by z(1W Sharpe, 1Y), capped at the
+    # universe size, so the selected-strategy grid + panes render with data.
+    import plotly.graph_objects as go
+    from src.bql_client import default_window, fetch_prices
+    from src.config import (
+        TRADING_DAYS_PER_YEAR,
+        UNIVERSE_SOLUTION_VALUES,
+        WEEK_WINDOW,
+    )
+    from src.data import load_metadata
+    from src.stats import rolling_metric_zscore
+
+    app = build_app(verbose=False)
+    ms = next(
+        b
+        for b in app.children[4].children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms.click()
+    panel = app.children[5].children[0]
+    ticker_w = next(w for w in _walk(panel) if isinstance(w, W.SelectMultiple))
+
+    # Expected: the top-5 (capped) by z(1W Sharpe, 1Y) over the fetched universe.
+    meta = load_metadata()
+    meta = meta[meta["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)]
+    start, end = default_window(5)
+    px, _ = fetch_prices(list(meta["ticker"]), start, end)
+    z = rolling_metric_zscore(
+        px, metric="sharpe", window=WEEK_WINDOW, zscore_window=TRADING_DAYS_PER_YEAR
+    ).dropna()
+    expected = set(z.nlargest(5).index)
+    assert set(ticker_w.value) == expected
+    assert 1 <= len(ticker_w.value) <= 5
+
+    # The selected-strategy perf grid is populated on load (one row per pick).
+    grid = next(w for w in _walk(panel) if w.__class__.__name__ == "DataGrid")
+    assert grid.data.shape[0] == len(ticker_w.value)
+    # Both panes' mounted figures carry data without a Refresh click.
+    figs = [w for w in _walk(panel) if isinstance(w, go.FigureWidget)]
+    assert sum(1 for f in figs if f.data) >= 1
+
+
+def test_quant_zscore_row_has_window_dropdown():
+    # v0.8.11: the Quantitative Z-Score row carries a window dropdown
+    # (1W/1M/3M/6M, default 1M) right after the base-metric dropdown — it sets the
+    # lookback the base metric is computed over for the cross-sectional z-score.
+    from src.config import MONTH_WINDOW
+
+    z_metrics = [
+        "Sharpe",
+        "Sortino",
+        "Calmar",
+        "Beta",
+        "Treynor",
+        "Jensen",
+        "VaR",
+        "RSI",
+    ]
+    app = build_app(verbose=False)
+    ms = next(
+        b
+        for b in app.children[4].children
+        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+    )
+    ms.click()
+    panel = app.children[5].children[0]
+    # Activate the Quantitative filter pill so its metric rows mount.
+    quant_pill = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Button) and w.description == "Quantitative"
+    )
+    quant_pill.click()
+
+    # The Z-Score row's trailing HBox holds: <"of"> label, base-metric dd, window dd.
+    trailing = next(
+        hb
+        for hb in _walk(panel)
+        if isinstance(hb, W.HBox)
+        and any(
+            isinstance(c, W.Dropdown) and list(c.options) == z_metrics
+            for c in hb.children
+        )
+        and any(
+            isinstance(c, W.Dropdown)
+            and [o[0] if isinstance(o, tuple) else o for o in c.options]
+            == ["1W", "1M", "3M", "6M"]
+            for c in hb.children
+        )
+    )
+    dds = [c for c in trailing.children if isinstance(c, W.Dropdown)]
+    metric_dd, window_dd = dds[0], dds[1]
+    assert list(metric_dd.options) == z_metrics  # base metric first
+    assert [o[0] for o in window_dd.options] == ["1W", "1M", "3M", "6M"]
+    assert window_dd.value == MONTH_WINDOW  # defaults to 1M
 
 
 def _walk(widget):
@@ -129,6 +338,67 @@ def test_correlation_benchmark_regime_controls():
     # Unticking Benchmark clears Regime so the chart reverts to plain.
     pane.heat_benchmark_chk.value = False
     assert pane.heat_regime_chk.value is False
+
+
+def test_superlatives_window_toggle_re_renders_live():
+    # v0.8.x: a 1W/1M/3M/6M ToggleButtons drives the Market Superlatives board;
+    # changing it re-renders the panel live from the cache (no BQL) with the
+    # matching window label. v0.8.9 dropped overbought/oversold/VaR → 16 cards.
+    app = build_app(verbose=False)
+    widgets = list(_walk(app))
+    toggle = next(
+        w
+        for w in widgets
+        if isinstance(w, W.ToggleButtons)
+        and [o[0] for o in w.options] == ["1W", "1M", "3M", "6M"]
+    )
+    panel = next(
+        w
+        for w in widgets
+        if isinstance(w, W.HTML) and "Market Superlatives" in (w.value or "")
+    )
+    before = panel.value
+    assert "Past Month" in before
+    assert before.count("bbg-superlative") == 16  # all 16 cards rendered
+    assert "title='" in before  # hover descriptions present
+
+    toggle.value = 5  # WEEK_WINDOW → fires the observer
+    after = panel.value
+    assert "Past Week" in after
+    assert after.count("bbg-superlative") == 16
+    assert after != before  # the board recomputed for the new window
+
+
+def test_highlights_sections_are_height_capped_and_scrollable():
+    # v0.8.x: each highlights section's card area is bounded (~22.5vh, halved in
+    # v0.8.11) and scrolls past it, so a tall board doesn't push the page down.
+    # The headers stay outside the scroll regions.
+    from src.layout.html import _render_highlights
+
+    sup = [
+        {
+            "label": "Top performer",
+            "value": "+5.0%",
+            "name": "Alpha",
+            "ticker": "AAA",
+            "sentiment": "positive",
+            "description": "Highest return.",
+        }
+    ]
+    launches = [
+        {
+            "name": "New One",
+            "ticker": "NEW",
+            "meta": "Equity · Trend · USD",
+            "live_date": "2026-05-30",
+            "days_ago": 10,
+            "since_return": "+2.0%",
+        }
+    ]
+    html = _render_highlights(sup, launches)
+    # Both panels' card areas are capped + scrollable (one per section).
+    assert html.count("max-height:22.5vh") == 2
+    assert html.count("overflow-y:auto") == 2
 
 
 def test_masthead_renders():

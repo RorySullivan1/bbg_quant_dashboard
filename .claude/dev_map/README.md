@@ -8,7 +8,7 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.7.5`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.8.6`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -47,9 +47,41 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   perf grid, replace the analysis date slider with two side-by-side date boxes,
   and restructure the correlation Benchmark/Regime controls (>/< dropdown)
   (shipped).
-- [ ] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
+- [x] `v0.8.0` — Key Highlights Rework: two side-by-side panels — a monthly
   statistical-superlatives board (top performer, longest bull run, strongest
-  trend, …) and a new-launches board with metadata.
+  trend, …) and a new-launches board with metadata (shipped).
+- [x] `v0.8.4` — Superlatives Redo: rebuild the superlatives board around
+  symmetric best/worst, technical/character indicators (return autocorrelation,
+  MACD, drawup, recovery speed, win-rate, skew) with cross-asset-neutral
+  asset-class-demeaned z-score ranking and calculation-only tooltips (shipped).
+- [x] `v0.8.5` — Regime Analysis: a Platform-tab tabbed section (Risk vs Return /
+  Correlation) between the factor scatter and the treemap, with a regime-type
+  dropdown (volatility / trend / liquidity / rate-level) and conditional buckets
+  (e.g. VIX buckets) that condition each chart — volatility wired this cycle, the
+  rest scaffolded (shipped).
+- [x] `v0.8.6` — Factor Scatter Zero Planes: three translucent zero-reference
+  planes (x=0/y=0/z=0) through the Platform 3D factor-beta scatter so the origin
+  reads in every dimension (small enhancement; shipped just after v0.8.5).
+- [x] `v0.8.7` — Regime Analysis rework: finish the Platform regime chart — drop
+  the Correlation sub-tab (kept in Multi-Strategy), make Volatility 3 buckets
+  (uncap the top), and wire Trend (benchmark-autocorr terciles), Rate-level
+  (regional-rate terciles), and a new Risk regime (ΔNFCIRISK terciles), each with
+  conditional indicator-source dropdowns (shipped).
+- [x] `v0.8.8` — Platform analytics tabs: reorganize the three Platform charts
+  (sunburst / regime / factor scatter) into one boxed `.bbg-card` of inner
+  pill-tabs sharing a single lookback toggle, each tab's extra controls stacked
+  in a left-hand column (shipped).
+- [x] `v0.8.9` — v0.8.0 closeout cleanup: drop the Risk regime; add the benchmark
+  to the correlation matrix on the Benchmark check; drop the overbought/oversold
+  + VaR superlatives; add Smart Beta + Risk Management solutions to the universe;
+  prune indices with no recent price movement (shipped).
+- [x] `v0.8.10` — Startup selection: seed the Multi-Strategy picker with the top 5
+  indices by z(1W Sharpe, 1Y) so the tab loads populated (fixes the v0.8.9 prune
+  clearing the default selection) (shipped).
+- [x] `v0.8.11` — Quant Z-Score window + commentary height: add a 1W/1M/3M/6M
+  window dropdown beside the Quantitative Z-Score base-metric selector (sets the
+  base-metric lookback for the cross-sectional z, independent of the Period); and
+  halve the Key-Highlights card-area height (45vh → 22.5vh) (shipped).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).

@@ -11,9 +11,8 @@ from IPython import get_ipython
 from IPython.display import display
 
 from ..bql_client import _cache_path, fetch_prices
-from ..commentary import build_highlights
+from ..commentary import build_launch_cards, build_superlatives
 from ..config import (
-    ARP_SOLUTION_VALUES,
     BENCHMARK_TICKERS,
     DEFAULT_BENCHMARK,
     FACTOR_TICKERS,
@@ -23,10 +22,16 @@ from ..config import (
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
+    REGIME_SPECS,
+    REGIME_TICKERS,
+    SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
+    UNIVERSE_SOLUTION_VALUES,
+    WEEK_WINDOW,
 )
 from ..data import apply_filters, load_metadata, unique_values
 from ..stats import (
+    active_columns,
     ann_beta,
     common_window_bounds,
     corr_matrix,
@@ -39,11 +44,12 @@ from ..stats import (
     quant_metrics_table,
     regime_corr_matrix,
     return_distribution_stats,
+    rolling_autocorr,
     rolling_beta,
     rolling_correlation,
     rolling_metric_zscore,
     rolling_sharpe_zscore,
-    sharpe_zscore,
+    tercile_bounds,
     treynor_ratio,
     universe_perf,
     zscore_cross_section,
@@ -91,9 +97,11 @@ from .html import (
 from .panes import _make_analysis_pane
 from .platform import (
     _factor_beta_scatter,
-    _treemap,
+    _regime_scatter,
+    _sunburst,
     _update_factor_scatter,
-    _update_treemap,
+    _update_regime_scatter,
+    _update_sunburst,
 )
 from .state import DashboardState
 
@@ -123,10 +131,15 @@ def build_app(verbose: bool = True) -> W.VBox:
         display(overlay_w)
     _set_progress(0, "Initializing…")
 
-    meta = load_metadata()
-    meta = meta[
-        meta["solution"].astype(str).str.lower().isin(ARP_SOLUTION_VALUES)
+    # `meta_all` is the full in-universe catalog (by solution); the displayed
+    # `meta` is later narrowed to indices with recent price movement (post-fetch,
+    # via `_prune_stale`). `meta_all` drives the fetch so a ticker that resumes
+    # trading can be re-admitted on a later Refresh.
+    meta_all = load_metadata()
+    meta_all = meta_all[
+        meta_all["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)
     ].reset_index(drop=True)
+    meta = meta_all
     _log(f"loaded metadata: {len(meta)} tickers")
     _set_progress(25, f"Loaded {len(meta)} indices")
 
@@ -194,6 +207,18 @@ def build_app(verbose: bool = True) -> W.VBox:
         value="Sharpe",
         layout=W.Layout(width="120px"),
     )
+    # Window the Z-Score's base metric is computed over (independent of the
+    # global Period); the metric is then z-scored cross-sectionally.
+    q_z_window = W.Dropdown(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=MONTH_WINDOW,
+        layout=W.Layout(width="70px"),
+    )
 
     sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
     sortino_row, sortino_op, q_sortino = _q_row("Sortino")
@@ -206,13 +231,14 @@ def build_app(verbose: bool = True) -> W.VBox:
     z_row, z_op, q_z = _q_row(
         "Z-Score",
         trailing=W.HBox(
-            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric],
+            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric, q_z_window],
             layout=W.Layout(align_items="center"),
         ),
     )
     quant = SimpleNamespace(
         period_dd=q_period,
         z_metric_dd=q_z_metric,
+        z_window_dd=q_z_window,
         # Each benchmark-based metric carries its own benchmark dropdown.
         bench_dd={
             "Beta": q_beta_bench,
@@ -577,7 +603,24 @@ def build_app(verbose: bool = True) -> W.VBox:
     weekly_w = W.HTML(
         _render_weekly_commentary(_load_weekly_commentary(), date.today())
     )
-    highlights_w = W.HTML(_render_highlights([]))
+    highlights_w = W.HTML(_render_highlights([], []))
+    errors_w = W.HTML("")  # init/pane-error boxes (kept out of highlights_w)
+    # Live window for the Market Superlatives board — recomputes the panel from
+    # the cache on change (no BQL), like the Platform lookback toggle.
+    superlative_window = W.ToggleButtons(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=SUPERLATIVE_WINDOW_DAYS,
+        layout=W.Layout(width="auto"),
+    )
+    superlative_window_row = W.HBox(
+        [_section_label("Superlatives window"), superlative_window],
+        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+    )
     universe_grid = _universe_grid()
 
     # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
@@ -625,10 +668,10 @@ def build_app(verbose: bool = True) -> W.VBox:
         layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
     )
 
-    # Shared 6M/1Y/3Y/5Y lookback selector (v0.7.0 Workstream C) — the beta
-    # window for the factor scatter below (and, later, the treemap z-score
-    # normalization window). Value is a trading-day count, like z_lookback_dd;
-    # the factor scatter converts it to years. Re-slices the cache only.
+    # Shared 6M/1Y/3Y/5Y lookback selector — drives all three Platform analytics
+    # tabs (factor scatter, regime scatter, and the sunburst). Value is a
+    # trading-day count, like z_lookback_dd; the factor scatter converts it to
+    # years. Re-slices the cache only (no BQL).
     lookback_selector = W.ToggleButtons(
         options=[
             ("6M", HALF_YEAR_WINDOW),
@@ -639,18 +682,79 @@ def build_app(verbose: bool = True) -> W.VBox:
         value=TRADING_DAYS_PER_YEAR,
         layout=W.Layout(width="auto"),
     )
-    lookback_row = W.HBox(
-        [_section_label("Lookback"), lookback_selector],
-        layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
-    )
-    scatter_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Factor exposures")
-    )
     factor_scatter_fig = _factor_beta_scatter()
-    treemap_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Risk-adjusted strength map")
+    sunburst_fig = _sunburst()
+
+    # Sunburst Z-score controls (Metric · Window; the lookback is the shared
+    # toggle above). The chosen z colors the arcs (averaged up each level) and its
+    # |z| drives each ring's gross-% sizing. Re-slice the cache only (no BQL);
+    # `.value`s feed `rolling_metric_zscore`, the `.label`s the colorbar/hover.
+    sb_metric_dd = W.Dropdown(
+        options=[
+            ("Sharpe", "sharpe"),
+            ("Sortino", "sortino"),
+            ("Return", "return"),
+            ("Vol", "vol"),
+        ],
+        value="sharpe",
+        description="Metric",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="230px"),
     )
-    treemap_fig = _treemap()
+    sb_window_dd = W.Dropdown(
+        options=[
+            ("1W", WEEK_WINDOW),
+            ("1M", MONTH_WINDOW),
+            ("3M", QUARTER_WINDOW),
+            ("6M", HALF_YEAR_WINDOW),
+        ],
+        value=WEEK_WINDOW,
+        description="Window",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="230px"),
+    )
+
+    # --- Regime Analysis: the all-catalog risk/return scatter conditioned on a
+    # market-regime bucket. Volatility uses fixed VIX-level buckets; Trend /
+    # Rate-level / Risk regime split a live-computed indicator into low/mid/high
+    # terciles. Trend / Rate-level carry a conditional indicator-source dropdown
+    # (benchmark / region). All conditioning is a live re-slice of the cache. The
+    # controls stack in the Regime tab's left column (built below).
+    regime_scatter_fig = _regime_scatter()
+
+    def _regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
+        """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
+        fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
+        spec = REGIME_SPECS[regime_type]
+        if spec.get("mode") == "level":
+            return [(label, (low, high)) for label, low, high in spec["buckets"]]
+        return [(label, key) for label, key in spec["bucket_labels"]]
+
+    regime_type_dd = W.Dropdown(
+        options=list(REGIME_SPECS.keys()),
+        value="Volatility",
+        description="Type",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
+    )
+    # Conditional indicator-source dropdown — benchmark for Trend, region for
+    # Rate-level; hidden (via `_sync_regime_controls`) for regimes with no
+    # `selector` (Volatility / Risk regime).
+    regime_selector_dd = W.Dropdown(
+        options=[("—", "")],
+        value="",
+        description="Source",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
+    )
+    _init_buckets = _regime_bucket_options("Volatility")
+    regime_bucket_dd = W.Dropdown(
+        options=_init_buckets,
+        value=_init_buckets[0][1],
+        description="Bucket",
+        style={"description_width": "60px"},
+        layout=W.Layout(width="240px"),
+    )
 
     pane_left = _make_analysis_pane("left")
     pane_right = _make_analysis_pane("right")
@@ -674,6 +778,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         pane_left=pane_left,
         pane_right=pane_right,
         highlights_w=highlights_w,
+        errors_w=errors_w,
     )
 
     selected_perf_header = W.HTML(
@@ -687,23 +792,97 @@ def build_app(verbose: bool = True) -> W.VBox:
     )
 
     commentary_box = W.VBox(
-        [weekly_w, highlights_w],
+        [weekly_w, errors_w, superlative_window_row, highlights_w],
         layout=W.Layout(width="100%", padding="12px 16px"),
     )
 
     universe_header = W.HTML(
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
+
+    # --- Platform analytics card: the three charts (sunburst / regime / factor
+    # scatter) as inner pill-tabs sharing one lookback. The layout is a fixed
+    # left control column beside a flex-grow chart: the shared lookback sits on
+    # top of the column, then the active tab's own selection boxes swap in below
+    # it (`tab_controls_box`); the chart swaps in `chart_box`. Factor exposures
+    # has no extra controls, so its column is just the lookback. The card is a
+    # bordered box (`.bbg-card`) so the grouping reads at a glance.
+    sunburst_controls = W.VBox(
+        [_section_label("Z-score"), sb_metric_dd, sb_window_dd],
+        layout=W.Layout(width="100%"),
+    )
+    regime_controls = W.VBox(
+        [
+            _section_label("Regime"),
+            regime_type_dd,
+            regime_selector_dd,
+            regime_bucket_dd,
+        ],
+        layout=W.Layout(width="100%"),
+    )
+    factor_controls = W.VBox([], layout=W.Layout(width="100%"))
+
+    sunburst_pill = _make_tab_button(
+        "Sunburst", active=True, width="190px", height="34px"
+    )
+    regime_pill = _make_tab_button(
+        "Regime analysis", active=False, width="190px", height="34px"
+    )
+    factor_pill = _make_tab_button(
+        "Factor exposures", active=False, width="190px", height="34px"
+    )
+    analytics_tab_bar = W.HBox(
+        [sunburst_pill, regime_pill, factor_pill],
+        layout=W.Layout(width="100%", padding="2px 0 6px 0"),
+    )
+
+    # Shared lookback stacked on top of the active tab's controls (left column).
+    tab_controls_box = W.Box([sunburst_controls], layout=W.Layout(width="100%"))
+    analytics_left_col = W.VBox(
+        [_section_label("Lookback"), lookback_selector, tab_controls_box],
+        layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
+    )
+    chart_box = W.Box([sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%"))
+    analytics_body = W.HBox(
+        [analytics_left_col, chart_box],
+        layout=W.Layout(width="100%", align_items="stretch"),
+    )
+
+    _analytics_tabs = {
+        "sunburst": (sunburst_pill, sunburst_controls, sunburst_fig),
+        "regime": (regime_pill, regime_controls, regime_scatter_fig),
+        "factor": (factor_pill, factor_controls, factor_scatter_fig),
+    }
+
+    def _activate_platform_tab(which: str) -> None:
+        for key, (pill, _controls, _fig) in _analytics_tabs.items():
+            _style_tab_button(pill, active=(key == which))
+        _pill, controls, fig = _analytics_tabs[which]
+        tab_controls_box.children = (controls,)
+        chart_box.children = (fig,)
+
+    sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
+    regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
+    factor_pill.on_click(lambda _b: _activate_platform_tab("factor"))
+
+    analytics_card = W.VBox(
+        [
+            W.HTML(
+                render_template("grid_header", **STYLE_CTX, text="Platform analytics")
+            ),
+            analytics_tab_bar,
+            analytics_body,
+        ],
+        layout=W.Layout(width="100%"),
+    )
+    analytics_card.add_class("bbg-card")
+
     platform_panel = W.VBox(
         [
             universe_header,
             z_controls_row,
             universe_grid,
-            lookback_row,
-            scatter_header,
-            factor_scatter_fig,
-            treemap_header,
-            treemap_fig,
+            analytics_card,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
@@ -763,6 +942,29 @@ def build_app(verbose: bool = True) -> W.VBox:
     for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
         _dd.observe(_render_universe_grid, names="value")
 
+    def _default_selection() -> tuple[str, ...]:
+        """The startup strategy selection: the 5 indices with the highest
+        z-score of (1W Sharpe, 1Y) over the fetched cache, so the Multi-Strategy
+        views load populated. Falls back to the first available tickers when the
+        z-score is unavailable/degenerate."""
+        opt = [o[1] if isinstance(o, tuple) else o for o in state.ticker_w.options]
+        if not opt:
+            return ()
+        if not state.arp_universe_prices.empty:
+            try:
+                z = rolling_metric_zscore(
+                    state.arp_universe_prices,
+                    metric="sharpe",
+                    window=WEEK_WINDOW,
+                    zscore_window=TRADING_DAYS_PER_YEAR,
+                ).dropna()
+                top = [t for t in z.nlargest(5).index if t in opt]
+                if top:
+                    return tuple(top)
+            except Exception:
+                pass
+        return tuple(opt[:5])
+
     def _render_factor_scatter(_change=None) -> None:
         """Render the Platform 3D factor-beta scatter (β to the equity risk
         premium, term premium, and trend factor, per strategy, colored by asset
@@ -786,28 +988,126 @@ def build_app(verbose: bool = True) -> W.VBox:
                 f"factor-beta scatter render failed:\n{traceback.format_exc()}"
             )
 
-    def _render_treemap(_change=None) -> None:
-        """Render the Platform asset class → theme → ticker treemap (sized by
-        z(6M Sharpe), colored by z(1W Sharpe)) at the current lookback. Computes
-        live from the ARP-only cache via `platform_treemap_frame` — the lookback
-        toggle re-slices only, no BQL. No in-figure title; the "Risk-adjusted
-        strength map" section header stands alone (v0.7.3)."""
+    def _render_sunburst(_change=None) -> None:
+        """Render the Platform asset class → theme → ticker sunburst from the
+        Metric/Window Z-score controls + the shared lookback: arcs sized by
+        gross-|z| share, colored by the level-averaged z. Computes live from the
+        ARP-only cache via `platform_sunburst_frame` — the controls re-slice
+        only, no BQL. No in-figure title; the active tab labels the chart."""
         if state.arp_universe_prices.empty:
             return
         try:
-            _update_treemap(
-                treemap_fig,
+            _update_sunburst(
+                sunburst_fig,
                 state.arp_universe_prices,
                 meta,
+                metric=sb_metric_dd.value,
+                window=sb_window_dd.value,
+                lookback=lookback_selector.value,
+                label=f"{sb_window_dd.label} {sb_metric_dd.label}",
+            )
+        except Exception:
+            state.init_errors.append(
+                f"sunburst render failed:\n{traceback.format_exc()}"
+            )
+
+    # --- Regime Analysis closures: live re-slice of the cache on the regime /
+    # source / bucket dropdowns and the shared lookback toggle — no BQL.
+    def _regime_indicator() -> pd.Series | None:
+        """The regime indicator series from the cache, per the active regime's
+        mode, or None when its ticker(s) are absent from the fetch (→
+        unconditioned all-days view):
+
+        - ``level`` — the raw indicator level (Volatility = VIX).
+        - ``autocorr_tercile`` — the selected benchmark's rolling return autocorr.
+        - ``level_tercile`` — the selected region's rate level.
+        """
+        spec = REGIME_SPECS.get(regime_type_dd.value, {})
+        mode = spec.get("mode")
+        prices = state.universe_prices
+        if mode == "autocorr_tercile":
+            ticker = regime_selector_dd.value
+            if not ticker or ticker not in prices.columns:
+                return None
+            rets = daily_returns(prices[[ticker]])[ticker]
+            return rolling_autocorr(rets, window=spec.get("autocorr_window", 21))
+        ticker = (
+            regime_selector_dd.value if mode == "level_tercile" else spec.get("ticker")
+        )
+        if not ticker or ticker not in prices.columns:
+            return None
+        return prices[ticker]
+
+    def _resolve_regime_bucket() -> tuple[float | None, float | None]:
+        """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
+        read the tuple straight off the bucket dropdown; tercile regimes derive
+        the bounds from the live indicator's 1/3 & 2/3 quantiles over the
+        lookback window (`tercile_bounds`). ``(None, None)`` when no indicator is
+        available (→ unconditioned all-days view)."""
+        spec = REGIME_SPECS.get(regime_type_dd.value, {})
+        if spec.get("mode") == "level":
+            low, high = regime_bucket_dd.value
+            return (low, high)
+        indicator = _regime_indicator()
+        if indicator is None:
+            return (None, None)
+        return tercile_bounds(
+            indicator.tail(lookback_selector.value), regime_bucket_dd.value
+        )
+
+    def _render_regime_scatter(_change=None) -> None:
+        """Render the regime risk/return scatter at the current regime / source /
+        bucket + lookback, live from the cache (no BQL)."""
+        if state.arp_universe_prices.empty:
+            return
+        try:
+            low, high = _resolve_regime_bucket()
+            _update_regime_scatter(
+                regime_scatter_fig,
+                state.arp_universe_prices,
+                _regime_indicator(),
+                meta,
+                low=low,
+                high=high,
                 lookback=lookback_selector.value,
             )
         except Exception:
             state.init_errors.append(
-                f"treemap render failed:\n{traceback.format_exc()}"
+                f"regime scatter render failed:\n{traceback.format_exc()}"
             )
 
-    for _render in (_render_factor_scatter, _render_treemap):
+    def _sync_regime_controls(_change=None) -> None:
+        # Repopulate the bucket dropdown for the active regime's mode and show /
+        # hide the indicator-source dropdown (only regimes carrying a `selector`).
+        spec = REGIME_SPECS.get(regime_type_dd.value, {})
+        selector = spec.get("selector", [])
+        if selector:
+            regime_selector_dd.options = selector
+            regime_selector_dd.value = selector[0][1]
+            regime_selector_dd.layout.display = ""
+        else:
+            regime_selector_dd.layout.display = "none"
+        options = _regime_bucket_options(regime_type_dd.value)
+        regime_bucket_dd.options = options
+        regime_bucket_dd.value = options[0][1]
+
+    def _on_regime_type(_change=None) -> None:
+        _sync_regime_controls()
+        _render_regime_scatter()
+
+    regime_type_dd.observe(_on_regime_type, names="value")
+    regime_selector_dd.observe(lambda _c: _render_regime_scatter(), names="value")
+    regime_bucket_dd.observe(lambda _c: _render_regime_scatter(), names="value")
+    _sync_regime_controls()
+
+    # The shared lookback drives all three analytics tabs (the sunburst now
+    # shares it too — its own lookback dropdown was removed in the tab rework).
+    for _render in (_render_factor_scatter, _render_regime_scatter, _render_sunburst):
         lookback_selector.observe(_render, names="value")
+
+    # The sunburst's own Metric/Window controls re-render only the sunburst.
+    for _dd in (sb_metric_dd, sb_window_dd):
+        _dd.observe(_render_sunburst, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
@@ -819,13 +1119,16 @@ def build_app(verbose: bool = True) -> W.VBox:
     # DashboardState); the startup fetch below populates them.
     # Benchmarks and v0.7.0 Platform factor proxies ride along on the single
     # startup fetch so the Rolling Correlation / Rolling Beta tabs and the
-    # Platform factor scatter/treemap can slice them from the same cache. Both
+    # Platform factor scatter/sunburst can slice them from the same cache. Both
     # are excluded from the ARP-universe grid and the highlights cards via
     # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
     # equity factor proxy is also a benchmark) while preserving order.
     fetch_tickers = list(
         dict.fromkeys(
-            list(meta["ticker"]) + list(BENCHMARK_TICKERS) + list(FACTOR_TICKERS)
+            list(meta["ticker"])
+            + list(BENCHMARK_TICKERS)
+            + list(FACTOR_TICKERS)
+            + list(REGIME_TICKERS)
         )
     )
     _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
@@ -846,11 +1149,27 @@ def build_app(verbose: bool = True) -> W.VBox:
         )
 
     if not state.universe_prices.empty:
+        # Drop indices with no recent price movement (stale / delisted / all-NaN)
+        # from the displayed `meta`; `meta_all` (everything fetched) is kept so a
+        # resumed ticker can be re-admitted on a later Refresh. Then refresh the
+        # strategies dropdown so the dropped tickers leave it too.
+        live = set(
+            active_columns(state.universe_prices.reindex(columns=meta_all["ticker"]))
+        )
+        meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+        # Resetting the options clears `ticker_w.value`; reselect below once the
+        # cache (and so the z-score ranking) is available.
+        state.ticker_w.options = _ticker_options(meta)
+        _log(f"pruned to {len(meta)} indices with recent performance")
         # ARP universe view of the cache — used for the all-catalog grid and
         # the whole-catalog highlights so benchmark columns never leak in.
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
+        # Startup selection: the top 5 indices by z(1W Sharpe, 1Y) so the
+        # Multi-Strategy views render populated on load (the initial _recompute
+        # below reads this selection).
+        state.ticker_w.value = _default_selection()
         t_perf = time.perf_counter()
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
@@ -858,7 +1177,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             t_grid = time.perf_counter()
             _render_universe_grid()
             _render_factor_scatter()
-            _render_treemap()
+            _render_sunburst()
+            _render_regime_scatter()
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -918,7 +1238,18 @@ def build_app(verbose: bool = True) -> W.VBox:
             years,
         )
         if "Z" in thresholds:
-            qt["Z"] = zscore_cross_section(qt[quant.z_metric_dd.value])
+            # Cross-sectional z of the base metric, computed over the Z-Score's
+            # own window (independent of the Period); recompute over that window,
+            # threading the base metric's benchmark when it's Beta/Treynor/Jensen.
+            z_metric = quant.z_metric_dd.value
+            z_years = quant.z_window_dd.value / TRADING_DAYS_PER_YEAR
+            z_bench = (
+                state.universe_prices.get(quant.bench_dd[z_metric].value)
+                if z_metric in quant.bench_dd
+                else None
+            )
+            zt = quant_metrics_table(prices, z_bench, z_years, returns=rets)
+            qt["Z"] = zscore_cross_section(zt[z_metric])
         keep = qt.index
         for name, (op, value) in thresholds.items():
             col = qt[name]
@@ -962,7 +1293,7 @@ def build_app(verbose: bool = True) -> W.VBox:
         cb.observe(_on_filter_change, names="value")
     for w in (live_min, live_max, search_w, currency_dd):
         w.observe(_on_filter_change, names="value")
-    quant_inputs = [q_period, q_z_metric, *quant.bench_dd.values()]
+    quant_inputs = [q_period, q_z_metric, q_z_window, *quant.bench_dd.values()]
     for op, box in quant.specs.values():
         quant_inputs += [op, box]
     for w in quant_inputs:
@@ -1015,11 +1346,11 @@ def build_app(verbose: bool = True) -> W.VBox:
         win_end: pd.Timestamp,
         errors: list[str],
     ) -> None:
-        # Correlation heatmap: optionally conditioned on a benchmark-return
-        # regime, with the benchmark added to the matrix. Computed per-pane so
-        # the two panes stay independent (like the rolling-corr/beta blocks).
-        # The regime path is gated on the nested Regime checkbox (v0.7.5);
-        # Benchmark-on / Regime-off stays plain full-sample correlation.
+        # Correlation heatmap, three cases (per-pane, so the panes stay
+        # independent): Regime on → conditioned on the benchmark-return tail with
+        # the benchmark in the matrix; Benchmark on / Regime off → full-sample
+        # correlation with the benchmark added (v0.8.9); neither → plain
+        # full-sample correlation of the selected strategies (`prep.cm`).
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
             direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
@@ -1054,6 +1385,43 @@ def build_app(verbose: bool = True) -> W.VBox:
                     f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
                 )
                 _update_heatmap(pane.heat_fig, cm, title=title)
+            except Exception:
+                errors.append(traceback.format_exc())
+                _update_heatmap(pane.heat_fig, pd.DataFrame())
+        elif pane.heat_benchmark_chk.value:
+            # Benchmark on, Regime off: full-sample correlation with the
+            # benchmark added as a row/column (no regime conditioning).
+            hm_bench_ticker = pane.heat_dd.value
+            try:
+
+                def _compute_incl():
+                    hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
+                    if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                        raise ValueError(
+                            f"No price data for benchmark {hm_bench_ticker!r}."
+                        )
+                    hm_bench_window = hm_bench_prices.loc[win_start:win_end]
+                    hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[
+                        :, 0
+                    ]
+                    # pct=1.0 keeps every day (no tail); include_benchmark appends it.
+                    return regime_corr_matrix(
+                        prep.rets,
+                        hm_bench_returns,
+                        1.0,
+                        direction="down",
+                        include_benchmark=True,
+                    )
+
+                cm = state.memo.get_or_compute(
+                    ("heatmap", hm_bench_ticker, "incl", 100),
+                    _compute_incl,
+                )
+                _update_heatmap(
+                    pane.heat_fig,
+                    cm,
+                    title=f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)",
+                )
             except Exception:
                 errors.append(traceback.format_exc())
                 _update_heatmap(pane.heat_fig, pd.DataFrame())
@@ -1270,6 +1638,46 @@ def build_app(verbose: bool = True) -> W.VBox:
         ):
             ctrl.observe(_make(_render_heatmap), names="value")
 
+    _WINDOW_LABELS = {
+        WEEK_WINDOW: "Past Week",
+        MONTH_WINDOW: "Past Month",
+        QUARTER_WINDOW: "Past Quarter",
+        HALF_YEAR_WINDOW: "Past 6 Months",
+    }
+
+    def _render_highlights_panel(window_days):
+        """Render the whole-catalog Key Highlights panel at ``window_days``.
+
+        Builds the superlatives (at the chosen window) + new-launch cards from
+        the already-fetched ARP cache and writes ``state.highlights_w`` — no
+        BQL, no selection. Shared by ``_recompute`` (initial/Refresh) and the
+        live window-toggle observer; a compute failure surfaces in-place rather
+        than blanking the panel."""
+        try:
+            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+            universe_window = state.arp_universe_prices.loc[
+                state.arp_universe_prices.index >= window_start
+            ]
+            if universe_window.empty:
+                state.highlights_w.value = _render_highlights([], [])
+                return
+            universe_rets = daily_returns(universe_window)
+            superlatives = build_superlatives(
+                meta, universe_window, universe_rets, window_days=window_days
+            )
+            launches = build_launch_cards(meta, state.arp_universe_prices, as_of=today)
+            state.highlights_w.value = _render_highlights(
+                superlatives,
+                launches,
+                window_label=_WINDOW_LABELS.get(window_days, "Past Month"),
+            )
+        except Exception:
+            state.highlights_w.value = _render_error(traceback.format_exc())
+
+    superlative_window.observe(
+        lambda c: _render_highlights_panel(c["new"]), names="value"
+    )
+
     def _recompute(_btn=None):
         # A recompute rebuilds the selection slice (`cur_prep`), so every
         # memoized benchmark-dependent result is stale — drop them all. This is
@@ -1277,30 +1685,20 @@ def build_app(verbose: bool = True) -> W.VBox:
         # no-selection guard branches below). Benchmark flips don't call
         # _recompute, so the memo survives across them within a stable slice.
         state.memo.clear()
-        highlights_html = ""
+        error_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
         for err in state.init_errors:
-            highlights_html += _render_error(err)
-        # Highlights are always whole-catalog (ARP only), regardless of selection.
+            error_html += _render_error(err)
+        # Highlights are always whole-catalog (ARP only), regardless of
+        # selection. Render the panel at the currently-selected window; the
+        # toggle re-renders it live (no BQL) via the same closure.
+        _render_highlights_panel(superlative_window.value)
+
+        # 5Y bound for the selected-set slice below.
         universe_window_start = pd.Timestamp(today) - pd.DateOffset(
             years=LOOKBACK_YEARS
         )
-        try:
-            if not state.arp_universe_prices.empty:
-                universe_window = state.arp_universe_prices.loc[
-                    state.arp_universe_prices.index >= universe_window_start
-                ]
-                if not universe_window.empty:
-                    universe_rets = daily_returns(universe_window)
-                    universe_sz = sharpe_zscore(universe_rets)
-                    cards = build_highlights(
-                        meta, universe_window, universe_rets, universe_sz
-                    )
-                    highlights_html += _render_highlights(cards)
-        except Exception:
-            highlights_html += _render_error(traceback.format_exc())
-
         pane_errors: list[str] = []
         try:
             tickers = list(state.ticker_w.value)
@@ -1386,11 +1784,12 @@ def build_app(verbose: bool = True) -> W.VBox:
             pane_errors.append(traceback.format_exc())
 
         for err in pane_errors:
-            highlights_html += _render_error(err)
+            error_html += _render_error(err)
 
-        state.highlights_w.value = highlights_html or _render_highlights([])
+        state.errors_w.value = error_html
 
     def _refresh_prices(_btn=None):
+        nonlocal meta
         # Re-show the overlay (it's already in the tree — just re-render its
         # value visible) and re-run the staged bar.
         _set_progress(0, "Refreshing…")
@@ -1410,6 +1809,16 @@ def build_app(verbose: bool = True) -> W.VBox:
             _recompute()
             return
         elapsed = time.perf_counter() - t_refresh
+        # Re-prune stale indices from the full catalog against the fresh cache
+        # (a resumed ticker can return), then refresh the strategies dropdown.
+        if not state.universe_prices.empty:
+            live = set(
+                active_columns(
+                    state.universe_prices.reindex(columns=meta_all["ticker"])
+                )
+            )
+            meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+            _on_filter_change()
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
@@ -1417,7 +1826,8 @@ def build_app(verbose: bool = True) -> W.VBox:
             state.universe_up = universe_perf(state.arp_universe_prices)
             _render_universe_grid()
             _render_factor_scatter()
-            _render_treemap()
+            _render_sunburst()
+            _render_regime_scatter()
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"

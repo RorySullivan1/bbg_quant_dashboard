@@ -49,6 +49,22 @@ def max_drawdown(prices: pd.DataFrame, years: float) -> pd.Series:
     return drawdowns.min()
 
 
+def max_drawup(prices: pd.DataFrame, years: float) -> pd.Series:
+    """Largest run-up off a trough over the window, per ticker (mirror of
+    ``max_drawdown``).
+
+    The max over the window of ``price / running-min - 1`` — the biggest gain
+    from a running low to a subsequent high. Always non-negative; columns with
+    no data in the window are NaN. Powers the "Largest drawup" superlative.
+    """
+    sliced = _slice_last_years(prices, years)
+    if sliced.empty:
+        return pd.Series(np.nan, index=prices.columns)
+    running_min = sliced.cummin()
+    drawups = sliced / running_min - 1.0
+    return drawups.max()
+
+
 def _benchmark_series(benchmark: pd.Series | pd.DataFrame | None) -> pd.Series | None:
     if benchmark is None:
         return None
@@ -62,6 +78,26 @@ def zscore_cross_section(series: pd.Series) -> pd.Series:
     if not std or np.isnan(std):
         return pd.Series(np.nan, index=series.index)
     return (series - series.mean()) / std
+
+
+def asset_class_demeaned_zscore(series: pd.Series, asset_class: pd.Series) -> pd.Series:
+    """Asset-class-demeaned cross-sectional z-score of a per-ticker metric.
+
+    Subtract each asset class's own mean from ``series`` (grouping tickers by
+    their ``asset_class``), then ``zscore_cross_section`` the demeaned values
+    across the whole catalog. This makes a metric **cross-asset-neutral**: an
+    index scores high for being extreme *relative to its asset-class cohort*,
+    not because its whole class is structurally high/low. Used **only to rank**
+    the cross-asset-neutral superlative cards (the card still shows the raw
+    metric). ``asset_class`` is a per-ticker Series aligned to ``series.index``;
+    tickers with no mapped class (NaN key) demean to NaN and drop out of the
+    ranking. Returns an empty Series for empty input.
+    """
+    if series.empty:
+        return pd.Series(dtype=float)
+    classes = asset_class.reindex(series.index)
+    group_mean = series.groupby(classes).transform("mean")
+    return zscore_cross_section(series - group_mean)
 
 
 def common_window_bounds(
@@ -84,3 +120,23 @@ def common_window_bounds(
     if pd.isna(start) or pd.isna(end) or start > end:
         return (None, None)
     return (start, end)
+
+
+def active_columns(prices: pd.DataFrame, *, window_days: int = 21) -> list[str]:
+    """Columns whose price actually *moved* over the trailing ``window_days``.
+
+    Keeps a column only when its last ``window_days`` rows carry at least two
+    distinct non-NaN values (i.e. the series isn't empty or flat). This drops
+    indices with no recent performance — delisted/stale series, including ones
+    BQL ``fill="prev"`` carried forward as a flat line, and all-NaN columns.
+    Returns the kept column names in their original order.
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return []
+    tail = prices.tail(window_days)
+    out: list[str] = []
+    for col in prices.columns:
+        s = tail[col].dropna()
+        if len(s) >= 2 and s.nunique() > 1:
+            out.append(col)
+    return out

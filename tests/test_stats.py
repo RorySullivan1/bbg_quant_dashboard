@@ -13,7 +13,11 @@ import numpy as np
 import pandas as pd
 import pytest
 from src import stats
-from src.config import HALF_YEAR_WINDOW, TRADING_DAYS_PER_YEAR, WEEK_WINDOW
+from src.config import (
+    MONTH_WINDOW,
+    TRADING_DAYS_PER_YEAR,
+    WEEK_WINDOW,
+)
 
 # --- basics ----------------------------------------------------------------
 
@@ -125,6 +129,17 @@ def test_regime_corr_matrix_empty_when_pct_zero(multiyear_prices):
     assert stats.regime_corr_matrix(rets, bench, pct=0.0).empty
 
 
+def test_regime_corr_matrix_full_sample_includes_benchmark(multiyear_prices):
+    # v0.8.9: the Correlation-Heatmap "Benchmark on / Regime off" path calls
+    # regime_corr_matrix with pct=1.0 — all days kept, benchmark appended.
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["AAA Index"].rename("SPX Index")
+    rm = stats.regime_corr_matrix(rets, bench, pct=1.0, include_benchmark=True)
+    assert "SPX Index" in rm.columns
+    assert rm.shape[0] == rets.shape[1] + 1
+    np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
+
+
 # --- risk / momentum -------------------------------------------------------
 
 
@@ -219,6 +234,26 @@ def test_common_window_bounds_no_overlap_returns_none(bdays):
 
 def test_common_window_bounds_empty_returns_none():
     assert stats.common_window_bounds(pd.DataFrame()) == (None, None)
+
+
+def test_active_columns_drops_flat_and_empty(bdays):
+    idx = bdays(40)
+    prices = pd.DataFrame(
+        {
+            "MOVING Index": np.linspace(100.0, 130.0, len(idx)),  # trends up
+            "FLAT Index": 100.0,  # carried-forward / never moves
+            "EMPTY Index": np.nan,  # no data at all
+            "STALE Index": [100.0 + i for i in range(len(idx) - 21)]  # moved early,
+            + [200.0] * 21,  # then flat over the trailing window
+        },
+        index=idx,
+    )
+    kept = stats.active_columns(prices, window_days=21)
+    assert kept == ["MOVING Index"]  # order preserved; the rest are dropped
+
+
+def test_active_columns_empty_frame():
+    assert stats.active_columns(pd.DataFrame()) == []
 
 
 # --- v0.6.9 Workstream D: precomputed-returns threading (equivalence) -------
@@ -373,7 +408,7 @@ def test_factor_beta_matches_ann_beta(bdays):
     )
 
 
-def test_platform_treemap_frame_columns_and_join(multiyear_prices):
+def test_platform_sunburst_frame_columns_and_join(multiyear_prices):
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
@@ -381,29 +416,422 @@ def test_platform_treemap_frame_columns_and_join(multiyear_prices):
             "theme": ["Growth", "Credit", "Energy"],
         }
     )
-    frame = stats.platform_treemap_frame(multiyear_prices, meta, lookback=252)
-    assert list(frame.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["asset_class", "theme", "z"]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
     assert frame.loc["BBB Index", "theme"] == "Credit"
-    assert frame["size_z"].notna().any()
-    # v0.7.3: size = z(6M Sharpe), color = z(1W Sharpe) — pin both windows.
-    size_expected = stats.rolling_metric_zscore(
-        multiyear_prices, metric="sharpe", window=HALF_YEAR_WINDOW, zscore_window=252
-    )
-    color_expected = stats.rolling_metric_zscore(
+    assert frame["z"].notna().any()
+    # Default: z(1W Sharpe, 1Y).
+    expected = stats.rolling_metric_zscore(
         multiyear_prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=252
     )
     pd.testing.assert_series_equal(
-        frame["size_z"], size_expected.reindex(frame.index), check_names=False
+        frame["z"], expected.reindex(frame.index), check_names=False
+    )
+
+
+def test_platform_sunburst_frame_honors_metric_params(multiyear_prices):
+    """z honors the selected metric/window/lookback."""
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "asset_class": ["Equity", "Fixed Income", "Commodity"],
+            "theme": ["Growth", "Credit", "Energy"],
+        }
+    )
+    frame = stats.platform_sunburst_frame(
+        multiyear_prices,
+        meta,
+        metric="sortino",
+        window=MONTH_WINDOW,
+        lookback=TRADING_DAYS_PER_YEAR * 3,
+    )
+    expected = stats.rolling_metric_zscore(
+        multiyear_prices,
+        metric="sortino",
+        window=MONTH_WINDOW,
+        zscore_window=TRADING_DAYS_PER_YEAR * 3,
     )
     pd.testing.assert_series_equal(
-        frame["color_z"], color_expected.reindex(frame.index), check_names=False
+        frame["z"], expected.reindex(frame.index), check_names=False
     )
 
 
-def test_platform_treemap_frame_empty_safe():
+def test_platform_sunburst_frame_empty_safe():
     meta = pd.DataFrame({"ticker": [], "asset_class": [], "theme": []})
-    out = stats.platform_treemap_frame(pd.DataFrame(), meta, lookback=252)
-    assert list(out.columns) == ["asset_class", "theme", "size_z", "color_z"]
+    out = stats.platform_sunburst_frame(pd.DataFrame(), meta)
+    assert list(out.columns) == ["asset_class", "theme", "z"]
     assert out.empty
+
+
+# --- v0.8.0 superlative helpers: period_return / streak / trend -------------
+
+
+def test_period_return_simple_cumulative(tiny_prices):
+    # window covers the whole 4-row frame: AAA 100→133.1, BBB 100→150.
+    pr = stats.period_return(tiny_prices, window_days=21)
+    assert pr["AAA Index"] == pytest.approx(0.331)
+    assert pr["BBB Index"] == pytest.approx(0.5)
+
+
+def test_period_return_respects_window(tiny_prices):
+    # window_days=2 → tail(3) rows [110, 121, 133.1] for AAA → 133.1/110 - 1.
+    pr = stats.period_return(tiny_prices, window_days=2)
+    assert pr["AAA Index"] == pytest.approx(133.1 / 110.0 - 1.0)
+
+
+def test_period_return_empty_passthrough():
+    assert stats.period_return(pd.DataFrame(), window_days=21).empty
+
+
+def test_period_return_insufficient_history_is_nan(bdays):
+    idx = bdays(3)
+    # Only one valid observation in the window → NaN.
+    prices = pd.DataFrame({"X Index": [np.nan, np.nan, 100.0]}, index=idx)
+    assert np.isnan(stats.period_return(prices, window_days=21)["X Index"])
+
+
+def test_longest_up_streak_counts_consecutive_gains(bdays):
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "UP Index": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # all up → 6
+            "MIX Index": [0.01, 0.01, -0.01, 0.01, 0.01, 0.01],  # longest run → 3
+            "DOWN Index": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01],  # never up → 0
+        },
+        index=idx,
+    )
+    streak = stats.longest_up_streak(rets, window_days=21)
+    assert streak["UP Index"] == 6.0
+    assert streak["MIX Index"] == 3.0
+    assert streak["DOWN Index"] == 0.0
+
+
+def test_longest_up_streak_respects_window(bdays):
+    idx = bdays(6)
+    # First three days up, then flat/down — a 3-day window sees no full streak.
+    rets = pd.DataFrame({"X Index": [0.01, 0.01, 0.01, -0.01, 0.0, -0.01]}, index=idx)
+    assert stats.longest_up_streak(rets, window_days=3)["X Index"] == 0.0
+
+
+def test_longest_up_streak_all_nan_is_nan(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [np.nan, np.nan, np.nan, np.nan]}, index=idx)
+    assert np.isnan(stats.longest_up_streak(rets, window_days=21)["X Index"])
+
+
+def test_trend_strength_clean_beats_noisy(bdays):
+    idx = bdays(40)
+    n = len(idx)
+    clean = 100.0 * 1.01 ** np.arange(n)  # perfectly log-linear uptrend → R²≈1
+    rng = np.random.default_rng(3)
+    noisy = clean * np.exp(rng.normal(0.0, 0.05, n))  # same drift, added noise
+    prices = pd.DataFrame({"CLEAN Index": clean, "NOISY Index": noisy}, index=idx)
+    ts = stats.trend_strength(prices, window_days=40)
+    # A clean persistent uptrend outranks a noisy one of similar slope.
+    assert ts["CLEAN Index"] > ts["NOISY Index"]
+    # Clean log-linear series: slope·R² ≈ ln(1.01).
+    assert ts["CLEAN Index"] == pytest.approx(np.log(1.01), rel=1e-6)
+
+
+def test_trend_strength_flat_series_is_zero(bdays):
+    idx = bdays(30)
+    prices = pd.DataFrame({"FLAT Index": np.full(len(idx), 100.0)}, index=idx)
+    assert stats.trend_strength(prices, window_days=21)["FLAT Index"] == 0.0
+
+
+def test_trend_strength_short_history_is_nan(bdays):
+    idx = bdays(2)
+    prices = pd.DataFrame({"X Index": [100.0, 101.0]}, index=idx)
+    assert np.isnan(stats.trend_strength(prices, window_days=21)["X Index"])
+
+
+# --- v0.8.x superlative helpers: down-streak / ma-spread --------------------
+
+
+def test_longest_down_streak_counts_consecutive_losses(bdays):
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "DOWN Index": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01],  # all down → 6
+            "MIX Index": [-0.01, -0.01, 0.01, -0.01, -0.01, -0.01],  # longest run → 3
+            "UP Index": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # never down → 0
+        },
+        index=idx,
+    )
+    streak = stats.longest_down_streak(rets, window_days=21)
+    assert streak["DOWN Index"] == 6.0
+    assert streak["MIX Index"] == 3.0
+    assert streak["UP Index"] == 0.0
+
+
+def test_longest_down_streak_all_nan_is_nan(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [np.nan, np.nan, np.nan, np.nan]}, index=idx)
+    assert np.isnan(stats.longest_down_streak(rets, window_days=21)["X Index"])
+
+
+def test_ma_spread_known_value(bdays):
+    idx = bdays(5)
+    # SMA of [100,102,104,106,108] = 104; last = 108 → 108/104 - 1.
+    prices = pd.DataFrame({"X Index": [100.0, 102.0, 104.0, 106.0, 108.0]}, index=idx)
+    spread = stats.ma_spread(prices, window_days=5)
+    assert spread["X Index"] == pytest.approx(108.0 / 104.0 - 1.0)
+
+
+def test_ma_spread_flat_series_is_zero(bdays):
+    idx = bdays(30)
+    prices = pd.DataFrame({"FLAT Index": np.full(len(idx), 100.0)}, index=idx)
+    assert stats.ma_spread(prices, window_days=21)["FLAT Index"] == pytest.approx(0.0)
+
+
+def test_ma_spread_insufficient_history_is_nan(bdays):
+    idx = bdays(10)
+    # Only 10 rows but a 21-day window requested → not enough → NaN.
+    prices = pd.DataFrame({"X Index": np.linspace(100.0, 110.0, len(idx))}, index=idx)
+    assert np.isnan(stats.ma_spread(prices, window_days=21)["X Index"])
+
+
+def test_ma_spread_empty_passthrough():
+    assert stats.ma_spread(pd.DataFrame(), window_days=21).empty
+
+
+# --- v0.8.4 superlative-redo helpers ---------------------------------------
+
+
+def test_max_drawup_window(tiny_prices):
+    du = stats.max_drawup(tiny_prices, years=10)  # window covers all rows
+    # AAA only rises → biggest run-up is the whole ramp: 133.1/100 - 1.
+    assert du["AAA Index"] == pytest.approx(0.331)
+    # BBB: cummin hits 90 → 150/90 - 1 is the largest run-up off the trough.
+    assert du["BBB Index"] == pytest.approx(150.0 / 90.0 - 1.0)
+
+
+def test_max_drawup_empty_safe():
+    assert stats.max_drawup(pd.DataFrame(), years=1).empty
+
+
+def test_asset_class_demeaned_zscore_neutralizes_class_level():
+    # Equity sits structurally higher than Bond. The raw winner is an equity
+    # name, but after demeaning each class the biggest cohort-relative mover is
+    # a bond name → the demeaned-z winner differs from the raw idxmax.
+    series = pd.Series(
+        {"E1 Index": 10.0, "E2 Index": 12.0, "B1 Index": 1.0, "B2 Index": 5.0}
+    )
+    asset_class = pd.Series(
+        {
+            "E1 Index": "Equity",
+            "E2 Index": "Equity",
+            "B1 Index": "Bond",
+            "B2 Index": "Bond",
+        }
+    )
+    z = stats.asset_class_demeaned_zscore(series, asset_class)
+    assert series.idxmax() == "E2 Index"  # raw winner is the high-class name
+    assert z.idxmax() == "B2 Index"  # cohort-relative winner after demeaning
+    assert z["B2 Index"] > z["E2 Index"]
+
+
+def test_asset_class_demeaned_zscore_empty():
+    assert stats.asset_class_demeaned_zscore(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    ).empty
+
+
+def test_return_autocorr_trending_is_positive(bdays):
+    idx = bdays(30)
+    # Perfectly monotonic returns → lag-1 autocorrelation 1.0 (max persistence).
+    rets = pd.DataFrame({"X Index": np.linspace(0.001, 0.030, len(idx))}, index=idx)
+    assert stats.return_autocorr(rets, window_days=30)["X Index"] == pytest.approx(1.0)
+
+
+def test_return_autocorr_alternating_is_negative(bdays):
+    idx = bdays(30)
+    vals = np.tile([0.01, -0.01], len(idx) // 2)  # perfectly mean-reverting
+    rets = pd.DataFrame({"X Index": vals}, index=idx)
+    assert stats.return_autocorr(rets, window_days=30)["X Index"] == pytest.approx(-1.0)
+
+
+def test_return_autocorr_short_history_is_nan(bdays):
+    idx = bdays(3)  # 3 points < lag + 3 = 4 → NaN
+    rets = pd.DataFrame({"X Index": [0.01, -0.01, 0.01]}, index=idx)
+    assert np.isnan(stats.return_autocorr(rets, window_days=21)["X Index"])
+
+
+def test_return_autocorr_empty_passthrough():
+    assert stats.return_autocorr(pd.DataFrame(), window_days=21).empty
+
+
+def test_macd_histogram_recent_up_positive_recent_down_negative(bdays):
+    idx = bdays(80)
+    # Flat for 60 days then a sharp recent move — the histogram reflects the
+    # latest momentum direction (MACD above/below its signal line).
+    up_vals = np.concatenate([np.full(60, 100.0), np.linspace(100.0, 130.0, 20)])
+    dn_vals = np.concatenate([np.full(60, 100.0), np.linspace(100.0, 70.0, 20)])
+    up = pd.DataFrame({"UP Index": up_vals}, index=idx)
+    dn = pd.DataFrame({"DN Index": dn_vals}, index=idx)
+    assert stats.macd_histogram(up)["UP Index"] > 0
+    assert stats.macd_histogram(dn)["DN Index"] < 0
+
+
+def test_macd_histogram_short_history_is_nan(bdays):
+    idx = bdays(20)  # fewer than slow=26 observations → NaN
+    prices = pd.DataFrame({"X Index": np.linspace(100.0, 120.0, len(idx))}, index=idx)
+    assert np.isnan(stats.macd_histogram(prices)["X Index"])
+
+
+def test_macd_histogram_empty_passthrough():
+    assert stats.macd_histogram(pd.DataFrame()).empty
+
+
+def test_recovery_days_counts_trough_to_recovery(bdays):
+    idx = bdays(5)
+    # peak 110 (day1) → trough 90 (day2) → regains 110 at day4 → 2 days later.
+    prices = pd.DataFrame({"X Index": [100.0, 110.0, 90.0, 100.0, 110.0]}, index=idx)
+    assert stats.recovery_days(prices, window_days=21)["X Index"] == pytest.approx(2.0)
+
+
+def test_recovery_days_no_drawdown_is_nan(bdays):
+    idx = bdays(5)
+    prices = pd.DataFrame({"X Index": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+    assert np.isnan(stats.recovery_days(prices, window_days=21)["X Index"])
+
+
+def test_recovery_days_unrecovered_is_nan(bdays):
+    idx = bdays(4)
+    # Drops to 90 and only claws back to 95 — never regains the 110 peak.
+    prices = pd.DataFrame({"X Index": [100.0, 110.0, 90.0, 95.0]}, index=idx)
+    assert np.isnan(stats.recovery_days(prices, window_days=21)["X Index"])
+
+
+def test_return_skew_sign(bdays):
+    idx = bdays(10)
+    right = pd.DataFrame({"R Index": [-0.01] * 9 + [0.2]}, index=idx)  # right tail
+    left = pd.DataFrame({"L Index": [0.01] * 9 + [-0.2]}, index=idx)  # left tail
+    assert stats.return_skew(right, window_days=21)["R Index"] > 0
+    assert stats.return_skew(left, window_days=21)["L Index"] < 0
+
+
+def test_return_skew_short_history_is_nan(bdays):
+    idx = bdays(2)  # fewer than 3 points → skew undefined → NaN
+    rets = pd.DataFrame({"X Index": [0.01, -0.01]}, index=idx)
+    assert np.isnan(stats.return_skew(rets, window_days=21)["X Index"])
+
+
+def test_return_skew_empty_passthrough():
+    assert stats.return_skew(pd.DataFrame(), window_days=21).empty
+
+
+def test_win_rate_fraction_of_up_days(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [0.01, 0.01, -0.01, 0.02]}, index=idx)
+    assert stats.win_rate(rets, window_days=21)["X Index"] == pytest.approx(0.75)
+
+
+def test_win_rate_excludes_nan_days(bdays):
+    idx = bdays(4)
+    rets = pd.DataFrame({"X Index": [0.01, np.nan, -0.01, 0.02]}, index=idx)
+    # valid days = 3, up days = 2 → 2/3.
+    assert stats.win_rate(rets, window_days=21)["X Index"] == pytest.approx(2.0 / 3.0)
+
+
+def test_win_rate_empty_passthrough():
+    assert stats.win_rate(pd.DataFrame(), window_days=21).empty
+
+
+# --- regime analytics: mask / risk-return / rolling autocorr / terciles -----
+
+
+def test_regime_mask_half_open_and_nan(bdays):
+    idx = bdays(6)
+    ind = pd.Series([10.0, 15.0, 24.999, 25.0, np.nan, 40.0], index=idx)
+    m = stats.regime_mask(ind, 15.0, 25.0)
+    # [15, 25): 15.0 in, 24.999 in; 10 below, 25.0 at the (excluded) upper edge,
+    # 40 above, NaN excluded.
+    assert list(m) == [False, True, True, False, False, False]
+
+
+def test_regime_mask_open_ends(bdays):
+    idx = bdays(3)
+    ind = pd.Series([5.0, 14.9, 100.0], index=idx)
+    assert list(stats.regime_mask(ind, -np.inf, 15.0)) == [True, True, False]
+    assert list(stats.regime_mask(ind, 35.0, np.inf)) == [False, False, True]
+
+
+def test_regime_mask_empty():
+    assert stats.regime_mask(pd.Series(dtype=float), 0.0, 1.0).empty
+
+
+def test_regime_risk_return_over_masked_days(bdays):
+    idx = bdays(10)
+    rng = np.random.default_rng(0)
+    rets = pd.DataFrame(
+        {
+            "A Index": rng.normal(0.001, 0.01, 10),
+            "B Index": rng.normal(0.0, 0.02, 10),
+        },
+        index=idx,
+    )
+    mask = pd.Series([True] * 5 + [False] * 5, index=idx)
+    frame = stats.regime_risk_return(rets, mask)
+    assert list(frame.columns) == ["vol", "ret", "sharpe"]
+    assert list(frame.index) == ["A Index", "B Index"]
+    sub = rets.iloc[:5]  # only the masked days
+    np.testing.assert_allclose(
+        frame["vol"].to_numpy(),
+        (sub.std() * np.sqrt(TRADING_DAYS_PER_YEAR)).to_numpy(),
+        rtol=1e-9,
+    )
+    np.testing.assert_allclose(
+        frame["ret"].to_numpy(),
+        (sub.mean() * TRADING_DAYS_PER_YEAR).to_numpy(),  # mean-based, not CAGR
+        rtol=1e-9,
+    )
+
+
+def test_regime_risk_return_too_few_days_is_empty(bdays):
+    idx = bdays(5)
+    rets = pd.DataFrame({"A Index": [0.01] * 5}, index=idx)
+    mask = pd.Series([True] + [False] * 4, index=idx)  # one day → empty
+    out = stats.regime_risk_return(rets, mask)
+    assert out.empty
+    assert list(out.columns) == ["vol", "ret", "sharpe"]
+
+
+def test_rolling_autocorr_trending_vs_reverting(bdays):
+    idx = bdays(40)
+    # A persistently rising return stream → positive trailing autocorrelation;
+    # a perfectly alternating stream → negative. The series is NaN over the
+    # leading warmup window, defined thereafter.
+    trend = pd.Series(np.linspace(0.001, 0.040, len(idx)), index=idx)
+    revert = pd.Series(np.tile([0.01, -0.01], len(idx) // 2), index=idx)
+    ac_trend = stats.rolling_autocorr(trend, window=21)
+    ac_revert = stats.rolling_autocorr(revert, window=21)
+    assert ac_trend.iloc[:20].isna().all()  # warmup
+    assert ac_trend.iloc[-1] > 0.5  # trending
+    assert ac_revert.iloc[-1] < -0.5  # mean-reverting
+
+
+def test_rolling_autocorr_empty_passthrough():
+    assert stats.rolling_autocorr(pd.Series(dtype=float)).empty
+
+
+def test_tercile_bounds_split_at_thirds():
+    s = pd.Series(np.arange(0, 99, dtype=float))  # 0..98, q⅓≈32.67, q⅔≈65.33
+    lo_low, lo_high = stats.tercile_bounds(s, "low")
+    mid_low, mid_high = stats.tercile_bounds(s, "mid")
+    hi_low, hi_high = stats.tercile_bounds(s, "high")
+    assert lo_low == -np.inf and hi_high == np.inf
+    # The three buckets are contiguous and split at the same quantiles.
+    assert lo_high == pytest.approx(mid_low)
+    assert mid_high == pytest.approx(hi_low)
+    assert lo_high == pytest.approx(s.quantile(1 / 3))
+    assert hi_low == pytest.approx(s.quantile(2 / 3))
+
+
+def test_tercile_bounds_degenerate_selects_all():
+    # Empty / no-spread series → (-inf, +inf) so the bucket selects every day.
+    assert stats.tercile_bounds(pd.Series(dtype=float), "low") == (-np.inf, np.inf)
+    flat = pd.Series([5.0] * 10)
+    assert stats.tercile_bounds(flat, "high") == (-np.inf, np.inf)

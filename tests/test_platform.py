@@ -10,15 +10,22 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
+from src.config import WEEK_WINDOW
 from src.data import load_metadata
 from src.layout.platform import (
+    _SUNBURST_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
-    _treemap,
+    _regime_scatter,
+    _sunburst,
+    _sunburst_leaf_sizes,
     _update_factor_scatter,
-    _update_treemap,
+    _update_regime_scatter,
+    _update_sunburst,
 )
 from src.layout.theme import _v_ref
+from src.stats import tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
@@ -68,16 +75,45 @@ def test_update_factor_scatter_one_trace_per_asset_class():
 
     # No in-figure title (v0.7.1) — the section header stands alone.
     assert not fig.layout.title.text
-    # AAA → Equity, BBB → Fixed Income → one trace each.
-    by_name = {tr.name: tr for tr in fig.data}
+    # AAA → Equity, BBB → Fixed Income → one marker trace each (the figure also
+    # holds the three Mesh3d zero planes, filtered out here).
+    by_name = {tr.name: tr for tr in fig.data if isinstance(tr, go.Scatter3d)}
     assert set(by_name) == {"Equity", "Fixed Income"}
     assert by_name["Equity"].marker.color == ASSET_CLASS_COLORS["Equity"]
     assert by_name["Fixed Income"].marker.color == ASSET_CLASS_COLORS["Fixed Income"]
-    # 3D traces — one strategy each, finite betas on all three axes.
-    for tr in fig.data:
-        assert isinstance(tr, go.Scatter3d)
+    # 3D marker traces — one strategy each, finite betas on all three axes.
+    for tr in by_name.values():
         assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
         assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
+
+
+def test_factor_scatter_has_three_zero_planes():
+    fig = _factor_beta_scatter()
+    universe = _universe()
+    arp = universe[["AAA Index", "BBB Index"]]
+    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+
+    planes = {tr.name: tr for tr in fig.data if isinstance(tr, go.Mesh3d)}
+    assert set(planes) == {"x=0", "y=0", "z=0"}
+    # Each plane is a faint, legend-less, non-hovering reference surface.
+    for tr in planes.values():
+        assert tr.showlegend is False
+        assert 0 < tr.opacity < 1
+
+    # Each plane is constant 0 on its own axis...
+    assert all(v == 0 for v in planes["x=0"].x)
+    assert all(v == 0 for v in planes["y=0"].y)
+    assert all(v == 0 for v in planes["z=0"].z)
+
+    # ...and spans (covers) the marker cloud on its other two axes.
+    markers = [tr for tr in fig.data if isinstance(tr, go.Scatter3d)]
+    xs = [v for tr in markers for v in tr.x]
+    ys = [v for tr in markers for v in tr.y]
+    zs = [v for tr in markers for v in tr.z]
+    assert min(planes["x=0"].y) <= min(ys) and max(planes["x=0"].y) >= max(ys)
+    assert min(planes["x=0"].z) <= min(zs) and max(planes["x=0"].z) >= max(zs)
+    assert min(planes["y=0"].x) <= min(xs) and max(planes["y=0"].x) >= max(xs)
+    assert min(planes["z=0"].x) <= min(xs) and max(planes["z=0"].x) >= max(xs)
 
 
 def test_catalog_asset_classes_get_distinct_non_fallback_colors():
@@ -117,30 +153,155 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
-def test_update_treemap_builds_asset_theme_ticker_hierarchy():
-    fig = _treemap()
+_SUNBURST_KW = dict(
+    metric="sharpe", window=WEEK_WINDOW, lookback=252, label="1W Sharpe"
+)
+
+
+def test_sunburst_leaf_sizes_magnitude_drives_arc():
+    # Arc = |z|: equal-magnitude +z/-z get equal arcs; near-zero lands on the
+    # floor; bigger |z| -> bigger arc. Sign is for color, not size.
+    z = pd.Series({"up": 2.0, "down": -2.0, "flat": 0.0})
+    sizes = _sunburst_leaf_sizes(z)
+    floor = _SUNBURST_SIZE_FLOOR * 2.0  # max |z| = 2.0
+    assert sizes["up"] == sizes["down"] == 2.0 + floor
+    assert sizes["flat"] == floor
+    assert sizes["up"] > 10 * sizes["flat"]
+    assert (sizes >= 0).all()
+
+
+def test_sunburst_leaf_sizes_all_zero_uniform():
+    # No deviation anywhere -> uniform fallback (avoids divide-by-zero floor).
+    sizes = _sunburst_leaf_sizes(pd.Series({"a": 0.0, "b": 0.0, "c": 0.0}))
+    assert (sizes == 1.0).all()
+
+
+def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
+    fig = _sunburst()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
-    _update_treemap(fig, arp, _treemap_meta(), lookback=252)
+    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
 
     # No in-figure title (v0.7.3) — the section header stands alone.
     assert not fig.layout.title.text
     assert len(fig.data) == 1
-    tm = fig.data[0]
-    nodes = dict(zip(tm.ids, tm.parents, strict=True))
+    sb = fig.data[0]
+    assert isinstance(sb, go.Sunburst)
+    assert sb.branchvalues == "total"
+    # maxdepth=2 hides the ticker ring until the user drills into a class/theme.
+    assert sb.maxdepth == 2
+    nodes = dict(zip(sb.ids, sb.parents, strict=True))
     # asset-class node is a root; theme nodes hang off it; leaves off the themes.
     assert nodes["Equity"] == ""
     assert nodes["Equity / Growth"] == "Equity"
     assert nodes["Equity / Value"] == "Equity"
     assert nodes["AAA Index"] == "Equity / Growth"
     assert nodes["BBB Index"] == "Equity / Value"
-    # Sizes are non-negative; one color + customdata per node.
-    assert all(v >= 0 for v in tm.values)
-    assert len(tm.marker.colors) == len(tm.ids)
-    assert len(tm.customdata) == len(tm.ids)
+    # Arcs are non-negative; one color per node.
+    assert all(v >= 0 for v in sb.values)
+    assert len(sb.marker.colors) == len(sb.ids)
+    # branchvalues="total": the asset-class arc == the sum of its ticker leaves.
+    val = dict(zip(sb.ids, sb.values, strict=True))
+    assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
+    # Colorbar title reflects the selected metric label.
+    assert sb.marker.colorbar.title.text == "z(1W Sharpe)"
 
 
-def test_update_treemap_empty_clears_traces():
-    fig = _treemap()
-    _update_treemap(fig, pd.DataFrame(), _treemap_meta(), lookback=252)
+def test_update_sunburst_label_drives_colorbar_title():
+    fig = _sunburst()
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    kw = {**_SUNBURST_KW, "metric": "sortino", "label": "3M Sortino"}
+    _update_sunburst(fig, arp, _treemap_meta(), **kw)
+    assert fig.data[0].marker.colorbar.title.text == "z(3M Sortino)"
+
+
+def test_update_sunburst_empty_clears_traces():
+    fig = _sunburst()
+    _update_sunburst(fig, pd.DataFrame(), _treemap_meta(), **_SUNBURST_KW)
     assert fig.data == ()
+
+
+# --- Regime Analysis: regime-conditioned risk/return scatter ----------------
+
+
+def _regime_universe(n: int = 300):
+    """Three strategies + a VIX-like indicator series (levels in ~[15, 40))."""
+    idx = pd.bdate_range("2022-01-03", periods=n)
+    rng = np.random.default_rng(7)
+    arp = pd.DataFrame(
+        {
+            "AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0003, 0.012, n)),
+            "BBB Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0002, 0.008, n)),
+            "CCC Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0001, 0.010, n)),
+        },
+        index=idx,
+    )
+    vix = pd.Series(
+        15.0 + 8.0 * np.abs(rng.normal(0, 1, n)), index=idx, name="VIX Index"
+    )
+    return arp, vix
+
+
+def _regime_meta() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "asset_class": ["Equity", "Equity", "Fixed Income"],
+            "theme": ["Growth", "Growth", "Carry"],
+        }
+    )
+
+
+def test_update_regime_scatter_one_trace_per_asset_class():
+    fig = _regime_scatter()
+    arp, vix = _regime_universe()
+    _update_regime_scatter(
+        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    assert not fig.layout.title.text
+    by_name = {tr.name: tr for tr in fig.data}
+    assert set(by_name) == {"Equity", "Fixed Income"}
+    for tr in fig.data:
+        assert isinstance(tr, go.Scatter)
+        assert len(tr.x) == len(tr.y) >= 1
+        assert all(np.isfinite(v) for v in tr.x)
+
+
+def test_update_regime_scatter_unconditioned_when_no_indicator():
+    # A scaffolded regime passes no indicator / no bucket → all-days view.
+    fig = _regime_scatter()
+    arp, _ = _regime_universe()
+    _update_regime_scatter(
+        fig, arp, None, _regime_meta(), low=None, high=None, lookback=200
+    )
+    assert fig.data  # renders over the full window
+
+
+def test_update_regime_scatter_empty_clears():
+    fig = _regime_scatter()
+    _update_regime_scatter(
+        fig, pd.DataFrame(), None, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    assert fig.data == ()
+
+
+def test_update_regime_scatter_tercile_bounds_condition_differently():
+    # The tercile modes derive (low, high) from the indicator's quantiles; the
+    # low and high thirds of the VIX-like series condition on disjoint day sets,
+    # so the scatter coordinates differ.
+    arp, vix = _regime_universe()
+    lo_low, lo_high = tercile_bounds(vix.tail(200), "low")
+    hi_low, hi_high = tercile_bounds(vix.tail(200), "high")
+
+    fig_low = _regime_scatter()
+    _update_regime_scatter(
+        fig_low, arp, vix, _regime_meta(), low=lo_low, high=lo_high, lookback=200
+    )
+    fig_high = _regime_scatter()
+    _update_regime_scatter(
+        fig_high, arp, vix, _regime_meta(), low=hi_low, high=hi_high, lookback=200
+    )
+    assert fig_low.data and fig_high.data
+    low_xy = [tuple(tr.x) for tr in fig_low.data]
+    high_xy = [tuple(tr.x) for tr in fig_high.data]
+    assert low_xy != high_xy

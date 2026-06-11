@@ -97,22 +97,76 @@ def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     )
 
 
-def _render_highlights(cards: list[dict]) -> str:
-    if not cards:
-        return ""
-    tiles = "".join(
+def _superlative_value_color(sentiment: str) -> str:
+    """Sentiment → value color for the dark superlative cards.
+
+    Reuses the shared green/red sentiment palette but maps ``neutral`` to the
+    bright chrome text token (the shared ``Sentiment.NEUTRAL`` is brand navy,
+    which is illegible on the dark surface)."""
+    if sentiment == "neutral":
+        return str(Color.TEXT)
+    return _sentiment_color(sentiment)
+
+
+def _render_superlative_cards(cards: list[dict]) -> str:
+    return "".join(
         render_template(
-            "highlight_card",
+            "superlative_card",
             **STYLE_CTX,
-            color=_sentiment_color(c.get("sentiment", "neutral")),
+            color=_superlative_value_color(c.get("sentiment", "neutral")),
             label=html.escape(c["label"]),
             value=html.escape(c["value"]),
             name=html.escape(c.get("name", "")),
             ticker=html.escape(c["ticker"]),
+            description=html.escape(c.get("description", "")),
         )
         for c in cards
     )
-    return render_template("highlights_wrapper", **STYLE_CTX, tiles=tiles)
+
+
+def _render_launch_cards(cards: list[dict]) -> str:
+    if not cards:
+        return render_template(
+            "launch_empty",
+            **STYLE_CTX,
+            message=html.escape("No new launches in the past 30 days."),
+        )
+    return "".join(
+        render_template(
+            "launch_card",
+            **STYLE_CTX,
+            name=html.escape(c.get("name", "")),
+            ticker=html.escape(c["ticker"]),
+            meta=html.escape(c.get("meta", "")),
+            live_date=html.escape(c["live_date"]),
+            days_ago=html.escape(str(c["days_ago"])),
+            since_return=html.escape(c["since_return"]),
+        )
+        for c in cards
+    )
+
+
+def _render_highlights(
+    superlatives: list[dict],
+    launches: list[dict],
+    *,
+    window_label: str = "Past Month",
+) -> str:
+    """Two-section highlights: left = window superlatives, right = new launches.
+
+    ``window_label`` (e.g. "Past Week"/"Past Month") titles the Superlatives
+    board to match the live window toggle. Returns ``""`` when there is nothing
+    to show yet (initial empty widget / no data), so the commentary block
+    collapses cleanly."""
+    if not superlatives and not launches:
+        return ""
+    return render_template(
+        "highlights_two_col",
+        **STYLE_CTX,
+        window_label=html.escape(window_label),
+        superlatives=_render_superlative_cards(superlatives),
+        launches=_render_launch_cards(launches),
+    )
 
 
 def _render_error(message: str) -> str:

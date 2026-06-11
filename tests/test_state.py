@@ -22,6 +22,7 @@ def _make(**overrides) -> DashboardState:
         pane_left=object(),
         pane_right=object(),
         highlights_w=object(),
+        errors_w=object(),
     )
     handles.update(overrides)
     return DashboardState(**handles)
