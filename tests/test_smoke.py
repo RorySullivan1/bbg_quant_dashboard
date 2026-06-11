@@ -397,7 +397,7 @@ def test_highlights_sections_are_height_capped_and_scrollable():
     ]
     html = _render_highlights(sup, launches)
     # Both panels' card areas are capped + scrollable (one per section).
-    assert html.count("max-height:22.5vh") == 2
+    assert html.count("max-height:30vh") == 2
     assert html.count("overflow-y:auto") == 2
 
 

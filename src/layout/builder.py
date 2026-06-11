@@ -106,7 +106,7 @@ from .platform import (
 from .state import DashboardState
 
 
-def build_app(verbose: bool = True) -> W.VBox:
+def build_app(verbose: bool = False) -> W.VBox:
     t0 = time.perf_counter()
 
     def _log(msg: str) -> None:
