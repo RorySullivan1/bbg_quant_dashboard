@@ -47,6 +47,13 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 (Visual/styling conventions — color identity, dark chart theme, dark chrome
 CSS, style tokens — live in `style.md`.)
 
+- **BQL fetch contract + recommended patterns** — the
+  `.claude/skills/bquant-dashboard-spec/SKILL.md` skill is the platform
+  reference for the BQL request shape, single-call-per-session, the two-tier
+  price cache, the off-terminal mock fallback, the benchmarks/factors
+  ride-along, the Refresh-prices control, and live controls slicing rather
+  than fetching. Read it first; the bullets below are *project-specific
+  hooks* into the actual code.
 - **One BQL call per session**. `build_app` issues a single
   `fetch_prices(arp_tickers + BENCHMARK_TICKERS + FACTOR_TICKERS + REGIME_TICKERS, ...)`
   request at load time (deduped, order-preserving) and caches the result in a
@@ -264,9 +271,13 @@ CSS, style tokens — live in `style.md`.)
 - **Agent context lives in `.claude/` and `.meta/`.** Reusable skills
   are folder-per-skill under `.claude/skills/<name>/SKILL.md` (Claude
   Code auto-discovers them) — the Python lifecycle + doc-drafting skills
-  came from `RorySullivan1/claude-skills-library`; `ipywidgets` and
-  `plotly` are project-authored against the conventions in this file
-  (prefer them for UI/chart work). The forward roadmap is
+  came from `RorySullivan1/claude-skills-library`; `ipywidgets`,
+  `plotly`, and `bquant-dashboard-spec` are project-authored against the
+  conventions in this file (prefer them for UI/chart work;
+  `bquant-dashboard-spec` is the portable platform reference for the BQL
+  fetch contract + recommended fetch patterns + standard BQuant UI stack —
+  load it first when touching anything that fetches from BQL or designs the
+  dashboard). The forward roadmap is
   `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs, and a reusable
   `TEMPLATE.md` skeleton new stubs copy from). The PreToolUse enforcement
   scripts live in `.claude/hooks/` (documented in `.claude/hooks/README.md`),

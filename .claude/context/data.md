@@ -41,22 +41,11 @@ single fetch, so a resumed ticker can re-enter on a later Refresh.
 
 ## BQL contract
 
-`src/bql_client.py` issues a single BQL request:
+The BQL request shape, ticker-suffix rules, case-insensitive column
+resolution, and wide-form pivot are documented in
+**`.claude/skills/bquant-dashboard-spec/SKILL.md` §2** (the platform reference).
+Project-specific hooks:
 
-```python
-bq = bql.Service()
-px = bq.data.px_last(
-    dates=bq.func.range(start.isoformat(), end.isoformat()),
-    fill="prev",
-)
-request = bql.Request(tickers, {"px_last": px})
-```
-
-`tickers` must be the full BQL identifiers (i.e. include `" Index"`).
-The response DataFrame is reset_indexed and we resolve the ID, DATE, and
-value column names case-insensitively via `_pick_column` before pivoting
-to wide form (`date` index, one column per ticker). Tickers that BQL
-returns no data for show up as all-NaN columns rather than raising.
-
-If you change this query, also update `_mock_prices` so the mock and
-live paths return the same shape.
+- `src/bql_client.py`'s case-insensitive column resolver is `_pick_column`.
+- The mock path is `_mock_prices`. If you change the BQL query, update
+  `_mock_prices` in lockstep so live and mock paths return the same shape.
