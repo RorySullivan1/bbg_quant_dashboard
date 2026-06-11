@@ -267,7 +267,36 @@ def test_build_launch_cards_metadata_and_order(bdays):
     new1 = next(c for c in cards if c["ticker"] == "NEW1 Index")
     assert new1["days_ago"] == 10
     assert new1["meta"] == "Equity · Trend · USD"
-    assert new1["since_return"] == "+5.0%"
+    # Anchored at the live date (first business day >= 2026-05-30, i.e.
+    # 2026-06-01), not the 2026-05-20 window start: the post-launch slice runs
+    # 102.857 -> 105 over the linspace, a +2.1% move.
+    assert new1["since_return"] == "+2.1%"
+
+
+def test_build_launch_cards_since_return_anchors_at_live_date(bdays):
+    # Pre-launch (backtest / mock-fill) history must not leak into the
+    # since-launch return: it is measured from the live date forward.
+    as_of = date(2026, 6, 2)
+    idx = bdays(10, start="2026-05-20")  # live 2026-05-28 sits at position 6
+    # Flat 50 before launch, then 100 -> 110 from the live date onward.
+    series = [50.0] * 6 + [100.0, 105.0, 108.0, 110.0]
+    prices = pd.DataFrame({"NEW Index": series}, index=idx)
+    meta = _meta(
+        [
+            {
+                "ticker": "NEW Index",
+                "name": "New",
+                "asset_class": "Equity",
+                "theme": "Trend",
+                "currency": "USD",
+                "live_date": "2026-05-28",
+            }
+        ]
+    )
+    cards = commentary.build_launch_cards(meta, prices, as_of=as_of, new_launch_days=30)
+    assert len(cards) == 1
+    # 110 / 100 - 1 = +10.0% (anchored at launch), NOT 110 / 50 - 1 = +120.0%.
+    assert cards[0]["since_return"] == "+10.0%"
 
 
 def test_build_launch_cards_empty_when_none_recent():

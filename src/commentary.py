@@ -293,9 +293,10 @@ def build_launch_cards(
 
     Each entry: ``{name, ticker, meta, live_date, days_ago, since_return}``
     where ``meta`` is ``asset_class · theme · currency`` and ``since_return``
-    is the simple cumulative return since the index's first valid observation
-    (not annualized — a 3-week-old index annualizes to nonsense). Returns an
-    empty list when no launches fall within ``new_launch_days``.
+    is the simple cumulative return since the index's live date (not annualized
+    — a 3-week-old index annualizes to nonsense, and anchoring at the first
+    fetched observation would fold in any pre-launch backtest history). Returns
+    an empty list when no launches fall within ``new_launch_days``.
     """
     as_of = as_of or date.today()
     if meta.empty:
@@ -313,7 +314,11 @@ def build_launch_cards(
 
         since_return = "—"
         if not prices.empty and ticker in prices.columns:
+            # Anchor at the launch date: the fetched window predates the index
+            # (mock fills the whole range; real BQL carries backtest history),
+            # so iloc[0] of the raw series is not the launch level.
             col = prices[ticker].dropna()
+            col = col[col.index >= live]
             if len(col) >= 2:
                 since_return = f"{col.iloc[-1] / col.iloc[0] - 1.0:+.1%}"
 
