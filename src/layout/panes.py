@@ -13,7 +13,6 @@ from ..config import (
     DEFAULT_BENCHMARK,
     LOOKBACK_YEARS,
 )
-from ..style import Color
 from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
@@ -350,12 +349,9 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
 
     root = W.VBox(
         [header_row, stack],
-        layout=W.Layout(
-            width="50%",
-            padding="8px",
-            border=f"1px solid {Color.SLATE_200}",
-        ),
+        layout=W.Layout(width="50%"),
     )
+    root.add_class("bbg-card")
 
     return SimpleNamespace(
         root=root,

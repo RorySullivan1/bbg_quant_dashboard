@@ -140,6 +140,61 @@ def test_regime_corr_matrix_full_sample_includes_benchmark(multiyear_prices):
     np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
 
 
+def test_regime_corr_matrix_dedups_benchmark_named_like_strategy(multiyear_prices):
+    # When the benchmark ticker is also a selected strategy, it must appear
+    # exactly once and be appended last — not overwrite the strategy column in
+    # place (which the old code did, also clobbering that strategy's returns).
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["BBB Index"].rename("BBB Index")
+    rm = stats.regime_corr_matrix(rets, bench, pct=1.0, include_benchmark=True)
+    assert list(rm.columns).count("BBB Index") == 1
+    assert rm.shape[1] == rets.shape[1]  # no extra column — deduped
+    assert list(rm.columns)[-1] == "BBB Index"  # pinned last
+    np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
+
+
+def test_heatmap_corr_matrix_no_benchmark_matches_corr_matrix(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    rm = stats.heatmap_corr_matrix(rets)
+    expected = stats.corr_matrix(rets)
+    assert list(rm.columns) == list(expected.columns)
+    pd.testing.assert_frame_equal(rm, expected)
+
+
+def test_heatmap_corr_matrix_pins_benchmark_last(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["AAA Index"].rename("SPX Index")
+    rm = stats.heatmap_corr_matrix(rets, bench)
+    assert list(rm.columns)[-1] == "SPX Index"
+    assert list(rm.index)[-1] == "SPX Index"
+    assert rm.shape[0] == rets.shape[1] + 1
+    # Strategies keep their original order ahead of the benchmark.
+    assert list(rm.columns)[:-1] == list(rets.columns)
+    np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
+
+
+def test_heatmap_corr_matrix_dedups_benchmark_named_like_strategy(multiyear_prices):
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["BBB Index"].rename("BBB Index")
+    rm = stats.heatmap_corr_matrix(rets, bench)
+    assert list(rm.columns).count("BBB Index") == 1
+    assert list(rm.columns)[-1] == "BBB Index"
+    assert rm.shape[1] == rets.shape[1]
+    np.testing.assert_allclose(np.diag(rm.to_numpy()), 1.0)
+
+
+def test_heatmap_corr_matrix_order_is_regime_independent(multiyear_prices):
+    # The whole point of the central helper: the benchmark sits in the same
+    # canonical slot whether or not the matrix is regime-conditioned, so the two
+    # panes can never disagree on row/column order.
+    rets = stats.daily_returns(multiyear_prices)
+    bench = rets["AAA Index"].rename("SPX Index")
+    full = stats.heatmap_corr_matrix(rets, bench, pct=1.0)
+    regime = stats.heatmap_corr_matrix(rets, bench, pct=0.3, direction="down")
+    assert list(full.columns) == list(regime.columns)
+    assert list(full.index) == list(regime.index)
+
+
 # --- risk / momentum -------------------------------------------------------
 
 

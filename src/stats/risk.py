@@ -29,11 +29,15 @@ def regime_corr_matrix(
     the benchmark return is at or below its ``pct`` quantile (worst days);
     ``direction="up"`` keeps days at or above its ``1 - pct`` quantile (best
     days). ``pct >= 1`` keeps all days. When ``include_benchmark``, the
-    benchmark is appended as a column so its conditional correlation to each
-    strategy (and self = 1) appears in the matrix — its column carries the
-    benchmark's name so it lines up with the full-ticker strategy columns the
-    heatmap already shows. Returns an empty frame when the regime selects fewer
-    than 2 rows (caller falls back to a blank heatmap).
+    benchmark is appended as the **last** column so its conditional correlation
+    to each strategy (and self = 1) appears in the matrix — its column carries
+    the benchmark's name so it lines up with the full-ticker strategy columns
+    the heatmap already shows. If the benchmark ticker is also one of the
+    selected strategies, its strategy column is dropped first so the benchmark
+    appears exactly once (last) rather than overwriting that strategy's returns
+    in place. Returns an empty frame when the regime selects fewer than 2 rows
+    (caller falls back to a blank heatmap). Prefer :func:`heatmap_corr_matrix`
+    as the single entry point for the Correlation-Heatmap panes.
     """
     if returns.empty or benchmark is None or benchmark.empty or pct <= 0:
         return pd.DataFrame()
@@ -50,11 +54,48 @@ def regime_corr_matrix(
     mask = mask.fillna(False)
     sub = returns.loc[mask]
     if include_benchmark:
-        sub = sub.copy()
+        # Drop any same-named strategy column first so the benchmark is appended
+        # last (not overwritten in place, which would also clobber the strategy's
+        # own returns with the benchmark's).
+        sub = sub.drop(columns=[bench.name], errors="ignore").copy()
         sub[bench.name] = bench.loc[mask]
     if sub.shape[0] < 2:
         return pd.DataFrame()
     return corr_matrix(sub)
+
+
+def heatmap_corr_matrix(
+    returns: pd.DataFrame,
+    benchmark: pd.Series | None = None,
+    *,
+    pct: float = 1.0,
+    direction: str = "down",
+) -> pd.DataFrame:
+    """Single source of truth for the Multi-Strategy Correlation-Heatmap matrix.
+
+    Both analysis panes (left and right) build their heatmap through this one
+    function so they can never diverge. With ``benchmark=None`` it returns the
+    plain full-sample correlation of ``returns``. With a ``benchmark`` it
+    conditions on the benchmark-return regime (``pct``/``direction``; ``pct >= 1``
+    keeps every day, i.e. plain full sample) and adds the benchmark as a
+    row/column **pinned last and de-duplicated** — strategies keep their existing
+    order and the benchmark is always the final column, appearing exactly once
+    even when its ticker is also a selected strategy. Returns an empty frame when
+    there's no benchmark data or the regime selects fewer than 2 rows (caller
+    falls back to a blank heatmap).
+    """
+    if benchmark is None:
+        return corr_matrix(returns)
+    cm = regime_corr_matrix(
+        returns, benchmark, pct, direction=direction, include_benchmark=True
+    )
+    if cm.empty:
+        return cm
+    # Pin the column/row order explicitly rather than relying on pandas'
+    # insert-vs-overwrite side effects, so the layout is deterministic and
+    # identical across panes: strategies in their original order, benchmark last.
+    order = [c for c in returns.columns if c != benchmark.name] + [benchmark.name]
+    return cm.reindex(index=order, columns=order)
 
 
 def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
