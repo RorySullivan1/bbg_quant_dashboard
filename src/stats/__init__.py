@@ -61,6 +61,7 @@ from .risk import (
     calmar_ratio,
     corr_matrix,
     downside_deviation,
+    heatmap_corr_matrix,
     historical_var,
     jensen_alpha,
     quant_metrics_table,
@@ -119,6 +120,7 @@ __all__ = [
     # risk
     "corr_matrix",
     "regime_corr_matrix",
+    "heatmap_corr_matrix",
     "return_distribution_stats",
     "return_skew",
     "recovery_days",

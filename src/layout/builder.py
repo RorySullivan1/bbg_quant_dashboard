@@ -39,10 +39,10 @@ from ..stats import (
     daily_returns,
     drawdown_series,
     excess_cum_return,
+    heatmap_corr_matrix,
     jensen_alpha,
     perf_table,
     quant_metrics_table,
-    regime_corr_matrix,
     return_distribution_stats,
     rolling_autocorr,
     rolling_beta,
@@ -1350,87 +1350,59 @@ def build_app(verbose: bool = False) -> W.VBox:
         # independent): Regime on → conditioned on the benchmark-return tail with
         # the benchmark in the matrix; Benchmark on / Regime off → full-sample
         # correlation with the benchmark added (v0.8.9); neither → plain
-        # full-sample correlation of the selected strategies (`prep.cm`).
+        # full-sample correlation of the selected strategies (`prep.cm`). The two
+        # benchmark cases differ only in (pct, direction, memo key, title); both
+        # build the matrix through the single `heatmap_corr_matrix` helper, which
+        # always pins the benchmark last, so the left and right panes can never
+        # disagree on the row/column order.
         if pane.heat_regime_chk.value:
             hm_bench_ticker = pane.heat_dd.value
             direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
             pct_int = pane.heat_pct.value
-            try:
-
-                def _compute_regime():
-                    hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-                    if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                        raise ValueError(
-                            f"No price data for benchmark {hm_bench_ticker!r}."
-                        )
-                    hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-                    hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[
-                        :, 0
-                    ]
-                    return regime_corr_matrix(
-                        prep.rets,
-                        hm_bench_returns,
-                        pct_int / 100.0,
-                        direction=direction,
-                        include_benchmark=True,
-                    )
-
-                cm = state.memo.get_or_compute(
-                    ("heatmap", hm_bench_ticker, direction, pct_int),
-                    _compute_regime,
-                )
-                tail_lbl = "worst" if direction == "down" else "best"
-                title = (
-                    f"Correlation — {hm_bench_ticker} {tail_lbl} "
-                    f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
-                )
-                _update_heatmap(pane.heat_fig, cm, title=title)
-            except Exception:
-                errors.append(traceback.format_exc())
-                _update_heatmap(pane.heat_fig, pd.DataFrame())
+            memo_key = ("heatmap", hm_bench_ticker, direction, pct_int)
+            tail_lbl = "worst" if direction == "down" else "best"
+            title = (
+                f"Correlation — {hm_bench_ticker} {tail_lbl} "
+                f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
+            )
         elif pane.heat_benchmark_chk.value:
-            # Benchmark on, Regime off: full-sample correlation with the
-            # benchmark added as a row/column (no regime conditioning).
+            # Benchmark on, Regime off: full-sample correlation (pct=100% keeps
+            # every day) with the benchmark added as the last row/column.
             hm_bench_ticker = pane.heat_dd.value
-            try:
-
-                def _compute_incl():
-                    hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-                    if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                        raise ValueError(
-                            f"No price data for benchmark {hm_bench_ticker!r}."
-                        )
-                    hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-                    hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[
-                        :, 0
-                    ]
-                    # pct=1.0 keeps every day (no tail); include_benchmark appends it.
-                    return regime_corr_matrix(
-                        prep.rets,
-                        hm_bench_returns,
-                        1.0,
-                        direction="down",
-                        include_benchmark=True,
-                    )
-
-                cm = state.memo.get_or_compute(
-                    ("heatmap", hm_bench_ticker, "incl", 100),
-                    _compute_incl,
-                )
-                _update_heatmap(
-                    pane.heat_fig,
-                    cm,
-                    title=f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)",
-                )
-            except Exception:
-                errors.append(traceback.format_exc())
-                _update_heatmap(pane.heat_fig, pd.DataFrame())
+            direction = "down"
+            pct_int = 100
+            memo_key = ("heatmap", hm_bench_ticker, "incl", 100)
+            title = f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)"
         else:
             _update_heatmap(
                 pane.heat_fig,
                 prep.cm,
                 title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
             )
+            return
+
+        try:
+
+            def _compute():
+                hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
+                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
+                    raise ValueError(
+                        f"No price data for benchmark {hm_bench_ticker!r}."
+                    )
+                hm_bench_window = hm_bench_prices.loc[win_start:win_end]
+                hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[:, 0]
+                return heatmap_corr_matrix(
+                    prep.rets,
+                    hm_bench_returns,
+                    pct=pct_int / 100.0,
+                    direction=direction,
+                )
+
+            cm = state.memo.get_or_compute(memo_key, _compute)
+            _update_heatmap(pane.heat_fig, cm, title=title)
+        except Exception:
+            errors.append(traceback.format_exc())
+            _update_heatmap(pane.heat_fig, pd.DataFrame())
 
     def _render_rolling_corr(
         pane: SimpleNamespace,
