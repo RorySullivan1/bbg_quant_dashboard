@@ -78,6 +78,7 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
+from .export_shim import BlobDownloadShim
 from .filters import _checkbox_group, _q_row, _section_label, _ticker_options
 from .grids import (
     _perf_grid,
@@ -1840,6 +1841,9 @@ def build_app(verbose: bool = False) -> W.VBox:
             perf_disclaimer_w,
             legal_w,
             overlay_w,  # fixed-position loading overlay (v0.6.5 Workstream C)
+            # Invisible: makes Plotly's PNG export work in the BQuant desktop
+            # webview by converting its blob: download to a data: URI download.
+            BlobDownloadShim(),
         ],
         layout=W.Layout(width="100%"),
     )

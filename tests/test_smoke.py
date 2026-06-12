@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipywidgets as W
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
+from src.layout.export_shim import BlobDownloadShim
 from src.layout.html import STYLE_CTX, render_template
 
 
@@ -22,14 +23,24 @@ def test_build_app_renders_expected_tree():
     assert isinstance(app, W.VBox)
 
     # injected CSS, banner, status toast, commentary, top tab bar, tab content,
-    # perf disclaimer, legal disclosure, loading overlay — 9 children in this
-    # order (see builder.py). The leading W.HTML is the global stylesheet
-    # (`_app_css()`); the trailing W.HTML is the `.bbg-overlay` (Workstream C).
+    # perf disclaimer, legal disclosure, loading overlay, blob-download shim —
+    # 10 children in this order (see builder.py). The leading W.HTML is the
+    # global stylesheet (`_app_css()`); the trailing widget is the invisible
+    # `BlobDownloadShim` (makes Plotly PNG export work in the BQuant webview).
     children = app.children
-    assert len(children) == 9
-    css, banner, status, commentary, tab_bar, tab_content, perf_disc, legal, overlay = (
-        children
-    )
+    assert len(children) == 10
+    (
+        css,
+        banner,
+        status,
+        commentary,
+        tab_bar,
+        tab_content,
+        perf_disc,
+        legal,
+        overlay,
+        export_shim,
+    ) = children
     assert isinstance(css, W.HTML)
     assert "<style" in css.value
     assert isinstance(banner, W.HBox)
@@ -39,8 +50,21 @@ def test_build_app_renders_expected_tree():
     assert isinstance(perf_disc, W.HTML)
     assert isinstance(legal, W.HTML)
     assert isinstance(overlay, W.HTML)
+    assert isinstance(export_shim, BlobDownloadShim)
     # On the mock-price path the load succeeds, so the overlay is dismissed.
     assert "is-hidden" in overlay.value
+
+
+def test_blob_download_shim_converts_blob_to_data_uri():
+    # The export shim must (a) construct, and (b) carry the frontend logic that
+    # turns Plotly's unsupported blob: download into a data: URI download so the
+    # PNG button works in the BQuant desktop webview.
+    shim = BlobDownloadShim()
+    esm = shim._esm
+    assert "a[download]" in esm
+    assert "blob:" in esm
+    assert "readAsDataURL" in esm  # blob -> data: URI conversion
+    assert "createObjectURL" in esm  # tracks the blob so the click can read it
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
