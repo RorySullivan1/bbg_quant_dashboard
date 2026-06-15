@@ -44,7 +44,7 @@ _MONTH_COLS = [
     "Dec",
 ]
 
-_CALENDAR_KINDS = ("absolute", "outperformance", "vol_adjusted")
+_CALENDAR_KINDS = ("absolute", "outperformance", "vol_adjusted", "beta", "correlation")
 
 
 def monthly_returns(prices: pd.DataFrame) -> pd.DataFrame:
@@ -117,6 +117,73 @@ def _annual_sharpe(prices: pd.Series) -> pd.Series:
     return pd.Series(out, dtype=float)
 
 
+def _beta(s: np.ndarray, b: np.ndarray) -> float:
+    """OLS beta of ``s`` on ``b`` (cov / var of the benchmark)."""
+    var = float(np.var(b))
+    return float(np.cov(s, b, ddof=0)[0, 1] / var) if var > 0 else np.nan
+
+
+def _corr(s: np.ndarray, b: np.ndarray) -> float:
+    """Pearson correlation of ``s`` and ``b`` (NaN if either is constant)."""
+    if np.std(s) == 0 or np.std(b) == 0:
+        return np.nan
+    return float(np.corrcoef(s, b)[0, 1])
+
+
+def _pairwise_daily(prices: pd.Series, benchmark: pd.Series) -> pd.DataFrame:
+    """Aligned daily returns of ``prices`` (``s``) and ``benchmark`` (``b``)."""
+    if prices is None or prices.empty or benchmark is None or benchmark.empty:
+        return pd.DataFrame(columns=["s", "b"], dtype=float)
+    s = daily_returns(prices.to_frame("s"))["s"]
+    b = daily_returns(benchmark.to_frame("b"))["b"]
+    return pd.concat([s, b], axis=1).dropna()
+
+
+def _within_month_pairwise(prices, benchmark, fn, *, min_obs: int = 2) -> pd.Series:
+    """Apply ``fn(strat_daily, bench_daily)`` within each calendar month.
+
+    Returns a month-end-indexed Series; a month with fewer than ``min_obs``
+    aligned daily pairs is NaN.
+    """
+    pair = _pairwise_daily(prices, benchmark)
+    if pair.empty:
+        return pd.Series(dtype=float)
+    out: dict[pd.Timestamp, float] = {}
+    for period, grp in pair.groupby(pair.index.to_period("M")):
+        ts = period.to_timestamp(how="end").normalize()
+        out[ts] = (
+            fn(grp["s"].to_numpy(), grp["b"].to_numpy())
+            if len(grp) >= min_obs
+            else np.nan
+        )
+    return pd.Series(out, dtype=float)
+
+
+def _annual_pairwise(prices, benchmark, fn, *, min_obs: int = 2) -> pd.Series:
+    """Apply ``fn`` over each calendar year's aligned daily pairs (year-indexed)."""
+    pair = _pairwise_daily(prices, benchmark)
+    if pair.empty:
+        return pd.Series(dtype=float)
+    out: dict[int, float] = {}
+    for year, grp in pair.groupby(pair.index.year):
+        out[int(year)] = (
+            fn(grp["s"].to_numpy(), grp["b"].to_numpy())
+            if len(grp) >= min_obs
+            else np.nan
+        )
+    return pd.Series(out, dtype=float)
+
+
+def monthly_beta(prices: pd.Series, benchmark: pd.Series) -> pd.Series:
+    """Within-month OLS beta of the strategy to the benchmark (month-end index)."""
+    return _within_month_pairwise(prices, benchmark, _beta)
+
+
+def monthly_correlation(prices: pd.Series, benchmark: pd.Series) -> pd.Series:
+    """Within-month correlation of the strategy to the benchmark (month-end index)."""
+    return _within_month_pairwise(prices, benchmark, _corr)
+
+
 def calendar_return_table(
     prices: pd.Series,
     *,
@@ -131,17 +198,21 @@ def calendar_return_table(
     - ``"outperformance"`` — strategy minus benchmark monthly return (needs
       ``benchmark``; returns an empty table if it is missing).
     - ``"vol_adjusted"`` — monthly return ÷ within-month realized vol.
+    - ``"beta"`` / ``"correlation"`` — the strategy's within-month OLS beta /
+      correlation to the benchmark (both need ``benchmark``).
 
-    The ``Year`` column is the compounded annual return (annual outperformance
-    for ``"outperformance"``); ``Sharpe`` is always the strategy's annualized
-    Sharpe for the calendar year, so it stays comparable across kinds.
+    The ``Year`` column is the calendar-year aggregate of the same metric
+    (compounded annual return / annual outperformance / annual beta / annual
+    correlation); ``Sharpe`` is always the strategy's annualized Sharpe for the
+    calendar year, so it stays comparable across kinds.
     """
     if kind not in _CALENDAR_KINDS:
         raise ValueError(f"unknown kind: {kind!r}")
     cols = [*_MONTH_COLS, "Year", "Sharpe"]
     if prices is None or prices.empty:
         return pd.DataFrame(columns=cols)
-    if kind == "outperformance" and (benchmark is None or benchmark.empty):
+    needs_benchmark = kind in ("outperformance", "beta", "correlation")
+    if needs_benchmark and (benchmark is None or benchmark.empty):
         return pd.DataFrame(columns=cols)
 
     strat = prices.to_frame("strategy")
@@ -154,6 +225,10 @@ def calendar_return_table(
         m_bench = monthly_returns(benchmark.to_frame("bench"))["bench"]
         cells = m_strat.sub(m_bench.reindex(m_strat.index))
         year_col = _annual_compound(m_strat).sub(_annual_compound(m_bench))
+    elif kind in ("beta", "correlation"):
+        fn = _beta if kind == "beta" else _corr
+        cells = _within_month_pairwise(prices, benchmark, fn)
+        year_col = _annual_pairwise(prices, benchmark, fn)
     else:  # vol_adjusted
         rvol = monthly_realized_vol(daily_returns(strat))["strategy"]
         cells = m_strat.divide(rvol.reindex(m_strat.index).replace(0, np.nan))
@@ -191,6 +266,46 @@ def ols_fit(x, y) -> OLSFit:
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r2 = 1.0 - float(np.sum(resid**2)) / ss_tot if ss_tot > 0 else 0.0
     return OLSFit(float(slope), float(intercept), float(r2))
+
+
+class PolyFit(NamedTuple):
+    """Result of a least-squares polynomial fit ``y = Σ coeffs[i]·x**(deg-i)``.
+
+    `coeffs` are highest-order first (NumPy ``polyfit`` order). For the default
+    quadratic, `convexity` is the leading ``x²`` coefficient — positive bends the
+    curve into a smile (convex payoff), negative into a frown (concave) — and
+    `slope` is the linear term (the central sensitivity, ≈ β at x = 0).
+    """
+
+    coeffs: tuple[float, ...]
+    slope: float
+    convexity: float
+    r_squared: float
+
+
+def poly_fit(x, y, degree: int = 2) -> PolyFit:
+    """Least-squares polynomial fit of ``y`` on ``x`` (default quadratic).
+
+    Inputs may be array-likes or pandas Series; non-finite pairs are dropped.
+    Fewer than ``degree + 1`` finite points, or a degenerate (zero-variance)
+    ``x``, yield an all-NaN fit. `slope` is the linear coefficient and
+    `convexity` the quadratic one (NaN when `degree` is too low to define them).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if x.size < degree + 1 or np.std(x) < 1e-12:
+        return PolyFit((np.nan,) * (degree + 1), np.nan, np.nan, np.nan)
+    coeffs = np.polyfit(x, y, degree)
+    resid = y - np.polyval(coeffs, x)
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - float(np.sum(resid**2)) / ss_tot if ss_tot > 0 else 0.0
+    # Index from the low-order end so the readouts are degree-agnostic:
+    # coeffs[-2] is the linear term, coeffs[-3] the quadratic.
+    slope = float(coeffs[-2]) if degree >= 1 else float("nan")
+    convexity = float(coeffs[-3]) if degree >= 2 else float("nan")
+    return PolyFit(tuple(float(c) for c in coeffs), slope, convexity, float(r2))
 
 
 def monthly_factor_correlations(

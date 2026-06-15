@@ -10,7 +10,51 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from src.layout.grids import ZSCORE_SUPERCOL, _build_universe_frame, _perf_renderers
+from src.layout.grids import (
+    ZSCORE_SUPERCOL,
+    _build_universe_frame,
+    _calendar_renderers,
+    _perf_renderers,
+)
+
+_CAL_COLS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+    "Year",
+    "Sharpe",
+]
+
+
+def test_calendar_renderers_show_dash_for_missing():
+    # Every calendar cell renders empty (NaN) months as "-" while keeping the
+    # value numeric for the diverging background. The dash is driven by a
+    # `text_value` VegaExpr (ipydatagrid's `missing` trait only fires on a strict
+    # JSON null, which pandas NaN never serializes to), so assert the expr is
+    # wired up and substitutes the dash only for NaN cells.
+    renderers = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
+    assert set(renderers) == set(_CAL_COLS)
+    assert all(r.missing == "-" for r in renderers.values())
+    for r in renderers.values():
+        assert r.text_value is not None
+        assert r.text_value.value == "isNaN(cell.value) ? '-' : ''"
+
+
+def test_calendar_renderers_format_by_kind():
+    # Return kinds format months as %, beta/correlation as plain 2dp.
+    pct = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")["Jan"]
+    beta = _calendar_renderers(pd.Index(_CAL_COLS), kind="beta")["Jan"]
+    assert pct.format == ".2%"
+    assert beta.format == ".2f"
 
 
 def _meta() -> pd.DataFrame:
@@ -108,3 +152,44 @@ def test_perf_renderers_flat_sharpe_heatmap_toggle():
     assert _bg_expr(on["1Y Return"]) == ""
     off = _perf_renderers(cols)
     assert _bg_expr(off["1Y Sharpe"]) == ""
+
+
+def _text_value_expr(renderer) -> str:
+    tv = getattr(renderer, "text_value", None)
+    return getattr(tv, "value", "") if tv is not None else ""
+
+
+def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
+    # Empty numeric cells (Return/Vol/Sharpe/Max DD/Z-Score) show "-" via a
+    # `text_value` expr, since ipydatagrid's `missing` trait never fires for a
+    # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
+    # is true for any non-numeric string and would blank every cell.
+    cols = pd.MultiIndex.from_tuples(
+        [
+            ("Info", "Chart Color"),
+            ("Info", "Name"),
+            ("1Y", "Return"),
+            ("1Y", "Sharpe"),
+            (ZSCORE_SUPERCOL, "Sharpe 1M/1Y"),
+        ]
+    )
+    r = _perf_renderers(cols, sharpe_heatmap=True)
+    dash = "isNaN(cell.value) ? '-' : ''"
+    assert _text_value_expr(r[("1Y", "Return")]) == dash
+    assert _text_value_expr(r[("1Y", "Sharpe")]) == dash
+    assert _text_value_expr(r[(ZSCORE_SUPERCOL, "Sharpe 1M/1Y")]) == dash
+    # Text + swatch stay plain.
+    assert _text_value_expr(r[("Info", "Name")]) == ""
+    assert _text_value_expr(r[("Info", "Chart Color")]) == ""
+
+
+def test_perf_renderers_dash_on_numeric_without_heatmap():
+    # Even with the heatmap off (selected-strategy grid), the plain 2dp / pct
+    # renderers still substitute "-" for empty numeric cells.
+    cols = pd.Index(["1Y Return", "1Y Sharpe", "Name", "Chart Color"])
+    r = _perf_renderers(cols)
+    dash = "isNaN(cell.value) ? '-' : ''"
+    assert _text_value_expr(r["1Y Return"]) == dash
+    assert _text_value_expr(r["1Y Sharpe"]) == dash
+    assert _text_value_expr(r["Name"]) == ""
+    assert _text_value_expr(r["Chart Color"]) == ""

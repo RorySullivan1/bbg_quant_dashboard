@@ -25,11 +25,15 @@ from ._common import (
 )
 from .calendar import (
     OLSFit,
+    PolyFit,
     calendar_return_table,
+    monthly_beta,
+    monthly_correlation,
     monthly_factor_correlations,
     monthly_realized_vol,
     monthly_returns,
     ols_fit,
+    poly_fit,
     weekly_returns,
 )
 from .factors import (
@@ -168,7 +172,11 @@ __all__ = [
     "weekly_returns",
     "monthly_realized_vol",
     "calendar_return_table",
+    "monthly_beta",
+    "monthly_correlation",
     "ols_fit",
     "OLSFit",
+    "poly_fit",
+    "PolyFit",
     "monthly_factor_correlations",
 ]

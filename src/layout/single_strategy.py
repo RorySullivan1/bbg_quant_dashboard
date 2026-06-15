@@ -61,6 +61,13 @@ _CALENDAR_TABS: tuple[tuple[str, str], ...] = (
     ("Absolute", "absolute"),
     ("Outperformance", "outperformance"),
     ("Vol-adjusted", "vol_adjusted"),
+    ("Beta", "beta"),
+    ("Correlation", "correlation"),
+)
+
+# Calendar kinds that need the shared benchmark to compute their cells.
+_CALENDAR_BENCHMARK_KINDS: frozenset[str] = frozenset(
+    {"outperformance", "beta", "correlation"}
 )
 
 # Section 3 analytics tabs: (pill label, view key).
@@ -243,10 +250,11 @@ def set_calendar_kind(ss: SimpleNamespace, which: str) -> None:
 
 
 def render_calendar(ss: SimpleNamespace, state: object) -> None:
-    """Render the monthly-return calendar for the picked strategy + active kind.
+    """Render the monthly calendar for the picked strategy + active kind.
 
-    Reads the cached prices (no BQL). The `outperformance` kind uses the shared
-    benchmark Dropdown; a missing ticker / benchmark clears the grid."""
+    Reads the cached prices (no BQL). The benchmark-driven kinds (outperformance
+    / beta / correlation) use the shared benchmark Dropdown; a missing ticker /
+    benchmark clears the grid."""
     prices = state.universe_prices
     ticker = ss.picker.value
     kind = ss.cal_kind
@@ -254,7 +262,7 @@ def render_calendar(ss: SimpleNamespace, state: object) -> None:
         _update_calendar_grid(ss.cal_grid, pd.DataFrame(), kind=kind)
         return
     benchmark = None
-    if kind == "outperformance":
+    if kind in _CALENDAR_BENCHMARK_KINDS:
         bench = ss.bench_dd.value
         benchmark = prices[bench] if bench in prices.columns else None
     table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
@@ -295,7 +303,8 @@ def render_section3(
     bench = ss.bench_dd.value
     has_bench = bench in win.columns and bench != ticker
 
-    # Weekly scatter: x = benchmark, y = strategy → OLS slope is the strategy's β.
+    # Weekly scatter: x = benchmark, y = strategy → quadratic fit shows the
+    # strategy's central β (linear term) plus convexity (curvature).
     if has_bench:
         bench_w = weekly_returns(win[[bench]])[bench]
         strat_w = weekly_returns(win[[ticker]])[ticker]

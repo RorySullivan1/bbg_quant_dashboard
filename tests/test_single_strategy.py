@@ -136,12 +136,12 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
     render_calendar(ss, state)
     data = ss.cal_grid.data
     assert list(data.columns) == _CAL_COLS
-    # Most-recent year on top (descending), years rendered as string labels.
+    # Oldest year on top (ascending), years rendered as string labels.
     years = [int(y) for y in data.index]
-    assert years == sorted(years, reverse=True)
+    assert years == sorted(years)
 
 
-def test_calendar_kind_switch_outperformance_and_voladj(multiyear_prices, benchmark):
+def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = multiyear_prices.copy()
@@ -150,21 +150,24 @@ def test_calendar_kind_switch_outperformance_and_voladj(multiyear_prices, benchm
     ss.picker.value = "AAA Index"
     ss.bench_dd.value = "SPX Index"
 
-    set_calendar_kind(ss, "outperformance")
-    assert ss.cal_kind == "outperformance"
-    render_calendar(ss, state)
-    assert list(ss.cal_grid.data.columns) == _CAL_COLS
-
-    set_calendar_kind(ss, "vol_adjusted")
-    assert ss.cal_kind == "vol_adjusted"
-    render_calendar(ss, state)
-    assert not ss.cal_grid.data.empty
+    for kind in ("outperformance", "vol_adjusted", "beta", "correlation"):
+        set_calendar_kind(ss, kind)
+        assert ss.cal_kind == kind
+        render_calendar(ss, state)
+        assert list(ss.cal_grid.data.columns) == _CAL_COLS
+        assert not ss.cal_grid.data.empty
 
 
 def test_calendar_tabs_cover_every_kind():
     # The pill set and the calendar_return_table kinds stay in lockstep.
     kinds = {kind for _label, kind in _CALENDAR_TABS}
-    assert kinds == {"absolute", "outperformance", "vol_adjusted"}
+    assert kinds == {
+        "absolute",
+        "outperformance",
+        "vol_adjusted",
+        "beta",
+        "correlation",
+    }
 
 
 def _universe_with_factors(multiyear_prices, benchmark):
