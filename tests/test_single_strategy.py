@@ -14,10 +14,13 @@ import pandas as pd
 from src.layout.html import _na, _render_profile_card
 from src.layout.single_strategy import (
     _CALENDAR_TABS,
+    _SECTION3_TABS,
     make_single_strategy_panel,
     render_calendar,
+    render_section3,
     render_single_strategy,
     set_calendar_kind,
+    set_section3_tab,
 )
 
 
@@ -162,3 +165,75 @@ def test_calendar_tabs_cover_every_kind():
     # The pill set and the calendar_return_table kinds stay in lockstep.
     kinds = {kind for _label, kind in _CALENDAR_TABS}
     assert kinds == {"absolute", "outperformance", "vol_adjusted"}
+
+
+def _universe_with_factors(multiyear_prices, benchmark):
+    """Mock cache with the benchmark + the equity-risk / term-premium factor
+    columns so `equity_risk_premium` / `term_premium` resolve."""
+    import numpy as np
+
+    universe = multiyear_prices.copy()
+    universe["SPX Index"] = benchmark  # benchmark + equity factor leg
+    rng = np.random.default_rng(11)
+    for col, drift in (("LD12TRUU Index", 5e-5), ("LUTLTRUU Index", 1e-4)):
+        rets = rng.normal(drift, 0.003, len(universe))
+        universe[col] = 100.0 * np.cumprod(1.0 + rets)
+    return universe
+
+
+def test_render_section3_populates_all_three(multiyear_prices, benchmark):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+    ss.bench_dd.value = "SPX Index"
+
+    render_section3(ss, state, meta, universe.index.min())
+    # Weekly scatter: markers + OLS line.
+    assert len(ss.weekly_fig.data) == 2
+    # Histogram: strategy + benchmark overlaid, stats grid populated.
+    assert len(ss.retdist_fig.data) >= 1
+    assert not ss.retdist_stats_grid.data.empty
+    # Factor scatter: one monthly point cloud.
+    assert len(ss.factor_fig.data) == 1
+
+
+def test_section3_tab_switch_swaps_view():
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    assert ss.s3_stack.children == (ss.s3_views["weekly"],)
+    set_section3_tab(ss, "factor")
+    assert ss.s3_tab == "factor"
+    assert ss.s3_stack.children == (ss.s3_views["factor"],)
+
+
+def test_section3_tabs_match_view_keys():
+    # The pill keys and the built view stack stay in lockstep.
+    keys = {key for _label, key in _SECTION3_TABS}
+    ss = make_single_strategy_panel(_meta())
+    assert keys == set(ss.s3_views)
+
+
+def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    # No benchmark / factor columns in the cache — only the strategies.
+    state = SimpleNamespace(universe_prices=multiyear_prices)
+    ss.picker.value = "AAA Index"
+    ss.bench_dd.value = "SPX Index"  # absent from the cache
+
+    render_section3(ss, state, meta, multiyear_prices.index.min())
+    assert len(ss.weekly_fig.data) == 0  # no benchmark → cleared
+    assert len(ss.retdist_fig.data) >= 1  # strategy-only histogram still renders
+    assert len(ss.factor_fig.data) == 0  # no factor columns → cleared
+
+
+def test_render_section3_empty_cache_no_raise():
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    state = SimpleNamespace(universe_prices=pd.DataFrame())
+    render_section3(ss, state, meta, pd.Timestamp("2020-01-01"))
+    assert len(ss.weekly_fig.data) == 0
+    assert len(ss.factor_fig.data) == 0
+    assert ss.retdist_stats_grid.data.empty

@@ -6,7 +6,8 @@ import plotly.graph_objects as go
 from ipydatagrid import DataGrid, TextRenderer
 
 from ..config import LOOKBACK_YEARS, TRADING_DAYS_PER_YEAR
-from ..stats import ann_return, ann_sharpe, ann_volatility
+from ..stats import ann_return, ann_sharpe, ann_volatility, ols_fit
+from ..style import Color
 from .theme import SHARPE_WINDOW_LABEL, _palette_color, _short_ticker
 
 
@@ -246,3 +247,101 @@ def _update_return_dist(
             renderers[col] = f2
     stats_grid.data = display
     stats_grid.renderers = renderers
+
+
+def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> None:
+    """Scatter of paired weekly returns (x = benchmark, y = strategy) with an
+    OLS fit line so the slope reads as the strategy's β to the benchmark, plus a
+    β / R² paper annotation. Fewer than two aligned points clears the figure."""
+    frame = (
+        pd.DataFrame({"x": x, "y": y}).dropna()
+        if x is not None and y is not None
+        else pd.DataFrame(columns=["x", "y"])
+    )
+    if len(frame) < 2:
+        with fig.batch_update():
+            fig.data = ()
+            fig.layout.annotations = ()
+        return
+    fit = ols_fit(frame["x"], frame["y"])
+    traces = [
+        go.Scatter(
+            x=frame["x"].to_numpy(),
+            y=frame["y"].to_numpy(),
+            mode="markers",
+            marker=dict(size=6, color=_palette_color(0), line=dict(width=0)),
+            name="weekly",
+            hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
+        )
+    ]
+    if not np.isnan(fit.slope):
+        xs = np.array([frame["x"].min(), frame["x"].max()])
+        traces.append(
+            go.Scatter(
+                x=xs,
+                y=fit.intercept + fit.slope * xs,
+                mode="lines",
+                line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1.5),
+                name="OLS",
+                hoverinfo="skip",
+            )
+        )
+    with fig.batch_update():
+        fig.data = ()
+        fig.add_traces(traces)
+        fig.layout.annotations = ()
+        if not np.isnan(fit.slope):
+            fig.add_annotation(
+                x=0.02,
+                y=0.98,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                align="left",
+                text=f"β={fit.slope:.2f}  R²={fit.r_squared:.2f}",
+                font=dict(color=Color.CHART_TEXT.value, size=11),
+            )
+
+
+def _update_factor_corr_scatter(
+    fig: go.FigureWidget, x: pd.Series, y: pd.Series, color: pd.Series
+) -> None:
+    """Monthly factor-correlation scatter: x = corr to the equity risk premium,
+    y = corr to the term premium, one marker per month colored / sized by that
+    month's risk-adjusted return (diverging RdYlGn around 0). Empty → cleared."""
+    if x is None or y is None:
+        with fig.batch_update():
+            fig.data = ()
+        return
+    frame = pd.DataFrame({"x": x, "y": y, "c": color}).dropna(subset=["x", "y"])
+    if frame.empty:
+        with fig.batch_update():
+            fig.data = ()
+        return
+    c = frame["c"].fillna(0.0)
+    cmax = max(0.5, float(c.abs().max()))
+    denom = float(c.abs().max()) or 1.0
+    sizes = (8 + 14 * (c.abs() / denom)).tolist()
+    trace = go.Scatter(
+        x=frame["x"].to_numpy(),
+        y=frame["y"].to_numpy(),
+        mode="markers",
+        marker=dict(
+            size=sizes,
+            color=c.tolist(),
+            colorscale="RdYlGn",
+            cmid=0,
+            cmin=-cmax,
+            cmax=cmax,
+            showscale=True,
+            colorbar=dict(title=dict(text="Risk-adj"), thickness=10),
+            line=dict(width=0.5, color=Color.CHART_BG.value),
+        ),
+        text=[d.strftime("%Y-%m") for d in frame.index],
+        hovertemplate=(
+            "%{text}<br>ERP corr %{x:.2f}<br>Term corr %{y:.2f}<extra></extra>"
+        ),
+    )
+    with fig.batch_update():
+        fig.data = ()
+        fig.add_traces([trace])
