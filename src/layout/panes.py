@@ -184,6 +184,37 @@ def _return_dist_stats_grid() -> DataGrid:
     return grid
 
 
+def _weekly_scatter_chart() -> go.FigureWidget:
+    """Single Strategy Section 3 (v0.9.0): weekly returns vs the benchmark, with
+    an OLS β line drawn by `_update_weekly_scatter`."""
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title="Weekly returns vs benchmark",
+            hovermode="closest",
+            xaxis=dict(
+                title="Benchmark weekly return", tickformat=".1%", zeroline=True
+            ),
+            yaxis=dict(title="Strategy weekly return", tickformat=".1%", zeroline=True),
+        )
+    )
+
+
+def _factor_corr_chart() -> go.FigureWidget:
+    """Single Strategy Section 3 (v0.9.0): the strategy's monthly correlation to
+    the equity-risk-premium (x) and term-premium (y) factors, colored by each
+    month's risk-adjusted return. Axes fixed to the correlation range."""
+    return go.FigureWidget(
+        layout=_chart_layout(
+            title="Monthly factor correlation",
+            hovermode="closest",
+            xaxis=dict(
+                title="Corr to equity risk premium", range=[-1, 1], zeroline=True
+            ),
+            yaxis=dict(title="Corr to term premium", range=[-1, 1], zeroline=True),
+        )
+    )
+
+
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     """Build a self-contained analysis pane with all 9 figures pre-allocated.
 

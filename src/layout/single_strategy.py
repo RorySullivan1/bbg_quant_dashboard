@@ -4,8 +4,10 @@ Workstream C delivered the tab **shell** — a single-select strategy picker plu
 a shared benchmark selector + overlay toggle — and **Section 1**: a two-column
 profile (metadata card on the left; a cumulative chart + compact standard-perf
 table on the right). Workstream D adds **Section 2**: a 3-pill monthly-return
-calendar (Absolute / Outperformance / Vol-adjusted) over one DataGrid. Section 3
-(analytics charts) lands in Workstream E; ``section3_slot`` is left empty.
+calendar (Absolute / Outperformance / Vol-adjusted) over one DataGrid.
+Workstream E adds **Section 3**: three tabbed analytics charts — a weekly-returns
+β scatter, a strategy-vs-benchmark return distribution, and a monthly
+factor-correlation scatter.
 
 Everything reuses the existing layout toolkit — no new runtime deps:
 ``_line_chart`` / ``_make_benchmark_dropdown`` (panes), ``_perf_grid`` /
@@ -24,21 +26,48 @@ import pandas as pd
 from ..stats import (
     calendar_return_table,
     cum_perf,
+    daily_returns,
+    equity_risk_premium,
+    monthly_factor_correlations,
+    monthly_realized_vol,
+    monthly_returns,
     perf_table,
+    return_distribution_stats,
     since_inception_perf,
+    term_premium,
+    weekly_returns,
 )
-from .charts import _update_line
+from .charts import (
+    _update_factor_corr_scatter,
+    _update_line,
+    _update_return_dist,
+    _update_weekly_scatter,
+)
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _ticker_options
 from .grids import _calendar_grid, _perf_grid, _update_calendar_grid, _update_perf_grid
 from .html import STYLE_CTX, _render_profile_card, render_template
-from .panes import _line_chart, _make_benchmark_dropdown
+from .panes import (
+    _factor_corr_chart,
+    _line_chart,
+    _make_benchmark_dropdown,
+    _return_dist_chart,
+    _return_dist_stats_grid,
+    _weekly_scatter_chart,
+)
 
 # Calendar tabs: (pill label, calendar_return_table `kind`).
 _CALENDAR_TABS: tuple[tuple[str, str], ...] = (
     ("Absolute", "absolute"),
     ("Outperformance", "outperformance"),
     ("Vol-adjusted", "vol_adjusted"),
+)
+
+# Section 3 analytics tabs: (pill label, view key).
+_SECTION3_TABS: tuple[tuple[str, str], ...] = (
+    ("Weekly scatter", "weekly"),
+    ("Distribution", "distribution"),
+    ("Factor scatter", "factor"),
 )
 
 
@@ -49,7 +78,8 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     re-renders: the strategy ``picker``, the shared ``bench_dd`` + ``bench_chk``
     overlay toggle, the ``profile_w`` card, the ``line_fig`` cumulative chart,
     the compact ``perf_grid``, the calendar ``cal_grid`` + ``cal_pills`` (active
-    ``cal_kind``), and the ``section3_slot`` container reserved for Workstream E.
+    ``cal_kind``), and the Section 3 analytics figures (``weekly_fig`` /
+    ``retdist_fig`` / ``factor_fig``) behind their ``s3_pills`` view stack.
     """
     options = _ticker_options(meta)
     picker = W.Dropdown(
@@ -111,8 +141,29 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
         [W.VBox([cal_header, cal_pill_bar, cal_grid], layout=W.Layout(width="100%"))],
         layout=W.Layout(width="100%", padding="8px 0 0 0"),
     )
-    # Reserved for Workstream E (analytics charts).
-    section3_slot = W.Box(layout=W.Layout(width="100%"))
+    # Section 3 (Workstream E): three tabbed analytics charts over one stack.
+    weekly_fig = _weekly_scatter_chart()
+    retdist_fig = _return_dist_chart()
+    retdist_stats_grid = _return_dist_stats_grid()
+    factor_fig = _factor_corr_chart()
+    s3_views = {
+        "weekly": weekly_fig,
+        "distribution": W.VBox(
+            [retdist_fig, retdist_stats_grid], layout=W.Layout(width="100%")
+        ),
+        "factor": factor_fig,
+    }
+    s3_pills = [
+        _make_tab_button(label, active=i == 0)
+        for i, (label, _k) in enumerate(_SECTION3_TABS)
+    ]
+    s3_pill_bar = W.HBox(s3_pills, layout=W.Layout(width="100%", margin="0 0 4px 0"))
+    s3_stack = W.Box([s3_views[_SECTION3_TABS[0][1]]], layout=W.Layout(width="100%"))
+    s3_header = W.HTML(render_template("grid_header", **STYLE_CTX, text="Analytics"))
+    section3_slot = W.Box(
+        [W.VBox([s3_header, s3_pill_bar, s3_stack], layout=W.Layout(width="100%"))],
+        layout=W.Layout(width="100%", padding="8px 0 0 0"),
+    )
 
     root = W.VBox(
         [controls_row, section1, section2_slot, section3_slot],
@@ -130,6 +181,14 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
         cal_grid=cal_grid,
         cal_pills=cal_pills,
         cal_kind=_CALENDAR_TABS[0][1],
+        weekly_fig=weekly_fig,
+        retdist_fig=retdist_fig,
+        retdist_stats_grid=retdist_stats_grid,
+        factor_fig=factor_fig,
+        s3_pills=s3_pills,
+        s3_views=s3_views,
+        s3_stack=s3_stack,
+        s3_tab=_SECTION3_TABS[0][1],
         section2_slot=section2_slot,
         section3_slot=section3_slot,
     )
@@ -171,6 +230,7 @@ def render_single_strategy(
     _update_perf_grid(ss.perf_grid, pt, meta)
 
     render_calendar(ss, state)
+    render_section3(ss, state, meta, window_start)
 
 
 def set_calendar_kind(ss: SimpleNamespace, which: str) -> None:
@@ -199,3 +259,75 @@ def render_calendar(ss: SimpleNamespace, state: object) -> None:
         benchmark = prices[bench] if bench in prices.columns else None
     table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
     _update_calendar_grid(ss.cal_grid, table, kind=kind)
+
+
+def set_section3_tab(ss: SimpleNamespace, which: str) -> None:
+    """Show one Section 3 analytics view (`weekly` / `distribution` / `factor`):
+    restyle the pills and swap the stack. Pure view switch — no recompute, since
+    `render_section3` keeps all three figures current."""
+    ss.s3_tab = which
+    for pill, (_label, key) in zip(ss.s3_pills, _SECTION3_TABS, strict=True):
+        _style_tab_button(pill, active=key == which)
+    ss.s3_stack.children = (ss.s3_views[which],)
+
+
+def render_section3(
+    ss: SimpleNamespace,
+    state: object,
+    meta: pd.DataFrame,
+    window_start: pd.Timestamp,
+) -> None:
+    """Render the three Section 3 analytics charts for the picked strategy over
+    the 5Y window (no BQL). Weekly scatter + histogram use the shared benchmark;
+    the factor scatter uses the cached factor columns. Missing ticker / benchmark
+    / factor columns clear the affected figure(s) without raising."""
+    prices = state.universe_prices
+    ticker = ss.picker.value
+    if ticker is None or prices is None or prices.empty or ticker not in prices.columns:
+        _update_weekly_scatter(ss.weekly_fig, None, None)
+        _update_return_dist(
+            ss.retdist_fig, ss.retdist_stats_grid, pd.DataFrame(), pd.DataFrame(), meta
+        )
+        _update_factor_corr_scatter(ss.factor_fig, None, None, None)
+        return
+
+    win = prices.loc[prices.index >= window_start]
+    bench = ss.bench_dd.value
+    has_bench = bench in win.columns and bench != ticker
+
+    # Weekly scatter: x = benchmark, y = strategy → OLS slope is the strategy's β.
+    if has_bench:
+        bench_w = weekly_returns(win[[bench]])[bench]
+        strat_w = weekly_returns(win[[ticker]])[ticker]
+        _update_weekly_scatter(ss.weekly_fig, bench_w, strat_w)
+    else:
+        _update_weekly_scatter(ss.weekly_fig, None, None)
+
+    # Distribution: strategy + benchmark daily returns overlaid.
+    dist_cols = [ticker, bench] if has_bench else [ticker]
+    rets = daily_returns(win[dist_cols])
+    _update_return_dist(
+        ss.retdist_fig,
+        ss.retdist_stats_grid,
+        rets,
+        return_distribution_stats(rets),
+        meta,
+    )
+
+    # Factor scatter: monthly corr to ERP (x) / term premium (y), colored by the
+    # month's risk-adjusted return (monthly return ÷ within-month realized vol).
+    erp = equity_risk_premium(prices)
+    tp = term_premium(prices)
+    strat_prices = win[ticker]
+    erp_corr = monthly_factor_correlations(strat_prices, erp)
+    tp_corr = monthly_factor_correlations(strat_prices, tp)
+    idx = erp_corr.index.intersection(tp_corr.index)
+    m_ret = monthly_returns(win[[ticker]])[ticker]
+    m_vol = monthly_realized_vol(daily_returns(win[[ticker]]))[ticker]
+    risk_adj = m_ret.divide(m_vol.replace(0, pd.NA))
+    _update_factor_corr_scatter(
+        ss.factor_fig,
+        erp_corr.reindex(idx),
+        tp_corr.reindex(idx),
+        risk_adj.reindex(idx),
+    )
