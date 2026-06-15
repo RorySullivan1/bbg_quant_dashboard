@@ -268,6 +268,46 @@ def ols_fit(x, y) -> OLSFit:
     return OLSFit(float(slope), float(intercept), float(r2))
 
 
+class PolyFit(NamedTuple):
+    """Result of a least-squares polynomial fit ``y = Σ coeffs[i]·x**(deg-i)``.
+
+    `coeffs` are highest-order first (NumPy ``polyfit`` order). For the default
+    quadratic, `convexity` is the leading ``x²`` coefficient — positive bends the
+    curve into a smile (convex payoff), negative into a frown (concave) — and
+    `slope` is the linear term (the central sensitivity, ≈ β at x = 0).
+    """
+
+    coeffs: tuple[float, ...]
+    slope: float
+    convexity: float
+    r_squared: float
+
+
+def poly_fit(x, y, degree: int = 2) -> PolyFit:
+    """Least-squares polynomial fit of ``y`` on ``x`` (default quadratic).
+
+    Inputs may be array-likes or pandas Series; non-finite pairs are dropped.
+    Fewer than ``degree + 1`` finite points, or a degenerate (zero-variance)
+    ``x``, yield an all-NaN fit. `slope` is the linear coefficient and
+    `convexity` the quadratic one (NaN when `degree` is too low to define them).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if x.size < degree + 1 or np.std(x) < 1e-12:
+        return PolyFit((np.nan,) * (degree + 1), np.nan, np.nan, np.nan)
+    coeffs = np.polyfit(x, y, degree)
+    resid = y - np.polyval(coeffs, x)
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - float(np.sum(resid**2)) / ss_tot if ss_tot > 0 else 0.0
+    # Index from the low-order end so the readouts are degree-agnostic:
+    # coeffs[-2] is the linear term, coeffs[-3] the quadratic.
+    slope = float(coeffs[-2]) if degree >= 1 else float("nan")
+    convexity = float(coeffs[-3]) if degree >= 2 else float("nan")
+    return PolyFit(tuple(float(c) for c in coeffs), slope, convexity, float(r2))
+
+
 def monthly_factor_correlations(
     prices: pd.Series,
     factor_returns: pd.Series,

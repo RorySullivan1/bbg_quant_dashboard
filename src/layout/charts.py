@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from ipydatagrid import DataGrid, TextRenderer
 
 from ..config import LOOKBACK_YEARS, TRADING_DAYS_PER_YEAR
-from ..stats import ann_return, ann_sharpe, ann_volatility, ols_fit
+from ..stats import ann_return, ann_sharpe, ann_volatility, poly_fit
 from ..style import Color
 from .theme import SHARPE_WINDOW_LABEL, _palette_color, _short_ticker
 
@@ -250,9 +250,12 @@ def _update_return_dist(
 
 
 def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> None:
-    """Scatter of paired weekly returns (x = benchmark, y = strategy) with an
-    OLS fit line so the slope reads as the strategy's β to the benchmark, plus a
-    β / R² paper annotation. Fewer than two aligned points clears the figure."""
+    """Scatter of paired weekly returns (x = benchmark, y = strategy) with a
+    quadratic least-squares fit, so a curved line reveals convexity (a smile =
+    the strategy outperforms in big up *and* down weeks) rather than a single
+    straight β. The annotation reports the central β (linear term), the convexity
+    (x² term, signed) and R². Fewer than three aligned points clears the fit
+    line (markers still draw); fewer than two clears the figure."""
     frame = (
         pd.DataFrame({"x": x, "y": y}).dropna()
         if x is not None and y is not None
@@ -263,7 +266,7 @@ def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> 
             fig.data = ()
             fig.layout.annotations = ()
         return
-    fit = ols_fit(frame["x"], frame["y"])
+    fit = poly_fit(frame["x"], frame["y"], degree=2)
     traces = [
         go.Scatter(
             x=frame["x"].to_numpy(),
@@ -274,15 +277,18 @@ def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> 
             hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
         )
     ]
-    if not np.isnan(fit.slope):
-        xs = np.array([frame["x"].min(), frame["x"].max()])
+    has_fit = not np.isnan(fit.convexity)
+    if has_fit:
+        # Dense x grid so the quadratic renders as a smooth curve, sorted so the
+        # connected line never doubles back on itself.
+        xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
         traces.append(
             go.Scatter(
                 x=xs,
-                y=fit.intercept + fit.slope * xs,
+                y=np.polyval(fit.coeffs, xs),
                 mode="lines",
                 line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1.5),
-                name="OLS",
+                name="quadratic fit",
                 hoverinfo="skip",
             )
         )
@@ -290,7 +296,7 @@ def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> 
         fig.data = ()
         fig.add_traces(traces)
         fig.layout.annotations = ()
-        if not np.isnan(fit.slope):
+        if has_fit:
             fig.add_annotation(
                 x=0.02,
                 y=0.98,
@@ -298,7 +304,10 @@ def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> 
                 yref="paper",
                 showarrow=False,
                 align="left",
-                text=f"β={fit.slope:.2f}  R²={fit.r_squared:.2f}",
+                text=(
+                    f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
+                    f"  R²={fit.r_squared:.2f}"
+                ),
                 font=dict(color=Color.CHART_TEXT.value, size=11),
             )
 

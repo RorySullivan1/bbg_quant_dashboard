@@ -186,7 +186,7 @@ def _return_dist_stats_grid() -> DataGrid:
 
 def _weekly_scatter_chart() -> go.FigureWidget:
     """Single Strategy Section 3 (v0.9.0): weekly returns vs the benchmark, with
-    an OLS β line drawn by `_update_weekly_scatter`."""
+    a quadratic fit line (β + convexity) drawn by `_update_weekly_scatter`."""
     return go.FigureWidget(
         layout=_chart_layout(
             title="Weekly returns vs benchmark",

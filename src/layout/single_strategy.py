@@ -303,7 +303,8 @@ def render_section3(
     bench = ss.bench_dd.value
     has_bench = bench in win.columns and bench != ticker
 
-    # Weekly scatter: x = benchmark, y = strategy → OLS slope is the strategy's β.
+    # Weekly scatter: x = benchmark, y = strategy → quadratic fit shows the
+    # strategy's central β (linear term) plus convexity (curvature).
     if has_bench:
         bench_w = weekly_returns(win[[bench]])[bench]
         strat_w = weekly_returns(win[[ticker]])[ticker]

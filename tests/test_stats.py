@@ -1022,6 +1022,40 @@ def test_ols_fit_degenerate_is_nan():
     assert np.isnan(flat_x.slope)
 
 
+def test_poly_fit_recovers_a_perfect_parabola():
+    x = np.linspace(-2.0, 2.0, 21)
+    # y = 3x² + 2x + 1 → convexity 3, linear (central β) 2.
+    fit = stats.poly_fit(x, 3.0 * x**2 + 2.0 * x + 1.0, degree=2)
+    assert fit.convexity == pytest.approx(3.0)
+    assert fit.slope == pytest.approx(2.0)
+    assert fit.coeffs[-1] == pytest.approx(1.0)  # intercept
+    assert fit.r_squared == pytest.approx(1.0)
+
+
+def test_poly_fit_sign_distinguishes_convex_from_concave():
+    x = np.linspace(-1.0, 1.0, 15)
+    convex = stats.poly_fit(x, x**2, degree=2)
+    concave = stats.poly_fit(x, -(x**2), degree=2)
+    assert convex.convexity > 0
+    assert concave.convexity < 0
+
+
+def test_poly_fit_drops_nan_pairs():
+    x = np.array([-2.0, -1.0, 0.0, 1.0, 2.0, np.nan])
+    y = np.array([4.0, 1.0, 0.0, 1.0, 4.0, 99.0])  # y = x², last pair dropped
+    fit = stats.poly_fit(x, y, degree=2)
+    assert fit.convexity == pytest.approx(1.0)
+    assert fit.slope == pytest.approx(0.0, abs=1e-9)
+
+
+def test_poly_fit_degenerate_is_nan():
+    # Too few points for a quadratic, and a zero-variance x, both yield NaN.
+    two = stats.poly_fit([0.0, 1.0], [0.0, 1.0], degree=2)
+    assert np.isnan(two.convexity) and np.isnan(two.r_squared)
+    flat_x = stats.poly_fit([5.0, 5.0, 5.0], [1.0, 2.0, 3.0], degree=2)
+    assert np.isnan(flat_x.slope)
+
+
 def test_monthly_factor_correlations_self_is_one(multiyear_prices):
     s = multiyear_prices["AAA Index"]
     factor = stats.daily_returns(s.to_frame("f"))["f"]
