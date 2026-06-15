@@ -104,6 +104,26 @@ def _zebra_expr() -> str:
     return f"(cell.row % 2 === 0 ? '{Color.CHROME_BG}' : '{Color.SURFACE}')"
 
 
+# Empty (NaN) numeric cells render as this dash rather than "NaN" / "NaN%".
+_MISSING_DASH: str = "-"
+
+
+def _dash_text_value(missing: str) -> VegaExpr:
+    """A `text_value` VegaExpr that shows `missing` (e.g. "-") for empty cells.
+
+    ipydatagrid's `missing` trait only substitutes on a strict JSON ``null``, but
+    a pandas ``NaN`` round-trips through serialization to a JS ``NaN`` (never
+    null), so that trait never fires for our data. The frontend instead renders
+    ``text_value || <the d3-formatted number>``, so returning ``''`` for real
+    values falls back to the renderer's normal numeric format while NaN cells
+    return `missing`. `cell.value` stays numeric, so any diverging background
+    ramp is unaffected.
+
+    Only wire this onto *numeric* columns: ``isNaN`` is true for any non-numeric
+    string, so on a text column it would blank every cell to the dash."""
+    return VegaExpr(f"isNaN(cell.value) ? '{missing}' : ''")
+
+
 def _diverging_bg_renderer(
     thresholds: tuple[float, float, float, float],
     *,
@@ -116,16 +136,9 @@ def _diverging_bg_renderer(
     so empty / middling cells read normally. `fmt` is the display number format
     (".2f" for ratios / Sharpe, ".2%" for return cells); `missing` is the text
     shown for empty cells (e.g. "-") while the value stays numeric so the
-    background ramp is unaffected.
-
-    Note on `missing`: ipydatagrid's `missing` trait only substitutes on a strict
-    JSON ``null``, but a pandas ``NaN`` round-trips to a JS ``NaN`` (never null),
-    so that trait never fires for our data. We instead drive the empty-cell text
-    through a `text_value` VegaExpr: the frontend renders ``text_value || <the
-    d3-formatted number>``, so returning ``''`` for real numbers falls back to
-    the normal `fmt` output while NaN cells return `missing`. `cell.value` stays
-    numeric, so the background ramp (which already routes NaN to the zebra) is
-    unaffected."""
+    background ramp is unaffected. The empty-cell text is driven through a
+    `text_value` VegaExpr (see `_dash_text_value`) because ipydatagrid's
+    `missing` trait never fires for a pandas NaN."""
     t0, t1, t2, t3 = thresholds
     zebra = _zebra_expr()
     expr = (
@@ -143,7 +156,7 @@ def _diverging_bg_renderer(
         background_color=VegaExpr(expr),
     )
     if missing:
-        renderer.text_value = VegaExpr(f"isNaN(cell.value) ? '{missing}' : ''")
+        renderer.text_value = _dash_text_value(missing)
     return renderer
 
 
@@ -220,18 +233,26 @@ def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
     # `sharpe_heatmap` (all-catalog grid only) swaps the plain 2dp renderer for
     # a diverging-background one on the Sharpe leaves + the Z-Score column,
     # leaving the selected-strategy grid (defaults off) visually unchanged.
+    # Empty (NaN) numeric cells show "-" instead of "NaN"/"NaN%" via a
+    # `text_value` expr; the text columns + color swatch keep plain text since
+    # `isNaN` is true for any non-numeric string (see `_dash_text_value`).
+    dash = _dash_text_value(_MISSING_DASH)
     text = TextRenderer(text_color=Color.TEXT)
-    pct = TextRenderer(format=".2%", text_color=Color.TEXT)
-    f2 = TextRenderer(format=".2f", text_color=Color.TEXT)
+    pct = TextRenderer(format=".2%", text_color=Color.TEXT, text_value=dash)
+    f2 = TextRenderer(format=".2f", text_color=Color.TEXT, text_value=dash)
     color_swatch = TextRenderer(
         background_color=VegaExpr("cell.value"),
         text_color=VegaExpr("cell.value"),
     )
     sharpe_renderer = (
-        _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
+        _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS, missing=_MISSING_DASH)
+        if sharpe_heatmap
+        else f2
     )
     zscore_renderer = (
-        _diverging_bg_renderer(_ZSCORE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
+        _diverging_bg_renderer(_ZSCORE_HEAT_THRESHOLDS, missing=_MISSING_DASH)
+        if sharpe_heatmap
+        else f2
     )
     renderers: dict = {}
     for col in columns:
@@ -296,8 +317,8 @@ _CALENDAR_VOLADJ_THRESHOLDS: tuple[float, float, float, float] = (
 _CALENDAR_CORR_THRESHOLDS: tuple[float, float, float, float] = (-0.5, -0.1, 0.1, 0.5)
 _CALENDAR_BETA_THRESHOLDS: tuple[float, float, float, float] = (0.0, 0.7, 1.3, 2.0)
 _CALENDAR_SUMMARY_COLS: frozenset[str] = frozenset({"Year", "Sharpe"})
-# Empty (NaN) calendar cells render as this dash rather than blank / "NaN".
-_CALENDAR_MISSING: str = "-"
+# Empty (NaN) calendar cells render as the shared dash rather than "NaN".
+_CALENDAR_MISSING: str = _MISSING_DASH
 
 
 def _calendar_grid() -> DataGrid:

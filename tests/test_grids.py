@@ -152,3 +152,44 @@ def test_perf_renderers_flat_sharpe_heatmap_toggle():
     assert _bg_expr(on["1Y Return"]) == ""
     off = _perf_renderers(cols)
     assert _bg_expr(off["1Y Sharpe"]) == ""
+
+
+def _text_value_expr(renderer) -> str:
+    tv = getattr(renderer, "text_value", None)
+    return getattr(tv, "value", "") if tv is not None else ""
+
+
+def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
+    # Empty numeric cells (Return/Vol/Sharpe/Max DD/Z-Score) show "-" via a
+    # `text_value` expr, since ipydatagrid's `missing` trait never fires for a
+    # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
+    # is true for any non-numeric string and would blank every cell.
+    cols = pd.MultiIndex.from_tuples(
+        [
+            ("Info", "Chart Color"),
+            ("Info", "Name"),
+            ("1Y", "Return"),
+            ("1Y", "Sharpe"),
+            (ZSCORE_SUPERCOL, "Sharpe 1M/1Y"),
+        ]
+    )
+    r = _perf_renderers(cols, sharpe_heatmap=True)
+    dash = "isNaN(cell.value) ? '-' : ''"
+    assert _text_value_expr(r[("1Y", "Return")]) == dash
+    assert _text_value_expr(r[("1Y", "Sharpe")]) == dash
+    assert _text_value_expr(r[(ZSCORE_SUPERCOL, "Sharpe 1M/1Y")]) == dash
+    # Text + swatch stay plain.
+    assert _text_value_expr(r[("Info", "Name")]) == ""
+    assert _text_value_expr(r[("Info", "Chart Color")]) == ""
+
+
+def test_perf_renderers_dash_on_numeric_without_heatmap():
+    # Even with the heatmap off (selected-strategy grid), the plain 2dp / pct
+    # renderers still substitute "-" for empty numeric cells.
+    cols = pd.Index(["1Y Return", "1Y Sharpe", "Name", "Chart Color"])
+    r = _perf_renderers(cols)
+    dash = "isNaN(cell.value) ? '-' : ''"
+    assert _text_value_expr(r["1Y Return"]) == dash
+    assert _text_value_expr(r["1Y Sharpe"]) == dash
+    assert _text_value_expr(r["Name"]) == ""
+    assert _text_value_expr(r["Chart Color"]) == ""
