@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.8.11`.
+- **Current version**: `v0.8.12`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.

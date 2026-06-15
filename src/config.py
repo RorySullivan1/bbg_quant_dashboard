@@ -23,6 +23,12 @@ HALF_YEAR_WINDOW = 126  # ~6 months
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
 RSI_WINDOW = 14  # Wilder RSI lookback in trading days
 
+# Server-side chart PNG export (src/layout/export.py). The figure is rendered to
+# PNG via kaleido at the given pixel width and a 2x device scale for a crisp,
+# retina-quality image; height follows the figure's own layout height.
+PNG_EXPORT_WIDTH = 1200
+PNG_EXPORT_SCALE = 2
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 

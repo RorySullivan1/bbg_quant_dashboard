@@ -13,6 +13,7 @@ from ..config import (
     DEFAULT_BENCHMARK,
     LOOKBACK_YEARS,
 )
+from .export import _png_export_control
 from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
@@ -347,8 +348,19 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
 
     picker.observe(_on_pick, names="value")
 
+    def _current_fig():
+        # The mounted view's figure is always its first child (the Return
+        # Distribution view's stats grid is the optional second). Resolved at
+        # click time so the PNG export targets whatever analysis is shown.
+        return stack.children[0].children[0]
+
+    png_export = _png_export_control(
+        _current_fig,
+        filename=lambda: f"{side_label}-{picker.value}.png",
+    )
+
     root = W.VBox(
-        [header_row, stack],
+        [header_row, stack, png_export],
         layout=W.Layout(width="50%"),
     )
     root.add_class("bbg-card")
@@ -358,6 +370,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         picker=picker,
         stack=stack,
         views=views,
+        png_btn=png_export.children[0],
         # Labels whose figure is populated for the current slice (Workstream D
         # lazy rendering). The builder renders only the mounted view per
         # recompute and adds others here on first pick.

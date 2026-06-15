@@ -1,5 +1,11 @@
 ipywidgets>=8.0
-plotly>=5.18
+# plotly capped <6 so the self-contained kaleido 0.2.1 (below) stays compatible:
+# plotly 6.1+ drops kaleido 0.2 support and requires a separately-installed Chrome.
+plotly>=5.18,<6
+# Server-side PNG export of charts (the modebar's client-side download is blocked
+# inside Bloomberg's terminal webview). 0.2.1 bundles its own Chromium, so no
+# system Chrome is needed on the locked-down BQuant runtime — see src/layout/export.py.
+kaleido==0.2.1
 anywidget>=0.9
 ipydatagrid>=1.3
 pandas>=2.0

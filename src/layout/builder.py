@@ -78,6 +78,7 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
+from .export import _png_export_control
 from .filters import _checkbox_group, _q_row, _section_label, _ticker_options
 from .grids import (
     _perf_grid,
@@ -853,6 +854,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         "regime": (regime_pill, regime_controls, regime_scatter_fig),
         "factor": (factor_pill, factor_controls, factor_scatter_fig),
     }
+    _active_tab = {"which": "sunburst"}
 
     def _activate_platform_tab(which: str) -> None:
         for key, (pill, _controls, _fig) in _analytics_tabs.items():
@@ -860,10 +862,18 @@ def build_app(verbose: bool = False) -> W.VBox:
         _pill, controls, fig = _analytics_tabs[which]
         tab_controls_box.children = (controls,)
         chart_box.children = (fig,)
+        _active_tab["which"] = which
 
     sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
     regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
     factor_pill.on_click(lambda _b: _activate_platform_tab("factor"))
+
+    # PNG export for whichever analytics chart is active (the terminal blocks
+    # the modebar's client-side download — see src/layout/export.py).
+    analytics_png_export = _png_export_control(
+        lambda: chart_box.children[0],
+        filename=lambda: f"platform-{_active_tab['which']}.png",
+    )
 
     analytics_card = W.VBox(
         [
@@ -872,6 +882,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             ),
             analytics_tab_bar,
             analytics_body,
+            analytics_png_export,
         ],
         layout=W.Layout(width="100%"),
     )

@@ -8,7 +8,7 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.8.6`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.8.12`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -82,6 +82,11 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   window dropdown beside the Quantitative Z-Score base-metric selector (sets the
   base-metric lookback for the cross-sectional z, independent of the Period); and
   halve the Key-Highlights card-area height (45vh → 22.5vh) (shipped).
+- [x] `v0.8.12` — Chart PNG download for the terminal: add kaleido (0.2.1,
+  bundled Chromium) + cap `plotly<6`, and a "⤓ PNG" button beside each chart that
+  renders the current figure server-side and delivers it as an inline preview +
+  user-clicked download link — the modebar's client-side download is blocked
+  inside Bloomberg's terminal webview (shipped).
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).

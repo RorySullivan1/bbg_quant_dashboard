@@ -61,7 +61,10 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].
     assert analytics_card._dom_classes == ("bbg-card",)
-    _card_header, tab_bar, body = analytics_card.children
+    # header, tab bar, body, then the PNG-export control (v0.8.12).
+    _card_header, tab_bar, body, png_export = analytics_card.children
+    png_btn = png_export.children[0]
+    assert isinstance(png_btn, W.Button) and "PNG" in png_btn.description
     pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
     assert [p.description for p in pills] == [
         "Sunburst",
@@ -338,6 +341,20 @@ def test_correlation_benchmark_regime_controls():
     # Unticking Benchmark clears Regime so the chart reverts to plain.
     pane.heat_benchmark_chk.value = False
     assert pane.heat_regime_chk.value is False
+
+
+def test_analysis_pane_has_png_export_button():
+    # v0.8.12: each analysis pane carries a server-side PNG-export control (the
+    # modebar's client-side download is blocked inside the Bloomberg terminal).
+    # The button is the export control's first child and reuses the pill styling.
+    from src.layout.panes import _make_analysis_pane
+
+    pane = _make_analysis_pane("left")
+    assert isinstance(pane.png_btn, W.Button)
+    assert "PNG" in pane.png_btn.description
+    assert "bbg-pill" in pane.png_btn._dom_classes
+    # The control sits at the end of the pane root, after the header + chart stack.
+    assert pane.root.children[-1].children[0] is pane.png_btn
 
 
 def test_superlatives_window_toggle_re_renders_live():
