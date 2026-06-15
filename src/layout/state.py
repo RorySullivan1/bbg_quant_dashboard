@@ -42,6 +42,10 @@ class DashboardState:
     # live superlatives-window toggle never wipes them (v0.8.x)
 
     # --- mutable session state ---
+    # The Single Strategy tab namespace (picker + profile/chart/grid handles),
+    # set once in build_app; its observers re-render Section 1 (v0.9.0). Defaults
+    # to None so the dataclass stays valid before the panel is built.
+    single_strategy: object | None = None
     # The single startup BQL/mock fetch (benchmarks included) and its
     # ARP-only view (benchmark columns reindexed out).
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)

@@ -5,6 +5,8 @@ from datetime import date
 from functools import cache
 from pathlib import Path
 
+import pandas as pd
+
 from ..config import TEMPLATES_DIR, WEEKLY_COMMENTARY_PATH
 from ..style import Color, Font, FontSize, StatusTone
 from .theme import _sentiment_color
@@ -166,6 +168,38 @@ def _render_highlights(
         window_label=html.escape(window_label),
         superlatives=_render_superlative_cards(superlatives),
         launches=_render_launch_cards(launches),
+    )
+
+
+def _na(value: object) -> str:
+    """Display helper: ``None`` / ``NA`` / blank → an em dash, else the text."""
+    if value is None:
+        return "—"
+    try:
+        if pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or "—"
+
+
+def _render_profile_card(row: pd.Series) -> str:
+    """Render the Single Strategy metadata card from one ``meta`` row.
+
+    Every field is `html.escape`'d and NA-safe (`_na` → em dash), so a record
+    missing a ``description`` / ``currency`` still renders cleanly."""
+    return render_template(
+        "profile_card",
+        **STYLE_CTX,
+        name=html.escape(_na(row.get("name"))),
+        ticker=html.escape(_na(row.get("ticker"))),
+        asset_class=html.escape(_na(row.get("asset_class"))),
+        currency=html.escape(_na(row.get("currency"))),
+        return_type=html.escape(_na(row.get("return_type"))),
+        theme=html.escape(_na(row.get("theme"))),
+        category=html.escape(_na(row.get("category"))),
+        description=html.escape(_na(row.get("description"))),
     )
 
 

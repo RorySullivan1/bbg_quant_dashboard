@@ -103,6 +103,7 @@ from .platform import (
     _update_regime_scatter,
     _update_sunburst,
 )
+from .single_strategy import make_single_strategy_panel, render_single_strategy
 from .state import DashboardState
 
 
@@ -891,10 +892,18 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
+    # The third top-level tab (v0.9.0): a per-strategy deep-dive. Built here so
+    # the tab wiring below can swap it in; its picker options are rebuilt against
+    # the pruned `meta` once the cache loads (alongside `ticker_w`).
+    single_strategy = make_single_strategy_panel(meta)
+    state.single_strategy = single_strategy
+    single_panel = single_strategy.root
+
     platform_btn = _make_tab_button("Platform", active=True)
     selected_btn = _make_tab_button("Multi-Strategy Analysis", active=False)
+    single_btn = _make_tab_button("Single Strategy", active=False)
     top_tab_bar = W.HBox(
-        [platform_btn, selected_btn],
+        [platform_btn, selected_btn, single_btn],
         layout=W.Layout(
             width="100%",
             padding="10px 16px 4px 16px",
@@ -906,14 +915,21 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%"),
     )
 
+    _top_panels = {
+        "platform": platform_panel,
+        "selected": selected_panel,
+        "single": single_panel,
+    }
+
     def _activate_tab(which: str) -> None:
-        is_platform = which == "platform"
-        _style_tab_button(platform_btn, active=is_platform)
-        _style_tab_button(selected_btn, active=not is_platform)
-        top_tab_content.children = (platform_panel if is_platform else selected_panel,)
+        _style_tab_button(platform_btn, active=which == "platform")
+        _style_tab_button(selected_btn, active=which == "selected")
+        _style_tab_button(single_btn, active=which == "single")
+        top_tab_content.children = (_top_panels[which],)
 
     platform_btn.on_click(lambda _b: _activate_tab("platform"))
     selected_btn.on_click(lambda _b: _activate_tab("selected"))
+    single_btn.on_click(lambda _b: _activate_tab("single"))
 
     def _render_universe_grid(_change=None) -> None:
         """Render the all-catalog grid with the dynamic z-score column from the
@@ -1160,6 +1176,9 @@ def build_app(verbose: bool = False) -> W.VBox:
         # Resetting the options clears `ticker_w.value`; reselect below once the
         # cache (and so the z-score ranking) is available.
         state.ticker_w.options = _ticker_options(meta)
+        # The single-strategy picker mirrors the pruned catalog (all live
+        # strategies, unfiltered); resetting its options auto-selects the first.
+        single_strategy.picker.options = _ticker_options(meta)
         _log(f"pruned to {len(meta)} indices with recent performance")
         # ARP universe view of the cache — used for the all-catalog grid and
         # the whole-catalog highlights so benchmark columns never leak in.
@@ -1791,6 +1810,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             )
             meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
             _on_filter_change()
+            single_strategy.picker.options = _ticker_options(meta)
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
@@ -1808,13 +1828,24 @@ def build_app(verbose: bool = False) -> W.VBox:
         text, tone = _format_loaded(state.universe_prices, source, elapsed)
         _set_status(text, tone=tone)
         _recompute()
+        _render_single()
         _set_progress(100, "Ready", hidden=True)
+
+    def _render_single(_change=None) -> None:
+        """Re-render the Single Strategy tab's Section 1 from the cache. Bound to
+        the picker / benchmark controls and called on load + Refresh. Reads the
+        current (possibly re-pruned) `meta` and a 5Y window off `today`."""
+        window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+        render_single_strategy(single_strategy, state, meta, window_start)
 
     apply_btn.on_click(_refresh_prices)
     _bind_live_controls(state.pane_left)
     _bind_live_controls(state.pane_right)
     _bind_lazy_render(state.pane_left)
     _bind_lazy_render(state.pane_right)
+    single_strategy.picker.observe(_render_single, names="value")
+    single_strategy.bench_dd.observe(_render_single, names="value")
+    single_strategy.bench_chk.observe(_render_single, names="value")
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
@@ -1848,6 +1879,7 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     t_initial = time.perf_counter()
     _recompute()
+    _render_single()
     _log(f"initial recompute (selected viz) in {time.perf_counter() - t_initial:.2f}s")
     _log(f"build_app TOTAL: {time.perf_counter() - t0:.2f}s")
     # Dismiss the overlay once data is loaded; on a fatal fetch failure leave
