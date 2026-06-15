@@ -106,11 +106,14 @@ def _zebra_expr() -> str:
 
 def _diverging_bg_renderer(
     thresholds: tuple[float, float, float, float],
+    *,
+    fmt: str = ".2f",
 ) -> TextRenderer:
-    """A 2dp numeric renderer whose background is a diverging red→neutral→green
+    """A numeric renderer whose background is a diverging red→neutral→green
     ramp keyed to `cell.value` via the existing VegaExpr mechanism. NaN/null and
     the neutral band (between the two middle thresholds) fall back to the zebra
-    so empty / middling cells read normally."""
+    so empty / middling cells read normally. `fmt` is the display number format
+    (".2f" for ratios / Sharpe, ".2%" for return cells)."""
     t0, t1, t2, t3 = thresholds
     zebra = _zebra_expr()
     expr = (
@@ -122,7 +125,7 @@ def _diverging_bg_renderer(
         f"'{Color.HEAT_POS_STRONG}'"
     )
     return TextRenderer(
-        format=".2f", text_color=Color.TEXT, background_color=VegaExpr(expr)
+        format=fmt, text_color=Color.TEXT, background_color=VegaExpr(expr)
     )
 
 
@@ -251,6 +254,76 @@ def _apply_grid_styling(
     grid.renderers = _perf_renderers(columns, sharpe_heatmap=sharpe_heatmap)
     if widths:
         grid.column_widths = _build_perf_column_widths(columns)
+
+
+# v0.9.0 Workstream D — the Single Strategy monthly-return calendar.
+# Month / annual cells are returns: red below -5%, soft red to -1%, neutral
+# ±1%, soft green to +5%, strong green above. Vol-adjusted cells are
+# return/vol ratios on a wider unitless band. The Sharpe summary column reuses
+# the perf-grid Sharpe band.
+_CALENDAR_RETURN_THRESHOLDS: tuple[float, float, float, float] = (
+    -0.05,
+    -0.01,
+    0.01,
+    0.05,
+)
+_CALENDAR_VOLADJ_THRESHOLDS: tuple[float, float, float, float] = (
+    -1.0,
+    -0.25,
+    0.25,
+    1.0,
+)
+_CALENDAR_SUMMARY_COLS: frozenset[str] = frozenset({"Year", "Sharpe"})
+
+
+def _calendar_grid() -> DataGrid:
+    grid = DataGrid(
+        pd.DataFrame(),
+        base_row_size=26,
+        base_column_size=62,
+        base_row_header_size=54,
+        layout=W.Layout(width="100%", height="260px"),
+        **_dark_grid_kwargs(),
+    )
+    grid.add_class("bbg-grid")
+    return grid
+
+
+def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
+    """Diverging renderers for the calendar grid. Month cells are returns
+    (".2%") for absolute / outperformance and ratios (".2f") for vol-adjusted;
+    the `Year` summary is always an annual return (".2%") and `Sharpe` uses the
+    Sharpe band (".2f")."""
+    voladj = kind == "vol_adjusted"
+    month_r = _diverging_bg_renderer(
+        _CALENDAR_VOLADJ_THRESHOLDS if voladj else _CALENDAR_RETURN_THRESHOLDS,
+        fmt=".2f" if voladj else ".2%",
+    )
+    year_r = _diverging_bg_renderer(_CALENDAR_RETURN_THRESHOLDS, fmt=".2%")
+    sharpe_r = _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS, fmt=".2f")
+    renderers: dict = {}
+    for col in columns:
+        if col == "Year":
+            renderers[col] = year_r
+        elif col == "Sharpe":
+            renderers[col] = sharpe_r
+        else:
+            renderers[col] = month_r
+    return renderers
+
+
+def _update_calendar_grid(grid: DataGrid, table: pd.DataFrame, *, kind: str) -> None:
+    """Render a `calendar_return_table` frame (years × Jan…Dec + Year + Sharpe)
+    into the calendar DataGrid, most-recent year on top, with diverging
+    conditional formatting keyed to `kind`."""
+    if table is None or table.empty:
+        grid.data = pd.DataFrame()
+        return
+    display = table.sort_index(ascending=False)
+    display.index = display.index.astype(int).astype(str)
+    display.index.name = ""
+    grid.data = display
+    grid.renderers = _calendar_renderers(display.columns, kind=kind)
 
 
 def _universe_grid() -> DataGrid:

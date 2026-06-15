@@ -103,7 +103,13 @@ from .platform import (
     _update_regime_scatter,
     _update_sunburst,
 )
-from .single_strategy import make_single_strategy_panel, render_single_strategy
+from .single_strategy import (
+    _CALENDAR_TABS,
+    make_single_strategy_panel,
+    render_calendar,
+    render_single_strategy,
+    set_calendar_kind,
+)
 from .state import DashboardState
 
 
@@ -1846,6 +1852,18 @@ def build_app(verbose: bool = False) -> W.VBox:
     single_strategy.picker.observe(_render_single, names="value")
     single_strategy.bench_dd.observe(_render_single, names="value")
     single_strategy.bench_chk.observe(_render_single, names="value")
+
+    def _make_cal_kind_handler(which: str):
+        def _handler(_b=None) -> None:
+            set_calendar_kind(single_strategy, which)
+            render_calendar(single_strategy, state)
+
+        return _handler
+
+    for pill, (_label, kind) in zip(
+        single_strategy.cal_pills, _CALENDAR_TABS, strict=True
+    ):
+        pill.on_click(_make_cal_kind_handler(kind))
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
