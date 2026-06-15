@@ -1050,3 +1050,44 @@ def test_calendar_resample_rules_are_offset_objects():
     assert isinstance(cal._MONTH_END, pd.offsets.MonthEnd)
     assert isinstance(cal._WEEK_FRI, pd.offsets.Week)
     assert cal._WEEK_FRI.weekday == 4  # Friday-anchored, == "W-FRI"
+
+
+def test_monthly_beta_and_correlation_self(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    mb = stats.monthly_beta(s, s)
+    mc = stats.monthly_correlation(s, s)
+    assert mb.index.is_month_end.all()
+    assert mc.index.is_month_end.all()
+    # A series vs itself: beta ≈ 1, correlation ≈ 1 for every populated month.
+    assert mb.dropna().sub(1.0).abs().max() == pytest.approx(0.0, abs=1e-9)
+    assert mc.dropna().sub(1.0).abs().max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_monthly_correlation_in_unit_range(multiyear_prices, benchmark):
+    mc = stats.monthly_correlation(multiyear_prices["AAA Index"], benchmark).dropna()
+    assert (mc <= 1.0 + 1e-9).all()
+    assert (mc >= -1.0 - 1e-9).all()
+
+
+def test_monthly_beta_correlation_empty():
+    assert stats.monthly_beta(pd.Series(dtype=float), pd.Series(dtype=float)).empty
+    assert stats.monthly_correlation(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    ).empty
+
+
+def test_calendar_beta_correlation_need_benchmark(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    cols = [*_CAL_MONTHS, "Year", "Sharpe"]
+    for kind in ("beta", "correlation"):
+        out = stats.calendar_return_table(s, kind=kind, benchmark=None)
+        assert out.empty
+        assert list(out.columns) == cols
+
+
+def test_calendar_beta_correlation_shape(multiyear_prices, benchmark):
+    s = multiyear_prices["AAA Index"]
+    for kind in ("beta", "correlation"):
+        table = stats.calendar_return_table(s, kind=kind, benchmark=benchmark)
+        assert list(table.columns) == [*_CAL_MONTHS, "Year", "Sharpe"]
+        assert not table.empty

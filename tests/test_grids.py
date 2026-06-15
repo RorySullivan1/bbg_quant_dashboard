@@ -10,7 +10,45 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from src.layout.grids import ZSCORE_SUPERCOL, _build_universe_frame, _perf_renderers
+from src.layout.grids import (
+    ZSCORE_SUPERCOL,
+    _build_universe_frame,
+    _calendar_renderers,
+    _perf_renderers,
+)
+
+_CAL_COLS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+    "Year",
+    "Sharpe",
+]
+
+
+def test_calendar_renderers_show_dash_for_missing():
+    # Every calendar cell renders empty (NaN) months as "-" while keeping the
+    # value numeric for the diverging background.
+    renderers = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
+    assert set(renderers) == set(_CAL_COLS)
+    assert all(r.missing == "-" for r in renderers.values())
+
+
+def test_calendar_renderers_format_by_kind():
+    # Return kinds format months as %, beta/correlation as plain 2dp.
+    pct = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")["Jan"]
+    beta = _calendar_renderers(pd.Index(_CAL_COLS), kind="beta")["Jan"]
+    assert pct.format == ".2%"
+    assert beta.format == ".2f"
 
 
 def _meta() -> pd.DataFrame:
