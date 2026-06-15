@@ -1038,3 +1038,15 @@ def test_monthly_factor_correlations_empty():
         pd.Series(dtype=float), pd.Series(dtype=float)
     )
     assert out.empty
+
+
+def test_calendar_resample_rules_are_offset_objects():
+    """Regression guard: the calendar resamplers use pandas offset objects, not
+    the "ME" / "W-FRI" alias strings (which raise on pandas < 2.2, as shipped by
+    some BQuant runtimes). The single-pandas test sandbox accepts both spellings,
+    so this pins the version-portable intent directly."""
+    from src.stats import calendar as cal
+
+    assert isinstance(cal._MONTH_END, pd.offsets.MonthEnd)
+    assert isinstance(cal._WEEK_FRI, pd.offsets.Week)
+    assert cal._WEEK_FRI.weekday == 4  # Friday-anchored, == "W-FRI"

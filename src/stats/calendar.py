@@ -5,8 +5,11 @@ Monthly & weekly return resampling, a year×month calendar return matrix
 benchmark scatter line, and a strategy's per-month correlation to a factor.
 All built on the daily primitives already in this package — no new runtime deps.
 
-pandas 3.x resample anchors are used throughout: ``ME`` (month-end) and
-``W-FRI`` (week ending Friday).
+Resampling uses pandas **offset objects** (``MonthEnd`` / Friday-anchored
+``Week``) rather than the string aliases ``"ME"`` / ``"W-FRI"``: those alias
+spellings only exist on pandas ≥ 2.2 and raise ``ValueError: Invalid frequency``
+on the older pandas the BQuant runtime can ship, whereas the offset objects bin
+identically across every supported pandas version.
 """
 
 from __future__ import annotations
@@ -19,6 +22,12 @@ import pandas as pd
 from ._common import daily_returns
 from .performance import ann_sharpe
 from .rolling import rolling_correlation
+
+# Version-agnostic resample rules (see module docstring): month-end and
+# week-ending-Friday, equivalent to the "ME" / "W-FRI" aliases but valid on
+# pandas < 2.2 too.
+_MONTH_END = pd.offsets.MonthEnd()
+_WEEK_FRI = pd.offsets.Week(weekday=4)
 
 _MONTH_COLS = [
     "Jan",
@@ -49,7 +58,7 @@ def monthly_returns(prices: pd.DataFrame) -> pd.DataFrame:
     rets = daily_returns(prices)
     if rets.empty:
         return rets
-    return rets.add(1.0).resample("ME").prod(min_count=1).sub(1.0)
+    return rets.add(1.0).resample(_MONTH_END).prod(min_count=1).sub(1.0)
 
 
 def weekly_returns(prices: pd.DataFrame) -> pd.DataFrame:
@@ -59,7 +68,7 @@ def weekly_returns(prices: pd.DataFrame) -> pd.DataFrame:
     rets = daily_returns(prices)
     if rets.empty:
         return rets
-    return rets.add(1.0).resample("W-FRI").prod(min_count=1).sub(1.0)
+    return rets.add(1.0).resample(_WEEK_FRI).prod(min_count=1).sub(1.0)
 
 
 def monthly_realized_vol(returns: pd.DataFrame) -> pd.DataFrame:
@@ -70,7 +79,7 @@ def monthly_realized_vol(returns: pd.DataFrame) -> pd.DataFrame:
     """
     if returns.empty:
         return returns
-    return returns.resample("ME").std()
+    return returns.resample(_MONTH_END).std()
 
 
 def _pivot_year_month(monthly: pd.Series) -> pd.DataFrame:
@@ -201,4 +210,4 @@ def monthly_factor_correlations(
     roll = rolling_correlation(rets, factor_returns, window=window)
     if roll.empty or "strategy" not in roll.columns:
         return pd.Series(dtype=float)
-    return roll["strategy"].resample("ME").last().rename("factor_corr")
+    return roll["strategy"].resample(_MONTH_END).last().rename("factor_corr")
