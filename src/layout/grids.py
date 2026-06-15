@@ -115,8 +115,17 @@ def _diverging_bg_renderer(
     the neutral band (between the two middle thresholds) fall back to the zebra
     so empty / middling cells read normally. `fmt` is the display number format
     (".2f" for ratios / Sharpe, ".2%" for return cells); `missing` is the text
-    shown for NaN/null cells (e.g. "-") while the value stays numeric so the
-    background ramp is unaffected."""
+    shown for empty cells (e.g. "-") while the value stays numeric so the
+    background ramp is unaffected.
+
+    Note on `missing`: ipydatagrid's `missing` trait only substitutes on a strict
+    JSON ``null``, but a pandas ``NaN`` round-trips to a JS ``NaN`` (never null),
+    so that trait never fires for our data. We instead drive the empty-cell text
+    through a `text_value` VegaExpr: the frontend renders ``text_value || <the
+    d3-formatted number>``, so returning ``''`` for real numbers falls back to
+    the normal `fmt` output while NaN cells return `missing`. `cell.value` stays
+    numeric, so the background ramp (which already routes NaN to the zebra) is
+    unaffected."""
     t0, t1, t2, t3 = thresholds
     zebra = _zebra_expr()
     expr = (
@@ -127,12 +136,15 @@ def _diverging_bg_renderer(
         f"cell.value < {t3} ? '{Color.HEAT_POS_SOFT}' : "
         f"'{Color.HEAT_POS_STRONG}'"
     )
-    return TextRenderer(
+    renderer = TextRenderer(
         format=fmt,
         missing=missing,
         text_color=Color.TEXT,
         background_color=VegaExpr(expr),
     )
+    if missing:
+        renderer.text_value = VegaExpr(f"isNaN(cell.value) ? '{missing}' : ''")
+    return renderer
 
 
 def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
@@ -306,7 +318,7 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
     cells are returns (".2%") for absolute / outperformance, ratios (".2f") for
     vol-adjusted, and beta / correlation values (".2f") for those kinds; `Sharpe`
     always uses the Sharpe band. Empty cells display ``-`` (`_CALENDAR_MISSING`)
-    via the renderer's numeric-preserving `missing` text."""
+    via the renderer's numeric-preserving `text_value` empty-cell text."""
     if kind == "vol_adjusted":
         month_thr, month_fmt = _CALENDAR_VOLADJ_THRESHOLDS, ".2f"
         year_thr, year_fmt = _CALENDAR_RETURN_THRESHOLDS, ".2%"

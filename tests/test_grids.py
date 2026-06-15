@@ -37,10 +37,16 @@ _CAL_COLS = [
 
 def test_calendar_renderers_show_dash_for_missing():
     # Every calendar cell renders empty (NaN) months as "-" while keeping the
-    # value numeric for the diverging background.
+    # value numeric for the diverging background. The dash is driven by a
+    # `text_value` VegaExpr (ipydatagrid's `missing` trait only fires on a strict
+    # JSON null, which pandas NaN never serializes to), so assert the expr is
+    # wired up and substitutes the dash only for NaN cells.
     renderers = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
     assert set(renderers) == set(_CAL_COLS)
     assert all(r.missing == "-" for r in renderers.values())
+    for r in renderers.values():
+        assert r.text_value is not None
+        assert r.text_value.value == "isNaN(cell.value) ? '-' : ''"
 
 
 def test_calendar_renderers_format_by_kind():
