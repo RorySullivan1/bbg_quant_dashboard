@@ -17,19 +17,22 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
     "Solution": "Beta",
     "ReturnType": "Total",
     "Currency": "USD",
-    "LiveDate": "1957-03-04"
+    "LiveDate": "1957-03-04",
+    "Description": "S&P 500 — description pending."
   }
 }
 ```
 
 `COLUMN_MAP` in `src/data.py` renames these to internal snake_case
 (`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
-`currency`, `live_date`). `IndexFamilyName` maps to the internal
-`category` field — there is no separate "family" dimension. The metadata
-DataFrame also has a derived `ticker` column = `<key> + " Index"`.
-`Currency` is metadata (BQL only supplies `px_last`, not reference
-fields); `load_metadata` pads any missing `COLUMN_MAP` column with `NA`,
-so records without a `Currency` key still load.
+`currency`, `live_date`, `description`). `IndexFamilyName` maps to the
+internal `category` field — there is no separate "family" dimension. The
+metadata DataFrame also has a derived `ticker` column = `<key> + " Index"`.
+`Currency` and `Description` are metadata (BQL only supplies `px_last`, not
+reference fields); `load_metadata` pads any missing `COLUMN_MAP` column with
+`NA`, so records without a `Currency` or `Description` key still load.
+`Description` (added in v0.9.0) is a free-text per-index blurb surfaced in the
+Single Strategy profile card; it is NA-safe when absent.
 
 **Universe membership (v0.8.9):** `build_app` keeps only records whose
 `solution` is in `UNIVERSE_SOLUTION_VALUES` (`src/config.py`) — **ARP**,
