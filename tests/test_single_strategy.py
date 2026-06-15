@@ -1,8 +1,9 @@
-"""Tests for the Single Strategy tab (v0.9.0 Workstream C).
+"""Tests for the Single Strategy tab (v0.9.0 Workstreams C + D).
 
-Covers the pure profile-card renderer (incl. NA-safety) and the Section 1
-recompute (`render_single_strategy`) against a mock cache: chart traces, the
-benchmark overlay, the compact perf table, and the empty/missing-ticker guard.
+Covers the pure profile-card renderer (incl. NA-safety), the Section 1 recompute
+(`render_single_strategy`), and the Section 2 monthly-return calendar
+(`render_calendar` / `set_calendar_kind`) against a mock cache: chart traces, the
+benchmark overlay, the perf table, calendar shape/kind switching, and guards.
 """
 
 from __future__ import annotations
@@ -12,8 +13,11 @@ from types import SimpleNamespace
 import pandas as pd
 from src.layout.html import _na, _render_profile_card
 from src.layout.single_strategy import (
+    _CALENDAR_TABS,
     make_single_strategy_panel,
+    render_calendar,
     render_single_strategy,
+    set_calendar_kind,
 )
 
 
@@ -96,3 +100,65 @@ def test_render_single_strategy_empty_cache_no_raise():
     render_single_strategy(ss, state, meta, pd.Timestamp("2020-01-01"))
     assert len(ss.line_fig.data) == 0
     assert ss.perf_grid.data.empty
+    # Section 1 recompute also drives the calendar — it should clear too.
+    assert ss.cal_grid.data.empty
+
+
+_CAL_COLS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+    "Year",
+    "Sharpe",
+]
+
+
+def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    universe = multiyear_prices.copy()
+    universe["SPX Index"] = benchmark
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+
+    render_calendar(ss, state)
+    data = ss.cal_grid.data
+    assert list(data.columns) == _CAL_COLS
+    # Most-recent year on top (descending), years rendered as string labels.
+    years = [int(y) for y in data.index]
+    assert years == sorted(years, reverse=True)
+
+
+def test_calendar_kind_switch_outperformance_and_voladj(multiyear_prices, benchmark):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    universe = multiyear_prices.copy()
+    universe["SPX Index"] = benchmark
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+    ss.bench_dd.value = "SPX Index"
+
+    set_calendar_kind(ss, "outperformance")
+    assert ss.cal_kind == "outperformance"
+    render_calendar(ss, state)
+    assert list(ss.cal_grid.data.columns) == _CAL_COLS
+
+    set_calendar_kind(ss, "vol_adjusted")
+    assert ss.cal_kind == "vol_adjusted"
+    render_calendar(ss, state)
+    assert not ss.cal_grid.data.empty
+
+
+def test_calendar_tabs_cover_every_kind():
+    # The pill set and the calendar_return_table kinds stay in lockstep.
+    kinds = {kind for _label, kind in _CALENDAR_TABS}
+    assert kinds == {"absolute", "outperformance", "vol_adjusted"}
