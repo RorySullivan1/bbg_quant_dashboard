@@ -17,6 +17,7 @@ COLUMN_MAP = {
     "ReturnType": "return_type",
     "LiveDate": "live_date",
     "Currency": "currency",
+    "Description": "description",
 }
 
 META_COLUMNS = ["ticker"] + list(COLUMN_MAP.values())

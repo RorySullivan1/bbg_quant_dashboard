@@ -8,7 +8,7 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.8.6`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.8.11`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
@@ -85,6 +85,8 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
 - [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
   tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
+  _(in progress — Workstream A `description` field landed; the v0.7.0 factor
+  dependency is now shipped)._
 - [ ] `v1.0.0` — Release Hardening: testing, final optimization, documentation,
   compliant legal-disclaimer placement, enhancements, and the 1.0 release
   mechanics.
