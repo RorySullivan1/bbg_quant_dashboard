@@ -890,3 +890,151 @@ def test_tercile_bounds_degenerate_selects_all():
     assert stats.tercile_bounds(pd.Series(dtype=float), "low") == (-np.inf, np.inf)
     flat = pd.Series([5.0] * 10)
     assert stats.tercile_bounds(flat, "high") == (-np.inf, np.inf)
+
+
+# --- v0.9.0 calendar / resampled-return helpers ----------------------------
+
+_CAL_MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+_CAL_COLS = [*_CAL_MONTHS, "Year", "Sharpe"]
+
+
+def test_monthly_returns_compounds_within_month(bdays):
+    # 1%/day for 11 business days, all inside January → 10 compounded steps.
+    idx = bdays(11, start="2021-01-04")
+    prices = pd.DataFrame({"X Index": 100.0 * 1.01 ** np.arange(11)}, index=idx)
+    m = stats.monthly_returns(prices)
+    assert len(m) == 1
+    assert m.index.is_month_end.all()
+    assert m["X Index"].iloc[0] == pytest.approx(1.01**10 - 1)
+
+
+def test_monthly_returns_reconcile_to_total_return(multiyear_prices):
+    # Compounding every month back together equals the full-period total return.
+    m = stats.monthly_returns(multiyear_prices)
+    compounded = (1.0 + m).prod() - 1.0
+    tot = stats.total_return(multiyear_prices)
+    np.testing.assert_allclose(compounded.to_numpy(), tot.to_numpy(), rtol=1e-9)
+
+
+def test_monthly_returns_empty_passthrough():
+    assert stats.monthly_returns(pd.DataFrame()).empty
+
+
+def test_weekly_returns_anchored_on_friday(bdays):
+    idx = bdays(10, start="2021-01-04")  # Mon Jan 4 .. Fri Jan 15
+    prices = pd.DataFrame({"X Index": 100.0 * 1.01 ** np.arange(10)}, index=idx)
+    w = stats.weekly_returns(prices)
+    assert (w.index.dayofweek == 4).all()  # every bin ends on a Friday
+
+
+def test_monthly_realized_vol_is_within_month_std(bdays):
+    idx = bdays(5, start="2021-01-04")
+    vals = [0.01, -0.01, 0.02, -0.02, 0.0]
+    rets = pd.DataFrame({"X Index": vals}, index=idx)
+    rv = stats.monthly_realized_vol(rets)
+    assert rv["X Index"].iloc[0] == pytest.approx(np.std(vals, ddof=1))
+
+
+def test_calendar_return_table_columns_and_year_reconciles(multiyear_prices):
+    table = stats.calendar_return_table(multiyear_prices["AAA Index"])
+    assert list(table.columns) == _CAL_COLS
+    for _, row in table.iterrows():
+        months = row[_CAL_MONTHS].dropna().to_numpy()
+        compounded = float(np.prod(1.0 + months) - 1.0)
+        assert row["Year"] == pytest.approx(compounded)
+    # A full calendar year has a finite annualized Sharpe.
+    assert np.isfinite(table.loc[2022, "Sharpe"])
+
+
+def test_calendar_return_table_empty_keeps_columns():
+    out = stats.calendar_return_table(pd.Series(dtype=float))
+    assert out.empty
+    assert list(out.columns) == _CAL_COLS
+
+
+def test_calendar_return_table_invalid_kind_raises(multiyear_prices):
+    with pytest.raises(ValueError, match="unknown kind"):
+        stats.calendar_return_table(multiyear_prices["AAA Index"], kind="bogus")
+
+
+def test_calendar_outperformance_requires_benchmark(multiyear_prices):
+    out = stats.calendar_return_table(
+        multiyear_prices["AAA Index"], kind="outperformance", benchmark=None
+    )
+    assert out.empty
+    assert list(out.columns) == _CAL_COLS
+
+
+def test_calendar_outperformance_is_strategy_minus_benchmark(
+    multiyear_prices, benchmark
+):
+    s = multiyear_prices["AAA Index"]
+    op = stats.calendar_return_table(s, kind="outperformance", benchmark=benchmark)
+    m_s = stats.monthly_returns(s.to_frame("x"))["x"]
+    m_b = stats.monthly_returns(benchmark.to_frame("b"))["b"]
+    ts = m_s.index[5]
+    expected = m_s.loc[ts] - m_b.reindex(m_s.index).loc[ts]
+    assert op.loc[ts.year, _CAL_MONTHS[ts.month - 1]] == pytest.approx(expected)
+
+
+def test_calendar_vol_adjusted_is_return_over_vol(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    va = stats.calendar_return_table(s, kind="vol_adjusted")
+    m = stats.monthly_returns(s.to_frame("x"))["x"]
+    rvol = stats.monthly_realized_vol(stats.daily_returns(s.to_frame("x")))["x"]
+    ts = m.index[5]
+    expected = m.loc[ts] / rvol.loc[ts]
+    assert va.loc[ts.year, _CAL_MONTHS[ts.month - 1]] == pytest.approx(expected)
+
+
+def test_ols_fit_recovers_a_perfect_line():
+    x = np.arange(10, dtype=float)
+    fit = stats.ols_fit(x, 3.0 + 2.0 * x)
+    assert fit.slope == pytest.approx(2.0)
+    assert fit.intercept == pytest.approx(3.0)
+    assert fit.r_squared == pytest.approx(1.0)
+
+
+def test_ols_fit_drops_nan_pairs():
+    x = np.array([0.0, 1.0, 2.0, np.nan])
+    y = np.array([1.0, 3.0, 5.0, 10.0])
+    fit = stats.ols_fit(x, y)
+    assert fit.slope == pytest.approx(2.0)
+
+
+def test_ols_fit_degenerate_is_nan():
+    one = stats.ols_fit([1.0], [2.0])
+    assert np.isnan(one.slope) and np.isnan(one.r_squared)
+    flat_x = stats.ols_fit([5.0, 5.0, 5.0], [1.0, 2.0, 3.0])
+    assert np.isnan(flat_x.slope)
+
+
+def test_monthly_factor_correlations_self_is_one(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    factor = stats.daily_returns(s.to_frame("f"))["f"]
+    mc = stats.monthly_factor_correlations(s, factor, window=63)
+    assert mc.index.is_month_end.all()
+    valid = mc.dropna()
+    assert (valid <= 1.0 + 1e-9).all()
+    assert (valid >= -1.0 - 1e-9).all()
+    assert valid.iloc[-1] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_monthly_factor_correlations_empty():
+    out = stats.monthly_factor_correlations(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    )
+    assert out.empty
