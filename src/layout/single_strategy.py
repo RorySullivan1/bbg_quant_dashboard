@@ -126,12 +126,22 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
         layout=W.Layout(width="38%", padding="0 8px 0 0"),
     )
     right_col = W.VBox(
-        [line_fig, perf_header, perf_grid],
+        [line_fig],
         layout=W.Layout(width="62%"),
     )
-    section1 = W.HBox(
+    profile_chart_row = W.HBox(
         [left_col, right_col],
         layout=W.Layout(width="100%", align_items="stretch"),
+    )
+    # Standard-performance table spans the full section width, below the
+    # profile-card + cumulative-chart row.
+    perf_block = W.VBox(
+        [perf_header, perf_grid],
+        layout=W.Layout(width="100%", padding="8px 0 0 0"),
+    )
+    section1 = W.VBox(
+        [profile_chart_row, perf_block],
+        layout=W.Layout(width="100%"),
     )
 
     # Section 2 (Workstream D): a 3-pill monthly-return calendar over one grid.

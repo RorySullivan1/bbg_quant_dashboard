@@ -11,7 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pandas as pd
-from src.layout.html import _na, _render_profile_card
+from src.layout.html import _fmt_date, _na, _render_profile_card
 from src.layout.panes import _SINGLE_BENCHMARK_VIEWS, SINGLE_ANALYSIS_OPTIONS
 from src.layout.single_strategy import (
     _CALENDAR_TABS,
@@ -35,6 +35,7 @@ def _meta() -> pd.DataFrame:
             "theme": ["T1", "T2", "T3"],
             "return_type": ["Total", "Total", "Excess"],
             "currency": ["USD", "EUR", "USD"],
+            "live_date": pd.to_datetime(["2010-03-15", pd.NaT, "2015-07-01"]),
             "description": ["Alpha desc", pd.NA, "Charlie desc"],
         }
     )
@@ -47,14 +48,24 @@ def test_na_helper():
     assert _na("USD") == "USD"
 
 
+def test_fmt_date_helper():
+    assert _fmt_date(pd.Timestamp("2010-03-15")) == "2010-03-15"
+    assert _fmt_date("2010-03-15") == "2010-03-15"
+    assert _fmt_date(pd.NaT) == "—"
+    assert _fmt_date(None) == "—"
+    assert _fmt_date("not a date") == "—"
+
+
 def test_render_profile_card_contains_fields():
     html = _render_profile_card(_meta().iloc[0])
     for token in ("Alpha", "AAA Index", "USD", "Total", "Alpha desc"):
         assert token in html
+    # Launch date is rendered as YYYY-MM-DD.
+    assert "Launch Date" in html and "2010-03-15" in html
 
 
 def test_render_profile_card_is_na_safe():
-    # Bravo's description is NA → renders an em dash, no exception.
+    # Bravo's description + launch date are NA → render em dashes, no exception.
     html = _render_profile_card(_meta().iloc[1])
     assert "Bravo" in html and "BBB Index" in html
     assert "—" in html
