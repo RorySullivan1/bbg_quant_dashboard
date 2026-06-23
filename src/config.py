@@ -58,7 +58,7 @@ BENCHMARK_TICKERS: list[str] = [
     "MXWO Index",  # MSCI World
     "LBUSTRUU Index",  # Bloomberg US Aggregate
     "BCOM Index",  # Bloomberg Commodity
-    "BBG6040 Index",  # Bloomberg 60/40
+    "BMADM64 Index",  # Bloomberg 60/40
 ]
 DEFAULT_BENCHMARK = "SPX Index"
 
