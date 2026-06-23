@@ -215,6 +215,181 @@ def _factor_corr_chart() -> go.FigureWidget:
     )
 
 
+def _factor_scoring_chart() -> go.FigureWidget:
+    """Single Strategy analysis (v0.9.0): a bar chart of the strategy's β to the
+    macro-factor proxies (equity risk premium / term premium / trend), filled by
+    `_update_factor_scoring`."""
+    return go.FigureWidget(
+        data=[
+            go.Bar(
+                x=[],
+                y=[],
+                marker=dict(color=[]),
+                hovertemplate="%{x}<br>β %{y:.2f}<extra></extra>",
+            )
+        ],
+        layout=_chart_layout(
+            title=f"Factor scoring — β to macro factors ({LOOKBACK_YEARS}Y)",
+            xaxis=dict(title="Factor"),
+            yaxis=dict(title="Beta", zeroline=True),
+            shapes=[_h_ref(0.0)],
+        ),
+    )
+
+
+def _perf_ranking_chart() -> go.FigureWidget:
+    """Single Strategy analysis (v0.9.0): a radar/spider chart ranking the
+    strategy across performance metrics. Metrics are wired in a later pass;
+    `_update_perf_ranking` shows a placeholder until then."""
+    return go.FigureWidget(
+        data=[go.Scatterpolar(r=[], theta=[], fill="toself")],
+        layout=_chart_layout(
+            title="Performance ranking",
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        ),
+    )
+
+
+def _pca_chart() -> go.FigureWidget:
+    """Single Strategy analysis (v0.9.0, stub): a PCA scree chart — per-component
+    explained-variance bars with a cumulative line on a secondary axis."""
+    return go.FigureWidget(
+        data=[
+            go.Bar(x=[], y=[], name="Explained"),
+            go.Scatter(x=[], y=[], mode="lines+markers", name="Cumulative", yaxis="y2"),
+        ],
+        layout=_chart_layout(
+            title="PCA analysis",
+            xaxis=dict(title="Principal component"),
+            yaxis=dict(title="Explained variance", tickformat=".0%"),
+            yaxis2=dict(
+                title="Cumulative",
+                overlaying="y",
+                side="right",
+                tickformat=".0%",
+                range=[0, 1],
+            ),
+        ),
+    )
+
+
+def _defensive_chart() -> go.FigureWidget:
+    """Single Strategy analysis (v0.9.0, stub): a defensive-scoring bar chart."""
+    return go.FigureWidget(
+        data=[go.Bar(x=[], y=[])],
+        layout=_chart_layout(
+            title="Defensive scoring",
+            xaxis=dict(title="Metric"),
+            yaxis=dict(title="Score"),
+        ),
+    )
+
+
+# Single Strategy analysis-pane options (v0.9.0). The first three are the
+# original Section 3 analytics; the rest are added per the v0.9.0 deep-dive
+# (Drawdown + Factor scoring are functional, the others are stubs).
+SINGLE_ANALYSIS_OPTIONS: tuple[str, ...] = (
+    "Weekly Scatter",
+    "Return Distribution",
+    "Factor Scatter",
+    "Drawdown",
+    "Performance Ranking",
+    "Factor Scoring",
+    "PCA Analysis",
+    "Defensive Scoring",
+)
+
+# Single-strategy analyses whose figure depends on the per-pane benchmark.
+_SINGLE_BENCHMARK_VIEWS: frozenset[str] = frozenset(
+    {"Weekly Scatter", "Return Distribution", "Drawdown"}
+)
+
+
+def _make_single_analysis_pane(side_label: str) -> SimpleNamespace:
+    """Build one Single-Strategy analysis pane — a self-contained 50%-width
+    column with an analysis picker, a per-pane benchmark dropdown (shown only for
+    the benchmark-dependent views), and every figure pre-allocated.
+
+    Mirrors `_make_analysis_pane` (Multi-Strategy) so the two single-strategy
+    panes render the same option set side-by-side for comparison. The *shared*
+    tab-level strategy picker feeds both panes; each pane only chooses which
+    analysis and which benchmark to draw, so users can contrast two views of the
+    same strategy.
+    """
+    weekly_fig = _weekly_scatter_chart()
+    retdist_fig = _return_dist_chart()
+    retdist_stats_grid = _return_dist_stats_grid()
+    factor_fig = _factor_corr_chart()
+    dd_fig = _drawdown_chart()
+    ranking_fig = _perf_ranking_chart()
+    factor_score_fig = _factor_scoring_chart()
+    pca_fig = _pca_chart()
+    defensive_fig = _defensive_chart()
+
+    bench_dd = _make_benchmark_dropdown()
+
+    view_layout = W.Layout(width="100%", padding="4px")
+    views: dict[str, W.Widget] = {
+        "Weekly Scatter": W.VBox([weekly_fig], layout=view_layout),
+        "Return Distribution": W.VBox(
+            [retdist_fig, retdist_stats_grid], layout=view_layout
+        ),
+        "Factor Scatter": W.VBox([factor_fig], layout=view_layout),
+        "Drawdown": W.VBox([dd_fig], layout=view_layout),
+        "Performance Ranking": W.VBox([ranking_fig], layout=view_layout),
+        "Factor Scoring": W.VBox([factor_score_fig], layout=view_layout),
+        "PCA Analysis": W.VBox([pca_fig], layout=view_layout),
+        "Defensive Scoring": W.VBox([defensive_fig], layout=view_layout),
+    }
+
+    default_label = "Weekly Scatter" if side_label == "left" else "Factor Scatter"
+    picker = W.Dropdown(
+        options=list(SINGLE_ANALYSIS_OPTIONS),
+        value=default_label,
+        description="Analysis",
+        style={"description_width": "70px"},
+        layout=W.Layout(width="360px"),
+    )
+
+    def _sync_benchmark_visibility(label: str) -> None:
+        bench_dd.layout.display = "" if label in _SINGLE_BENCHMARK_VIEWS else "none"
+
+    _sync_benchmark_visibility(default_label)
+
+    header_row = W.HBox(
+        [picker, bench_dd],
+        layout=W.Layout(width="100%", align_items="center", margin="0 0 6px 0"),
+    )
+    stack = W.Box([views[default_label]], layout=W.Layout(width="100%"))
+
+    def _on_pick(change):
+        label = change["new"]
+        _sync_benchmark_visibility(label)
+        stack.children = (views[label],)
+
+    picker.observe(_on_pick, names="value")
+
+    root = W.VBox([header_row, stack], layout=W.Layout(width="50%"))
+    root.add_class("bbg-card")
+
+    return SimpleNamespace(
+        root=root,
+        picker=picker,
+        bench_dd=bench_dd,
+        stack=stack,
+        views=views,
+        weekly_fig=weekly_fig,
+        retdist_fig=retdist_fig,
+        retdist_stats_grid=retdist_stats_grid,
+        factor_fig=factor_fig,
+        dd_fig=dd_fig,
+        ranking_fig=ranking_fig,
+        factor_score_fig=factor_score_fig,
+        pca_fig=pca_fig,
+        defensive_fig=defensive_fig,
+    )
+
+
 def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     """Build a self-contained analysis pane with all 9 figures pre-allocated.
 

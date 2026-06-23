@@ -354,3 +354,76 @@ def _update_factor_corr_scatter(
     with fig.batch_update():
         fig.data = ()
         fig.add_traces([trace])
+
+
+def _update_factor_scoring(fig: go.FigureWidget, betas: pd.Series | None) -> None:
+    """Bar chart of a strategy's β to each macro-factor proxy (equity risk
+    premium / term premium / trend). `betas` is a Series indexed by factor label;
+    bars are green when positive, red when negative. None / all-NaN clears."""
+    if betas is None or betas.dropna().empty:
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.color = []
+        return
+    s = betas.dropna()
+    colors = [
+        Color.GREEN_600.value if v >= 0 else Color.RED_600.value for v in s.values
+    ]
+    with fig.batch_update():
+        fig.data[0].x = list(s.index)
+        fig.data[0].y = s.values
+        fig.data[0].marker.color = colors
+
+
+def _stub_placeholder(fig: go.FigureWidget, text: str) -> None:
+    """Clear a figure and show one centered muted placeholder annotation — the
+    shared body of the not-yet-implemented analysis stubs."""
+    with fig.batch_update():
+        fig.data = ()
+        fig.layout.annotations = ()
+        fig.add_annotation(
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            text=text,
+            font=dict(color=Color.TEXT_MUTED.value, size=13),
+        )
+
+
+def _update_perf_ranking(fig: go.FigureWidget, scores: pd.Series | None = None) -> None:
+    """Radar/spider ranking of the strategy across performance metrics. Metrics
+    are wired in a later pass; with no scores the figure shows a placeholder.
+    When given, `scores` is a Series of metric→value plotted as a closed loop."""
+    if scores is None or scores.dropna().empty:
+        _stub_placeholder(fig, "Performance metrics coming soon")
+        return
+    s = scores.dropna()
+    theta = [*s.index, s.index[0]]  # close the loop back to the first axis
+    r = [*s.values, s.values[0]]
+    with fig.batch_update():
+        fig.data = ()
+        fig.layout.annotations = ()
+        fig.add_traces(
+            [
+                go.Scatterpolar(
+                    r=r,
+                    theta=theta,
+                    fill="toself",
+                    line=dict(color=_palette_color(0)),
+                )
+            ]
+        )
+
+
+def _update_pca(fig: go.FigureWidget, *_args, **_kwargs) -> None:
+    """PCA scree (stub): explained-variance bars + a cumulative line. Wired in a
+    later pass; for now it shows a placeholder."""
+    _stub_placeholder(fig, "PCA analysis — coming soon")
+
+
+def _update_defensive(fig: go.FigureWidget, *_args, **_kwargs) -> None:
+    """Defensive scoring (stub). Wired in a later pass; shows a placeholder."""
+    _stub_placeholder(fig, "Defensive scoring — coming soon")

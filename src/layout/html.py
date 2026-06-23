@@ -184,11 +184,26 @@ def _na(value: object) -> str:
     return text or "—"
 
 
+def _fmt_date(value: object) -> str:
+    """Display helper: a date / timestamp → ``YYYY-MM-DD``; ``NaT`` / blank → em
+    dash. Tolerates strings and anything `pd.to_datetime` can parse."""
+    if value is None:
+        return "—"
+    try:
+        ts = pd.to_datetime(value, errors="coerce")
+    except (TypeError, ValueError):
+        return _na(value)
+    if pd.isna(ts):
+        return "—"
+    return ts.strftime("%Y-%m-%d")
+
+
 def _render_profile_card(row: pd.Series) -> str:
     """Render the Single Strategy metadata card from one ``meta`` row.
 
-    Every field is `html.escape`'d and NA-safe (`_na` → em dash), so a record
-    missing a ``description`` / ``currency`` still renders cleanly."""
+    Every field is `html.escape`'d and NA-safe (`_na` / `_fmt_date` → em dash), so
+    a record missing a ``description`` / ``currency`` / ``live_date`` still
+    renders cleanly."""
     return render_template(
         "profile_card",
         **STYLE_CTX,
@@ -199,6 +214,7 @@ def _render_profile_card(row: pd.Series) -> str:
         return_type=html.escape(_na(row.get("return_type"))),
         theme=html.escape(_na(row.get("theme"))),
         category=html.escape(_na(row.get("category"))),
+        launch_date=html.escape(_fmt_date(row.get("live_date"))),
         description=html.escape(_na(row.get("description"))),
     )
 
