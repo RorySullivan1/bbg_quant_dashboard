@@ -22,6 +22,7 @@ from src.layout.single_strategy import (
     set_calendar_kind,
     set_section3_tab,
 )
+from src.stats import calendar_summary_columns
 
 
 def _meta() -> pd.DataFrame:
@@ -107,7 +108,7 @@ def test_render_single_strategy_empty_cache_no_raise():
     assert ss.cal_grid.data.empty
 
 
-_CAL_COLS = [
+_CAL_MONTHS = [
     "Jan",
     "Feb",
     "Mar",
@@ -120,9 +121,11 @@ _CAL_COLS = [
     "Oct",
     "Nov",
     "Dec",
-    "Year",
-    "Sharpe",
 ]
+
+
+def _cal_cols(kind: str) -> list[str]:
+    return [*_CAL_MONTHS, *calendar_summary_columns(kind)]
 
 
 def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
@@ -135,7 +138,8 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
 
     render_calendar(ss, state)
     data = ss.cal_grid.data
-    assert list(data.columns) == _CAL_COLS
+    # Default kind is absolute → Return / Vol / Sharpe summary columns.
+    assert list(data.columns) == _cal_cols("absolute")
     # Oldest year on top (ascending), years rendered as string labels.
     years = [int(y) for y in data.index]
     assert years == sorted(years)
@@ -154,7 +158,8 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
         set_calendar_kind(ss, kind)
         assert ss.cal_kind == kind
         render_calendar(ss, state)
-        assert list(ss.cal_grid.data.columns) == _CAL_COLS
+        # Each kind drives its own summary columns.
+        assert list(ss.cal_grid.data.columns) == _cal_cols(kind)
         assert not ss.cal_grid.data.empty
 
 

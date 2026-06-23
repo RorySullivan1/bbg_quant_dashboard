@@ -908,7 +908,13 @@ _CAL_MONTHS = [
     "Nov",
     "Dec",
 ]
-_CAL_COLS = [*_CAL_MONTHS, "Year", "Sharpe"]
+
+
+def _cal_cols(kind: str) -> list[str]:
+    return [*_CAL_MONTHS, *stats.calendar_summary_columns(kind)]
+
+
+_CAL_COLS = _cal_cols("absolute")
 
 
 def test_monthly_returns_compounds_within_month(bdays):
@@ -954,9 +960,10 @@ def test_calendar_return_table_columns_and_year_reconciles(multiyear_prices):
     for _, row in table.iterrows():
         months = row[_CAL_MONTHS].dropna().to_numpy()
         compounded = float(np.prod(1.0 + months) - 1.0)
-        assert row["Year"] == pytest.approx(compounded)
-    # A full calendar year has a finite annualized Sharpe.
+        assert row["Return"] == pytest.approx(compounded)
+    # A full calendar year has a finite annualized Sharpe + Vol.
     assert np.isfinite(table.loc[2022, "Sharpe"])
+    assert np.isfinite(table.loc[2022, "Vol"]) and table.loc[2022, "Vol"] > 0
 
 
 def test_calendar_return_table_empty_keeps_columns():
@@ -975,7 +982,7 @@ def test_calendar_outperformance_requires_benchmark(multiyear_prices):
         multiyear_prices["AAA Index"], kind="outperformance", benchmark=None
     )
     assert out.empty
-    assert list(out.columns) == _CAL_COLS
+    assert list(out.columns) == _cal_cols("outperformance")
 
 
 def test_calendar_outperformance_is_strategy_minus_benchmark(
@@ -988,6 +995,14 @@ def test_calendar_outperformance_is_strategy_minus_benchmark(
     ts = m_s.index[5]
     expected = m_s.loc[ts] - m_b.reindex(m_s.index).loc[ts]
     assert op.loc[ts.year, _CAL_MONTHS[ts.month - 1]] == pytest.approx(expected)
+    # Summary columns: strategy & benchmark annual returns and both Sharpes, with
+    # Excess reconciling to Return − Bench.
+    assert list(op.columns) == _cal_cols("outperformance")
+    year = ts.year
+    assert op.loc[year, "Excess"] == pytest.approx(
+        op.loc[year, "Return"] - op.loc[year, "Bench"]
+    )
+    assert np.isfinite(op.loc[year, "Bench Sharpe"])
 
 
 def test_calendar_vol_adjusted_is_return_over_vol(multiyear_prices):
@@ -1112,16 +1127,32 @@ def test_monthly_beta_correlation_empty():
 
 def test_calendar_beta_correlation_need_benchmark(multiyear_prices):
     s = multiyear_prices["AAA Index"]
-    cols = [*_CAL_MONTHS, "Year", "Sharpe"]
     for kind in ("beta", "correlation"):
         out = stats.calendar_return_table(s, kind=kind, benchmark=None)
         assert out.empty
-        assert list(out.columns) == cols
+        assert list(out.columns) == _cal_cols(kind)
 
 
 def test_calendar_beta_correlation_shape(multiyear_prices, benchmark):
     s = multiyear_prices["AAA Index"]
     for kind in ("beta", "correlation"):
         table = stats.calendar_return_table(s, kind=kind, benchmark=benchmark)
-        assert list(table.columns) == [*_CAL_MONTHS, "Year", "Sharpe"]
+        # A single annual summary column: Beta / Correlation, no Sharpe.
+        assert list(table.columns) == _cal_cols(kind)
         assert not table.empty
+
+
+def test_calendar_summary_columns_per_kind():
+    assert stats.calendar_summary_columns("absolute") == ("Return", "Vol", "Sharpe")
+    assert stats.calendar_summary_columns("outperformance") == (
+        "Return",
+        "Bench",
+        "Excess",
+        "Sharpe",
+        "Bench Sharpe",
+    )
+    assert stats.calendar_summary_columns("vol_adjusted") == ("Sharpe",)
+    assert stats.calendar_summary_columns("beta") == ("Beta",)
+    assert stats.calendar_summary_columns("correlation") == ("Correlation",)
+    with pytest.raises(ValueError, match="unknown kind"):
+        stats.calendar_summary_columns("bogus")

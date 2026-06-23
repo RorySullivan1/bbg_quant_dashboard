@@ -160,6 +160,17 @@ def _diverging_bg_renderer(
     return renderer
 
 
+def _plain_num_renderer(fmt: str, *, missing: str = "") -> TextRenderer:
+    """A numeric renderer with no diverging background (the grid zebra shows
+    through), but the same empty-cell dash handling as `_diverging_bg_renderer`.
+    Used for summary columns like Vol where a red→green ramp would imply a
+    good/bad axis that doesn't exist."""
+    renderer = TextRenderer(format=fmt, missing=missing, text_color=Color.TEXT)
+    if missing:
+        renderer.text_value = _dash_text_value(missing)
+    return renderer
+
+
 def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
     """Map each MultiIndex column to a pixel width, keyed by ipydatagrid's
     "<level0>,<level1>" comma-joined field name (e.g. "Info,Name",
@@ -316,7 +327,21 @@ _CALENDAR_VOLADJ_THRESHOLDS: tuple[float, float, float, float] = (
 # neutral band. The ramp encodes magnitude/sign, not good/bad.
 _CALENDAR_CORR_THRESHOLDS: tuple[float, float, float, float] = (-0.5, -0.1, 0.1, 0.5)
 _CALENDAR_BETA_THRESHOLDS: tuple[float, float, float, float] = (0.0, 0.7, 1.3, 2.0)
-_CALENDAR_SUMMARY_COLS: frozenset[str] = frozenset({"Year", "Sharpe"})
+# Renderer spec per calendar summary column: (thresholds | None, fmt). A
+# `None` threshold → a plain (non-diverging) renderer, used for Vol where a
+# good/bad color ramp would mislead. Return-like columns use the return ramp
+# (".2%"); Sharpe / Beta / Correlation use their own bands (".2f").
+_CALENDAR_SUMMARY_SPECS: dict[str, tuple[tuple[float, float, float, float] | None, str]]
+_CALENDAR_SUMMARY_SPECS = {
+    "Return": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Bench": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Excess": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Vol": (None, ".2%"),
+    "Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
+    "Bench Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
+    "Beta": (_CALENDAR_BETA_THRESHOLDS, ".2f"),
+    "Correlation": (_CALENDAR_CORR_THRESHOLDS, ".2f"),
+}
 # Empty (NaN) calendar cells render as the shared dash rather than "NaN".
 _CALENDAR_MISSING: str = _MISSING_DASH
 
@@ -335,45 +360,43 @@ def _calendar_grid() -> DataGrid:
 
 
 def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
-    """Diverging renderers for the calendar grid, keyed by `kind`. Month + Year
-    cells are returns (".2%") for absolute / outperformance, ratios (".2f") for
-    vol-adjusted, and beta / correlation values (".2f") for those kinds; `Sharpe`
-    always uses the Sharpe band. Empty cells display ``-`` (`_CALENDAR_MISSING`)
-    via the renderer's numeric-preserving `text_value` empty-cell text."""
+    """Renderers for the calendar grid, keyed by `kind`. Month cells use a
+    diverging ramp whose band/format match the kind (returns ".2%" for absolute /
+    outperformance, ratios ".2f" for vol-adjusted, beta / correlation ".2f"). The
+    trailing summary columns each take their own renderer from
+    `_CALENDAR_SUMMARY_SPECS` (e.g. Return as a ".2%" ramp, Sharpe on the Sharpe
+    band, Vol plain). Empty cells display ``-`` (`_CALENDAR_MISSING`) via the
+    renderers' numeric-preserving `text_value`."""
     if kind == "vol_adjusted":
         month_thr, month_fmt = _CALENDAR_VOLADJ_THRESHOLDS, ".2f"
-        year_thr, year_fmt = _CALENDAR_RETURN_THRESHOLDS, ".2%"
     elif kind == "beta":
-        month_thr = year_thr = _CALENDAR_BETA_THRESHOLDS
-        month_fmt = year_fmt = ".2f"
+        month_thr, month_fmt = _CALENDAR_BETA_THRESHOLDS, ".2f"
     elif kind == "correlation":
-        month_thr = year_thr = _CALENDAR_CORR_THRESHOLDS
-        month_fmt = year_fmt = ".2f"
+        month_thr, month_fmt = _CALENDAR_CORR_THRESHOLDS, ".2f"
     else:  # absolute / outperformance
-        month_thr = year_thr = _CALENDAR_RETURN_THRESHOLDS
-        month_fmt = year_fmt = ".2%"
+        month_thr, month_fmt = _CALENDAR_RETURN_THRESHOLDS, ".2%"
     month_r = _diverging_bg_renderer(
         month_thr, fmt=month_fmt, missing=_CALENDAR_MISSING
     )
-    year_r = _diverging_bg_renderer(year_thr, fmt=year_fmt, missing=_CALENDAR_MISSING)
-    sharpe_r = _diverging_bg_renderer(
-        _SHARPE_HEAT_THRESHOLDS, fmt=".2f", missing=_CALENDAR_MISSING
-    )
     renderers: dict = {}
     for col in columns:
-        if col == "Year":
-            renderers[col] = year_r
-        elif col == "Sharpe":
-            renderers[col] = sharpe_r
-        else:
+        spec = _CALENDAR_SUMMARY_SPECS.get(col)
+        if spec is None:  # a month cell (Jan…Dec)
             renderers[col] = month_r
+            continue
+        thresholds, fmt = spec
+        renderers[col] = (
+            _plain_num_renderer(fmt, missing=_CALENDAR_MISSING)
+            if thresholds is None
+            else _diverging_bg_renderer(thresholds, fmt=fmt, missing=_CALENDAR_MISSING)
+        )
     return renderers
 
 
 def _update_calendar_grid(grid: DataGrid, table: pd.DataFrame, *, kind: str) -> None:
-    """Render a `calendar_return_table` frame (years × Jan…Dec + Year + Sharpe)
-    into the calendar DataGrid, oldest year on top, with diverging conditional
-    formatting keyed to `kind`."""
+    """Render a `calendar_return_table` frame (years × Jan…Dec + the kind's
+    summary columns) into the calendar DataGrid, oldest year on top, with
+    diverging conditional formatting keyed to `kind`."""
     if table is None or table.empty:
         grid.data = pd.DataFrame()
         return

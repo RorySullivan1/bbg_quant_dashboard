@@ -17,7 +17,7 @@ from src.layout.grids import (
     _perf_renderers,
 )
 
-_CAL_COLS = [
+_CAL_MONTHS = [
     "Jan",
     "Feb",
     "Mar",
@@ -30,9 +30,9 @@ _CAL_COLS = [
     "Oct",
     "Nov",
     "Dec",
-    "Year",
-    "Sharpe",
 ]
+# Absolute kind's grid columns: months + Return / Vol / Sharpe.
+_CAL_COLS = [*_CAL_MONTHS, "Return", "Vol", "Sharpe"]
 
 
 def test_calendar_renderers_show_dash_for_missing():
@@ -55,6 +55,29 @@ def test_calendar_renderers_format_by_kind():
     beta = _calendar_renderers(pd.Index(_CAL_COLS), kind="beta")["Jan"]
     assert pct.format == ".2%"
     assert beta.format == ".2f"
+
+
+def test_calendar_summary_column_renderers():
+    # Each summary column takes its own renderer: Return as a % diverging ramp,
+    # Sharpe on the Sharpe band (2dp), and Vol plain (no diverging background) so
+    # its higher-is-not-better axis isn't color-coded good/bad.
+    r = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
+    assert r["Return"].format == ".2%"
+    assert "cell.value <" in _bg_expr(r["Return"])
+    assert r["Sharpe"].format == ".2f"
+    assert "cell.value <" in _bg_expr(r["Sharpe"])
+    # Vol: plain numeric, default (empty) background, but still 2%-formatted + dash.
+    assert r["Vol"].format == ".2%"
+    assert _bg_expr(r["Vol"]) == ""
+    assert r["Vol"].missing == "-"
+
+    # Beta / Correlation single summary columns format as 2dp diverging ramps.
+    beta = _calendar_renderers(pd.Index([*_CAL_MONTHS, "Beta"]), kind="beta")["Beta"]
+    corr = _calendar_renderers(
+        pd.Index([*_CAL_MONTHS, "Correlation"]), kind="correlation"
+    )["Correlation"]
+    assert beta.format == ".2f" and "cell.value <" in _bg_expr(beta)
+    assert corr.format == ".2f" and "cell.value <" in _bg_expr(corr)
 
 
 def _meta() -> pd.DataFrame:

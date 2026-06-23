@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from ._common import daily_returns
-from .performance import ann_sharpe
+from .performance import ann_sharpe, ann_volatility
 from .rolling import rolling_correlation
 
 # Version-agnostic resample rules (see module docstring): month-end and
@@ -45,6 +45,30 @@ _MONTH_COLS = [
 ]
 
 _CALENDAR_KINDS = ("absolute", "outperformance", "vol_adjusted", "beta", "correlation")
+
+# Per-kind trailing summary columns (rendered after Jan…Dec), in display order.
+# Each kind surfaces the calendar-year aggregates that make sense for its month
+# cells; see `calendar_return_table` for how each column is computed.
+#   absolute        — annual return / vol / Sharpe of the strategy.
+#   outperformance  — strategy & benchmark annual return, their difference, and
+#                     both annual Sharpes.
+#   vol_adjusted    — annual Sharpe only (the annual return/vol analogue of the
+#                     monthly return÷vol cells).
+#   beta / corr     — the single annual beta / correlation to the benchmark.
+_CALENDAR_SUMMARY_COLS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "absolute": ("Return", "Vol", "Sharpe"),
+    "outperformance": ("Return", "Bench", "Excess", "Sharpe", "Bench Sharpe"),
+    "vol_adjusted": ("Sharpe",),
+    "beta": ("Beta",),
+    "correlation": ("Correlation",),
+}
+
+
+def calendar_summary_columns(kind: str) -> tuple[str, ...]:
+    """The trailing summary column names for a calendar `kind` (after Jan…Dec)."""
+    if kind not in _CALENDAR_SUMMARY_COLS_BY_KIND:
+        raise ValueError(f"unknown kind: {kind!r}")
+    return _CALENDAR_SUMMARY_COLS_BY_KIND[kind]
 
 
 def monthly_returns(prices: pd.DataFrame) -> pd.DataFrame:
@@ -114,6 +138,19 @@ def _annual_sharpe(prices: pd.Series) -> pd.Series:
         # years=100 ≫ the one-year slice, so the whole calendar year is used.
         sharpe = ann_sharpe(daily_returns(grp), grp, years=100.0)
         out[int(year)] = float(sharpe.get("strategy", np.nan))
+    return pd.Series(out, dtype=float)
+
+
+def _annual_vol(prices: pd.Series) -> pd.Series:
+    """Annualized volatility per calendar year, reusing ``ann_volatility``."""
+    if prices.empty:
+        return pd.Series(dtype=float)
+    frame = prices.to_frame("strategy")
+    out: dict[int, float] = {}
+    for year, grp in frame.groupby(frame.index.year):
+        # years=100 ≫ the one-year slice, so the whole calendar year is used.
+        vol = ann_volatility(daily_returns(grp), years=100.0)
+        out[int(year)] = float(vol.get("strategy", np.nan))
     return pd.Series(out, dtype=float)
 
 
@@ -190,25 +227,29 @@ def calendar_return_table(
     kind: str = "absolute",
     benchmark: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """A single strategy's year×month return calendar plus Year + Sharpe columns.
+    """A single strategy's year×month return calendar plus kind-specific summary
+    columns.
 
-    ``kind`` selects the month-cell transform:
+    ``kind`` selects the month-cell transform *and* the trailing summary columns
+    (see `_CALENDAR_SUMMARY_COLS_BY_KIND`):
 
-    - ``"absolute"`` — the strategy's compounded monthly return.
-    - ``"outperformance"`` — strategy minus benchmark monthly return (needs
-      ``benchmark``; returns an empty table if it is missing).
-    - ``"vol_adjusted"`` — monthly return ÷ within-month realized vol.
+    - ``"absolute"`` — compounded monthly return; summary ``Return`` / ``Vol`` /
+      ``Sharpe`` (annual return, annualized vol, annualized Sharpe).
+    - ``"outperformance"`` — strategy minus benchmark monthly return; summary
+      ``Return`` / ``Bench`` / ``Excess`` (annual strategy & benchmark returns and
+      their difference) plus ``Sharpe`` / ``Bench Sharpe``. Needs ``benchmark``.
+    - ``"vol_adjusted"`` — monthly return ÷ within-month realized vol; summary
+      ``Sharpe`` only (the annual return/vol analogue of the cells).
     - ``"beta"`` / ``"correlation"`` — the strategy's within-month OLS beta /
-      correlation to the benchmark (both need ``benchmark``).
+      correlation to the benchmark; summary is the single annual ``Beta`` /
+      ``Correlation``. Both need ``benchmark``.
 
-    The ``Year`` column is the calendar-year aggregate of the same metric
-    (compounded annual return / annual outperformance / annual beta / annual
-    correlation); ``Sharpe`` is always the strategy's annualized Sharpe for the
-    calendar year, so it stays comparable across kinds.
+    All annual aggregates are per calendar year, computed from the same data the
+    month cells use, so each kind's summary reconciles with its grid.
     """
     if kind not in _CALENDAR_KINDS:
         raise ValueError(f"unknown kind: {kind!r}")
-    cols = [*_MONTH_COLS, "Year", "Sharpe"]
+    cols = [*_MONTH_COLS, *_CALENDAR_SUMMARY_COLS_BY_KIND[kind]]
     if prices is None or prices.empty:
         return pd.DataFrame(columns=cols)
     needs_benchmark = kind in ("outperformance", "beta", "correlation")
@@ -220,23 +261,36 @@ def calendar_return_table(
 
     if kind == "absolute":
         cells = m_strat
-        year_col = _annual_compound(m_strat)
+        summary = {
+            "Return": _annual_compound(m_strat),
+            "Vol": _annual_vol(prices),
+            "Sharpe": _annual_sharpe(prices),
+        }
     elif kind == "outperformance":
         m_bench = monthly_returns(benchmark.to_frame("bench"))["bench"]
         cells = m_strat.sub(m_bench.reindex(m_strat.index))
-        year_col = _annual_compound(m_strat).sub(_annual_compound(m_bench))
+        strat_ret = _annual_compound(m_strat)
+        bench_ret = _annual_compound(m_bench)
+        summary = {
+            "Return": strat_ret,
+            "Bench": bench_ret,
+            "Excess": strat_ret.sub(bench_ret),
+            "Sharpe": _annual_sharpe(prices),
+            "Bench Sharpe": _annual_sharpe(benchmark),
+        }
     elif kind in ("beta", "correlation"):
         fn = _beta if kind == "beta" else _corr
         cells = _within_month_pairwise(prices, benchmark, fn)
-        year_col = _annual_pairwise(prices, benchmark, fn)
+        label = "Beta" if kind == "beta" else "Correlation"
+        summary = {label: _annual_pairwise(prices, benchmark, fn)}
     else:  # vol_adjusted
         rvol = monthly_realized_vol(daily_returns(strat))["strategy"]
         cells = m_strat.divide(rvol.reindex(m_strat.index).replace(0, np.nan))
-        year_col = _annual_compound(m_strat)
+        summary = {"Sharpe": _annual_sharpe(prices)}
 
     table = _pivot_year_month(cells)
-    table["Year"] = year_col
-    table["Sharpe"] = _annual_sharpe(prices)
+    for name, series in summary.items():
+        table[name] = series
     return table.reindex(columns=cols)
 
 
