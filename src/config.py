@@ -58,7 +58,14 @@ BENCHMARK_TICKERS: list[str] = [
     "MXWO Index",  # MSCI World
     "LBUSTRUU Index",  # Bloomberg US Aggregate
     "BCOM Index",  # Bloomberg Commodity
-    "BBG6040 Index",  # Bloomberg 60/40
+    "BMADM64 Index",  # Bloomberg 60/40
+    # Bloomberg systematic risk-premia / cross-asset strategy benchmarks.
+    "BSLRP Index",  # Bloomberg systematic risk premia
+    "BSLMARP Index",  # Bloomberg multi-asset risk premia
+    "BSLXAC Index",  # Bloomberg cross-asset carry
+    "BSLXACV Index",  # Bloomberg cross-asset carry/value
+    "BSLXAV Index",  # Bloomberg cross-asset value
+    "BSLXAT Index",  # Bloomberg cross-asset trend (also TREND_TICKER)
 ]
 DEFAULT_BENCHMARK = "SPX Index"
 
