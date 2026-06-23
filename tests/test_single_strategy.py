@@ -12,15 +12,15 @@ from types import SimpleNamespace
 
 import pandas as pd
 from src.layout.html import _na, _render_profile_card
+from src.layout.panes import _SINGLE_BENCHMARK_VIEWS, SINGLE_ANALYSIS_OPTIONS
 from src.layout.single_strategy import (
     _CALENDAR_TABS,
-    _SECTION3_TABS,
     make_single_strategy_panel,
+    render_analysis_pane,
     render_calendar,
     render_section3,
     render_single_strategy,
     set_calendar_kind,
-    set_section3_tab,
 )
 from src.stats import calendar_summary_columns
 
@@ -189,38 +189,97 @@ def _universe_with_factors(multiyear_prices, benchmark):
     return universe
 
 
-def test_render_section3_populates_all_three(multiyear_prices, benchmark):
+def _set_pane(pane, label, bench="SPX Index"):
+    """Point a pane at one analysis (and benchmark) without going through the
+    widget observer wiring (the builder owns rendering)."""
+    pane.bench_dd.value = bench
+    pane.picker.value = label
+    pane.stack.children = (pane.views[label],)
+
+
+def test_render_section3_renders_both_panes(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = _universe_with_factors(multiyear_prices, benchmark)
     state = SimpleNamespace(universe_prices=universe)
     ss.picker.value = "AAA Index"
-    ss.bench_dd.value = "SPX Index"
+    # Left = weekly scatter (benchmark), right = factor scatter (factors).
+    _set_pane(ss.pane_left, "Weekly Scatter")
+    _set_pane(ss.pane_right, "Factor Scatter")
 
     render_section3(ss, state, meta, universe.index.min())
-    # Weekly scatter: markers + OLS line.
-    assert len(ss.weekly_fig.data) == 2
-    # Histogram: strategy + benchmark overlaid, stats grid populated.
-    assert len(ss.retdist_fig.data) >= 1
-    assert not ss.retdist_stats_grid.data.empty
-    # Factor scatter: one monthly point cloud.
-    assert len(ss.factor_fig.data) == 1
+    assert len(ss.pane_left.weekly_fig.data) == 2  # markers + quadratic fit
+    assert len(ss.pane_right.factor_fig.data) == 1  # one monthly point cloud
 
 
-def test_section3_tab_switch_swaps_view():
+def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
-    assert ss.s3_stack.children == (ss.s3_views["weekly"],)
-    set_section3_tab(ss, "factor")
-    assert ss.s3_tab == "factor"
-    assert ss.s3_stack.children == (ss.s3_views["factor"],)
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+    pane = ss.pane_left
+    _set_pane(pane, "Return Distribution")
+
+    render_analysis_pane(ss, pane, state, meta, universe.index.min())
+    assert len(pane.retdist_fig.data) >= 1
+    assert not pane.retdist_stats_grid.data.empty
 
 
-def test_section3_tabs_match_view_keys():
-    # The pill keys and the built view stack stay in lockstep.
-    keys = {key for _label, key in _SECTION3_TABS}
+def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+    pane = ss.pane_left
+    _set_pane(pane, "Drawdown")
+
+    render_analysis_pane(ss, pane, state, meta, universe.index.min())
+    # Strategy + benchmark drawdown lines.
+    assert len(pane.dd_fig.data) == 2
+
+
+def test_render_analysis_pane_factor_scoring(multiyear_prices, benchmark):
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    universe["BSLXAT Index"] = benchmark  # trend factor leg
+    state = SimpleNamespace(universe_prices=universe)
+    ss.picker.value = "AAA Index"
+    pane = ss.pane_left
+    _set_pane(pane, "Factor Scoring")
+
+    render_analysis_pane(ss, pane, state, meta, universe.index.min())
+    bar = pane.factor_score_fig.data[0]
+    # All three macro-factor betas resolve from the mock cache.
+    assert list(bar.x) == ["Equity risk premium", "Term premium", "Trend"]
+    assert len(bar.y) == 3
+
+
+def test_render_analysis_pane_stubs_show_placeholder():
+    meta = _meta()
+    ss = make_single_strategy_panel(meta)
+    state = SimpleNamespace(universe_prices=pd.DataFrame())
+    for label, fig_attr in (
+        ("Performance Ranking", "ranking_fig"),
+        ("PCA Analysis", "pca_fig"),
+        ("Defensive Scoring", "defensive_fig"),
+    ):
+        pane = ss.pane_left
+        _set_pane(pane, label)
+        render_analysis_pane(ss, pane, state, meta, pd.Timestamp("2020-01-01"))
+        fig = getattr(pane, fig_attr)
+        assert len(fig.data) == 0
+        assert len(fig.layout.annotations) == 1
+
+
+def test_analysis_options_match_pane_views():
+    # The option list and the built view stack stay in lockstep, and every
+    # benchmark-dependent view is a real option.
     ss = make_single_strategy_panel(_meta())
-    assert keys == set(ss.s3_views)
+    assert set(SINGLE_ANALYSIS_OPTIONS) == set(ss.pane_left.views)
+    assert set(SINGLE_ANALYSIS_OPTIONS) >= _SINGLE_BENCHMARK_VIEWS
 
 
 def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
@@ -229,19 +288,21 @@ def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
     # No benchmark / factor columns in the cache — only the strategies.
     state = SimpleNamespace(universe_prices=multiyear_prices)
     ss.picker.value = "AAA Index"
-    ss.bench_dd.value = "SPX Index"  # absent from the cache
+    _set_pane(ss.pane_left, "Weekly Scatter")  # benchmark absent → cleared
+    _set_pane(ss.pane_right, "Return Distribution")
 
     render_section3(ss, state, meta, multiyear_prices.index.min())
-    assert len(ss.weekly_fig.data) == 0  # no benchmark → cleared
-    assert len(ss.retdist_fig.data) >= 1  # strategy-only histogram still renders
-    assert len(ss.factor_fig.data) == 0  # no factor columns → cleared
+    assert len(ss.pane_left.weekly_fig.data) == 0  # no benchmark → cleared
+    # Strategy-only histogram still renders.
+    assert len(ss.pane_right.retdist_fig.data) >= 1
 
 
 def test_render_section3_empty_cache_no_raise():
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     state = SimpleNamespace(universe_prices=pd.DataFrame())
+    _set_pane(ss.pane_left, "Weekly Scatter")
+    _set_pane(ss.pane_right, "Factor Scatter")
     render_section3(ss, state, meta, pd.Timestamp("2020-01-01"))
-    assert len(ss.weekly_fig.data) == 0
-    assert len(ss.factor_fig.data) == 0
-    assert ss.retdist_stats_grid.data.empty
+    assert len(ss.pane_left.weekly_fig.data) == 0
+    assert len(ss.pane_right.factor_fig.data) == 0

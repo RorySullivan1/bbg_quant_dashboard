@@ -105,12 +105,11 @@ from .platform import (
 )
 from .single_strategy import (
     _CALENDAR_TABS,
-    _SECTION3_TABS,
     make_single_strategy_panel,
+    render_analysis_pane,
     render_calendar,
     render_single_strategy,
     set_calendar_kind,
-    set_section3_tab,
 )
 from .state import DashboardState
 
@@ -1867,16 +1866,22 @@ def build_app(verbose: bool = False) -> W.VBox:
     ):
         pill.on_click(_make_cal_kind_handler(kind))
 
-    def _make_section3_handler(which: str):
-        def _handler(_b=None) -> None:
-            set_section3_tab(single_strategy, which)
+    # Section 3 two-pane analysis: each pane re-renders its mounted view when its
+    # analysis picker or benchmark dropdown changes (panes.py already swapped the
+    # stack + benchmark visibility on the pick). The shared strategy / window
+    # come from `single_strategy.picker` and `today`; no BQL, the other pane
+    # untouched.
+    def _make_pane_render_handler(pane: SimpleNamespace):
+        def _handler(_change=None) -> None:
+            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+            render_analysis_pane(single_strategy, pane, state, meta, window_start)
 
         return _handler
 
-    for pill, (_label, key) in zip(
-        single_strategy.s3_pills, _SECTION3_TABS, strict=True
-    ):
-        pill.on_click(_make_section3_handler(key))
+    for pane in (single_strategy.pane_left, single_strategy.pane_right):
+        handler = _make_pane_render_handler(pane)
+        pane.picker.observe(handler, names="value")
+        pane.bench_dd.observe(handler, names="value")
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
