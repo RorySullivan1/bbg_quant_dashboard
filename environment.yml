@@ -1,4 +1,4 @@
-name: bbg_quant
+name: bbg-quant
 channels:
   - conda-forge
 dependencies:
