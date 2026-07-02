@@ -50,6 +50,10 @@ class Color(StrEnum):
     # Near-black with a hint of blue (GitHub-dark vibe; reads better than
     # pure #000 under typical browser displays).
     CHART_BG = "#0d1117"
+    # Fully transparent — lets the host page surface show through the chart
+    # (paper + plot area). Used when charts should read as part of the chrome
+    # rather than sitting on their own near-black panel.
+    TRANSPARENT = "rgba(0,0,0,0)"
     # Subtle grid lines that don't compete with the data.
     CHART_GRID = "#1f2937"
     # Axis line + tick color — medium slate for legibility on the dark bg.

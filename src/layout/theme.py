@@ -22,18 +22,18 @@ _CHART_HEIGHT_PX: int = int(CHART_HEIGHT.removesuffix("px"))
 def _chart_layout(*, title: str, **overrides) -> dict:
     """Shared plotly Layout kwargs — Bloomberg/Barclays dark theme.
 
-    Charts render on a near-black background (`Color.CHART_BG`) with
-    white titles and light slate text. Axis grid/tick styling inherits
-    from the `plotly_dark` template; we override only background, title,
-    font color, and hover styling.
+    Charts render on a transparent background (`Color.TRANSPARENT`) so the
+    host page surface shows through, with white titles and light slate text.
+    Axis grid/tick styling inherits from the `plotly_dark` template; we
+    override only background, title, font color, and hover styling.
 
     Pass `xaxis`, `yaxis`, `hovermode`, `barmode`, `shapes`, `margin`,
     etc. via `overrides`.
     """
     base = dict(
         template="plotly_dark",
-        paper_bgcolor=Color.CHART_BG.value,
-        plot_bgcolor=Color.CHART_BG.value,
+        paper_bgcolor=Color.TRANSPARENT.value,
+        plot_bgcolor=Color.TRANSPARENT.value,
         height=_CHART_HEIGHT_PX,
         margin=dict(t=44, b=50, l=60, r=20),
         title=dict(
