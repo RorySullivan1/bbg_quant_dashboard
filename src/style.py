@@ -65,29 +65,31 @@ class Color(StrEnum):
     # Hover tooltip background.
     CHART_HOVER_BG = "#1f2937"
 
-    # ---- Dark technical chrome (v0.6.5) -----------------------------------
-    # Cohesive dark surface palette aligned with the chart theme above, so the
-    # surrounding chrome reads as the same "terminal-grade" surface as the
-    # charts. Workstreams B/C/D (masthead, loading overlay, buttons, grids)
-    # hang their styling off these tokens.
-    # Page background — matches the chart canvas so chrome and charts blend.
-    CHROME_BG = "#0d1117"
-    # Raised panel surface (filter box, cards) — one step above the page bg.
-    SURFACE = "#161b22"
-    # Second raised surface (nested panels, hover rows).
-    SURFACE_2 = "#1f2937"
-    # Hairline borders / dividers / scrollbar thumb.
-    BORDER = "#30363d"
-    # Primary chrome text — bright near-white for legibility on the dark bg.
+    # ---- Dark technical chrome (navy blue theme) --------------------------
+    # Cohesive dark *navy* surface palette anchored by the cyan action accent
+    # below. Charts render on a transparent background (`TRANSPARENT`), so they
+    # sit on this navy through-color; only the chrome (masthead, loading
+    # overlay, buttons, grids, tab band) hangs off these tokens.
+    # Page background — deep navy.
+    CHROME_BG = "#0a1322"
+    # Raised panel surface (filter box, cards, masthead) — one step up in navy.
+    SURFACE = "#101d33"
+    # Second raised surface (nested panels, hover rows, the tab band).
+    SURFACE_2 = "#1a2b45"
+    # Hairline borders / dividers / scrollbar thumb — navy-tinted.
+    BORDER = "#293c59"
+    # Primary chrome text — bright near-white for legibility on the navy bg.
     TEXT = "#e6edf3"
-    # Muted secondary text (captions, metadata, placeholders).
-    TEXT_MUTED = "#8b949e"
-    # Accent — Bloomberg orange (LINE_PALETTE[0]); primary highlight / rule.
-    ACCENT = "#FFA000"
-    # Secondary accent — Barclays cyan (LINE_PALETTE[1]).
-    ACCENT_2 = "#00B5E2"
+    # Muted secondary text (captions, metadata, placeholders) — cool slate.
+    TEXT_MUTED = "#93a4c0"
+    # Accent — cyan; the primary action / highlight / rule color (was the
+    # Bloomberg orange). Drives the masthead rule, active tab fill, focus
+    # outlines, progress bar, and highlight emphasis.
+    ACCENT = "#00AFE9"
+    # Secondary accent — a lighter azure that complements the cyan primary.
+    ACCENT_2 = "#66c6f0"
     # Dimmed loading-overlay backdrop — CHROME_BG at ~90% alpha (8-digit hex).
-    SCRIM = "#0d1117e6"
+    SCRIM = "#0a1322e6"
 
     # ---- Conditional-format heatmap (v0.7.0 Platform grid) ----------------
     # Diverging red→neutral→green cell backgrounds for the all-catalog grid's

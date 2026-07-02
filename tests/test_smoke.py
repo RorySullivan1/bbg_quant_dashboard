@@ -13,6 +13,7 @@ import ipywidgets as W
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
 from src.layout.html import STYLE_CTX, render_template
+from src.style import Color
 
 
 def test_build_app_renders_expected_tree():
@@ -440,7 +441,7 @@ def test_app_css_has_overlay_and_toast_rules():
     css = render_template("app_css", **STYLE_CTX)
     for rule in (".bbg-overlay", ".bbg-progress", ".bbg-toast"):
         assert rule in css
-    assert "#FFA000" in css  # Color.ACCENT, tokens substituted
+    assert Color.ACCENT.value in css  # accent token substituted
     assert "{{" not in css
 
 
@@ -474,15 +475,15 @@ def test_dark_grid_style():
     from src.layout.grids import _dark_grid_style
 
     gs = _dark_grid_style()
-    assert gs["background_color"] == "#0d1117"  # Color.CHROME_BG
-    assert gs["header_background_color"] == "#161b22"  # Color.SURFACE
-    assert gs["grid_line_color"] == "#30363d"  # Color.BORDER
+    assert gs["background_color"] == Color.CHROME_BG.value
+    assert gs["header_background_color"] == Color.SURFACE.value
+    assert gs["grid_line_color"] == Color.BORDER.value
 
 
 def test_grids_are_dark_themed():
     from src.layout.grids import _perf_grid, _universe_grid
 
     for grid in (_perf_grid(), _universe_grid()):
-        assert grid.grid_style["background_color"] == "#0d1117"
-        assert grid.header_renderer.text_color == "#e6edf3"  # Color.TEXT
+        assert grid.grid_style["background_color"] == Color.CHROME_BG.value
+        assert grid.header_renderer.text_color == Color.TEXT.value
         assert "bbg-grid" in grid._dom_classes
