@@ -17,7 +17,7 @@ organized as: masthead banner → an always-visible **all-catalog commentary
 block** (Weekly Commentary + a two-section Key Highlights panel: Market
 Superlatives and New Launches) → a **top-level pill-button tab bar** with two
 tabs — **Platform** (all-catalog performance grid + a Platform-analytics card
-of Sunburst / Regime / Factor-exposure charts) and **Multi-Strategy Analysis**
+of Sunburst / Regime / Factor-exposure charts) and **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes) → disclaimers. All compute lives in `src/`; the notebook is a
 one-liner that calls `build_app()`.

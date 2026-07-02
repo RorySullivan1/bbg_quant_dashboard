@@ -24,7 +24,7 @@ def _mount_multi_strategy(app) -> None:
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
 

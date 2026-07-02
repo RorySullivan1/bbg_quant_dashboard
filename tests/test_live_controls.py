@@ -25,13 +25,13 @@ def _walk(widget):
 
 
 def _mount_multi_strategy(app) -> None:
-    """Click the Multi-Strategy Analysis tab so its panel (the strategies
+    """Click the Multi-Strategy tab so its panel (the strategies
     picker + analysis panes) is mounted into the tree and reachable by
     ``_walk`` (the default mounted tab is Platform)."""
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
 
