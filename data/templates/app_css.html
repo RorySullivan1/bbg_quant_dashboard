@@ -10,6 +10,11 @@
   background: {{chrome_bg}};
   color: {{text_color}};
   font-family: {{sans}};
+  /* Positioning context for the loading overlay: `position: fixed` gets
+     trapped by transformed ancestors in some hosts (JupyterLab/Voila cell
+     wrappers), so the overlay anchors to this element and covers its full
+     height instead — see `.bbg-overlay`. */
+  position: relative;
 }
 
 /* Slim, dark-themed scrollbars (WebKit/Blink). */
@@ -47,13 +52,20 @@
   gap: 16px;
 }
 
-/* Workstream C — loading overlay + staged progress bar + post-load toast. */
+/* Workstream C — loading overlay + staged progress bar + post-load toast.
+   Anchored to `.bbg-app` (position: relative) and stretched to its full height
+   via `inset: 0` + `min-height: 100vh`, so it covers the ENTIRE dashboard —
+   including anything below the fold — instead of just the initial viewport
+   (which is what a trapped `position: fixed` did). The progress card is kept
+   in view with `position: sticky` so it stays vertically centred in the
+   viewport no matter where the user has scrolled. */
 .bbg-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
+  min-height: 100vh;
   z-index: 9999;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   background: {{scrim}};
   opacity: 1;
@@ -64,6 +76,9 @@
   pointer-events: none;
 }
 .bbg-overlay-card {
+  position: sticky;
+  top: 50vh;
+  transform: translateY(-50%);
   background: {{surface}};
   border: 1px solid {{border_color}};
   border-radius: 8px;
