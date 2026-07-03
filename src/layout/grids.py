@@ -47,6 +47,27 @@ def _dark_grid_kwargs() -> dict:
     }
 
 
+def _reassert_dark_theme(grid: DataGrid) -> None:
+    """Re-apply the dark grid theme after a ``grid.data`` reassignment.
+
+    The dark ``grid_style`` (background / zebra / header colors) and the
+    bright-text header/corner/default renderers are set once at construction
+    (``_dark_grid_kwargs``). Reassigning ``grid.data`` on a Refresh rebuilds the
+    frontend grid model, which drops the styling back to ipydatagrid's default
+    (white) background — the "reverts to the original background" symptom. The
+    per-column ``renderers`` are already rebuilt on each update (their column
+    keys change with the data), but ``grid_style`` is not, so re-assert the full
+    dark theme here. ``grid_style`` is force-synced via ``send_state`` because an
+    equal dict would otherwise short-circuit the traitlets diff and never
+    re-reach the frontend."""
+    kw = _dark_grid_kwargs()
+    grid.grid_style = kw["grid_style"]
+    grid.header_renderer = kw["header_renderer"]
+    grid.corner_renderer = kw["corner_renderer"]
+    grid.default_renderer = kw["default_renderer"]
+    grid.send_state("grid_style")
+
+
 def _perf_grid() -> DataGrid:
     grid = DataGrid(
         pd.DataFrame(),
@@ -190,6 +211,7 @@ def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
     if pt.empty:
         grid.data = pd.DataFrame()
+        _reassert_dark_theme(grid)
         return
     info_block = _build_info_block(
         meta,
@@ -213,6 +235,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     combined.index.name = "Ticker"
     grid.data = combined
     _apply_grid_styling(grid, combined.columns, widths=True, sharpe_heatmap=True)
+    _reassert_dark_theme(grid)
 
 
 def _build_info_block(
@@ -399,12 +422,14 @@ def _update_calendar_grid(grid: DataGrid, table: pd.DataFrame, *, kind: str) -> 
     diverging conditional formatting keyed to `kind`."""
     if table is None or table.empty:
         grid.data = pd.DataFrame()
+        _reassert_dark_theme(grid)
         return
     display = table.sort_index(ascending=True)
     display.index = display.index.astype(int).astype(str)
     display.index.name = ""
     grid.data = display
     grid.renderers = _calendar_renderers(display.columns, kind=kind)
+    _reassert_dark_theme(grid)
 
 
 def _universe_grid() -> DataGrid:
@@ -490,3 +515,4 @@ def _update_universe_grid(
     combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
     grid.data = combined
     _apply_grid_styling(grid, combined.columns, sharpe_heatmap=True)
+    _reassert_dark_theme(grid)
