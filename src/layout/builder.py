@@ -309,14 +309,13 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
     clear_sel_btn.add_class("bbg-btn-secondary")
     search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
-    # The picker is a scrollable checkbox list (CheckboxMultiSelect) that fills a
-    # flex holder (built below) growing to the bottom of the left panel, which
-    # the parent HBox stretches to the filter panel's height. `height="100%"` +
-    # `overflow_y="auto"` inside the grown holder lets the list scroll.
+    # The picker is a scrollable checkbox list (CheckboxMultiSelect) with a
+    # fixed height — it does NOT grow to fill the panel; longer catalogs scroll
+    # inside the fixed box (`overflow="auto"`).
     ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", height="100%", overflow="auto"),
+        layout=W.Layout(width="100%", height="320px", overflow="auto"),
     )
     clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
 
@@ -385,20 +384,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             StatusTone.SUCCESS,
         )
 
-    # Left: the strategies picker — search box above the dropdown.
-    # Holder grows to fill the left panel's free vertical space; the dropdown
-    # fills the holder, so it reaches the bottom of the container regardless of
-    # the (stretched) panel height.
-    ticker_holder = W.Box(
-        [ticker_w],
-        layout=W.Layout(
-            width="100%",
-            flex="1 1 auto",
-            min_height="220px",
-            display="flex",
-        ),
-    )
-
     # --- Analysis date-range box plumbing --------------------------------
     def _set_date_bounds(index, reset: bool, *, keep=None) -> None:
         """Set the two date boxes to the selection's overlap window. On
@@ -459,7 +444,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_row, ticker_holder],
+        [_section_label("Strategies"), search_row, ticker_w],
         layout=W.Layout(
             width="38%",
             padding="8px",

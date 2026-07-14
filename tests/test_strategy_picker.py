@@ -78,6 +78,10 @@ def test_multi_strategy_picker_is_a_checkbox_list():
     picker = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
     assert len(picker.children) >= 1
     assert all(isinstance(c, W.Checkbox) for c in picker.children)
+    # Fixed height + scroll — the list must NOT grow to fill the panel.
+    assert picker.layout.height is not None
+    assert picker.layout.overflow == "auto"
+    assert picker.layout.flex is None
 
 
 def test_clear_button_clears_the_strategy_selection():
