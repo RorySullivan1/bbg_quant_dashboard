@@ -53,20 +53,18 @@
 }
 
 /* Workstream C — loading overlay + staged progress bar + post-load toast.
-   Anchored to `.bbg-app` (position: relative) and stretched to its full height
-   via `inset: 0` + `min-height: 100vh`, so it covers the ENTIRE dashboard —
-   including anything below the fold — instead of just the initial viewport
-   (which is what a trapped `position: fixed` did). The progress card is kept
-   in view with `position: sticky` so it stays vertically centred in the
-   viewport no matter where the user has scrolled. */
+   Both the dimmed scrim AND the progress card float with `position: fixed`
+   (the same mechanism the post-load `.bbg-toast` uses), so they cover / centre
+   on the VIEWPORT — the screen the user is actually looking at. An earlier
+   `position: absolute` scrim was anchored to the top of the (long) `.bbg-app`
+   page: once the page was scrolled at all, the mask sat off-screen while the
+   fixed card still showed, so Refresh looked like a bare dialog with no mask.
+   The overlay blocks interaction while up, so covering the viewport (not the
+   below-the-fold page) is exactly right. */
 .bbg-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  min-height: 100vh;
   z-index: 9999;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
   background: {{scrim}};
   opacity: 1;
   transition: opacity 0.3s ease;
@@ -76,9 +74,10 @@
   pointer-events: none;
 }
 .bbg-overlay-card {
-  position: sticky;
-  top: 50vh;
-  transform: translateY(-50%);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   background: {{surface}};
   border: 1px solid {{border_color}};
   border-radius: 8px;
@@ -142,19 +141,37 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
-/* Plotly FigureWidget chart backdrop. FigureWidget renders a theme-following
-   (light/dark) default background at the DOM/container level that
-   `paper_bgcolor` does not control; a Refresh's full trace swap (`fig.data=()`
-   then `add_traces`) can transiently drop plotly's own paper rect and expose
-   it, flashing the chart to the browser's default background — white in light
-   mode, black in dark mode — after a refresh or two (plotly.py #3811). Pin the
-   plot's own containers to the chart-canvas color (`chrome_bg` == `CHART_BG`)
-   so any such gap always reads as the dark canvas, never the theme default. */
+/* Plotly FigureWidget chart backdrop. Charts render on a transparent
+   `paper_bgcolor`/`plot_bgcolor` (see `theme._chart_layout`) so the themed
+   card behind them shows through. FigureWidget, however, gives its own wrapper
+   DIV a theme-following (light/dark) default background that `paper_bgcolor`
+   does not control; a Refresh's full trace swap (`fig.data=()` then
+   `add_traces`) can transiently expose it, flashing the chart to the browser's
+   default background (plotly.py #3811). Force the wrapper DIVs transparent so
+   the themed card always shows through instead.
+
+   `background: transparent` on `.main-svg` is intentional and SAFE (it only
+   removes a fill, revealing what's behind) — do NOT change it to a color: an
+   opaque background on the stacked `.main-svg` layers paints over the chart
+   and hides the plotted data entirely. */
 .bbg-app .js-plotly-plot,
 .bbg-app .js-plotly-plot .plot-container,
 .bbg-app .js-plotly-plot .svg-container,
 .bbg-app .js-plotly-plot .main-svg {
-  background: {{chrome_bg}} !important;
+  background: transparent !important;
+}
+
+/* And force every plotly background *rect* transparent. When a pane view is
+   revisited it is remounted into its Stack (`stack.children = ...`), so plotly
+   re-runs `newPlot` on fresh DOM and can redraw these rects with the
+   `plotly_dark` template's dark colors even though `paper_bgcolor` is
+   `rgba(0,0,0,0)` — which made a dark background reappear on the second view.
+   `.bg` covers the paper rect, the subplot plot-area, AND the legend
+   background, so the legend and plot area stay transparent (themed card shows
+   through) on first render and every remount. Every `.bg` rect sits *behind*
+   its content, so forcing it transparent never hides data. */
+.bbg-app .js-plotly-plot .main-svg .bg {
+  fill: transparent !important;
 }
 
 /* Workstream D — button hover/active/focus states + dark form controls.

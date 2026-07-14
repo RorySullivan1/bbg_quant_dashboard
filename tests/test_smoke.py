@@ -445,15 +445,27 @@ def test_app_css_has_overlay_and_toast_rules():
     assert "{{" not in css
 
 
-def test_app_css_pins_plotly_chart_backdrop():
-    # FigureWidget's theme-following default container background must be
-    # covered by the dark chart canvas so a Refresh can't flash it to the
-    # browser default (white/black). See app_css.html (plotly.py #3811).
+def test_app_css_plotly_backdrop_is_transparent():
+    # Charts render transparent (theme._chart_layout) so the themed card shows
+    # through. The plotly backdrop CSS must force the wrapper DIVs / SVG layers
+    # transparent to defeat the FigureWidget theme-following default background
+    # (plotly.py #3811), AND force the paper `.bg` rect transparent so a remount
+    # (Stack view swap) can't redraw it with the plotly_dark dark paper color.
     css = render_template("app_css", **STYLE_CTX)
     assert ".js-plotly-plot" in css
-    plotly_rule = css[css.find(".bbg-app .js-plotly-plot") :]
-    assert str(Color.CHROME_BG) in plotly_rule.split("}")[0]
-    assert "!important" in plotly_rule.split("}")[0]
+    # Isolate the plotly backdrop section (up to the next CSS section).
+    start = css.find(".bbg-app .js-plotly-plot")
+    block = css[start : css.find("Workstream D", start)]
+    # Wrapper + SVG-layer background is transparent — never an opaque color
+    # (an opaque `.main-svg` background hides the chart's plotted data).
+    assert "background: transparent !important" in block
+    assert str(Color.CHROME_BG) not in block  # no opaque backdrop leaked in
+    assert str(Color.CHART_BG) not in block
+    # Every plotly background rect (paper + subplot + legend) fill is forced
+    # transparent, so a remount can't redraw them with the plotly_dark dark
+    # colors (the revisit-goes-dark fix, incl. legend / plot-area backgrounds).
+    assert ".main-svg .bg" in block
+    assert "fill: transparent !important" in block
 
 
 def test_tab_button_classes():
