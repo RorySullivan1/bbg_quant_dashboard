@@ -11,7 +11,11 @@ deployable via Voila.
 ## Layout
 
 1. **Banner** — logo and title.
-2. **Status banner** — load progress / source (BQL, cache, or mock).
+2. **Loading overlay** — a full-screen dimmed overlay with a staged progress
+   bar covers the dashboard on first load and on every **Refresh prices**, then
+   dismisses to a slim, auto-fading post-load toast reporting the source (BQL,
+   cache, or mock) and timing. On Refresh the refetch runs on a background
+   worker thread so the overlay reliably paints before the fetch blocks.
 3. **All-catalog commentary** — automated highlight cards (top/bottom
    performers, Sharpe extremes, recently launched indices), always
    whole-catalog.

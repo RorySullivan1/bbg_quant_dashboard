@@ -70,7 +70,11 @@ renders the full dashboard without a Bloomberg session. Verify by:
   BQL/mock fetch happens.
 - Clicking Refresh prices — the overlay re-shows and runs the staged bar,
   then dismisses; the toast reads `Loaded … fetched from BQL in X.Ys`; the
-  parquet mtime advances.
+  parquet mtime advances. The overlay must actually **become visible** even
+  when the refetch is near-instant (off-terminal mock or a warm cache): the
+  refetch runs on a worker thread and the overlay is held up for a short beat
+  (`_OVERLAY_PAINT_DELAY_S`) first, so it can't be shown and hidden inside one
+  frame (which previously made the dialog never appear).
 - Clicking the top-level **Platform** / **Multi-Strategy** pill
   buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
   content area; commentary stays visible above both.
@@ -78,6 +82,11 @@ renders the full dashboard without a Bloomberg session. Verify by:
   analysis panes refreshes (the pane's currently mounted view shows
   the new data; the other 8 pre-built views are also populated so
   swapping the picker afterwards is instant — 9 analysis views total).
+  The chart **traces stay visible** through the refresh — the charts render on
+  a transparent backdrop (the themed card shows through), so a blank / empty
+  pane after a refresh means the plotly wrapper CSS is painting over the SVG
+  layers (only the wrapper DIVs may carry a background, never `.main-svg` —
+  see `style.md`).
 - Changing a pane's analysis-picker dropdown — only that pane's
   mounted view changes; the other pane is untouched, no recompute.
 - Setting both panes' pickers to the same analysis — both render

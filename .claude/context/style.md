@@ -7,7 +7,12 @@ chrome shares the charts' near-black surface, the title is a bold masthead
 with an accent rule, buttons/controls/grids are dark-themed, and load
 progress shows in a full-screen dimmed loading overlay with a staged progress
 bar that dismisses once data is loaded, leaving a slim auto-fading post-load
-toast.
+toast. On **Refresh prices** the same overlay re-shows while the refetch runs
+on a background worker thread (so the click handler returns and the frontend
+can paint the overlay before the kernel blocks); the worker holds the overlay
+visible for a short beat (`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an
+*instant* refetch (off-terminal mock or warm cache) can't hide it inside the
+same frame it was shown.
 
 - **One color identity per strategy**: every chart inside an
   analysis pane (lines, bars, scatter points) uses positional
@@ -18,16 +23,27 @@ toast.
   `ipydatagrid.VegaExpr` and the same positional palette, so the
   grid acts as the universal legend — every chart's per-strategy
   bqplot legend (`display_legend`) is off.
-- **Chart theme is dark (Bloomberg / Barclays blend)**: charts render
-  on `Color.CHART_BG` (near-black `#0d1117`) via plotly's
-  `plotly_dark` template + custom overrides defined in
-  `_chart_layout()` in `src/layout/theme.py`. The `LINE_PALETTE` is a
-  high-chroma palette anchored by Bloomberg orange (`#FFA000`) and
-  Barclays cyan (`#00B5E2`) so traces pop against the dark
-  background. Chart-specific color tokens (`CHART_BG`, `CHART_GRID`,
+- **Chart theme is dark (Bloomberg / Barclays blend)**: charts render on a
+  **transparent** `paper_bgcolor`/`plot_bgcolor` (`Color.TRANSPARENT`) via
+  plotly's `plotly_dark` template + custom overrides defined in
+  `_chart_layout()` in `src/layout/theme.py`, so the themed card / chrome
+  behind each chart shows through instead of a painted-in canvas. The
+  `LINE_PALETTE` is a high-chroma palette anchored by Bloomberg orange
+  (`#FFA000`) and Barclays cyan (`#00B5E2`) so traces pop against the dark
+  surface. Chart-specific color tokens (`CHART_BG`, `CHART_GRID`,
   `CHART_AXIS`, `CHART_TEXT`, `CHART_TITLE`, `CHART_HOVER_BG`) live
   on the `Color` enum. As of v0.6.5 the **whole dashboard chrome is dark
   too** (it no longer stays light) — see the next bullet.
+  - **FigureWidget backdrop caveat**: plotly's `FigureWidget` gives its own
+    wrapper DIV a theme-following (light/dark) default background that
+    `paper_bgcolor` does not control, and a Refresh's full trace swap can
+    transiently expose it — flashing a chart to the browser default (white in
+    light mode, black in dark mode; plotly.py #3811). `app_css.html` forces the
+    plotly **wrapper DIVs** (`.js-plotly-plot` / `.plot-container` /
+    `.svg-container`) transparent so the themed card always shows through.
+    **Never** put a background on the stacked `.main-svg` *render layers* — an
+    opaque fill there paints over the transparent chart and hides the plotted
+    data entirely.
 - **Dark technical chrome via injected CSS (v0.6.5)**. A single global
   stylesheet (`data/templates/app_css.html`, rendered by `_app_css()` and
   mounted as the app VBox's first child; the app gets `add_class("bbg-app")`)
