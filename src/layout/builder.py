@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import traceback
 from datetime import date
@@ -124,10 +125,11 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Loading overlay (v0.6.5 Workstream C). `build_app` is synchronous, so we
     # display() the overlay first and push staged progress as each load step
     # completes, then mount the dashboard (which also contains `overlay_w`) and
-    # dismiss it. Caveat: in Voila the kernel may collapse the intermediate
-    # comm frames to the first/last, so the bar is best-effort — it always
-    # appears and dismisses, but frame-by-frame animation isn't guaranteed
-    # without a background-thread load (a deferred dev-map stretch).
+    # dismiss it. On the initial load this shows because display() mounts a
+    # *new* overlay view that is born visible and painted before the long
+    # synchronous build runs. Refresh has no such fresh mount, so it offloads
+    # its blocking work to a worker thread instead (see `_refresh_prices`) — the
+    # background-thread load the original caveat here flagged as the real fix.
     overlay_w = _loading_overlay()
 
     def _set_progress(
@@ -1786,12 +1788,13 @@ def build_app(verbose: bool = False) -> W.VBox:
 
         state.errors_w.value = error_html
 
-    def _refresh_prices(_btn=None):
+    def _run_refresh():
+        """The Refresh-prices blocking work: refetch, re-prune, recompute.
+
+        Split out of ``_refresh_prices`` so a live frontend can run it on a
+        worker thread (see ``_refresh_prices``). Drives the overlay's staged
+        progress from 60% (fetch) through dismissal at 100%."""
         nonlocal meta
-        # Re-show the overlay (it's already in the tree — just re-render its
-        # value visible) and re-run the staged bar.
-        _set_progress(0, "Refreshing…")
-        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
         t_refresh = time.perf_counter()
         try:
             state.universe_prices, source = fetch_prices(
@@ -1845,6 +1848,48 @@ def build_app(verbose: bool = False) -> W.VBox:
         window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         render_single_strategy(single_strategy, state, meta, window_start)
 
+    def _refresh_prices(_btn=None):
+        # Re-show the overlay (it's already in the tree — just re-render its
+        # value visible) and re-run the staged bar.
+        #
+        # The overlay only becomes visible once the frontend gets a paint
+        # cycle. On the initial load that happens naturally: `display(overlay_w)`
+        # mounts a *new* view that is born visible and painted before the long
+        # synchronous build runs. On Refresh the overlay view already exists
+        # (hidden), so flipping it visible→…→hidden all inside one synchronous
+        # click handler keeps the kernel busy the whole time; the frontend
+        # coalesces those comm updates and only ever paints the final hidden
+        # state, so the overlay never appears. This is the "background-thread
+        # load" the v0.6.5 Workstream C caveat flagged as the real fix: show the
+        # overlay, then hand the blocking fetch/recompute to a worker thread so
+        # the click handler returns and the frontend can paint the visible
+        # overlay before the kernel blocks on BQL.
+        _set_progress(0, "Refreshing…")
+        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
+
+        if get_ipython() is None:
+            # Headless / pytest: run synchronously so callers observe the
+            # refetch immediately after `.click()` (no frontend to paint for).
+            _run_refresh()
+            return
+
+        if refresh_inflight["running"]:
+            return  # a refresh is already running; ignore re-clicks
+        refresh_inflight["running"] = True
+        apply_btn.disabled = True
+
+        def _worker():
+            try:
+                _run_refresh()
+            finally:
+                refresh_inflight["running"] = False
+                apply_btn.disabled = False
+
+        threading.Thread(target=_worker, name="bbg-refresh", daemon=True).start()
+
+    # Guards against a second Refresh being launched while a worker thread is
+    # still fetching/recomputing (the button is also disabled for the duration).
+    refresh_inflight = {"running": False}
     apply_btn.on_click(_refresh_prices)
     _bind_live_controls(state.pane_left)
     _bind_live_controls(state.pane_right)
