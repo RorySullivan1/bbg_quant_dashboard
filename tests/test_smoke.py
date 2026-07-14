@@ -445,6 +445,17 @@ def test_app_css_has_overlay_and_toast_rules():
     assert "{{" not in css
 
 
+def test_app_css_pins_plotly_chart_backdrop():
+    # FigureWidget's theme-following default container background must be
+    # covered by the dark chart canvas so a Refresh can't flash it to the
+    # browser default (white/black). See app_css.html (plotly.py #3811).
+    css = render_template("app_css", **STYLE_CTX)
+    assert ".js-plotly-plot" in css
+    plotly_rule = css[css.find(".bbg-app .js-plotly-plot") :]
+    assert str(Color.CHROME_BG) in plotly_rule.split("}")[0]
+    assert "!important" in plotly_rule.split("}")[0]
+
+
 def test_tab_button_classes():
     from src.layout.chrome import _make_tab_button, _style_tab_button
 

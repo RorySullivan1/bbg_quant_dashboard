@@ -142,6 +142,21 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
+/* Plotly FigureWidget chart backdrop. FigureWidget renders a theme-following
+   (light/dark) default background at the DOM/container level that
+   `paper_bgcolor` does not control; a Refresh's full trace swap (`fig.data=()`
+   then `add_traces`) can transiently drop plotly's own paper rect and expose
+   it, flashing the chart to the browser's default background — white in light
+   mode, black in dark mode — after a refresh or two (plotly.py #3811). Pin the
+   plot's own containers to the chart-canvas color (`chrome_bg` == `CHART_BG`)
+   so any such gap always reads as the dark canvas, never the theme default. */
+.bbg-app .js-plotly-plot,
+.bbg-app .js-plotly-plot .plot-container,
+.bbg-app .js-plotly-plot .svg-container,
+.bbg-app .js-plotly-plot .main-svg {
+  background: {{chrome_bg}} !important;
+}
+
 /* Workstream D — button hover/active/focus states + dark form controls.
    (`.bbg-grid` is filled by PR 5, the dark ipydatagrid theme.) */
 
