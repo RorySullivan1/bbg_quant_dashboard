@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from src.layout.grids import (
+    PERF_COLOR_COLUMN_NAME,
     ZSCORE_SUPERCOL,
     _build_universe_frame,
     _calendar_renderers,
@@ -175,7 +176,7 @@ def test_perf_renderers_flat_sharpe_heatmap_toggle():
     # The selected-strategy grid uses flat string columns. v0.7.5 turns the
     # diverging Sharpe heatmap on for it too, so a flat "1Y Sharpe" leaf must
     # get the ramp when the flag is on and stay plain when off.
-    cols = pd.Index(["1Y Sharpe", "1Y Return", "Chart Color"])
+    cols = pd.Index(["1Y Sharpe", "1Y Return", PERF_COLOR_COLUMN_NAME])
     on = _perf_renderers(cols, sharpe_heatmap=True)
     assert "cell.value <" in _bg_expr(on["1Y Sharpe"])
     # Non-Sharpe numeric + swatch columns are untouched by the flag.
@@ -195,7 +196,7 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
     # is true for any non-numeric string and would blank every cell.
     z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
-    cols = pd.Index(["Chart Color", "Name", "1Y Return", "1Y Sharpe", z_name])
+    cols = pd.Index([PERF_COLOR_COLUMN_NAME, "Name", "1Y Return", "1Y Sharpe", z_name])
     r = _perf_renderers(cols, sharpe_heatmap=True)
     dash = "isNaN(cell.value) ? '-' : ''"
     assert _text_value_expr(r["1Y Return"]) == dash
@@ -203,16 +204,16 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     assert _text_value_expr(r[z_name]) == dash
     # Text + swatch stay plain.
     assert _text_value_expr(r["Name"]) == ""
-    assert _text_value_expr(r["Chart Color"]) == ""
+    assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""
 
 
 def test_perf_renderers_dash_on_numeric_without_heatmap():
     # Even with the heatmap off (selected-strategy grid), the plain 2dp / pct
     # renderers still substitute "-" for empty numeric cells.
-    cols = pd.Index(["1Y Return", "1Y Sharpe", "Name", "Chart Color"])
+    cols = pd.Index(["1Y Return", "1Y Sharpe", "Name", PERF_COLOR_COLUMN_NAME])
     r = _perf_renderers(cols)
     dash = "isNaN(cell.value) ? '-' : ''"
     assert _text_value_expr(r["1Y Return"]) == dash
     assert _text_value_expr(r["1Y Sharpe"]) == dash
     assert _text_value_expr(r["Name"]) == ""
-    assert _text_value_expr(r["Chart Color"]) == ""
+    assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""

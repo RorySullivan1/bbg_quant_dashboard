@@ -84,7 +84,10 @@ def _perf_grid() -> DataGrid:
     return grid
 
 
-PERF_COLOR_COLUMN_NAME: str = "Chart Color"
+# The per-strategy chart-color swatch column. Its header is intentionally blank
+# (a single space) — the column is a narrow color chip, not a labelled field —
+# so it reads as a nameless legend swatch rather than a clipped "Chart Color".
+PERF_COLOR_COLUMN_NAME: str = " "
 
 
 # Column sizing for the flat single-index perf / catalog grids (v0.9.11 visual
@@ -96,7 +99,7 @@ PERF_COLOR_COLUMN_NAME: str = "Chart Color"
 # `auto_fit_columns` — because that frontend autofit fits *every* column and
 # writes the result back over `column_widths`, so it can't be scoped to the
 # descriptive columns while keeping the color / stat columns pinned.
-_COLOR_COL_WIDTH: int = 24  # tiny swatch — the per-strategy chart-color legend
+_COLOR_COL_WIDTH: int = 30  # narrow swatch chip — visible color, minimal space
 _STAT_COL_WIDTH: int = 82  # uniform width for every Return/Vol/Sharpe/Max DD col
 _CHAR_PX: float = 7.6  # ~avg glyph width at the 12px grid font
 _TEXT_PAD: int = 24  # cell padding + a little header slack
