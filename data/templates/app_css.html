@@ -53,16 +53,17 @@
 }
 
 /* Workstream C — loading overlay + staged progress bar + post-load toast.
-   The dimmed scrim is anchored to `.bbg-app` (position: relative) and stretched
-   to its full height via `inset: 0` + `min-height: 100vh`, so it covers the
-   ENTIRE dashboard — including anything below the fold. The progress *card*,
-   however, floats with `position: fixed` centred in the viewport — the same
-   mechanism the post-load `.bbg-toast` uses — so it always sits in the middle
-   of what the user is looking at, not at the middle of the (long) page. */
+   Both the dimmed scrim AND the progress card float with `position: fixed`
+   (the same mechanism the post-load `.bbg-toast` uses), so they cover / centre
+   on the VIEWPORT — the screen the user is actually looking at. An earlier
+   `position: absolute` scrim was anchored to the top of the (long) `.bbg-app`
+   page: once the page was scrolled at all, the mask sat off-screen while the
+   fixed card still showed, so Refresh looked like a bare dialog with no mask.
+   The overlay blocks interaction while up, so covering the viewport (not the
+   below-the-fold page) is exactly right. */
 .bbg-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  min-height: 100vh;
   z-index: 9999;
   background: {{scrim}};
   opacity: 1;

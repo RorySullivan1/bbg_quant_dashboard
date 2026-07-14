@@ -75,8 +75,12 @@ renders the full dashboard without a Bloomberg session. Verify by:
   up for a short beat (`_OVERLAY_PAINT_DELAY_S`) first, so it can't be shown and
   hidden inside one frame (which previously made the dialog never appear). The
   overlay's scrim is a translucent **black** mask (clearly darker than the navy
-  chrome). **No** `Loaded …` toast fires on Refresh — that toast is reserved for
-  the dashboard's initial load; only a refresh *failure* toasts.
+  chrome) that covers the **viewport** — it stays covering the screen even if the
+  page is scrolled when Refresh is clicked (both scrim and card use
+  `position: fixed`; an `absolute` scrim sat off-screen once scrolled, leaving a
+  bare dialog with no mask). **No** `Loaded …` toast fires on Refresh — that
+  toast is reserved for the dashboard's initial load; only a refresh *failure*
+  toasts.
 - Clicking the top-level **Platform** / **Multi-Strategy** pill
   buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
   content area; commentary stays visible above both.

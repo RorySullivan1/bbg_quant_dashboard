@@ -16,11 +16,13 @@ blocks); the worker holds the overlay visible for a short beat
 (`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an *instant* refetch
 (off-terminal mock or warm cache) can't hide it inside the same frame it was
 shown. The scrim (`.bbg-overlay`, `Color.SCRIM`) is a translucent **black** mask
-(so it reads clearly darker than the navy chrome, signalling "loading") that
-covers the full page, while the progress *card* (`.bbg-overlay-card`) floats
-with `position: fixed` centred in the viewport — the same mechanism as the
-`.bbg-toast` — so it sits in the middle of what the user is looking at, not the
-middle of the (long) page.
+(so it reads clearly darker than the navy chrome, signalling "loading"); both it
+**and** the progress *card* (`.bbg-overlay-card`) float with `position: fixed`,
+so they cover / centre on the **viewport** — the same mechanism as the
+`.bbg-toast`. (An earlier `position: absolute` scrim was anchored to the top of
+the long page, so once scrolled the mask sat off-screen and Refresh looked like
+a bare dialog with no mask; the overlay blocks interaction while up, so covering
+the viewport rather than the below-the-fold page is exactly right.)
 
 - **One color identity per strategy**: every chart inside an
   analysis pane (lines, bars, scatter points) uses positional
