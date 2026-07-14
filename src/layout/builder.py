@@ -114,6 +114,15 @@ from .single_strategy import (
 )
 from .state import DashboardState
 
+# Minimum time the Refresh overlay is held visible before the worker thread
+# runs the (possibly instant) refetch and flips it hidden. The click handler
+# shows the overlay and returns; without this beat, an instant refetch — the
+# off-terminal mock path, or a warm cache — hides it again inside the same
+# animation frame, so the frontend coalesces show→hide and the overlay never
+# paints. A background-thread sleep doesn't block the kernel, so the frontend
+# is free to paint the visible overlay during it. (v0.9.0 refresh-overlay fix.)
+_OVERLAY_PAINT_DELAY_S = 0.35
+
 
 def build_app(verbose: bool = False) -> W.VBox:
     t0 = time.perf_counter()
@@ -1880,6 +1889,13 @@ def build_app(verbose: bool = False) -> W.VBox:
 
         def _worker():
             try:
+                # Hold the just-shown overlay visible for a beat so the frontend
+                # actually paints it before an instant refetch (mock / warm
+                # cache) flips it hidden — otherwise show→hide coalesce into one
+                # frame and the overlay never appears. Harmless on a slow BQL
+                # fetch (it's already visible for far longer). Runs on this
+                # worker thread, so the kernel stays free to flush the paint.
+                time.sleep(_OVERLAY_PAINT_DELAY_S)
                 _run_refresh()
             finally:
                 refresh_inflight["running"] = False

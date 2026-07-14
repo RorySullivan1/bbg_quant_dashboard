@@ -26,13 +26,13 @@ def _walk(widget):
 
 
 def _mount_multi_strategy(app) -> None:
-    """Click the Multi-Strategy Analysis tab so its Refresh-prices button (and
-    the rest of the panel) is mounted into the tree and reachable by ``_walk``
-    (the default mounted tab is Platform)."""
+    """Click the Multi-Strategy tab so its Refresh-prices button (and the rest
+    of the panel) is mounted into the tree and reachable by ``_walk`` (the
+    default mounted tab is Platform)."""
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
 
@@ -47,8 +47,14 @@ def _refresh_button(app) -> W.Button:
 
 def _overlay(app) -> W.HTML:
     # The loading overlay is the trailing `.bbg-overlay` W.HTML in the app VBox.
+    # Exclude the injected `<style>` block, whose CSS text also mentions
+    # `.bbg-overlay` / `.is-hidden` and would otherwise match first.
     return next(
-        w for w in _walk(app) if isinstance(w, W.HTML) and "bbg-overlay" in w.value
+        w
+        for w in _walk(app)
+        if isinstance(w, W.HTML)
+        and "bbg-overlay" in w.value
+        and "<style" not in w.value
     )
 
 
@@ -112,3 +118,41 @@ def test_frontend_refresh_uses_worker_thread(monkeypatch):
     assert calls["n"] == before + 1
     assert not btn.disabled  # re-enabled in the worker's finally block
     assert "is-hidden" in _overlay(app).value
+
+
+def test_refresh_holds_overlay_visible_before_instant_refetch(monkeypatch):
+    """The worker must hold the overlay visible (the paint-delay beat) BEFORE it
+    runs the refetch, so an instant (mock / warm-cache) refetch can't hide the
+    overlay inside the same frame it was shown — the "loading dialog never
+    appears" regression."""
+    import src.layout.builder as builder_mod
+
+    calls = _patch_fetch_counter(monkeypatch)
+    app = build_app(verbose=False)
+    _mount_multi_strategy(app)
+    monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
+    before = calls["n"]
+
+    seen: dict = {}
+    real_sleep = builder_mod.time.sleep
+
+    def spy_sleep(secs):
+        # At the paint-hold beat, capture the overlay state and whether the
+        # refetch has run yet — don't actually block the test.
+        if abs(secs - builder_mod._OVERLAY_PAINT_DELAY_S) < 1e-9:
+            seen["overlay"] = _overlay(app).value
+            seen["fetches_so_far"] = calls["n"]
+            return real_sleep(0)
+        return real_sleep(secs)
+
+    monkeypatch.setattr(builder_mod.time, "sleep", spy_sleep)
+
+    _refresh_button(app).click()
+    _join_refresh_worker()
+
+    assert builder_mod._OVERLAY_PAINT_DELAY_S > 0
+    assert "overlay" in seen  # the paint-hold beat ran
+    assert "is-hidden" not in seen["overlay"]  # overlay was VISIBLE during it
+    assert seen["fetches_so_far"] == before  # ...and it ran BEFORE the refetch
+    assert calls["n"] == before + 1  # the refetch still happened
+    assert "is-hidden" in _overlay(app).value  # dismissed at the end

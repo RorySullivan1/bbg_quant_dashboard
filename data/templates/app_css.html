@@ -142,19 +142,22 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
-/* Plotly FigureWidget chart backdrop. FigureWidget renders a theme-following
-   (light/dark) default background at the DOM/container level that
-   `paper_bgcolor` does not control; a Refresh's full trace swap (`fig.data=()`
-   then `add_traces`) can transiently drop plotly's own paper rect and expose
-   it, flashing the chart to the browser's default background — white in light
-   mode, black in dark mode — after a refresh or two (plotly.py #3811). Pin the
-   plot's own containers to the chart-canvas color (`chrome_bg` == `CHART_BG`)
-   so any such gap always reads as the dark canvas, never the theme default. */
+/* Plotly FigureWidget chart backdrop. Charts render on a transparent
+   `paper_bgcolor`/`plot_bgcolor` (see `theme._chart_layout`) so the themed
+   card behind them shows through. FigureWidget, however, gives its own wrapper
+   DIV a theme-following (light/dark) default background that `paper_bgcolor`
+   does not control; a Refresh's full trace swap (`fig.data=()` then
+   `add_traces`) can transiently expose it, flashing the chart to the browser's
+   default background (plotly.py #3811). Force just the wrapper DIVs transparent
+   so the themed card always shows through instead.
+
+   IMPORTANT: only the container DIVs are targeted — never the stacked
+   `.main-svg` render layers. An opaque (or any) background on `.main-svg`
+   paints over the transparent chart, hiding the plotted data entirely. */
 .bbg-app .js-plotly-plot,
 .bbg-app .js-plotly-plot .plot-container,
-.bbg-app .js-plotly-plot .svg-container,
-.bbg-app .js-plotly-plot .main-svg {
-  background: {{chrome_bg}} !important;
+.bbg-app .js-plotly-plot .svg-container {
+  background: transparent !important;
 }
 
 /* Workstream D — button hover/active/focus states + dark form controls.

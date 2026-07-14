@@ -445,15 +445,17 @@ def test_app_css_has_overlay_and_toast_rules():
     assert "{{" not in css
 
 
-def test_app_css_pins_plotly_chart_backdrop():
-    # FigureWidget's theme-following default container background must be
-    # covered by the dark chart canvas so a Refresh can't flash it to the
-    # browser default (white/black). See app_css.html (plotly.py #3811).
+def test_app_css_plotly_wrapper_is_transparent_not_opaque():
+    # Charts render transparent (theme._chart_layout) so the themed card shows
+    # through. The FigureWidget wrapper DIVs are forced transparent to defeat
+    # the widget's theme-following default background (plotly.py #3811) — but
+    # the rule must NEVER touch the stacked `.main-svg` render layers, since an
+    # opaque background there paints over the chart and hides the data.
     css = render_template("app_css", **STYLE_CTX)
     assert ".js-plotly-plot" in css
-    plotly_rule = css[css.find(".bbg-app .js-plotly-plot") :]
-    assert str(Color.CHROME_BG) in plotly_rule.split("}")[0]
-    assert "!important" in plotly_rule.split("}")[0]
+    plotly_rule = css[css.find(".bbg-app .js-plotly-plot") :].split("}")[0]
+    assert "transparent !important" in plotly_rule
+    assert ".main-svg" not in plotly_rule
 
 
 def test_tab_button_classes():
