@@ -8,11 +8,12 @@ Automated tests live in `tests/` and run with **pytest** (a dev-only dep):
 pytest -q
 ```
 
-`tests/test_stats.py` unit-tests the pure `src/stats.py` metric functions
+`tests/test_stats.py` unit-tests the pure `src/stats/` metric functions
 against small fixed frames (fixtures in `tests/conftest.py`); `tests/test_smoke.py`
 is the regression guard — it builds the whole dashboard on the mock-price
 fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
-also run in CI (`.github/workflows/ci.yml`) on every push/PR to `v0.6.0`.
+also run in CI (`.github/workflows/ci.yml`) on every push/PR to `v0.7.5` and
+`main`.
 
 Off-terminal, the mock-price fallback is deterministic per ticker, so:
 
@@ -81,9 +82,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
   bare dialog with no mask). **No** `Loaded …` toast fires on Refresh — that
   toast is reserved for the dashboard's initial load; only a refresh *failure*
   toasts.
-- Clicking the top-level **Platform** / **Multi-Strategy** pill
-  buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
-  content area; commentary stays visible above both.
+- Clicking the top-level **Platform** / **Multi-Strategy** / **Single
+  Strategy** pill buttons toggles the active button (`.bbg-pill.is-active`)
+  and swaps the content area; commentary stays visible across all three.
+- The **Single Strategy** tab (v0.9.0): picking a strategy from the
+  single-select dropdown populates the profile card + cumulative chart +
+  standard-perf table (Section 1); the 3-pill monthly-return calendar
+  (Absolute / Outperformance / Vol-adjusted) tab-switches over one DataGrid
+  (Section 2); and the two side-by-side analysis panes each swap analyses on
+  their own picker + per-pane benchmark dropdown (Section 3) — all computed
+  from the cached prices, no BQL.
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows
   the new data; the other 8 pre-built views are also populated so

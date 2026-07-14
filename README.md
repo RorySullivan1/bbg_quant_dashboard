@@ -19,16 +19,25 @@ deployable via Voila.
 3. **All-catalog commentary** — automated highlight cards (top/bottom
    performers, Sharpe extremes, recently launched indices), always
    whole-catalog.
-4. **Top-level tab bar** with two tabs:
+4. **Top-level tab bar** with three tabs:
    - **Platform** — a full-width all-catalog performance grid (every index with
-     metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
+     metadata plus 1Y / 3Y / 5Y / Since-Inception performance), above a boxed
+     **Platform analytics** card of inner pill-tabs (Sunburst / Regime analysis
+     / Factor exposures).
    - **Multi-Strategy** — a "Filters" accordion (strategies picker +
      filter panel: Asset Class / Category / Theme / Return Type /
-     Characteristics / Quantitative) and an analysis date-range slider, above a
-     selected-strategy performance grid and **two side-by-side analysis panes**.
-     Each pane swaps among 9 analysis types (Cumulative Performance,
-     Outperformance, 1Y Sharpe-z, Correlation Heatmap, Risk/Return, Drawdown,
-     Rolling Correlation, Return Distribution, Rolling Beta).
+     Characteristics / Quantitative) and an analysis date-range row (two date
+     boxes), above a selected-strategy performance grid and **two side-by-side
+     analysis panes**. Each pane swaps among 9 analysis types (Cumulative
+     Performance, Outperformance, 1Y Sharpe-z, Correlation Heatmap, Risk/Return,
+     Drawdown, Rolling Correlation, Return Distribution, Rolling Beta).
+   - **Single Strategy** — a per-strategy deep-dive: a single-select strategy
+     picker with a shared benchmark selector + overlay toggle, a metadata
+     **profile card** with a cumulative chart and standard-perf table, a
+     3-mode monthly-return **calendar** (Absolute / Outperformance /
+     Vol-adjusted), and **two side-by-side analysis panes** mirroring the
+     Multi-Strategy tab. All views compute from the cached prices (no extra
+     BQL call).
 5. **Disclaimers** — performance disclaimer (templated with the data window) and
    the bottom legal disclosure.
 
@@ -64,6 +73,7 @@ bbg_quant_dashboard/
 ├── pyproject.toml             # ruff / black / pytest config (tooling only)
 ├── requirements.txt
 ├── .meta/VERSION              # canonical shipped version
+├── environment.yml            # conda entrypoint (pins python=3.11; deps via pip)
 ├── .pre-commit-config.yaml
 ├── .github/workflows/ci.yml   # ruff + black + pytest on push/PR
 ├── assets/logo.png            # banner logo (placeholder)
@@ -78,10 +88,14 @@ bbg_quant_dashboard/
 │   ├── bql_client.py          # BQL fetch + off-terminal mock + parquet cache
 │   ├── style.py               # centralized style tokens (Color/Font/…)
 │   ├── commentary.py          # rule-based highlight cards
-│   ├── stats/                 # metrics package: _common / performance / risk / rolling
+│   ├── stats/                 # metrics package: _common / performance / risk /
+│   │                          #   rolling / factors / regime / calendar
 │   └── layout/                # UI package: builder + theme/chrome/filters/panes/
-│                              #   charts/grids/html/state (build_app re-exported)
-└── tests/                     # pytest: conftest, test_stats, test_state, test_smoke
+│                              #   platform/single_strategy/charts/grids/html/state
+│                              #   (build_app re-exported)
+└── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
+                               #   cache/commentary/grids/platform/single_strategy/
+                               #   live-controls/lazy-views/state/smoke tests
 ```
 
 See `CLAUDE.md` for the data contract, BQL query shape, architecture map, and
