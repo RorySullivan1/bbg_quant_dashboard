@@ -61,6 +61,18 @@ def test_checkbox_options_reset_drops_missing_selection():
     assert len(m.children) == 2
 
 
+def test_checkbox_multiselect_reuses_widgets_across_option_changes():
+    # Search narrows `options` on every keystroke; the checkbox widgets must be
+    # reused (not rebuilt) so the list stays responsive.
+    opts = [(f"T{i} — N{i}", f"T{i}") for i in range(20)]
+    m = CheckboxMultiSelect(options=opts, value=())
+    original = {id(cb) for cb in m.children}
+    m.options = opts[:5]  # narrow (like a search)
+    assert {id(cb) for cb in m.children} <= original  # reused, not recreated
+    m.options = opts  # widen back
+    assert {id(cb) for cb in m.children} == original  # exact same widget objects
+
+
 def test_checkbox_multiselect_fires_value_observers():
     m = CheckboxMultiSelect(options=_opts(), value=())
     seen = []

@@ -29,7 +29,8 @@ class CheckboxMultiSelect(W.VBox):
     def __init__(self, *, options=(), value=(), **kwargs) -> None:
         super().__init__(**kwargs)
         self.add_class("bbg-strat-list")
-        self._checks: dict = {}  # value -> W.Checkbox
+        self._checks: dict = {}  # value -> W.Checkbox currently shown
+        self._pool: dict = {}  # value -> W.Checkbox, reused across rebuilds
         self._guard = False  # suppress observer feedback loops
         self.observe(self._rebuild_rows, names="options")
         self.observe(self._sync_checks, names="value")
@@ -43,32 +44,44 @@ class CheckboxMultiSelect(W.VBox):
             else:
                 yield str(opt), opt
 
+    def _make_checkbox(self, label: str, checked: bool) -> W.Checkbox:
+        cb = W.Checkbox(
+            value=checked,
+            description=label,
+            indent=False,
+            layout=W.Layout(width="100%", margin="1px 0"),
+        )
+        cb.add_class("bbg-strat-check")
+        cb.observe(self._on_toggle, names="value")
+        return cb
+
     def _rebuild_rows(self, *_) -> None:
+        # Reuse pooled checkbox widgets by value across rebuilds — a search
+        # keystroke narrows the option set, and recreating a `W.Checkbox` (each
+        # spins up a frontend view) per row is what made the list feel slow.
+        # Existing widgets are just re-selected into `children`, so the frontend
+        # reuses their views; only genuinely new values create a widget.
         selected = set(self.value)
-        checks: dict = {}
-        rows = []
-        for label, val in self._pairs():
-            cb = W.Checkbox(
-                value=val in selected,
-                description=label,
-                indent=False,
-                layout=W.Layout(width="100%", margin="1px 0"),
-            )
-            cb.add_class("bbg-strat-check")
-            cb.observe(self._on_toggle, names="value")
-            checks[val] = cb
-            rows.append(cb)
-        self._checks = checks
-        self.children = tuple(rows)
-        # SelectMultiple parity: options change drops selections no longer
-        # present. Guarded so it doesn't re-enter `_sync_checks`.
-        kept = tuple(v for v in self.value if v in checks)
-        if kept != tuple(self.value):
-            self._guard = True
-            try:
-                self.value = kept
-            finally:
-                self._guard = False
+        self._guard = True
+        try:
+            checks: dict = {}
+            rows = []
+            for label, val in self._pairs():
+                cb = self._pool.get(val)
+                if cb is None:
+                    cb = self._make_checkbox(label, val in selected)
+                    self._pool[val] = cb
+                elif cb.value != (val in selected):
+                    cb.value = val in selected  # guarded — won't fire _on_toggle
+                checks[val] = cb
+                rows.append(cb)
+            self._checks = checks
+            self.children = tuple(rows)
+            # SelectMultiple parity: options change drops selections no longer
+            # present.
+            self.value = tuple(v for v in self.value if v in checks)
+        finally:
+            self._guard = False
 
     def _sync_checks(self, *_) -> None:
         if self._guard:
