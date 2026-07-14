@@ -1,9 +1,9 @@
 """Unit tests for the all-catalog grid data prep (v0.7.0 Workstream A).
 
 `_build_universe_frame` is the pure assembly behind `_update_universe_grid` —
-it builds the MultiIndex frame, inserts the dynamic z-score column, and sorts by
-it — so it's testable without constructing an `ipydatagrid.DataGrid`. The
-conditional-format renderer scoping is checked against `_perf_renderers`.
+it builds the flat single-index frame, inserts the dynamic z-score column, and
+sorts by it — so it's testable without constructing an `ipydatagrid.DataGrid`.
+The conditional-format renderer scoping is checked against `_perf_renderers`.
 """
 
 from __future__ import annotations
@@ -114,10 +114,14 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     zcol = pd.Series({"AAA Index": 0.5, "BBB Index": 2.0, "CCC Index": -1.0})
     frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
 
-    # Z-Score supercolumn present, immediately after the Info block.
-    level0 = list(dict.fromkeys(frame.columns.get_level_values(0)))
-    assert level0 == ["Info", ZSCORE_SUPERCOL, "1Y", "3Y", "5Y"]
-    assert (ZSCORE_SUPERCOL, "Sharpe 1M/1Y") in frame.columns
+    # Flat single-index columns; the Z-Score column sits right after the Info
+    # block and immediately before the first stat column.
+    cols = list(frame.columns)
+    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    info_cols = ["Name", "Asset Class", "Category", "Theme", "Return Type", "Live Date"]
+    assert cols[: len(info_cols)] == info_cols
+    assert cols[len(info_cols)] == z_name
+    assert cols[len(info_cols) + 1] == "1Y Return"
     # Sorted by z descending: BBB (2.0) > AAA (0.5) > CCC (-1.0).
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
 
@@ -134,9 +138,13 @@ def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
     meta = _meta()
     up = _up(meta["ticker"])
     frame = _build_universe_frame(meta, up)
-    level0 = list(dict.fromkeys(frame.columns.get_level_values(0)))
-    assert level0 == ["Info", "1Y", "3Y", "5Y"]
-    assert ZSCORE_SUPERCOL not in frame.columns.get_level_values(0)
+    cols = list(frame.columns)
+    # Info block then flat stat columns; no z-score column at all.
+    assert cols[0] == "Name"
+    assert "1Y Return" in cols and "5Y Sharpe" in cols
+    assert not any(
+        c == ZSCORE_SUPERCOL or c.startswith(ZSCORE_SUPERCOL + " ") for c in cols
+    )
     # No sort applied → original metadata order preserved.
     assert list(frame.index) == list(meta["ticker"])
 
@@ -153,15 +161,14 @@ def _bg_expr(renderer) -> str:
 
 
 def test_perf_renderers_heatmap_scopes_sharpe_and_zscore():
-    cols = pd.MultiIndex.from_tuples(
-        [("1Y", "Sharpe"), ("1Y", "Return"), (ZSCORE_SUPERCOL, "Sharpe 1M/1Y")]
-    )
+    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    cols = pd.Index(["1Y Sharpe", "1Y Return", z_name])
     on = _perf_renderers(cols, sharpe_heatmap=True)
-    # Heatmap on: Sharpe leaf + Z-Score column get the diverging ramp.
-    assert "cell.value <" in _bg_expr(on[("1Y", "Sharpe")])
-    assert "cell.value <" in _bg_expr(on[(ZSCORE_SUPERCOL, "Sharpe 1M/1Y")])
-    # Non-Sharpe numeric leaves keep the plain (default) background.
-    assert _bg_expr(on[("1Y", "Return")]) == ""
+    # Heatmap on: Sharpe column + Z-Score column get the diverging ramp.
+    assert "cell.value <" in _bg_expr(on["1Y Sharpe"])
+    assert "cell.value <" in _bg_expr(on[z_name])
+    # Non-Sharpe numeric columns keep the plain (default) background.
+    assert _bg_expr(on["1Y Return"]) == ""
 
 
 def test_perf_renderers_flat_sharpe_heatmap_toggle():
@@ -187,23 +194,16 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     # `text_value` expr, since ipydatagrid's `missing` trait never fires for a
     # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
     # is true for any non-numeric string and would blank every cell.
-    cols = pd.MultiIndex.from_tuples(
-        [
-            ("Info", "Chart Color"),
-            ("Info", "Name"),
-            ("1Y", "Return"),
-            ("1Y", "Sharpe"),
-            (ZSCORE_SUPERCOL, "Sharpe 1M/1Y"),
-        ]
-    )
+    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    cols = pd.Index(["Chart Color", "Name", "1Y Return", "1Y Sharpe", z_name])
     r = _perf_renderers(cols, sharpe_heatmap=True)
     dash = "isNaN(cell.value) ? '-' : ''"
-    assert _text_value_expr(r[("1Y", "Return")]) == dash
-    assert _text_value_expr(r[("1Y", "Sharpe")]) == dash
-    assert _text_value_expr(r[(ZSCORE_SUPERCOL, "Sharpe 1M/1Y")]) == dash
+    assert _text_value_expr(r["1Y Return"]) == dash
+    assert _text_value_expr(r["1Y Sharpe"]) == dash
+    assert _text_value_expr(r[z_name]) == dash
     # Text + swatch stay plain.
-    assert _text_value_expr(r[("Info", "Name")]) == ""
-    assert _text_value_expr(r[("Info", "Chart Color")]) == ""
+    assert _text_value_expr(r["Name"]) == ""
+    assert _text_value_expr(r["Chart Color"]) == ""
 
 
 def test_perf_renderers_dash_on_numeric_without_heatmap():
