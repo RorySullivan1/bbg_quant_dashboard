@@ -309,13 +309,14 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
     clear_sel_btn.add_class("bbg-btn-secondary")
     search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
-    # The picker is a scrollable checkbox list (CheckboxMultiSelect) with a
-    # fixed height — it does NOT grow to fill the panel; longer catalogs scroll
-    # inside the fixed box (`overflow="auto"`).
+    # The picker is a scrollable checkbox list (CheckboxMultiSelect), capped at
+    # the same 240px as the categorical filter groups on the right
+    # (`_checkbox_group`) so the two panels match; longer catalogs scroll inside
+    # the box (`overflow="auto"`) rather than growing to fill the panel.
     ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", height="320px", overflow="auto"),
+        layout=W.Layout(width="100%", max_height="240px", overflow="auto"),
     )
     clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
 
@@ -474,12 +475,18 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", padding="2px 4px"),
     )
 
+    # The Quantitative view has a row per metric (Sharpe/Sortino/…/Z), so it's
+    # by far the tallest filter view; cap it at the same 240px as the other
+    # views and scroll, for a compact-but-sufficient panel that doesn't jump in
+    # height when switched to.
     quant_view = W.VBox(
         [
             W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
             *quant.rows,
         ],
-        layout=W.Layout(width="100%", padding="2px 4px"),
+        layout=W.Layout(
+            width="100%", padding="2px 4px", max_height="240px", overflow="auto"
+        ),
     )
 
     filter_views: dict[str, W.Widget] = {

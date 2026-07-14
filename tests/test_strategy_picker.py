@@ -90,8 +90,9 @@ def test_multi_strategy_picker_is_a_checkbox_list():
     picker = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
     assert len(picker.children) >= 1
     assert all(isinstance(c, W.Checkbox) for c in picker.children)
-    # Fixed height + scroll — the list must NOT grow to fill the panel.
-    assert picker.layout.height is not None
+    # Capped height + scroll — the list must NOT grow to fill the panel; it's
+    # bounded to the same 240px as the categorical filter groups.
+    assert picker.layout.max_height == "240px"
     assert picker.layout.overflow == "auto"
     assert picker.layout.flex is None
 
