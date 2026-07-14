@@ -69,12 +69,14 @@ renders the full dashboard without a Bloomberg session. Verify by:
   `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
   BQL/mock fetch happens.
 - Clicking Refresh prices — the overlay re-shows and runs the staged bar,
-  then dismisses; the toast reads `Loaded … fetched from BQL in X.Ys`; the
-  parquet mtime advances. The overlay must actually **become visible** even
-  when the refetch is near-instant (off-terminal mock or a warm cache): the
-  refetch runs on a worker thread and the overlay is held up for a short beat
-  (`_OVERLAY_PAINT_DELAY_S`) first, so it can't be shown and hidden inside one
-  frame (which previously made the dialog never appear).
+  then dismisses; the parquet mtime advances. The overlay must actually
+  **become visible** even when the refetch is near-instant (off-terminal mock
+  or a warm cache): the refetch runs on a worker thread and the overlay is held
+  up for a short beat (`_OVERLAY_PAINT_DELAY_S`) first, so it can't be shown and
+  hidden inside one frame (which previously made the dialog never appear). The
+  overlay's scrim is a translucent **black** mask (clearly darker than the navy
+  chrome). **No** `Loaded …` toast fires on Refresh — that toast is reserved for
+  the dashboard's initial load; only a refresh *failure* toasts.
 - Clicking the top-level **Platform** / **Multi-Strategy** pill
   buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
   content area; commentary stays visible above both.
@@ -88,10 +90,11 @@ renders the full dashboard without a Bloomberg session. Verify by:
   layers (they may only ever be `background: transparent` — see `style.md`).
 - Changing a pane's analysis-picker dropdown — only that pane's
   mounted view changes; the other pane is untouched, no recompute. Switching
-  **away and back** to a view keeps its transparent backdrop (the themed card
-  still shows through) — a dark rectangle on the second view means the paper
-  `.bg` rect isn't being forced transparent (the remount `newPlot` redrew it
-  from the `plotly_dark` template).
+  **away and back** to a view keeps its transparent backdrop — the whole chart,
+  **including its legend and plot area**, still shows the themed card through. A
+  dark rectangle (or a dark legend box) on the second view means a plotly
+  background rect isn't being forced transparent: the remount `newPlot` redrew
+  it from the `plotly_dark` template, so `.main-svg .bg` must cover it.
 - The loading overlay's progress card sits **centred in the viewport** (not at
   the middle of the long page) and stays there while scrolling, like the
   post-load toast — both use `position: fixed`.

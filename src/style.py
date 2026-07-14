@@ -88,8 +88,11 @@ class Color(StrEnum):
     ACCENT = "#00AFE9"
     # Secondary accent — a lighter azure that complements the cyan primary.
     ACCENT_2 = "#66c6f0"
-    # Dimmed loading-overlay backdrop — CHROME_BG at ~90% alpha (8-digit hex).
-    SCRIM = "#0a1322e6"
+    # Dimmed loading-overlay backdrop — a translucent BLACK mask (8-digit hex,
+    # ~60% alpha) so it reads clearly darker than the navy chrome behind it,
+    # signalling "the app is loading". (A near-opaque CHROME_BG scrim blended
+    # into the navy dashboard and looked like no mask at all.)
+    SCRIM = "#00000099"
 
     # ---- Conditional-format heatmap (v0.7.0 Platform grid) ----------------
     # Diverging red→neutral→green cell backgrounds for the all-catalog grid's

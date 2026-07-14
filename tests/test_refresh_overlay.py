@@ -58,6 +58,15 @@ def _overlay(app) -> W.HTML:
     )
 
 
+def _toast(app) -> W.HTML:
+    # The post-load summary toast (`.bbg-toast`), set on the initial load.
+    return next(
+        w
+        for w in _walk(app)
+        if isinstance(w, W.HTML) and "bbg-toast" in w.value and "<style" not in w.value
+    )
+
+
 def _patch_fetch_counter(monkeypatch):
     import src.layout.builder as builder_mod
 
@@ -156,3 +165,21 @@ def test_refresh_holds_overlay_visible_before_instant_refetch(monkeypatch):
     assert seen["fetches_so_far"] == before  # ...and it ran BEFORE the refetch
     assert calls["n"] == before + 1  # the refetch still happened
     assert "is-hidden" in _overlay(app).value  # dismissed at the end
+
+
+def test_refresh_does_not_re_toast(monkeypatch):
+    """The post-load "Loaded N indices …" toast only appears on the initial
+    load — a Refresh must not re-toast (the loading overlay already signals
+    progress). The status widget's value is unchanged across a refresh."""
+    calls = _patch_fetch_counter(monkeypatch)
+    app = build_app(verbose=False)
+    _mount_multi_strategy(app)
+
+    toast = _toast(app)
+    before_value = toast.value  # the initial-load toast
+    before_n = calls["n"]
+
+    _refresh_button(app).click()  # headless => synchronous refresh
+
+    assert calls["n"] == before_n + 1  # the refetch happened
+    assert toast.value == before_value  # ...but no new toast was emitted

@@ -1804,9 +1804,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         worker thread (see ``_refresh_prices``). Drives the overlay's staged
         progress from 60% (fetch) through dismissal at 100%."""
         nonlocal meta
-        t_refresh = time.perf_counter()
         try:
-            state.universe_prices, source = fetch_prices(
+            state.universe_prices, _ = fetch_prices(
                 fetch_tickers, universe_start, today, use_cache=False
             )
         except Exception:
@@ -1818,7 +1817,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             )
             _recompute()
             return
-        elapsed = time.perf_counter() - t_refresh
         # Re-prune stale indices from the full catalog against the fresh cache
         # (a resumed ticker can return), then refresh the strategies dropdown.
         if not state.universe_prices.empty:
@@ -1844,8 +1842,9 @@ def build_app(verbose: bool = False) -> W.VBox:
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
         _set_progress(85, "Building catalog…")
-        text, tone = _format_loaded(state.universe_prices, source, elapsed)
-        _set_status(text, tone=tone)
+        # No post-load toast on Refresh: the loading overlay already signals
+        # progress, and the "Loaded N indices …" toast is reserved for the
+        # dashboard's *initial* load. (A refresh failure still toasts, above.)
         _recompute()
         _render_single()
         _set_progress(100, "Ready", hidden=True)

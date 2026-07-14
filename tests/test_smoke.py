@@ -461,8 +461,10 @@ def test_app_css_plotly_backdrop_is_transparent():
     assert "background: transparent !important" in block
     assert str(Color.CHROME_BG) not in block  # no opaque backdrop leaked in
     assert str(Color.CHART_BG) not in block
-    # The paper rect fill is forced transparent (the revisit-goes-dark fix).
-    assert ".main-svg > .bg" in block
+    # Every plotly background rect (paper + subplot + legend) fill is forced
+    # transparent, so a remount can't redraw them with the plotly_dark dark
+    # colors (the revisit-goes-dark fix, incl. legend / plot-area backgrounds).
+    assert ".main-svg .bg" in block
     assert "fill: transparent !important" in block
 
 

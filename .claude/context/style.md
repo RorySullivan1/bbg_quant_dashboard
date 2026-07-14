@@ -7,15 +7,20 @@ chrome shares the charts' near-black surface, the title is a bold masthead
 with an accent rule, buttons/controls/grids are dark-themed, and load
 progress shows in a full-screen dimmed loading overlay with a staged progress
 bar that dismisses once data is loaded, leaving a slim auto-fading post-load
-toast. On **Refresh prices** the same overlay re-shows while the refetch runs
-on a background worker thread (so the click handler returns and the frontend
-can paint the overlay before the kernel blocks); the worker holds the overlay
-visible for a short beat (`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an
-*instant* refetch (off-terminal mock or warm cache) can't hide it inside the
-same frame it was shown. The dimmed scrim (`.bbg-overlay`) covers the full page,
-but the progress *card* (`.bbg-overlay-card`) floats with `position: fixed`
-centred in the viewport — the same mechanism as the `.bbg-toast` — so it sits in
-the middle of what the user is looking at, not the middle of the (long) page.
+toast. The post-load toast ("Loaded N indices …") is shown **only on the
+initial load** — **Refresh prices** does not re-toast (the overlay already
+signals progress); a refresh *failure* still toasts. On Refresh the same overlay
+re-shows while the refetch runs on a background worker thread (so the click
+handler returns and the frontend can paint the overlay before the kernel
+blocks); the worker holds the overlay visible for a short beat
+(`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an *instant* refetch
+(off-terminal mock or warm cache) can't hide it inside the same frame it was
+shown. The scrim (`.bbg-overlay`, `Color.SCRIM`) is a translucent **black** mask
+(so it reads clearly darker than the navy chrome, signalling "loading") that
+covers the full page, while the progress *card* (`.bbg-overlay-card`) floats
+with `position: fixed` centred in the viewport — the same mechanism as the
+`.bbg-toast` — so it sits in the middle of what the user is looking at, not the
+middle of the (long) page.
 
 - **One color identity per strategy**: every chart inside an
   analysis pane (lines, bars, scatter points) uses positional
@@ -47,11 +52,14 @@ the middle of what the user is looking at, not the middle of the (long) page.
     the `plotly_dark` template's dark color even though `paper_bgcolor` is
     `rgba(0,0,0,0)` — the "dark background returns on the second view" bug.
     `app_css.html` handles both: it forces the plotly wrapper DIVs **and** the
-    `.main-svg` layers `background: transparent`, and forces the paper rect
-    (`.main-svg > .bg`) `fill: transparent`, so the themed card always shows
-    through on first render and every remount. **Key rule:** `.main-svg` may
-    only ever be `background: transparent` — an *opaque* fill there paints over
-    the stacked layers and hides the plotted data entirely.
+    `.main-svg` layers `background: transparent`, and forces **every** plotly
+    background rect (`.main-svg .bg` — the paper, the subplot plot-area, **and**
+    the legend background) `fill: transparent`, so the whole chart *including its
+    legend* shows the themed card through on first render and every remount.
+    (Scoping the fill to only the paper rect left legend / plot-area backgrounds
+    redrawing dark on remount.) **Key rule:** `.main-svg` may only ever be
+    `background: transparent` — an *opaque* fill there paints over the stacked
+    layers and hides the plotted data entirely.
 - **Dark technical chrome via injected CSS (v0.6.5)**. A single global
   stylesheet (`data/templates/app_css.html`, rendered by `_app_css()` and
   mounted as the app VBox's first child; the app gets `add_class("bbg-app")`)
