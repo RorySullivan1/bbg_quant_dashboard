@@ -12,7 +12,10 @@ on a background worker thread (so the click handler returns and the frontend
 can paint the overlay before the kernel blocks); the worker holds the overlay
 visible for a short beat (`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an
 *instant* refetch (off-terminal mock or warm cache) can't hide it inside the
-same frame it was shown.
+same frame it was shown. The dimmed scrim (`.bbg-overlay`) covers the full page,
+but the progress *card* (`.bbg-overlay-card`) floats with `position: fixed`
+centred in the viewport — the same mechanism as the `.bbg-toast` — so it sits in
+the middle of what the user is looking at, not the middle of the (long) page.
 
 - **One color identity per strategy**: every chart inside an
   analysis pane (lines, bars, scatter points) uses positional
@@ -38,12 +41,17 @@ same frame it was shown.
     wrapper DIV a theme-following (light/dark) default background that
     `paper_bgcolor` does not control, and a Refresh's full trace swap can
     transiently expose it — flashing a chart to the browser default (white in
-    light mode, black in dark mode; plotly.py #3811). `app_css.html` forces the
-    plotly **wrapper DIVs** (`.js-plotly-plot` / `.plot-container` /
-    `.svg-container`) transparent so the themed card always shows through.
-    **Never** put a background on the stacked `.main-svg` *render layers* — an
-    opaque fill there paints over the transparent chart and hides the plotted
-    data entirely.
+    light mode, black in dark mode; plotly.py #3811). Separately, revisiting a
+    pane view remounts its FigureWidget into its `Stack` (`stack.children = …`),
+    so plotly re-runs `newPlot` and can redraw the **paper background rect** with
+    the `plotly_dark` template's dark color even though `paper_bgcolor` is
+    `rgba(0,0,0,0)` — the "dark background returns on the second view" bug.
+    `app_css.html` handles both: it forces the plotly wrapper DIVs **and** the
+    `.main-svg` layers `background: transparent`, and forces the paper rect
+    (`.main-svg > .bg`) `fill: transparent`, so the themed card always shows
+    through on first render and every remount. **Key rule:** `.main-svg` may
+    only ever be `background: transparent` — an *opaque* fill there paints over
+    the stacked layers and hides the plotted data entirely.
 - **Dark technical chrome via injected CSS (v0.6.5)**. A single global
   stylesheet (`data/templates/app_css.html`, rendered by `_app_css()` and
   mounted as the app VBox's first child; the app gets `add_class("bbg-app")`)

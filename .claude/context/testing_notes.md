@@ -84,11 +84,17 @@ renders the full dashboard without a Bloomberg session. Verify by:
   swapping the picker afterwards is instant — 9 analysis views total).
   The chart **traces stay visible** through the refresh — the charts render on
   a transparent backdrop (the themed card shows through), so a blank / empty
-  pane after a refresh means the plotly wrapper CSS is painting over the SVG
-  layers (only the wrapper DIVs may carry a background, never `.main-svg` —
-  see `style.md`).
+  pane means the plotly CSS is painting an *opaque* fill over the `.main-svg`
+  layers (they may only ever be `background: transparent` — see `style.md`).
 - Changing a pane's analysis-picker dropdown — only that pane's
-  mounted view changes; the other pane is untouched, no recompute.
+  mounted view changes; the other pane is untouched, no recompute. Switching
+  **away and back** to a view keeps its transparent backdrop (the themed card
+  still shows through) — a dark rectangle on the second view means the paper
+  `.bg` rect isn't being forced transparent (the remount `newPlot` redrew it
+  from the `plotly_dark` template).
+- The loading overlay's progress card sits **centred in the viewport** (not at
+  the middle of the long page) and stays there while scrolling, like the
+  post-load toast — both use `position: fixed`.
 - Setting both panes' pickers to the same analysis — both render
   independently (separate plotly FigureWidget instances).
 - Plotly modebar is visible at the top-right of every chart (zoom,
