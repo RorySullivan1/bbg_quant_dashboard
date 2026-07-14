@@ -303,7 +303,10 @@ def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
     _set_pane(ss.pane_right, "Return Distribution")
 
     render_section3(ss, state, meta, multiyear_prices.index.min())
-    assert len(ss.pane_left.weekly_fig.data) == 0  # no benchmark → cleared
+    # Weekly scatter traces are pre-allocated (in-place update), so "cleared"
+    # means the marker trace has no points, not zero traces.
+    assert len(ss.pane_left.weekly_fig.data) == 2
+    assert not ss.pane_left.weekly_fig.data[0].x  # no benchmark → cleared
     # Strategy-only histogram still renders.
     assert len(ss.pane_right.retdist_fig.data) >= 1
 
@@ -315,5 +318,7 @@ def test_render_section3_empty_cache_no_raise():
     _set_pane(ss.pane_left, "Weekly Scatter")
     _set_pane(ss.pane_right, "Factor Scatter")
     render_section3(ss, state, meta, pd.Timestamp("2020-01-01"))
-    assert len(ss.pane_left.weekly_fig.data) == 0
+    # Weekly scatter keeps its 2 pre-allocated traces but with no data points.
+    assert len(ss.pane_left.weekly_fig.data) == 2
+    assert not ss.pane_left.weekly_fig.data[0].x
     assert len(ss.pane_right.factor_fig.data) == 0

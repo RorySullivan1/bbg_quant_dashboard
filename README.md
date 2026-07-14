@@ -18,7 +18,7 @@ deployable via Voila.
 4. **Top-level tab bar** with two tabs:
    - **Platform** — a full-width all-catalog performance grid (every index with
      metadata plus 1Y / 3Y / 5Y / Since-Inception performance).
-   - **Multi-Strategy Analysis** — a "Filters" accordion (strategies picker +
+   - **Multi-Strategy** — a "Filters" accordion (strategies picker +
      filter panel: Asset Class / Category / Theme / Return Type /
      Characteristics / Quantitative) and an analysis date-range slider, above a
      selected-strategy performance grid and **two side-by-side analysis panes**.

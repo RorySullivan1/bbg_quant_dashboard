@@ -907,16 +907,16 @@ def build_app(verbose: bool = False) -> W.VBox:
     single_panel = single_strategy.root
 
     platform_btn = _make_tab_button("Platform", active=True)
-    selected_btn = _make_tab_button("Multi-Strategy Analysis", active=False)
+    selected_btn = _make_tab_button("Multi-Strategy", active=False)
     single_btn = _make_tab_button("Single Strategy", active=False)
     top_tab_bar = W.HBox(
         [platform_btn, selected_btn, single_btn],
-        layout=W.Layout(
-            width="100%",
-            padding="10px 16px 4px 16px",
-            border_bottom=f"1px solid {Color.BORDER}",
-        ),
+        layout=W.Layout(width="100%"),
     )
+    # Stylize the band as the section header (distinct bg + accent underline +
+    # inverted active tab); padding/border/background live on `.bbg-tabband`
+    # in app_css.html so they stay token-driven.
+    top_tab_bar.add_class("bbg-tabband")
     top_tab_content = W.Box(
         [platform_panel],
         layout=W.Layout(width="100%"),

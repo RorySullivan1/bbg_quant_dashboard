@@ -13,7 +13,8 @@ from ..config import (
     DEFAULT_BENCHMARK,
     LOOKBACK_YEARS,
 )
-from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref
+from ..style import Color
+from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref, _palette_color
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Cumulative Performance",
@@ -186,8 +187,16 @@ def _return_dist_stats_grid() -> DataGrid:
 
 def _weekly_scatter_chart() -> go.FigureWidget:
     """Single Strategy Section 3 (v0.9.0): weekly returns vs the benchmark, with
-    a quadratic fit line (β + convexity) drawn by `_update_weekly_scatter`."""
-    return go.FigureWidget(
+    a quadratic fit line (β + convexity) drawn by `_update_weekly_scatter`.
+
+    The two traces (markers + fit line) and the β/convexity annotation are
+    **pre-allocated here** so ``_update_weekly_scatter`` mutates them in place
+    (`.x` / `.y` / `.text`) rather than replacing the trace tuple. An in-place
+    restyle repaints reliably across ipywidgets/plotly widget-manager versions,
+    whereas a *same-count* delete-then-re-add (this chart always has exactly two
+    traces) can be dropped by older frontends — the repaint bug this chart hit
+    on BQuant."""
+    fig = go.FigureWidget(
         layout=_chart_layout(
             title="Weekly returns vs benchmark",
             hovermode="closest",
@@ -197,6 +206,41 @@ def _weekly_scatter_chart() -> go.FigureWidget:
             yaxis=dict(title="Strategy weekly return", tickformat=".1%", zeroline=True),
         )
     )
+    # Trace 0 = weekly-return markers; trace 1 = the quadratic fit line. Both
+    # start empty and are filled in place on update.
+    fig.add_trace(
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="markers",
+            marker=dict(size=6, color=_palette_color(0), line=dict(width=0)),
+            name="weekly",
+            hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="lines",
+            line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1.5),
+            name="quadratic fit",
+            hoverinfo="skip",
+        )
+    )
+    # Pre-allocated β/convexity/R² annotation, toggled + retexted in place.
+    fig.add_annotation(
+        x=0.02,
+        y=0.98,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        align="left",
+        text="",
+        font=dict(color=Color.CHART_TEXT.value, size=11),
+        visible=False,
+    )
+    return fig
 
 
 def _factor_corr_chart() -> go.FigureWidget:

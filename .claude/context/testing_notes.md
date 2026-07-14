@@ -71,7 +71,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Clicking Refresh prices — the overlay re-shows and runs the staged bar,
   then dismisses; the toast reads `Loaded … fetched from BQL in X.Ys`; the
   parquet mtime advances.
-- Clicking the top-level **Platform** / **Multi-Strategy Analysis** pill
+- Clicking the top-level **Platform** / **Multi-Strategy** pill
   buttons toggles the active button (`.bbg-pill.is-active`) and swaps the
   content area; commentary stays visible above both.
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH

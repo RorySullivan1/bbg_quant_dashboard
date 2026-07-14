@@ -261,55 +261,36 @@ def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> 
         if x is not None and y is not None
         else pd.DataFrame(columns=["x", "y"])
     )
+    # Mutate the pre-allocated traces + annotation in place (see
+    # `_weekly_scatter_chart`): a same-count trace *replacement* can fail to
+    # repaint on older widget-manager frontends, an in-place restyle does not.
+    marker, fit_line = fig.data[0], fig.data[1]
+    annotation = fig.layout.annotations[0]
     if len(frame) < 2:
         with fig.batch_update():
-            fig.data = ()
-            fig.layout.annotations = ()
+            marker.x, marker.y = (), ()
+            fit_line.x, fit_line.y = (), ()
+            annotation.visible = False
         return
     fit = poly_fit(frame["x"], frame["y"], degree=2)
-    traces = [
-        go.Scatter(
-            x=frame["x"].to_numpy(),
-            y=frame["y"].to_numpy(),
-            mode="markers",
-            marker=dict(size=6, color=_palette_color(0), line=dict(width=0)),
-            name="weekly",
-            hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
-        )
-    ]
     has_fit = not np.isnan(fit.convexity)
-    if has_fit:
-        # Dense x grid so the quadratic renders as a smooth curve, sorted so the
-        # connected line never doubles back on itself.
-        xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
-        traces.append(
-            go.Scatter(
-                x=xs,
-                y=np.polyval(fit.coeffs, xs),
-                mode="lines",
-                line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1.5),
-                name="quadratic fit",
-                hoverinfo="skip",
-            )
-        )
     with fig.batch_update():
-        fig.data = ()
-        fig.add_traces(traces)
-        fig.layout.annotations = ()
+        marker.x = frame["x"].to_numpy()
+        marker.y = frame["y"].to_numpy()
         if has_fit:
-            fig.add_annotation(
-                x=0.02,
-                y=0.98,
-                xref="paper",
-                yref="paper",
-                showarrow=False,
-                align="left",
-                text=(
-                    f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
-                    f"  R²={fit.r_squared:.2f}"
-                ),
-                font=dict(color=Color.CHART_TEXT.value, size=11),
+            # Dense x grid so the quadratic renders as a smooth curve, sorted so
+            # the connected line never doubles back on itself.
+            xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
+            fit_line.x = xs
+            fit_line.y = np.polyval(fit.coeffs, xs)
+            annotation.text = (
+                f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
+                f"  R²={fit.r_squared:.2f}"
             )
+            annotation.visible = True
+        else:
+            fit_line.x, fit_line.y = (), ()
+            annotation.visible = False
 
 
 def _update_factor_corr_scatter(
