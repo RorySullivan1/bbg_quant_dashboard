@@ -79,7 +79,13 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
-from .filters import _checkbox_group, _q_row, _section_label, _ticker_options
+from .filters import (
+    CheckboxMultiSelect,
+    _checkbox_group,
+    _q_row,
+    _section_label,
+    _ticker_options,
+)
 from .grids import (
     _perf_grid,
     _universe_grid,
@@ -291,17 +297,28 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     search_w = W.Text(
         placeholder="Search ticker or name…",
-        layout=W.Layout(width="100%"),
+        layout=W.Layout(flex="1 1 auto"),
     )
-    # The SelectMultiple fills 100% of a flex holder (built below) that grows to
-    # the bottom of the left panel, which the parent HBox stretches to the
-    # filter panel's height. A plain `flex` on the select itself isn't honored,
-    # but `height="100%"` inside a grown holder is — so it reaches the bottom.
-    ticker_w = W.SelectMultiple(
+    # A "Clear" button to the right of the search box wipes the strategy
+    # *selection* (distinct from "Clear all", which resets the filters/search
+    # but deliberately keeps the picked strategies).
+    clear_sel_btn = W.Button(
+        description="Clear",
+        tooltip="Clear the strategy selection",
+        layout=W.Layout(width="auto", margin="0 0 0 6px"),
+    )
+    clear_sel_btn.add_class("bbg-btn-secondary")
+    search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
+    # The picker is a scrollable checkbox list (CheckboxMultiSelect) that fills a
+    # flex holder (built below) growing to the bottom of the left panel, which
+    # the parent HBox stretches to the filter panel's height. `height="100%"` +
+    # `overflow_y="auto"` inside the grown holder lets the list scroll.
+    ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", height="100%"),
+        layout=W.Layout(width="100%", height="100%", overflow="auto"),
     )
+    clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
 
     # Analysis date range — a slider flanked by two date boxes, two-way
     # linked. Its bounds are rebuilt at recompute time to the overlap window
@@ -442,7 +459,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_w, ticker_holder],
+        [_section_label("Strategies"), search_row, ticker_holder],
         layout=W.Layout(
             width="38%",
             padding="8px",

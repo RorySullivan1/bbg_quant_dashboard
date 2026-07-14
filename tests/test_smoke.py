@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipywidgets as W
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
+from src.layout.filters import CheckboxMultiSelect
 from src.layout.html import STYLE_CTX, render_template
 from src.style import Color
 
@@ -208,7 +209,7 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     )
     ms.click()
     panel = app.children[5].children[0]
-    ticker_w = next(w for w in _walk(panel) if isinstance(w, W.SelectMultiple))
+    ticker_w = next(w for w in _walk(panel) if isinstance(w, CheckboxMultiSelect))
 
     # Expected: the top-5 (capped) by z(1W Sharpe, 1Y) over the fetched universe.
     meta = load_metadata()
