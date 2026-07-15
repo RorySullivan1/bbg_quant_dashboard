@@ -18,6 +18,7 @@ sliced from the already-fetched ``state.universe_prices`` and memoized on
 from __future__ import annotations
 
 import traceback
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pandas as pd
@@ -76,6 +77,51 @@ def clear_pane(pane: SimpleNamespace, meta: pd.DataFrame) -> None:
     pane.fresh = set()
 
 
+# --- Shared benchmark-chart plumbing -----------------------------------------
+# The four benchmark-dependent charts (heatmap / rolling-corr / rolling-beta /
+# outperformance) all slice a benchmark from the cache, memoize a compute keyed
+# by ``(prefix, ticker)``, and swallow a missing-benchmark failure. These three
+# helpers factor out that shared skeleton so each chart is just its own
+# compute + update.
+
+
+def _bench_window(
+    state: object, ticker: str, win_start: pd.Timestamp, win_end: pd.Timestamp
+) -> pd.Series:
+    """The benchmark's price series sliced to ``[win_start, win_end]``.
+
+    Raises ``ValueError`` when the benchmark has no data in the cache — the
+    callers swallow that into their error list / a cleared figure."""
+    prices = state.universe_prices.get(ticker)
+    if prices is None or prices.dropna().empty:
+        raise ValueError(f"No price data for benchmark {ticker!r}.")
+    return prices.loc[win_start:win_end]
+
+
+def _bench_returns(
+    state: object, ticker: str, win_start: pd.Timestamp, win_end: pd.Timestamp
+) -> pd.Series:
+    """Daily returns of the benchmark's windowed price series."""
+    window = _bench_window(state, ticker, win_start, win_end)
+    return daily_returns(window.to_frame()).iloc[:, 0]
+
+
+def _render_bench_chart(
+    state: object,
+    memo_key: tuple,
+    compute: Callable[[], object],
+    update: Callable[[object], None],
+    errors: list[str],
+) -> None:
+    """Memoize ``compute`` under ``memo_key`` and hand the result to ``update``,
+    swallowing a failed compute (missing benchmark data) into ``errors`` — the
+    shared driver for the per-pane benchmark charts."""
+    try:
+        update(state.memo.get_or_compute(memo_key, compute))
+    except Exception:
+        errors.append(traceback.format_exc())
+
+
 def _render_heatmap(
     state: object,
     meta: pd.DataFrame,  # unused — kept for a uniform benchmark-helper signature
@@ -123,14 +169,9 @@ def _render_heatmap(
     try:
 
         def _compute():
-            hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-            if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {hm_bench_ticker!r}.")
-            hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-            hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[:, 0]
             return heatmap_corr_matrix(
                 prep.rets,
-                hm_bench_returns,
+                _bench_returns(state, hm_bench_ticker, win_start, win_end),
                 pct=pct_int / 100.0,
                 direction=direction,
             )
@@ -151,27 +192,22 @@ def _render_rolling_corr(
     win_end: pd.Timestamp,
     errors: list[str],
 ) -> None:
-    rc_bench_ticker = pane.rcorr_dd.value
-    try:
-
-        def _compute_rcorr():
-            rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
-            if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {rc_bench_ticker!r}.")
-            rc_bench_window = rc_bench_prices.loc[win_start:win_end]
-            rc_bench_returns = daily_returns(rc_bench_window.to_frame()).iloc[:, 0]
-            return rolling_correlation(prep.rets, rc_bench_returns)
-
-        rc = state.memo.get_or_compute(("rcorr", rc_bench_ticker), _compute_rcorr)
-        _update_rolling_ref(
+    ticker = pane.rcorr_dd.value
+    _render_bench_chart(
+        state,
+        ("rcorr", ticker),
+        lambda: rolling_correlation(
+            prep.rets, _bench_returns(state, ticker, win_start, win_end)
+        ),
+        lambda rc: _update_rolling_ref(
             pane.rcorr_fig,
             rc,
             meta,
             title_prefix="Rolling Correlation",
-            benchmark_label=rc_bench_ticker,
-        )
-    except Exception:
-        errors.append(traceback.format_exc())
+            benchmark_label=ticker,
+        ),
+        errors,
+    )
 
 
 def _render_rolling_beta(
@@ -183,27 +219,22 @@ def _render_rolling_beta(
     win_end: pd.Timestamp,
     errors: list[str],
 ) -> None:
-    rb_bench_ticker = pane.rbeta_dd.value
-    try:
-
-        def _compute_rbeta():
-            rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
-            if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {rb_bench_ticker!r}.")
-            rb_bench_window = rb_bench_prices.loc[win_start:win_end]
-            rb_bench_returns = daily_returns(rb_bench_window.to_frame()).iloc[:, 0]
-            return rolling_beta(prep.rets, rb_bench_returns)
-
-        rb = state.memo.get_or_compute(("rbeta", rb_bench_ticker), _compute_rbeta)
-        _update_rolling_ref(
+    ticker = pane.rbeta_dd.value
+    _render_bench_chart(
+        state,
+        ("rbeta", ticker),
+        lambda: rolling_beta(
+            prep.rets, _bench_returns(state, ticker, win_start, win_end)
+        ),
+        lambda rb: _update_rolling_ref(
             pane.rbeta_fig,
             rb,
             meta,
             title_prefix="Rolling Beta",
-            benchmark_label=rb_bench_ticker,
-        )
-    except Exception:
-        errors.append(traceback.format_exc())
+            benchmark_label=ticker,
+        ),
+        errors,
+    )
 
 
 def _render_outperf(
@@ -215,27 +246,20 @@ def _render_outperf(
     win_end: pd.Timestamp,
     errors: list[str],
 ) -> None:
-    # Outperformance: cumulative excess return vs the benchmark (prices,
-    # not returns — every strategy series starts at 0).
-    op_bench_ticker = pane.outperf_dd.value
-    try:
-
-        def _compute_outperf():
-            op_bench_prices = state.universe_prices.get(op_bench_ticker)
-            if op_bench_prices is None or op_bench_prices.dropna().empty:
-                raise ValueError(f"No price data for benchmark {op_bench_ticker!r}.")
-            op_bench_window = op_bench_prices.loc[win_start:win_end]
-            return excess_cum_return(prep.sel_window, op_bench_window)
-
-        oc = state.memo.get_or_compute(("outperf", op_bench_ticker), _compute_outperf)
-        _update_outperformance(
-            pane.outperf_fig,
-            oc,
-            meta,
-            benchmark_label=op_bench_ticker,
-        )
-    except Exception:
-        errors.append(traceback.format_exc())
+    # Outperformance uses the benchmark's price window (not returns) — every
+    # strategy series starts at 0 (cumulative excess return).
+    ticker = pane.outperf_dd.value
+    _render_bench_chart(
+        state,
+        ("outperf", ticker),
+        lambda: excess_cum_return(
+            prep.sel_window, _bench_window(state, ticker, win_start, win_end)
+        ),
+        lambda oc: _update_outperformance(
+            pane.outperf_fig, oc, meta, benchmark_label=ticker
+        ),
+        errors,
+    )
 
 
 def render_one(
