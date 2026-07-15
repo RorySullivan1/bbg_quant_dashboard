@@ -31,13 +31,15 @@ deployable via Voila.
      analysis panes**. Each pane swaps among 9 analysis types (Cumulative
      Performance, Outperformance, 1Y Sharpe-z, Correlation Heatmap, Risk/Return,
      Drawdown, Rolling Correlation, Return Distribution, Rolling Beta).
-   - **Single Strategy** — a per-strategy deep-dive: a single-select strategy
-     picker with a shared benchmark selector + overlay toggle, a metadata
-     **profile card** with a cumulative chart and standard-perf table, a
-     3-mode monthly-return **calendar** (Absolute / Outperformance /
-     Vol-adjusted), and **two side-by-side analysis panes** mirroring the
-     Multi-Strategy tab. All views compute from the cached prices (no extra
-     BQL call).
+   - **Single Strategy** — a per-strategy deep-dive: a **"Filters" accordion**
+     (same dimensions as Multi-Strategy — Asset Class / Category / Theme /
+     Return Type / Characteristics / Quantitative) that narrows a single-select
+     strategy picker **live** as boxes are toggled (no Refresh-prices button),
+     a shared benchmark selector + overlay toggle, a metadata **profile card**
+     with a cumulative chart and standard-perf table, a 3-mode monthly-return
+     **calendar** (Absolute / Outperformance / Vol-adjusted), and **two
+     side-by-side analysis panes** mirroring the Multi-Strategy tab. All views
+     compute from the cached prices (no extra BQL call).
 5. **Disclaimers** — performance disclaimer (templated with the data window) and
    the bottom legal disclosure.
 

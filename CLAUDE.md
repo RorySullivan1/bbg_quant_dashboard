@@ -20,9 +20,9 @@ tabs — **Platform** (all-catalog performance grid + a Platform-analytics card
 of Sunburst / Regime / Factor-exposure charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
-profile card + cumulative chart, a monthly-return calendar, and two analysis
-panes) → disclaimers. All compute lives in `src/`; the notebook is a
-one-liner that calls `build_app()`.
+live-narrowing filter accordion, a profile card + cumulative chart, a
+monthly-return calendar, and two analysis panes) → disclaimers. All compute
+lives in `src/`; the notebook is a one-liner that calls `build_app()`.
 
 ## Current version
 

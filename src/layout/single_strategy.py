@@ -13,6 +13,13 @@ distribution, monthly factor-correlation scatter, drawdown, factor scoring
 (β to the macro factors), plus performance-ranking / PCA / defensive-scoring
 stubs.
 
+v0.9.12 adds a **"Filters"** accordion above the picker (``make_filter_panel``)
+— the same pill bar / checkbox groups / Characteristics / Quantitative views as
+the Multi-Strategy tab — that narrows the single-select picker. The builder
+wires it to re-render the tab **live** whenever a filter input changes (no
+Refresh-prices button); when the picked strategy is filtered out, the first
+still-matching strategy is auto-selected.
+
 Everything reuses the existing layout toolkit — no new runtime deps:
 ``_line_chart`` / ``_make_benchmark_dropdown`` (panes), ``_perf_grid`` /
 ``_update_perf_grid`` (grids), ``_update_line`` (charts), ``_ticker_options``
@@ -57,6 +64,7 @@ from .charts import (
     _update_weekly_scatter,
 )
 from .chrome import _make_tab_button, _style_tab_button
+from .filter_panel import make_filter_panel
 from .filters import _ticker_options
 from .grids import _calendar_grid, _perf_grid, _update_calendar_grid, _update_perf_grid
 from .html import STYLE_CTX, _render_profile_card, render_template
@@ -91,6 +99,12 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     ``cal_kind``), and the Section 3 two-pane analysis section (``pane_left`` /
     ``pane_right``, each a ``_make_single_analysis_pane`` namespace).
     """
+    # A "Filters" accordion (v0.9.12) — same pill bar / checkbox groups /
+    # Characteristics / Quantitative views as the Multi-Strategy tab — narrows
+    # the single-select picker below. The builder wires its inputs so the tab
+    # re-renders live on every filter change (no Refresh-prices button).
+    filters = make_filter_panel(meta)
+
     options = _ticker_options(meta)
     picker = W.Dropdown(
         options=options,
@@ -177,12 +191,13 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     )
 
     root = W.VBox(
-        [controls_row, section1, section2_slot, section3_slot],
+        [filters.root, controls_row, section1, section2_slot, section3_slot],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
     return SimpleNamespace(
         root=root,
+        filters=filters,
         picker=picker,
         bench_dd=bench_dd,
         bench_chk=bench_chk,

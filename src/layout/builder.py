@@ -1855,13 +1855,22 @@ def build_app(verbose: bool = False) -> W.VBox:
         # progress, and the "Loaded N indices …" toast is reserved for the
         # dashboard's *initial* load. (A refresh failure still toasts, above.)
         _recompute()
-        _render_single()
+        # Re-apply the Single Strategy filters against the fresh cache (arp is
+        # updated above) so its picker stays consistent with any active filter;
+        # this renders the tab once. (`_on_single_filter_change` is defined
+        # below but only ever called at runtime, like `_render_single`.)
+        _on_single_filter_change()
         _set_progress(100, "Ready", hidden=True)
 
     def _render_single(_change=None) -> None:
         """Re-render the Single Strategy tab's Section 1 from the cache. Bound to
         the picker / benchmark controls and called on load + Refresh. Reads the
         current (possibly re-pruned) `meta` and a 5Y window off `today`."""
+        # `_on_single_filter_change` sets the picker options+value in one shot;
+        # suppress the intermediate picker-observer renders and render once at
+        # the end there instead.
+        if getattr(single_strategy, "_suspend", False):
+            return
         window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
         render_single_strategy(single_strategy, state, meta, window_start)
 
@@ -1922,6 +1931,36 @@ def build_app(verbose: bool = False) -> W.VBox:
     single_strategy.picker.observe(_render_single, names="value")
     single_strategy.bench_dd.observe(_render_single, names="value")
     single_strategy.bench_chk.observe(_render_single, names="value")
+
+    def _on_single_filter_change(_change=None) -> None:
+        """Narrow the Single Strategy picker to the filter matches and re-render.
+
+        Live handler for the v0.9.12 "Filters" accordion: on any filter input
+        change, recompute the matching tickers from the cache, reset the picker
+        options, keep the current pick when it still matches (else auto-select
+        the first match, or clear when nothing matches), then render once.
+        """
+        matches = single_strategy.filters.matching(meta, state)
+        sub = meta.loc[meta["ticker"].isin(matches)]
+        options = _ticker_options(sub)
+        cur = single_strategy.picker.value
+        # Set options + value atomically without triggering the picker-observer
+        # render mid-flight (resetting options fires an intermediate value=None).
+        single_strategy._suspend = True
+        try:
+            single_strategy.picker.options = options
+            if cur in set(sub["ticker"]):
+                single_strategy.picker.value = cur
+            elif options:
+                single_strategy.picker.value = options[0][1]
+            else:
+                single_strategy.picker.value = None
+        finally:
+            single_strategy._suspend = False
+        _render_single()
+
+    for _w in single_strategy.filters.inputs:
+        _w.observe(_on_single_filter_change, names="value")
 
     def _make_cal_kind_handler(which: str):
         def _handler(_b=None) -> None:
