@@ -13,12 +13,14 @@ distribution, monthly factor-correlation scatter, drawdown, factor scoring
 (β to the macro factors), plus performance-ranking / PCA / defensive-scoring
 stubs.
 
-v0.9.12 adds a **"Filters"** accordion above the picker (``make_filter_panel``)
-— the same pill bar / checkbox groups / Characteristics / Quantitative views as
-the Multi-Strategy tab — that narrows the single-select picker. The builder
-wires it to re-render the tab **live** whenever a filter input changes (no
-Refresh-prices button); when the picked strategy is filtered out, the first
-still-matching strategy is auto-selected.
+v0.9.12 adds a **"Filters"** accordion (``make_filter_panel``) — the same pill
+bar / checkbox groups / Characteristics / Quantitative views as the
+Multi-Strategy tab — reorganized into a two-column panel: the single-select
+strategy picker + benchmark selector + "Show benchmark" toggle on the left, the
+filter criteria on the right (equal height), so the criteria narrow the picker
+in the same pane. The builder wires it to re-render the tab **live** whenever a
+filter input changes (no Refresh-prices button); when the picked strategy is
+filtered out, the first still-matching strategy is auto-selected.
 
 Everything reuses the existing layout toolkit — no new runtime deps:
 ``_line_chart`` / ``_make_benchmark_dropdown`` (panes), ``_perf_grid`` /
@@ -52,6 +54,7 @@ from ..stats import (
     trend_returns,
     weekly_returns,
 )
+from ..style import Color
 from .charts import (
     _update_defensive,
     _update_drawdown,
@@ -99,11 +102,22 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     ``cal_kind``), and the Section 3 two-pane analysis section (``pane_left`` /
     ``pane_right``, each a ``_make_single_analysis_pane`` namespace).
     """
-    # A "Filters" accordion (v0.9.12) — same pill bar / checkbox groups /
-    # Characteristics / Quantitative views as the Multi-Strategy tab — narrows
-    # the single-select picker below. The builder wires its inputs so the tab
-    # re-renders live on every filter change (no Refresh-prices button).
-    filters = make_filter_panel(meta)
+    # The "Filters" accordion (v0.9.12, reorganized) is a two-column panel inside
+    # one accordion: on the **left**, the single-select strategy picker with a
+    # benchmark selector + "Show benchmark" toggle stacked below it; on the
+    # **right**, the filter criteria (the same pill bar / checkbox groups /
+    # Characteristics / Quantitative views as the Multi-Strategy tab) that narrow
+    # the picker's options live. The two columns stretch to equal height. The
+    # criteria live in `make_filter_panel`'s right panel (build_root=False so we
+    # compose it here); the builder wires its inputs so the tab re-renders on
+    # every filter change (no Refresh-prices button).
+    filters = make_filter_panel(
+        meta,
+        build_root=False,
+        right_panel_layout=W.Layout(
+            width="62%", padding="8px", border=f"1px solid {Color.BORDER}"
+        ),
+    )
 
     options = _ticker_options(meta)
     picker = W.Dropdown(
@@ -111,18 +125,36 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
         value=options[0][1] if options else None,
         description="Strategy",
         style={"description_width": "70px"},
-        layout=W.Layout(width="360px"),
+        layout=W.Layout(width="100%"),
     )
-    bench_dd = _make_benchmark_dropdown()
+    bench_dd = _make_benchmark_dropdown(width="100%")
     bench_chk = W.Checkbox(
         value=False,
         description="Show benchmark",
         indent=False,
-        layout=W.Layout(width="160px"),
+        layout=W.Layout(width="100%"),
     )
-    controls_row = W.HBox(
+    # Left column: the strategy selection + benchmark controls, bordered like the
+    # criteria panel and stretched to match its height.
+    strategy_panel = W.VBox(
         [picker, bench_dd, bench_chk],
-        layout=W.Layout(width="100%", align_items="center", margin="0 0 6px 0"),
+        layout=W.Layout(
+            width="38%",
+            padding="8px",
+            border=f"1px solid {Color.BORDER}",
+            display="flex",
+            flex_flow="column",
+        ),
+    )
+    filter_box = W.HBox(
+        [strategy_panel, filters.right_panel],
+        layout=W.Layout(width="100%", align_items="stretch"),
+    )
+    filters_accordion = W.Accordion(
+        children=[filter_box],
+        titles=("Filters",),
+        selected_index=0,
+        layout=W.Layout(width="100%"),
     )
 
     profile_w = W.HTML()
@@ -191,7 +223,7 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     )
 
     root = W.VBox(
-        [filters.root, controls_row, section1, section2_slot, section3_slot],
+        [filters_accordion, section1, section2_slot, section3_slot],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
