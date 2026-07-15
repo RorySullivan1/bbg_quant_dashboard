@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Iterable
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pandas as pd
@@ -458,6 +459,18 @@ def _update_regime_scatter(
 # fetched cache on ``state`` — no BQL.
 
 
+@contextmanager
+def _guard_render(state: object, label: str):
+    """Route any exception raised in the block into ``state.init_errors`` labeled
+    with ``label`` — the shared error handling for the Platform render functions
+    (a failed chart records its traceback in the commentary block rather than
+    breaking the whole render)."""
+    try:
+        yield
+    except Exception:
+        state.init_errors.append(f"{label} failed:\n{traceback.format_exc()}")
+
+
 def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
     """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
     fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
@@ -486,7 +499,7 @@ def render_universe_grid(
     already-fetched ``arp_universe_prices`` — no BQL, no full recompute."""
     if state.arp_universe_prices.empty:
         return
-    try:
+    with _guard_render(state, "all-catalog grid z-score render"):
         zcol = rolling_metric_zscore(
             state.arp_universe_prices,
             metric=pa.z_metric_dd.value,
@@ -499,10 +512,6 @@ def render_universe_grid(
         _update_universe_grid(
             state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
         )
-    except Exception:
-        state.init_errors.append(
-            f"all-catalog grid z-score render failed:\n{traceback.format_exc()}"
-        )
 
 
 def render_factor_scatter(
@@ -512,17 +521,13 @@ def render_factor_scatter(
     live from the fetched cache (no BQL)."""
     if state.arp_universe_prices.empty or state.universe_prices.empty:
         return
-    try:
+    with _guard_render(state, "factor-beta scatter render"):
         _update_factor_scatter(
             pa.factor_scatter_fig,
             state.arp_universe_prices,
             state.universe_prices,
             meta,
             years=pa.lookback_selector.value / TRADING_DAYS_PER_YEAR,
-        )
-    except Exception:
-        state.init_errors.append(
-            f"factor-beta scatter render failed:\n{traceback.format_exc()}"
         )
 
 
@@ -531,7 +536,7 @@ def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> N
     Z-score controls + the shared lookback, live from the ARP-only cache."""
     if state.arp_universe_prices.empty:
         return
-    try:
+    with _guard_render(state, "sunburst render"):
         _update_sunburst(
             pa.sunburst_fig,
             state.arp_universe_prices,
@@ -541,8 +546,6 @@ def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> N
             lookback=pa.lookback_selector.value,
             label=f"{pa.sb_window_dd.label} {pa.sb_metric_dd.label}",
         )
-    except Exception:
-        state.init_errors.append(f"sunburst render failed:\n{traceback.format_exc()}")
 
 
 def _regime_indicator(state: object, pa: SimpleNamespace) -> pd.Series | None:
@@ -591,7 +594,7 @@ def render_regime_scatter(
     bucket + lookback, live from the cache (no BQL)."""
     if state.arp_universe_prices.empty:
         return
-    try:
+    with _guard_render(state, "regime scatter render"):
         low, high = _resolve_regime_bucket(state, pa)
         _update_regime_scatter(
             pa.regime_scatter_fig,
@@ -601,10 +604,6 @@ def render_regime_scatter(
             low=low,
             high=high,
             lookback=pa.lookback_selector.value,
-        )
-    except Exception:
-        state.init_errors.append(
-            f"regime scatter render failed:\n{traceback.format_exc()}"
         )
 
 

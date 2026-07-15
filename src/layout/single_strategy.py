@@ -233,7 +233,7 @@ def render_single_strategy(
     ss.profile_w.value = _render_profile_card(row.iloc[0]) if not row.empty else ""
 
     if ticker is None or prices is None or prices.empty or ticker not in prices.columns:
-        _update_line(ss.line_fig, pd.DataFrame(), meta)
+        _update_line(ss.line_fig, pd.DataFrame())
         _update_perf_grid(ss.perf_grid, pd.DataFrame(), meta)
         return
 
@@ -243,7 +243,7 @@ def render_single_strategy(
         if bench in prices.columns and bench != ticker:
             cols.append(bench)
     window = prices.loc[prices.index >= window_start, cols]
-    _update_line(ss.line_fig, cum_perf(window), meta)
+    _update_line(ss.line_fig, cum_perf(window))
 
     full = prices[[ticker]]
     pt = pd.concat([perf_table(full), since_inception_perf(full)], axis=1)
@@ -355,7 +355,7 @@ def render_analysis_pane(
         )
     elif label == "Drawdown":
         dd_cols = [ticker, bench] if has_bench else [ticker]
-        _update_drawdown(pane.dd_fig, drawdown_series(win[dd_cols]), meta)
+        _update_drawdown(pane.dd_fig, drawdown_series(win[dd_cols]))
     elif label == "Factor Scatter":
         _render_factor_scatter(pane, prices, win, ticker)
     elif label == "Factor Scoring":
@@ -375,7 +375,7 @@ def _clear_analysis_view(pane: SimpleNamespace, label: str, meta: pd.DataFrame) 
             meta,
         )
     elif label == "Drawdown":
-        _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
+        _update_drawdown(pane.dd_fig, pd.DataFrame())
     elif label == "Factor Scatter":
         _update_factor_corr_scatter(pane.factor_fig, None, None, None)
     elif label == "Factor Scoring":

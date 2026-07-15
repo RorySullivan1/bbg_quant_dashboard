@@ -45,23 +45,21 @@ from .charts import (
 
 def clear_pane(pane: SimpleNamespace, meta: pd.DataFrame) -> None:
     """Reset every figure in ``pane`` to empty (no valid selection)."""
-    _update_line(pane.line_fig, pd.DataFrame(), meta)
-    _update_outperformance(pane.outperf_fig, pd.DataFrame(), meta, benchmark_label="")
-    _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
+    _update_line(pane.line_fig, pd.DataFrame())
+    _update_outperformance(pane.outperf_fig, pd.DataFrame(), benchmark_label="")
+    _update_sharpe_line(pane.sharpe_fig, pd.DataFrame())
     _update_heatmap(pane.heat_fig, pd.DataFrame())
     _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
-    _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
+    _update_drawdown(pane.dd_fig, pd.DataFrame())
     _update_rolling_ref(
         pane.rcorr_fig,
         pd.DataFrame(),
-        meta,
         title_prefix="Rolling Correlation",
         benchmark_label="",
     )
     _update_rolling_ref(
         pane.rbeta_fig,
         pd.DataFrame(),
-        meta,
         title_prefix="Rolling Beta",
         benchmark_label="",
     )
@@ -202,7 +200,6 @@ def _render_rolling_corr(
         lambda rc: _update_rolling_ref(
             pane.rcorr_fig,
             rc,
-            meta,
             title_prefix="Rolling Correlation",
             benchmark_label=ticker,
         ),
@@ -229,7 +226,6 @@ def _render_rolling_beta(
         lambda rb: _update_rolling_ref(
             pane.rbeta_fig,
             rb,
-            meta,
             title_prefix="Rolling Beta",
             benchmark_label=ticker,
         ),
@@ -255,9 +251,7 @@ def _render_outperf(
         lambda: excess_cum_return(
             prep.sel_window, _bench_window(state, ticker, win_start, win_end)
         ),
-        lambda oc: _update_outperformance(
-            pane.outperf_fig, oc, meta, benchmark_label=ticker
-        ),
+        lambda oc: _update_outperformance(pane.outperf_fig, oc, benchmark_label=ticker),
         errors,
     )
 
@@ -276,13 +270,13 @@ def render_one(
     # rendering (Workstream D) calls this for only the mounted view per
     # recompute and builds the others on first pick.
     if label == "Cumulative Performance":
-        _update_line(pane.line_fig, prep.perf, meta)
+        _update_line(pane.line_fig, prep.perf)
     elif label == "1Y Sharpe-z Line":
-        _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
+        _update_sharpe_line(pane.sharpe_fig, prep.sz_series)
     elif label == "Risk / Return":
         _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
     elif label == "Drawdown":
-        _update_drawdown(pane.dd_fig, prep.dd, meta)
+        _update_drawdown(pane.dd_fig, prep.dd)
     elif label == "Return Distribution":
         _update_return_dist(
             pane.retdist_fig,

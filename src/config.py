@@ -19,6 +19,22 @@ MONTH_WINDOW = 21  # ~1 month
 QUARTER_WINDOW = 63  # ~3 months
 HALF_YEAR_WINDOW = 126  # ~6 months
 
+# The shared 1W / 1M / 3M / 6M window option list (superlatives toggle, sunburst
+# Z-score window, Quantitative Z-Score window) and the window-day → prose-label
+# map for the highlights board title, so these aren't re-spelled at each widget.
+SHORT_WINDOW_OPTIONS: list[tuple[str, int]] = [
+    ("1W", WEEK_WINDOW),
+    ("1M", MONTH_WINDOW),
+    ("3M", QUARTER_WINDOW),
+    ("6M", HALF_YEAR_WINDOW),
+]
+WINDOW_LABELS: dict[int, str] = {
+    WEEK_WINDOW: "Past Week",
+    MONTH_WINDOW: "Past Month",
+    QUARTER_WINDOW: "Past Quarter",
+    HALF_YEAR_WINDOW: "Past 6 Months",
+}
+
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
 RSI_WINDOW = 14  # Wilder RSI lookback in trading days

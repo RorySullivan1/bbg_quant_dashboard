@@ -24,10 +24,12 @@ from ..config import (
     QUARTER_WINDOW,
     REGIME_SPECS,
     REGIME_TICKERS,
+    SHORT_WINDOW_OPTIONS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
+    WINDOW_LABELS,
 )
 from ..data import load_metadata
 from ..stats import (
@@ -382,12 +384,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Live window for the Market Superlatives board — recomputes the panel from
     # the cache on change (no BQL), like the Platform lookback toggle.
     superlative_window = W.ToggleButtons(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
+        options=SHORT_WINDOW_OPTIONS,
         value=SUPERLATIVE_WINDOW_DAYS,
         layout=W.Layout(width="auto"),
     )
@@ -476,12 +473,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="230px"),
     )
     sb_window_dd = W.Dropdown(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
+        options=SHORT_WINDOW_OPTIONS,
         value=WEEK_WINDOW,
         description="Window",
         style={"description_width": "60px"},
@@ -851,13 +843,6 @@ def build_app(verbose: bool = False) -> W.VBox:
         w.observe(_on_filter_change, names="value")
     search_w.observe(_on_filter_change, names="value")
 
-    _WINDOW_LABELS = {
-        WEEK_WINDOW: "Past Week",
-        MONTH_WINDOW: "Past Month",
-        QUARTER_WINDOW: "Past Quarter",
-        HALF_YEAR_WINDOW: "Past 6 Months",
-    }
-
     def _render_highlights_panel(window_days):
         """Render the whole-catalog Key Highlights panel at ``window_days``.
 
@@ -882,7 +867,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             state.highlights_w.value = _render_highlights(
                 superlatives,
                 launches,
-                window_label=_WINDOW_LABELS.get(window_days, "Past Month"),
+                window_label=WINDOW_LABELS.get(window_days, "Past Month"),
             )
         except Exception:
             state.highlights_w.value = _render_error(traceback.format_exc())
