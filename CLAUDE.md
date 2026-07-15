@@ -26,7 +26,7 @@ one-liner that calls `build_app()`.
 
 ## Current version
 
-`v0.8.11` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.11` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
