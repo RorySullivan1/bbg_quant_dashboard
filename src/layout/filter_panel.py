@@ -62,18 +62,35 @@ _CATEGORICAL: tuple[tuple[str, str], ...] = (
 )
 
 
-def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
-    """Build the reusable filter accordion and its ``matching`` reducer.
+def make_filter_panel(
+    meta: pd.DataFrame,
+    *,
+    leading_actions: tuple[W.Widget, ...] = (),
+    right_panel_layout: W.Layout | None = None,
+    build_root: bool = True,
+) -> SimpleNamespace:
+    """Build the reusable filter panel and its ``matching`` reducer.
+
+    The Single Strategy tab uses the default (``build_root=True``) and drops the
+    returned ``root`` accordion straight in. The Multi-Strategy tab composes the
+    pieces itself — it passes its **Refresh prices** button as ``leading_actions``
+    (prepended to the action row), a ``right_panel_layout`` (its 60%/bordered
+    box), and ``build_root=False``, then mounts ``right_panel`` beside its own
+    Strategies picker.
 
     Returns a ``SimpleNamespace`` with:
 
-    - ``root`` — the "Filters" ``Accordion`` widget to drop into a tab.
+    - ``root`` — the "Filters" ``Accordion`` (``None`` when ``build_root=False``).
+    - ``right_panel`` / ``header_row`` / ``content`` — the composable view pieces
+      (the action row + pill bar + swappable value list; the pill bar and the
+      content box, for callers that build their own container).
     - ``inputs`` — every user-adjustable input widget (checkboxes, date pickers,
       currency + quant dropdowns, quant operator/value boxes) for the caller to
       ``observe(..., names="value")``.
-    - ``matching(meta, state)`` — the tickers passing the current filter state,
-      as a ``pd.Index`` (categorical + characteristics via ``apply_filters``,
-      then the quant thresholds via the cached prices on ``state``).
+    - ``apply_categorical(meta)`` — the metadata rows passing the categorical +
+      Characteristics filters (a ``DataFrame``); ``quant_keep(candidates, state)``
+      — the subset of ``candidates`` clearing the quant thresholds; and
+      ``matching(meta, state)`` — the two composed (a ``pd.Index``).
     - the raw widget handles / getters (``asset_checks`` … ``quant``,
       ``currency_dd``, ``live_min`` / ``live_max``, ``clear_all_btn`` …) for
       tests and callers that need them.
@@ -299,20 +316,25 @@ def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
     clear_all_btn.add_class("bbg-btn-secondary")
     clear_section_btn.on_click(_clear_section)
     clear_all_btn.on_click(_clear_all)
+    # Callers (Multi-Strategy) may prepend their own action (Refresh prices).
     action_row = W.HBox(
-        [clear_section_btn, clear_all_btn],
+        [*leading_actions, clear_section_btn, clear_all_btn],
         layout=W.Layout(width="100%", margin="0 0 6px 0"),
     )
 
     right_panel = W.VBox(
         [action_row, filter_header_row, filter_content],
-        layout=W.Layout(width="100%"),
+        layout=right_panel_layout or W.Layout(width="100%"),
     )
-    filters_accordion = W.Accordion(
-        children=[right_panel],
-        titles=("Filters",),
-        selected_index=0,
-        layout=W.Layout(width="100%"),
+    filters_accordion = (
+        W.Accordion(
+            children=[right_panel],
+            titles=("Filters",),
+            selected_index=0,
+            layout=W.Layout(width="100%"),
+        )
+        if build_root
+        else None
     )
 
     # --- Matching reducer (categorical + characteristics + quant) -------------
@@ -375,14 +397,15 @@ def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
             keep = keep.intersection(qt.index[mask])
         return keep
 
-    def matching(meta: pd.DataFrame, state: object) -> pd.Index:
-        """Tickers passing the current filter state, as a ``pd.Index``.
+    def apply_categorical(meta: pd.DataFrame) -> pd.DataFrame:
+        """The metadata rows passing the categorical + Characteristics filters.
 
-        Applies the categorical + Characteristics filters via ``apply_filters``,
-        then the quant thresholds via the cached prices on ``state``. Preserves
-        ``meta`` row order.
+        The pure-metadata half of the filter (no prices / no quant), so callers
+        that need the intermediate frame — e.g. to union back currently-selected
+        rows before applying quant — can get it directly. Preserves ``meta`` row
+        order.
         """
-        filtered = apply_filters(
+        return apply_filters(
             meta,
             asset_classes=cat_widgets["asset_class"].get(),
             categories=cat_widgets["category"].get(),
@@ -392,6 +415,15 @@ def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
             live_date_min=live_min.value,
             live_date_max=live_max.value,
         )
+
+    def matching(meta: pd.DataFrame, state: object) -> pd.Index:
+        """Tickers passing the current filter state, as a ``pd.Index``.
+
+        Composes ``apply_categorical`` (categorical + Characteristics) with the
+        quant thresholds via the cached prices on ``state``. Preserves ``meta``
+        row order.
+        """
+        filtered = apply_categorical(meta)
         keep = _quant_keep(pd.Index(filtered["ticker"]), state)
         return pd.Index(filtered.loc[filtered["ticker"].isin(keep), "ticker"])
 
@@ -406,8 +438,13 @@ def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
 
     return SimpleNamespace(
         root=filters_accordion,
+        right_panel=right_panel,
+        header_row=filter_header_row,
+        content=filter_content,
         inputs=inputs,
         matching=matching,
+        apply_categorical=apply_categorical,
+        quant_keep=_quant_keep,
         # Handles for tests / callers.
         asset_checks=cat_widgets["asset_class"].checks,
         cat_checks=cat_widgets["category"].checks,

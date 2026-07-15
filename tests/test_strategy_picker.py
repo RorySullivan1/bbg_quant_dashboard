@@ -109,3 +109,62 @@ def test_clear_button_clears_the_strategy_selection():
     clear_btn.click()
     assert picker.value == ()
     assert not any(c.value for c in picker.children)
+
+
+# --- Shared filter panel (v0.9.12-review #155) -------------------------------
+
+
+def _click(app, description):
+    next(
+        w
+        for w in _walk(app)
+        if isinstance(w, W.Button) and w.description == description
+    ).click()
+
+
+def test_multi_strategy_filter_narrows_picker_via_shared_panel():
+    """The Multi-Strategy tab drives `make_filter_panel` — a live filter change
+    narrows the strategy picker (no Refresh needed)."""
+    app = build_app(verbose=False)
+    _mount_multi_strategy(app)
+    panel = app.children[5].children[0]
+    picker = next(w for w in _walk(panel) if isinstance(w, CheckboxMultiSelect))
+    n_all = len(picker.options)
+    assert n_all > 0
+
+    # The Refresh + Clear controls all live in the shared panel's action row.
+    labels = {w.description for w in _walk(panel) if isinstance(w, W.Button)}
+    assert {"Refresh prices", "Clear section", "Clear all"} <= labels
+
+    # Clear the seeded selection so the keep-selected union can't mask narrowing.
+    _click(app, "Clear")
+    assert picker.value == ()
+
+    # An impossible quant threshold (Sharpe ≥ 1e6) filters everything out — proof
+    # the quant reducer is wired through the shared panel.
+    _click(app, "Quantitative")
+    value_boxes = [
+        w for w in _walk(panel) if isinstance(w, W.Text) and w.placeholder == "value"
+    ]
+    assert len(value_boxes) == 9  # one per quant metric
+    value_boxes[0].value = "1000000"
+    assert len(picker.options) == 0
+
+    # Clearing the quant box restores the full catalog live.
+    value_boxes[0].value = ""
+    assert len(picker.options) == n_all
+
+
+def test_no_inline_filter_duplication_in_builder():
+    """Regression guard for #155: the Multi-Strategy filter must stay on the
+    shared `make_filter_panel` and not re-grow an inline copy of the widget
+    construction / quant reducer in builder.py."""
+    from pathlib import Path
+
+    src = Path("src/layout/builder.py").read_text()
+    assert "from .filter_panel import make_filter_panel" in src
+    assert "make_filter_panel(" in src
+    # The quant reducer + row factories now live only in filter_panel.py.
+    assert "def _quant_keep" not in src
+    assert "def _quant_thresholds" not in src
+    assert "_q_row(" not in src

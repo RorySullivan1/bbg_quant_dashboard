@@ -15,7 +15,6 @@ from ..bql_client import _cache_path, fetch_prices
 from ..commentary import build_launch_cards, build_superlatives
 from ..config import (
     BENCHMARK_TICKERS,
-    DEFAULT_BENCHMARK,
     FACTOR_TICKERS,
     HALF_YEAR_WINDOW,
     LEGAL_DISCLOSURE_PATH,
@@ -30,10 +29,9 @@ from ..config import (
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
 )
-from ..data import apply_filters, load_metadata, unique_values
+from ..data import load_metadata
 from ..stats import (
     active_columns,
-    ann_beta,
     common_window_bounds,
     corr_matrix,
     cum_perf,
@@ -41,9 +39,7 @@ from ..stats import (
     drawdown_series,
     excess_cum_return,
     heatmap_corr_matrix,
-    jensen_alpha,
     perf_table,
-    quant_metrics_table,
     return_distribution_stats,
     rolling_autocorr,
     rolling_beta,
@@ -51,9 +47,7 @@ from ..stats import (
     rolling_metric_zscore,
     rolling_sharpe_zscore,
     tercile_bounds,
-    treynor_ratio,
     universe_perf,
-    zscore_cross_section,
 )
 from ..style import (
     Color,
@@ -79,10 +73,9 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
+from .filter_panel import make_filter_panel
 from .filters import (
     CheckboxMultiSelect,
-    _checkbox_group,
-    _q_row,
     _section_label,
     _ticker_options,
 )
@@ -168,133 +161,6 @@ def build_app(verbose: bool = False) -> W.VBox:
     _log(f"loaded metadata: {len(meta)} tickers")
     _set_progress(25, f"Loaded {len(meta)} indices")
 
-    asset_content, asset_get, asset_checks = _checkbox_group(
-        unique_values(meta, "asset_class")
-    )
-    cat_content, cat_get, cat_checks = _checkbox_group(unique_values(meta, "category"))
-    theme_content, theme_get, theme_checks = _checkbox_group(
-        unique_values(meta, "theme")
-    )
-    ret_content, ret_get, ret_checks = _checkbox_group(
-        unique_values(meta, "return_type")
-    )
-
-    live_min = W.DatePicker(layout=W.Layout(width="160px"))
-    live_max = W.DatePicker(layout=W.Layout(width="160px"))
-
-    # Currency lives under Characteristics; "All" = no currency filter.
-    currency_dd = W.Dropdown(
-        options=["All"] + unique_values(meta, "currency"),
-        value="All",
-        description="Currency",
-        style={"description_width": "70px"},
-        layout=W.Layout(width="240px"),
-    )
-
-    def currency_get() -> list[str]:
-        return [] if currency_dd.value == "All" else [currency_dd.value]
-
-    # Quantitative filter — each metric row is [label] [≥/≤ dropdown] [value],
-    # with an inline parameter dropdown where relevant (Beta → benchmark,
-    # Z-Score → base metric). Ratios are computed from the already-fetched
-    # prices (no new BQL). Value is a Text box parsed to float, so a blank box
-    # means "no filter"; 0 stays a valid threshold.
-    q_period = W.Dropdown(
-        options=[("1Y", 1), ("3Y", 3), ("5Y", 5)],
-        value=1,
-        description="Period",
-        style={"description_width": "55px"},
-        layout=W.Layout(width="150px"),
-    )
-
-    def _bench_dd() -> W.Dropdown:
-        return W.Dropdown(
-            options=BENCHMARK_TICKERS,
-            value=DEFAULT_BENCHMARK,
-            layout=W.Layout(width="200px"),
-        )
-
-    # Each benchmark-based metric gets its own benchmark dropdown.
-    q_beta_bench = _bench_dd()
-    q_treynor_bench = _bench_dd()
-    q_jensen_bench = _bench_dd()
-    q_z_metric = W.Dropdown(
-        options=[
-            "Sharpe",
-            "Sortino",
-            "Calmar",
-            "Beta",
-            "Treynor",
-            "Jensen",
-            "VaR",
-            "RSI",
-        ],
-        value="Sharpe",
-        layout=W.Layout(width="120px"),
-    )
-    # Window the Z-Score's base metric is computed over (independent of the
-    # global Period); the metric is then z-scored cross-sectionally.
-    q_z_window = W.Dropdown(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
-        value=MONTH_WINDOW,
-        layout=W.Layout(width="70px"),
-    )
-
-    sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
-    sortino_row, sortino_op, q_sortino = _q_row("Sortino")
-    calmar_row, calmar_op, q_calmar = _q_row("Calmar")
-    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_beta_bench)
-    treynor_row, treynor_op, q_treynor = _q_row("Treynor", trailing=q_treynor_bench)
-    jensen_row, jensen_op, q_jensen = _q_row("Jensen α", trailing=q_jensen_bench)
-    var_row, var_op, q_var = _q_row("VaR %")
-    rsi_row, rsi_op, q_rsi = _q_row("RSI")
-    z_row, z_op, q_z = _q_row(
-        "Z-Score",
-        trailing=W.HBox(
-            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric, q_z_window],
-            layout=W.Layout(align_items="center"),
-        ),
-    )
-    quant = SimpleNamespace(
-        period_dd=q_period,
-        z_metric_dd=q_z_metric,
-        z_window_dd=q_z_window,
-        # Each benchmark-based metric carries its own benchmark dropdown.
-        bench_dd={
-            "Beta": q_beta_bench,
-            "Treynor": q_treynor_bench,
-            "Jensen": q_jensen_bench,
-        },
-        rows=[
-            sharpe_row,
-            sortino_row,
-            calmar_row,
-            beta_row,
-            treynor_row,
-            jensen_row,
-            var_row,
-            rsi_row,
-            z_row,
-        ],
-        # metric name -> (operator dropdown, value box)
-        specs={
-            "Sharpe": (sharpe_op, q_sharpe),
-            "Sortino": (sortino_op, q_sortino),
-            "Calmar": (calmar_op, q_calmar),
-            "Beta": (beta_op, q_beta),
-            "Treynor": (treynor_op, q_treynor),
-            "Jensen": (jensen_op, q_jensen),
-            "VaR": (var_op, q_var),
-            "RSI": (rsi_op, q_rsi),
-            "Z": (z_op, q_z),
-        },
-    )
-
     search_w = W.Text(
         placeholder="Search ticker or name…",
         layout=W.Layout(flex="1 1 auto"),
@@ -341,19 +207,39 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
     # states — styled via CSS class, not inline `.style`, so `:hover` works.
     apply_btn.add_class("bbg-btn")
-    clear_section_btn = W.Button(
-        description="Clear section",
-        tooltip="Clear the active filter's selections",
-        layout=W.Layout(width="auto"),
+
+    # The Multi-Strategy filter UI is the reusable `make_filter_panel` (shared
+    # with the Single Strategy tab, v0.9.12-review #155): the pill bar over the
+    # categorical / Characteristics / Quantitative views, the Clear buttons, and
+    # the `apply_categorical` / `quant_keep` / `matching` reducers. Multi-Strategy
+    # composes it with its own left Strategies picker + Refresh button + analysis
+    # date-range row, so it passes the Refresh button as a leading action, its own
+    # 60%/bordered right-panel layout, and `build_root=False` (it wraps the pieces
+    # in its own "Filters" accordion below).
+    filter_panel = make_filter_panel(
+        meta,
+        leading_actions=(apply_btn,),
+        right_panel_layout=W.Layout(
+            width="60%", padding="8px", border=f"1px solid {Color.BORDER}"
+        ),
+        build_root=False,
     )
-    clear_all_btn = W.Button(
-        description="Clear all",
-        tooltip="Clear all filters and the search box",
-        layout=W.Layout(width="auto"),
-    )
-    # Secondary (outlined/muted) action style with hover/focus — via CSS class.
-    clear_section_btn.add_class("bbg-btn-secondary")
-    clear_all_btn.add_class("bbg-btn-secondary")
+
+    def _clear_all_extra(_b=None) -> None:
+        # `make_filter_panel`'s Clear all resets the filter widgets (and fires the
+        # observers); Multi-Strategy additionally wipes the search box and snaps
+        # the analysis date range back to its full overlap span.
+        search_w.value = ""
+        if state.cur_bound_start is not None and state.cur_bound_end is not None:
+            state.sync_guard = True
+            try:
+                range_min_box.value = state.cur_bound_start
+                range_max_box.value = state.cur_bound_end
+            finally:
+                state.sync_guard = False
+
+    filter_panel.clear_all_btn.on_click(_clear_all_extra)
+
     status_w = _status_banner()
 
     def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
@@ -455,140 +341,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         ),
     )
 
-    # Right: filter panel — Refresh prices on top, then a pill header bar whose
-    # buttons swap which filter dimension's values are shown below.
-    date_range_row = W.HBox(
-        [
-            live_min,
-            W.HTML("<div style='padding:0 6px;font-size:16px;'>–</div>"),
-            live_max,
-        ],
-        layout=W.Layout(width="100%", align_items="center"),
-    )
-    characteristics_view = W.VBox(
-        [
-            _section_label("Launch date"),
-            date_range_row,
-            _section_label("Currency"),
-            currency_dd,
-        ],
-        layout=W.Layout(width="100%", padding="2px 4px"),
-    )
-
-    # The Quantitative view has a row per metric (Sharpe/Sortino/…/Z), so it's
-    # by far the tallest filter view; cap it at the same 240px as the other
-    # views and scroll, for a compact-but-sufficient panel that doesn't jump in
-    # height when switched to.
-    quant_view = W.VBox(
-        [
-            W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
-            *quant.rows,
-        ],
-        layout=W.Layout(
-            width="100%", padding="2px 4px", max_height="240px", overflow="auto"
-        ),
-    )
-
-    filter_views: dict[str, W.Widget] = {
-        "Asset Class": asset_content,
-        "Category": cat_content,
-        "Theme": theme_content,
-        "Return Type": ret_content,
-        "Characteristics": characteristics_view,
-        "Quantitative": quant_view,
-    }
-    filter_btns = {
-        label: _make_tab_button(label, active=(i == 0), width="auto", height="32px")
-        for i, label in enumerate(filter_views)
-    }
-    filter_header_row = W.HBox(
-        list(filter_btns.values()),
-        layout=W.Layout(
-            width="100%",
-            flex_flow="row wrap",
-            margin="2px 0 6px 0",
-        ),
-    )
-    filter_content = W.Box(
-        [filter_views["Asset Class"]],
-        layout=W.Layout(width="100%", min_height="250px"),
-    )
-
-    # The currently visible filter dimension (on `state`) drives "Clear section".
-    def _activate_filter(label: str) -> None:
-        state.active_filter = label
-        for lbl, btn in filter_btns.items():
-            _style_tab_button(btn, active=(lbl == label))
-        filter_content.children = (filter_views[label],)
-
-    for label, btn in filter_btns.items():
-        btn.on_click(lambda _b, lbl=label: _activate_filter(lbl))
-
-    # Maps each checkbox-based filter dimension to its checkboxes. The
-    # Characteristics view clears its date range instead. Clearing a value
-    # widget fires its `_on_filter_change` observer, so the dropdown re-narrows
-    # automatically — no manual recompute needed.
-    filter_checks = {
-        "Asset Class": asset_checks,
-        "Category": cat_checks,
-        "Theme": theme_checks,
-        "Return Type": ret_checks,
-    }
-
-    def _clear_quant() -> None:
-        for op, box in quant.specs.values():
-            box.value = ""
-            op.value = "≥"
-
-    def _clear_section(_b=None) -> None:
-        label = state.active_filter
-        if label == "Characteristics":
-            live_min.value = None
-            live_max.value = None
-            currency_dd.value = "All"
-        elif label == "Quantitative":
-            _clear_quant()
-        else:
-            for c in filter_checks[label]:
-                c.value = False
-
-    def _clear_all(_b=None) -> None:
-        for checks in filter_checks.values():
-            for c in checks:
-                c.value = False
-        live_min.value = None
-        live_max.value = None
-        currency_dd.value = "All"
-        _clear_quant()
-        search_w.value = ""
-        # Snap the analysis date range back to its full overlap span. The bounds
-        # themselves re-derive from the selection on the next Refresh prices.
-        if state.cur_bound_start is not None and state.cur_bound_end is not None:
-            state.sync_guard = True
-            try:
-                range_min_box.value = state.cur_bound_start
-                range_max_box.value = state.cur_bound_end
-            finally:
-                state.sync_guard = False
-
-    clear_section_btn.on_click(_clear_section)
-    clear_all_btn.on_click(_clear_all)
-
-    action_row = W.HBox(
-        [apply_btn, clear_section_btn, clear_all_btn],
-        layout=W.Layout(width="100%", margin="0 0 6px 0"),
-    )
-
-    right_panel = W.VBox(
-        [action_row, filter_header_row, filter_content],
-        layout=W.Layout(
-            width="60%",
-            padding="8px",
-            border=f"1px solid {Color.BORDER}",
-        ),
-    )
     filter_box = W.HBox(
-        [left_panel, right_panel],
+        [left_panel, filter_panel.right_panel],
         layout=W.Layout(width="100%", align_items="stretch"),
     )
     # Full-width analysis date-range row below the two panels: slider flanked
@@ -1235,85 +989,12 @@ def build_app(verbose: bool = False) -> W.VBox:
         state.arp_universe_prices = pd.DataFrame()
         state.universe_up = pd.DataFrame()
 
-    def _quant_thresholds() -> dict[str, tuple[str, float]]:
-        """Active quant filters as `{metric: (operator, value)}`; blank = off."""
-        out: dict[str, tuple[str, float]] = {}
-        for name, (op, box) in quant.specs.items():
-            raw = (box.value or "").strip()
-            if not raw:
-                continue
-            try:
-                out[name] = (op.value, float(raw))
-            except ValueError:
-                continue
-        return out
-
-    def _quant_keep(candidates: pd.Index) -> pd.Index:
-        """Tickers (among `candidates`) passing the active ≥/≤ thresholds.
-
-        Metrics are computed from the already-fetched ARP prices — no BQL. If
-        the cache is empty or no thresholds are set, every candidate passes.
-        """
-        thresholds = _quant_thresholds()
-        if not thresholds or state.arp_universe_prices.empty:
-            return candidates
-        prices = state.arp_universe_prices.reindex(columns=candidates).dropna(
-            how="all", axis=1
-        )
-        if prices.shape[1] == 0:
-            return candidates
-        years = quant.period_dd.value
-        # Non-benchmark metrics from the shared table; the benchmark-based ones
-        # (Beta / Treynor / Jensen) are recomputed each against its own dropdown.
-        # Compute returns once and share them with quant_metrics_table.
-        rets = daily_returns(prices)
-        qt = quant_metrics_table(prices, None, years, returns=rets)
-        qt["Beta"] = ann_beta(
-            rets, state.universe_prices.get(quant.bench_dd["Beta"].value), years
-        )
-        qt["Treynor"] = treynor_ratio(
-            rets,
-            prices,
-            state.universe_prices.get(quant.bench_dd["Treynor"].value),
-            years,
-        )
-        qt["Jensen"] = jensen_alpha(
-            rets,
-            prices,
-            state.universe_prices.get(quant.bench_dd["Jensen"].value),
-            years,
-        )
-        if "Z" in thresholds:
-            # Cross-sectional z of the base metric, computed over the Z-Score's
-            # own window (independent of the Period); recompute over that window,
-            # threading the base metric's benchmark when it's Beta/Treynor/Jensen.
-            z_metric = quant.z_metric_dd.value
-            z_years = quant.z_window_dd.value / TRADING_DAYS_PER_YEAR
-            z_bench = (
-                state.universe_prices.get(quant.bench_dd[z_metric].value)
-                if z_metric in quant.bench_dd
-                else None
-            )
-            zt = quant_metrics_table(prices, z_bench, z_years, returns=rets)
-            qt["Z"] = zscore_cross_section(zt[z_metric])
-        keep = qt.index
-        for name, (op, value) in thresholds.items():
-            col = qt[name]
-            mask = col >= value if op == "≥" else col <= value
-            keep = keep.intersection(qt.index[mask])
-        return keep
-
     def _on_filter_change(_change=None):
-        filtered = apply_filters(
-            meta,
-            asset_classes=asset_get(),
-            categories=cat_get(),
-            themes=theme_get(),
-            return_types=ret_get(),
-            currencies=currency_get(),
-            live_date_min=live_min.value,
-            live_date_max=live_max.value,
-        )
+        # Categorical + Characteristics via the shared panel; then the search
+        # substring; then the quant thresholds. Currently-selected tickers that
+        # still pass the categorical filter are unioned back so a live filter
+        # toggle never drops a picked strategy from the option list.
+        filtered = filter_panel.apply_categorical(meta)
         query = (search_w.value or "").strip().lower()
         if query:
             mask = filtered["ticker"].str.lower().str.contains(
@@ -1323,7 +1004,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         else:
             visible = filtered
 
-        quant_keep = _quant_keep(pd.Index(visible["ticker"]))
+        quant_keep = filter_panel.quant_keep(pd.Index(visible["ticker"]), state)
         visible = visible.loc[visible["ticker"].isin(quant_keep)]
 
         selected = list(state.ticker_w.value)
@@ -1335,15 +1016,11 @@ def build_app(verbose: bool = False) -> W.VBox:
             t for t in selected if t in combined["ticker"].values
         )
 
-    for cb in (*asset_checks, *cat_checks, *theme_checks, *ret_checks):
-        cb.observe(_on_filter_change, names="value")
-    for w in (live_min, live_max, search_w, currency_dd):
+    # Every filter input narrows the picker live (the panel exposes them all);
+    # the search box is the Multi-Strategy tab's own, wired alongside.
+    for w in filter_panel.inputs:
         w.observe(_on_filter_change, names="value")
-    quant_inputs = [q_period, q_z_metric, q_z_window, *quant.bench_dd.values()]
-    for op, box in quant.specs.values():
-        quant_inputs += [op, box]
-    for w in quant_inputs:
-        w.observe(_on_filter_change, names="value")
+    search_w.observe(_on_filter_change, names="value")
 
     def _clear_pane(pane: SimpleNamespace) -> None:
         _update_line(pane.line_fig, pd.DataFrame(), meta)
