@@ -32,13 +32,9 @@ import ipywidgets as W
 import pandas as pd
 
 from ..config import (
-    BENCHMARK_TICKERS,
-    DEFAULT_BENCHMARK,
-    HALF_YEAR_WINDOW,
     MONTH_WINDOW,
-    QUARTER_WINDOW,
+    SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
-    WEEK_WINDOW,
 )
 from ..data import apply_filters, unique_values
 from ..stats import (
@@ -51,6 +47,7 @@ from ..stats import (
 )
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _checkbox_group, _q_row, _section_label
+from .panes import _make_benchmark_dropdown
 
 # Pill labels, in bar order. The four categorical dimensions map to a metadata
 # column; Characteristics / Quantitative are special views built below.
@@ -143,11 +140,8 @@ def make_filter_panel(
     )
 
     def _bench_dd() -> W.Dropdown:
-        return W.Dropdown(
-            options=BENCHMARK_TICKERS,
-            value=DEFAULT_BENCHMARK,
-            layout=W.Layout(width="200px"),
-        )
+        # The shared benchmark-dropdown factory (panes); no label, narrower box.
+        return _make_benchmark_dropdown(description="", width="200px")
 
     q_beta_bench = _bench_dd()
     q_treynor_bench = _bench_dd()
@@ -167,12 +161,7 @@ def make_filter_panel(
         layout=W.Layout(width="120px"),
     )
     q_z_window = W.Dropdown(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
+        options=SHORT_WINDOW_OPTIONS,
         value=MONTH_WINDOW,
         layout=W.Layout(width="80px"),
     )

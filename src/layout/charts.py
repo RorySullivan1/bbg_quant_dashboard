@@ -62,14 +62,13 @@ def _update_line_series(
             fig.layout.title.text = title
 
 
-def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
+def _update_line(fig: go.FigureWidget, perf: pd.DataFrame) -> None:
     _update_line_series(fig, perf)
 
 
 def _update_outperformance(
     fig: go.FigureWidget,
     df: pd.DataFrame,
-    meta: pd.DataFrame,
     *,
     benchmark_label: str,
 ) -> None:
@@ -99,10 +98,19 @@ def _update_heatmap(
             fig.layout.title.text = title
 
 
-def _update_sharpe_line(
-    fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataFrame
-) -> None:
+def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame) -> None:
     _update_line_series(fig, zser, tail_n=TRADING_DAYS_PER_YEAR)
+
+
+def _clear_scatter(fig: go.FigureWidget) -> None:
+    """Blank the risk/return scatter's single trace (no valid data)."""
+    with fig.batch_update():
+        fig.data[0].x = []
+        fig.data[0].y = []
+        fig.data[0].marker.size = []
+        fig.data[0].marker.color = []
+        fig.data[0].text = []
+        fig.data[0].customdata = []
 
 
 def _update_scatter(
@@ -112,13 +120,7 @@ def _update_scatter(
     meta: pd.DataFrame,
 ) -> None:
     if prices.empty or rets.empty:
-        with fig.batch_update():
-            fig.data[0].x = []
-            fig.data[0].y = []
-            fig.data[0].marker.size = []
-            fig.data[0].marker.color = []
-            fig.data[0].text = []
-            fig.data[0].customdata = []
+        _clear_scatter(fig)
         return
     vol = ann_volatility(rets, LOOKBACK_YEARS)
     ret = ann_return(prices, LOOKBACK_YEARS)
@@ -127,13 +129,7 @@ def _update_scatter(
         subset=["vol", "ret"]
     )
     if frame.empty:
-        with fig.batch_update():
-            fig.data[0].x = []
-            fig.data[0].y = []
-            fig.data[0].marker.size = []
-            fig.data[0].marker.color = []
-            fig.data[0].text = []
-            fig.data[0].customdata = []
+        _clear_scatter(fig)
         return
     s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
     if s_clipped.max() > 0:
@@ -153,16 +149,13 @@ def _update_scatter(
         fig.data[0].customdata = frame["sharpe"].values
 
 
-def _update_drawdown(
-    fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame
-) -> None:
+def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame) -> None:
     _update_line_series(fig, dd, value_format=".2%")
 
 
 def _update_rolling_ref(
     fig: go.FigureWidget,
     df: pd.DataFrame,
-    meta: pd.DataFrame,
     *,
     title_prefix: str,
     benchmark_label: str,

@@ -30,18 +30,21 @@ ANALYSIS_OPTIONS: tuple[str, ...] = (
 
 
 def _make_benchmark_dropdown(
-    description: str = "Benchmark", *, default: str = DEFAULT_BENCHMARK
+    description: str = "Benchmark",
+    *,
+    default: str = DEFAULT_BENCHMARK,
+    width: str = "320px",
 ) -> W.Dropdown:
-    """A per-pane benchmark selector. Every analysis-pane benchmark dropdown
-    (Rolling Correlation / Rolling Beta / Outperformance / Correlation-Heatmap
-    regime) is the same widget over `BENCHMARK_TICKERS`, so they share this
-    factory."""
+    """A benchmark selector over `BENCHMARK_TICKERS`. Every analysis-pane
+    benchmark dropdown (Rolling Correlation / Rolling Beta / Outperformance /
+    Correlation-Heatmap regime) and the Quantitative-filter benchmark rows use
+    this one factory. A blank `description` leaves no label gap."""
     return W.Dropdown(
         options=BENCHMARK_TICKERS,
         value=default,
         description=description,
-        style={"description_width": "80px"},
-        layout=W.Layout(width="320px"),
+        style={"description_width": "80px" if description else "0px"},
+        layout=W.Layout(width=width),
     )
 
 
