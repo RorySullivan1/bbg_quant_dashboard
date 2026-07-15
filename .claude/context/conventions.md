@@ -17,7 +17,9 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
     so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
     `v0.6.0-refactor-dashboard-state`).
 - When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.9.0/...`).
+  open new branches under the new prefix. Because the integration branch is
+  named exactly `vX.Y.Z`, use the flattened form (see the caveat above) —
+  e.g. `v0.9.12-<short-description>`.
 
 ## Development workflow
 
@@ -235,18 +237,22 @@ CSS, style tokens — live in `style.md`.)
   (a thin caller of the same `{{key}}` substitution as `render_template`);
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
-- **Selected perf grid uses 2-level MultiIndex columns** (Info / 1Y /
-  3Y / 5Y supercolumns over their leaves), matching the all-catalog
-  grid. Custom per-column widths are kept via ipydatagrid's
-  `"<level0>,<level1>"` comma-joined `column_widths` keys (built by
-  `_build_perf_column_widths`), so the grid both shows a two-row
-  header and fills a ~full-HD width (~2014px). This grid was flattened
-  to single-level strings once (`2a9cc6c`) because MultiIndex widths
-  were flaky; if they regress again, the fallback is uniform sizing
-  via `base_column_size` (no `column_widths`), like the all-catalog
-  grid. `_perf_renderers` matches on the column leaf
-  (`col[-1] if isinstance(col, tuple) else col`) so it serves both
-  grids.
+- **Both perf grids use flat single-index string columns (v0.9.11).**
+  The selected-strategy grid and the all-catalog grid both flatten the
+  (period, metric) column tuples to single-index labels (e.g.
+  `("1Y", "Return") -> "1Y Return"`) via `_flatten_perf_columns`, and
+  render under a **single-row header** (`base_column_header_size=26`).
+  Per-column pixel widths come from `_perf_column_widths` (a tiny
+  color-swatch column, uniform stat columns, and content-fit
+  descriptive / z-score columns fit to the header + actual cell
+  strings). Autofit is done in Python — a deterministic content-fit
+  (`_content_px`), not ipydatagrid's frontend `auto_fit_columns`, so
+  the color / stat columns stay pinned while only the descriptive
+  columns re-fit. `_perf_renderers` matches on the flat string name
+  (e.g. `name.endswith(" Sharpe")`) so it serves both grids. (This
+  replaced the earlier 2-level MultiIndex layout with comma-joined
+  `"<level0>,<level1>"` width keys and a two-row header — flattened in
+  v0.9.11.)
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.

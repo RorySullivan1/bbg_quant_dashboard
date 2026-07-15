@@ -28,11 +28,13 @@ the viewport rather than the below-the-fold page is exactly right.)
   analysis pane (lines, bars, scatter points) uses positional
   `LINE_PALETTE` colors keyed by the strategy's position in the
   selected ticker set. The selected-strategy perf grid above the
-  panes carries a leftmost color-swatch column (header **"Chart
-  Color"**, `PERF_COLOR_COLUMN_NAME`) rendered with
+  panes carries a leftmost color-swatch column whose header is
+  **deliberately blank** (`PERF_COLOR_COLUMN_NAME = " "`, a single
+  space — a nameless legend chip, not a labelled field), rendered with
   `ipydatagrid.VegaExpr` and the same positional palette, so the
-  grid acts as the universal legend — every chart's per-strategy
-  bqplot legend (`display_legend`) is off.
+  grid acts as the universal legend — each plotly chart's own legend
+  is off (`showlegend=False`), with the swatch column serving as the
+  shared legend instead.
 - **Chart theme is dark (Bloomberg / Barclays blend)**: charts render on a
   **transparent** `paper_bgcolor`/`plot_bgcolor` (`Color.TRANSPARENT`) via
   plotly's `plotly_dark` template + custom overrides defined in
