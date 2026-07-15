@@ -10,11 +10,14 @@ price cache — no BQL.
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Iterable
+from types import SimpleNamespace
 
 import pandas as pd
 import plotly.graph_objects as go
 
+from ..config import REGIME_SPECS, TRADING_DAYS_PER_YEAR
 from ..stats import (
     daily_returns,
     equity_risk_premium,
@@ -22,10 +25,15 @@ from ..stats import (
     platform_sunburst_frame,
     regime_mask,
     regime_risk_return,
+    rolling_autocorr,
+    rolling_metric_zscore,
+    tercile_bounds,
     term_premium,
     trend_returns,
 )
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
+from .chrome import _style_tab_button
+from .grids import _update_universe_grid
 from .theme import _chart_layout, _short_ticker
 
 
@@ -440,3 +448,215 @@ def _update_regime_scatter(
     with fig.batch_update():
         fig.data = ()
         fig.add_traces(traces)
+
+
+# --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
+# Extracted from the ``build_app`` monolith. ``build_app`` builds the analytics
+# widgets, bundles their handles into a ``pa`` namespace, then calls
+# ``wire_platform_analytics(state, meta, pa)`` (observers + tab pills) and the
+# ``render_*`` functions on load / Refresh. Every render reads the already
+# fetched cache on ``state`` — no BQL.
+
+
+def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
+    """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
+    fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
+    spec = REGIME_SPECS[regime_type]
+    if spec.get("mode") == "level":
+        return [(label, (low, high)) for label, low, high in spec["buckets"]]
+    return [(label, key) for label, key in spec["bucket_labels"]]
+
+
+def activate_platform_tab(pa: SimpleNamespace, which: str) -> None:
+    """Swap the analytics card to tab ``which`` — restyle the pills, swap the
+    left-column controls (``tab_controls_box``) and the chart (``chart_box``)."""
+    for key, (pill, _controls, _fig) in pa.analytics_tabs.items():
+        _style_tab_button(pill, active=(key == which))
+    _pill, controls, fig = pa.analytics_tabs[which]
+    pa.tab_controls_box.children = (controls,)
+    pa.chart_box.children = (fig,)
+
+
+def render_universe_grid(
+    state: object, meta: pd.DataFrame, pa: SimpleNamespace
+) -> None:
+    """Render the all-catalog grid with the dynamic z-score column from the
+    current Metric/Window/Lookback dropdowns. Reads the cached perf table
+    (``state.universe_up``) and computes only the z-score column live from the
+    already-fetched ``arp_universe_prices`` — no BQL, no full recompute."""
+    if state.arp_universe_prices.empty:
+        return
+    try:
+        zcol = rolling_metric_zscore(
+            state.arp_universe_prices,
+            metric=pa.z_metric_dd.value,
+            window=pa.z_window_dd.value,
+            zscore_window=pa.z_lookback_dd.value,
+        )
+        zlabel = (
+            f"{pa.z_metric_dd.label} {pa.z_window_dd.label}/{pa.z_lookback_dd.label}"
+        )
+        _update_universe_grid(
+            state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
+        )
+    except Exception:
+        state.init_errors.append(
+            f"all-catalog grid z-score render failed:\n{traceback.format_exc()}"
+        )
+
+
+def render_factor_scatter(
+    state: object, meta: pd.DataFrame, pa: SimpleNamespace
+) -> None:
+    """Render the Platform 3D factor-beta scatter at the selected lookback,
+    live from the fetched cache (no BQL)."""
+    if state.arp_universe_prices.empty or state.universe_prices.empty:
+        return
+    try:
+        _update_factor_scatter(
+            pa.factor_scatter_fig,
+            state.arp_universe_prices,
+            state.universe_prices,
+            meta,
+            years=pa.lookback_selector.value / TRADING_DAYS_PER_YEAR,
+        )
+    except Exception:
+        state.init_errors.append(
+            f"factor-beta scatter render failed:\n{traceback.format_exc()}"
+        )
+
+
+def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
+    """Render the asset class → theme → ticker sunburst from the Metric/Window
+    Z-score controls + the shared lookback, live from the ARP-only cache."""
+    if state.arp_universe_prices.empty:
+        return
+    try:
+        _update_sunburst(
+            pa.sunburst_fig,
+            state.arp_universe_prices,
+            meta,
+            metric=pa.sb_metric_dd.value,
+            window=pa.sb_window_dd.value,
+            lookback=pa.lookback_selector.value,
+            label=f"{pa.sb_window_dd.label} {pa.sb_metric_dd.label}",
+        )
+    except Exception:
+        state.init_errors.append(f"sunburst render failed:\n{traceback.format_exc()}")
+
+
+def _regime_indicator(state: object, pa: SimpleNamespace) -> pd.Series | None:
+    """The regime indicator series from the cache, per the active regime's mode,
+    or None when its ticker(s) are absent (→ unconditioned all-days view)."""
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
+    mode = spec.get("mode")
+    prices = state.universe_prices
+    if mode == "autocorr_tercile":
+        ticker = pa.regime_selector_dd.value
+        if not ticker or ticker not in prices.columns:
+            return None
+        rets = daily_returns(prices[[ticker]])[ticker]
+        return rolling_autocorr(rets, window=spec.get("autocorr_window", 21))
+    ticker = (
+        pa.regime_selector_dd.value if mode == "level_tercile" else spec.get("ticker")
+    )
+    if not ticker or ticker not in prices.columns:
+        return None
+    return prices[ticker]
+
+
+def _resolve_regime_bucket(
+    state: object, pa: SimpleNamespace
+) -> tuple[float | None, float | None]:
+    """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes read
+    the tuple off the bucket dropdown; tercile regimes derive it from the live
+    indicator's 1/3 & 2/3 quantiles over the lookback window. ``(None, None)``
+    when no indicator is available (→ unconditioned all-days view)."""
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
+    if spec.get("mode") == "level":
+        low, high = pa.regime_bucket_dd.value
+        return (low, high)
+    indicator = _regime_indicator(state, pa)
+    if indicator is None:
+        return (None, None)
+    return tercile_bounds(
+        indicator.tail(pa.lookback_selector.value), pa.regime_bucket_dd.value
+    )
+
+
+def render_regime_scatter(
+    state: object, meta: pd.DataFrame, pa: SimpleNamespace
+) -> None:
+    """Render the regime risk/return scatter at the current regime / source /
+    bucket + lookback, live from the cache (no BQL)."""
+    if state.arp_universe_prices.empty:
+        return
+    try:
+        low, high = _resolve_regime_bucket(state, pa)
+        _update_regime_scatter(
+            pa.regime_scatter_fig,
+            state.arp_universe_prices,
+            _regime_indicator(state, pa),
+            meta,
+            low=low,
+            high=high,
+            lookback=pa.lookback_selector.value,
+        )
+    except Exception:
+        state.init_errors.append(
+            f"regime scatter render failed:\n{traceback.format_exc()}"
+        )
+
+
+def _sync_regime_controls(pa: SimpleNamespace) -> None:
+    """Repopulate the bucket dropdown for the active regime's mode and show /
+    hide the indicator-source dropdown (only regimes carrying a ``selector``)."""
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
+    selector = spec.get("selector", [])
+    if selector:
+        pa.regime_selector_dd.options = selector
+        pa.regime_selector_dd.value = selector[0][1]
+        pa.regime_selector_dd.layout.display = ""
+    else:
+        pa.regime_selector_dd.layout.display = "none"
+    options = regime_bucket_options(pa.regime_type_dd.value)
+    pa.regime_bucket_dd.options = options
+    pa.regime_bucket_dd.value = options[0][1]
+
+
+def wire_platform_analytics(
+    state: object, meta: pd.DataFrame, pa: SimpleNamespace
+) -> None:
+    """Wire every Platform-analytics observer: the z-score-column controls, the
+    three tab pills, the regime dropdowns, the shared lookback, and the
+    sunburst's own controls. Each re-renders live from the cache, no BQL."""
+    for _dd in (pa.z_metric_dd, pa.z_window_dd, pa.z_lookback_dd):
+        _dd.observe(lambda _c: render_universe_grid(state, meta, pa), names="value")
+
+    pa.sunburst_pill.on_click(lambda _b: activate_platform_tab(pa, "sunburst"))
+    pa.regime_pill.on_click(lambda _b: activate_platform_tab(pa, "regime"))
+    pa.factor_pill.on_click(lambda _b: activate_platform_tab(pa, "factor"))
+
+    def _on_regime_type(_change=None):
+        _sync_regime_controls(pa)
+        render_regime_scatter(state, meta, pa)
+
+    pa.regime_type_dd.observe(_on_regime_type, names="value")
+    pa.regime_selector_dd.observe(
+        lambda _c: render_regime_scatter(state, meta, pa), names="value"
+    )
+    pa.regime_bucket_dd.observe(
+        lambda _c: render_regime_scatter(state, meta, pa), names="value"
+    )
+
+    # The shared lookback drives all three analytics tabs.
+    for _render in (render_factor_scatter, render_regime_scatter, render_sunburst):
+        pa.lookback_selector.observe(
+            lambda _c, r=_render: r(state, meta, pa), names="value"
+        )
+
+    # The sunburst's own Metric/Window controls re-render only the sunburst.
+    for _dd in (pa.sb_metric_dd, pa.sb_window_dd):
+        _dd.observe(lambda _c: render_sunburst(state, meta, pa), names="value")
+
+    _sync_regime_controls(pa)

@@ -305,3 +305,76 @@ def test_update_regime_scatter_tercile_bounds_condition_differently():
     low_xy = [tuple(tr.x) for tr in fig_low.data]
     high_xy = [tuple(tr.x) for tr in fig_high.data]
     assert low_xy != high_xy
+
+
+# --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
+# The render/wire logic was extracted from build_app into platform.py; these
+# guard that build_app still wires it correctly end-to-end.
+
+
+def _walk(w):
+    yield w
+    for c in getattr(w, "children", ()) or ():
+        yield from _walk(c)
+
+
+def test_platform_regime_controls_resync_on_type_change():
+    """The regime Type dropdown is wired (platform.wire_platform_analytics ->
+    _sync_regime_controls) to repopulate the Source / Bucket dropdowns: a
+    tercile regime (Trend) shows the Source dropdown and Low/Middle/High
+    buckets; Volatility hides the Source and uses fixed VIX-level buckets."""
+    import ipywidgets as W
+    from src.layout import build_app
+
+    app = build_app(verbose=False)
+    panel = app.children[5].children[0]  # Platform is the default tab
+    # Mount the Regime analytics tab so its controls are in the widget tree.
+    next(
+        b
+        for b in _walk(app)
+        if isinstance(b, W.Button) and b.description == "Regime analysis"
+    ).click()
+    type_dd = next(
+        w for w in _walk(panel) if isinstance(w, W.Dropdown) and w.description == "Type"
+    )
+    source_dd = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Dropdown) and w.description == "Source"
+    )
+    bucket_dd = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Dropdown) and w.description == "Bucket"
+    )
+
+    assert type_dd.value == "Volatility"
+    assert source_dd.layout.display == "none"  # no source for Volatility
+    vix_buckets = [o[0] for o in bucket_dd.options]
+
+    type_dd.value = "Trend"  # tercile regime — wired observer re-syncs
+    assert source_dd.layout.display != "none"
+    assert len(source_dd.options) > 0
+    assert [o[0] for o in bucket_dd.options] != vix_buckets
+
+    type_dd.value = "Volatility"  # back to fixed buckets, source hidden
+    assert source_dd.layout.display == "none"
+    assert [o[0] for o in bucket_dd.options] == vix_buckets
+
+
+def test_platform_analytics_tab_swap():
+    """Clicking the analytics pills swaps the chart shown in the card
+    (platform.activate_platform_tab, wired by build_app)."""
+    import ipywidgets as W
+    from src.layout import build_app
+
+    app = build_app(verbose=False)
+    panel = app.children[5].children[0]
+    analytics_card = panel.children[3]
+    chart_box = analytics_card.children[2].children[1]  # analytics_body -> chart_box
+    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+    first = chart_box.children[0]
+    pills["Factor exposures"].click()
+    assert chart_box.children[0] is not first  # swapped to the factor scatter
+    pills["Sunburst"].click()
+    assert chart_box.children[0] is first  # back to the sunburst
