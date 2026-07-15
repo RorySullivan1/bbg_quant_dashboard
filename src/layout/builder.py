@@ -37,13 +37,9 @@ from ..stats import (
     cum_perf,
     daily_returns,
     drawdown_series,
-    excess_cum_return,
-    heatmap_corr_matrix,
     perf_table,
     return_distribution_stats,
     rolling_autocorr,
-    rolling_beta,
-    rolling_correlation,
     rolling_metric_zscore,
     rolling_sharpe_zscore,
     tercile_bounds,
@@ -52,16 +48,6 @@ from ..stats import (
 from ..style import (
     Color,
     StatusTone,
-)
-from .charts import (
-    _update_drawdown,
-    _update_heatmap,
-    _update_line,
-    _update_outperformance,
-    _update_return_dist,
-    _update_rolling_ref,
-    _update_scatter,
-    _update_sharpe_line,
 )
 from .chrome import (
     _app_css,
@@ -93,6 +79,12 @@ from .html import (
     _render_highlights,
     _render_weekly_commentary,
     render_template,
+)
+from .multi_strategy import (
+    bind_lazy_render,
+    bind_live_controls,
+    clear_pane,
+    render_pane,
 )
 from .panes import _make_analysis_pane
 from .platform import (
@@ -1022,317 +1014,6 @@ def build_app(verbose: bool = False) -> W.VBox:
         w.observe(_on_filter_change, names="value")
     search_w.observe(_on_filter_change, names="value")
 
-    def _clear_pane(pane: SimpleNamespace) -> None:
-        _update_line(pane.line_fig, pd.DataFrame(), meta)
-        _update_outperformance(
-            pane.outperf_fig, pd.DataFrame(), meta, benchmark_label=""
-        )
-        _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
-        _update_heatmap(pane.heat_fig, pd.DataFrame())
-        _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
-        _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
-        _update_rolling_ref(
-            pane.rcorr_fig,
-            pd.DataFrame(),
-            meta,
-            title_prefix="Rolling Correlation",
-            benchmark_label="",
-        )
-        _update_rolling_ref(
-            pane.rbeta_fig,
-            pd.DataFrame(),
-            meta,
-            title_prefix="Rolling Beta",
-            benchmark_label="",
-        )
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            pd.DataFrame(),
-            pd.DataFrame(),
-            meta,
-        )
-        # No selection -> no view holds current data; the lazy picker observer
-        # no-ops while cur_prep is None, so picks just swap to cleared figures.
-        pane.fresh = set()
-
-    # The four benchmark-dependent charts are each rendered by a small helper
-    # over the shared `(pane, prep, win_start, win_end, errors)` signature, so
-    # the same code serves both the full recompute (`_render_pane`) and the
-    # live benchmark/regime observers (`_bind_live_controls`). Each slices its
-    # benchmark series from the already-fetched `state.universe_prices` — no
-    # BQL fetch.
-    def _render_heatmap(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Correlation heatmap, three cases (per-pane, so the panes stay
-        # independent): Regime on → conditioned on the benchmark-return tail with
-        # the benchmark in the matrix; Benchmark on / Regime off → full-sample
-        # correlation with the benchmark added (v0.8.9); neither → plain
-        # full-sample correlation of the selected strategies (`prep.cm`). The two
-        # benchmark cases differ only in (pct, direction, memo key, title); both
-        # build the matrix through the single `heatmap_corr_matrix` helper, which
-        # always pins the benchmark last, so the left and right panes can never
-        # disagree on the row/column order.
-        if pane.heat_regime_chk.value:
-            hm_bench_ticker = pane.heat_dd.value
-            direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
-            pct_int = pane.heat_pct.value
-            memo_key = ("heatmap", hm_bench_ticker, direction, pct_int)
-            tail_lbl = "worst" if direction == "down" else "best"
-            title = (
-                f"Correlation — {hm_bench_ticker} {tail_lbl} "
-                f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
-            )
-        elif pane.heat_benchmark_chk.value:
-            # Benchmark on, Regime off: full-sample correlation (pct=100% keeps
-            # every day) with the benchmark added as the last row/column.
-            hm_bench_ticker = pane.heat_dd.value
-            direction = "down"
-            pct_int = 100
-            memo_key = ("heatmap", hm_bench_ticker, "incl", 100)
-            title = f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)"
-        else:
-            _update_heatmap(
-                pane.heat_fig,
-                prep.cm,
-                title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-            )
-            return
-
-        try:
-
-            def _compute():
-                hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {hm_bench_ticker!r}."
-                    )
-                hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-                hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[:, 0]
-                return heatmap_corr_matrix(
-                    prep.rets,
-                    hm_bench_returns,
-                    pct=pct_int / 100.0,
-                    direction=direction,
-                )
-
-            cm = state.memo.get_or_compute(memo_key, _compute)
-            _update_heatmap(pane.heat_fig, cm, title=title)
-        except Exception:
-            errors.append(traceback.format_exc())
-            _update_heatmap(pane.heat_fig, pd.DataFrame())
-
-    def _render_rolling_corr(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        rc_bench_ticker = pane.rcorr_dd.value
-        try:
-
-            def _compute_rcorr():
-                rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
-                if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {rc_bench_ticker!r}."
-                    )
-                rc_bench_window = rc_bench_prices.loc[win_start:win_end]
-                rc_bench_returns = daily_returns(rc_bench_window.to_frame()).iloc[:, 0]
-                return rolling_correlation(prep.rets, rc_bench_returns)
-
-            rc = state.memo.get_or_compute(("rcorr", rc_bench_ticker), _compute_rcorr)
-            _update_rolling_ref(
-                pane.rcorr_fig,
-                rc,
-                meta,
-                title_prefix="Rolling Correlation",
-                benchmark_label=rc_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_rolling_beta(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        rb_bench_ticker = pane.rbeta_dd.value
-        try:
-
-            def _compute_rbeta():
-                rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
-                if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {rb_bench_ticker!r}."
-                    )
-                rb_bench_window = rb_bench_prices.loc[win_start:win_end]
-                rb_bench_returns = daily_returns(rb_bench_window.to_frame()).iloc[:, 0]
-                return rolling_beta(prep.rets, rb_bench_returns)
-
-            rb = state.memo.get_or_compute(("rbeta", rb_bench_ticker), _compute_rbeta)
-            _update_rolling_ref(
-                pane.rbeta_fig,
-                rb,
-                meta,
-                title_prefix="Rolling Beta",
-                benchmark_label=rb_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_outperf(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Outperformance: cumulative excess return vs the benchmark (prices,
-        # not returns — every strategy series starts at 0).
-        op_bench_ticker = pane.outperf_dd.value
-        try:
-
-            def _compute_outperf():
-                op_bench_prices = state.universe_prices.get(op_bench_ticker)
-                if op_bench_prices is None or op_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {op_bench_ticker!r}."
-                    )
-                op_bench_window = op_bench_prices.loc[win_start:win_end]
-                return excess_cum_return(prep.sel_window, op_bench_window)
-
-            oc = state.memo.get_or_compute(
-                ("outperf", op_bench_ticker), _compute_outperf
-            )
-            _update_outperformance(
-                pane.outperf_fig,
-                oc,
-                meta,
-                benchmark_label=op_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_one(
-        pane: SimpleNamespace,
-        label: str,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Populate the single analysis view named `label` from `prep`. Lazy
-        # rendering (Workstream D) calls this for only the mounted view per
-        # recompute and builds the others on first pick.
-        if label == "Cumulative Performance":
-            _update_line(pane.line_fig, prep.perf, meta)
-        elif label == "1Y Sharpe-z Line":
-            _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
-        elif label == "Risk / Return":
-            _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
-        elif label == "Drawdown":
-            _update_drawdown(pane.dd_fig, prep.dd, meta)
-        elif label == "Return Distribution":
-            _update_return_dist(
-                pane.retdist_fig,
-                pane.retdist_stats_grid,
-                prep.rets,
-                prep.rd_stats,
-                meta,
-            )
-        elif label == "Correlation Heatmap":
-            _render_heatmap(pane, prep, win_start, win_end, errors)
-        elif label == "Rolling Correlation":
-            _render_rolling_corr(pane, prep, win_start, win_end, errors)
-        elif label == "Rolling Beta":
-            _render_rolling_beta(pane, prep, win_start, win_end, errors)
-        elif label == "Outperformance":
-            _render_outperf(pane, prep, win_start, win_end, errors)
-
-    def _render_pane(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Lazy (Workstream D): render only the currently-mounted view; the other
-        # eight are built on first pick (see _bind_lazy_render) and stay fresh
-        # until the next recompute resets `pane.fresh`.
-        label = pane.picker.value
-        _render_one(pane, label, prep, win_start, win_end, errors)
-        pane.fresh = {label}
-
-    def _bind_lazy_render(pane: SimpleNamespace) -> None:
-        # On a picker change, build the newly-shown view on demand if it hasn't
-        # been rendered for the current slice yet (panes.py already swaps it into
-        # view and syncs control visibility). No-op without a valid selection or
-        # when the view is already fresh; errors are swallowed like the live
-        # benchmark observers (a real failure resurfaces on the next Refresh).
-        def _on_pick_render(change):
-            label = change["new"]
-            if state.cur_prep is None or label in pane.fresh:
-                return
-            _render_one(
-                pane,
-                label,
-                state.cur_prep,
-                state.cur_win_start,
-                state.cur_win_end,
-                [],
-            )
-            pane.fresh.add(label)
-
-        pane.picker.observe(_on_pick_render, names="value")
-
-    def _bind_live_controls(pane: SimpleNamespace) -> None:
-        # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
-        # controls so changing one re-renders only its own chart, immediately,
-        # from the slice persisted on `state` at the last recompute — no BQL
-        # fetch, no full recompute, the other pane untouched. (Refresh prices
-        # stays the only path that refetches and re-runs filters/selection.)
-        def _make(render_fn):
-            def _handler(_change):
-                if state.cur_prep is None:
-                    return  # no valid selection — nothing to redraw, no fetch
-                # A single live chart swallows its errors: the helper's own
-                # except-branch leaves the chart in a safe state, and a
-                # genuinely broken benchmark still surfaces on the next
-                # Refresh prices (where errors flow into the commentary block).
-                render_fn(
-                    pane,
-                    state.cur_prep,
-                    state.cur_win_start,
-                    state.cur_win_end,
-                    [],
-                )
-
-            return _handler
-
-        pane.rcorr_dd.observe(_make(_render_rolling_corr), names="value")
-        pane.rbeta_dd.observe(_make(_render_rolling_beta), names="value")
-        pane.outperf_dd.observe(_make(_render_outperf), names="value")
-        # The Benchmark/Regime checkboxes keep their visibility-sync observers
-        # (in panes.py); this adds the data re-render on top. Toggling Benchmark
-        # off re-renders plain full-sample (it also clears Regime in panes.py).
-        for ctrl in (
-            pane.heat_benchmark_chk,
-            pane.heat_regime_chk,
-            pane.heat_dd,
-            pane.heat_dir,
-            pane.heat_pct,
-        ):
-            ctrl.observe(_make(_render_heatmap), names="value")
-
     _WINDOW_LABELS = {
         WEEK_WINDOW: "Past Week",
         MONTH_WINDOW: "Past Month",
@@ -1402,8 +1083,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                 state.cur_prep = None
                 _set_date_bounds(None, reset=True)
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(state.pane_left)
-                _clear_pane(state.pane_right)
+                clear_pane(state.pane_left, meta)
+                clear_pane(state.pane_right, meta)
             elif state.universe_prices.empty:
                 state.last_sel_key = None
                 state.cur_prep = None
@@ -1412,8 +1093,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(state.pane_left)
-                _clear_pane(state.pane_right)
+                clear_pane(state.pane_left, meta)
+                clear_pane(state.pane_right, meta)
             else:
                 sel_full = state.universe_prices.reindex(columns=tickers)
                 sel_5y = sel_full.loc[sel_full.index >= universe_window_start]
@@ -1425,8 +1106,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
                     _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                    _clear_pane(state.pane_left)
-                    _clear_pane(state.pane_right)
+                    clear_pane(state.pane_left, meta)
+                    clear_pane(state.pane_right, meta)
                 else:
                     # Bounds = overlap window of the selected set; fall back to
                     # the full 5Y span if the series don't overlap at all.
@@ -1467,9 +1148,23 @@ def build_app(verbose: bool = False) -> W.VBox:
                     _log(f"selected prep built in {time.perf_counter() - t_prep:.2f}s")
                     _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
                     t_panes = time.perf_counter()
-                    _render_pane(state.pane_left, prep, win_start, win_end, pane_errors)
-                    _render_pane(
-                        state.pane_right, prep, win_start, win_end, pane_errors
+                    render_pane(
+                        state,
+                        meta,
+                        state.pane_left,
+                        prep,
+                        win_start,
+                        win_end,
+                        pane_errors,
+                    )
+                    render_pane(
+                        state,
+                        meta,
+                        state.pane_right,
+                        prep,
+                        win_start,
+                        win_end,
+                        pane_errors,
                     )
                     _log(
                         "panes rendered (mounted views only) in "
@@ -1601,10 +1296,10 @@ def build_app(verbose: bool = False) -> W.VBox:
     # still fetching/recomputing (the button is also disabled for the duration).
     refresh_inflight = {"running": False}
     apply_btn.on_click(_refresh_prices)
-    _bind_live_controls(state.pane_left)
-    _bind_live_controls(state.pane_right)
-    _bind_lazy_render(state.pane_left)
-    _bind_lazy_render(state.pane_right)
+    bind_live_controls(state, meta, state.pane_left)
+    bind_live_controls(state, meta, state.pane_right)
+    bind_lazy_render(state, meta, state.pane_left)
+    bind_lazy_render(state, meta, state.pane_right)
     single_strategy.picker.observe(_render_single, names="value")
     single_strategy.bench_dd.observe(_render_single, names="value")
     single_strategy.bench_chk.observe(_render_single, names="value")

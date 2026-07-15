@@ -2,14 +2,15 @@
 
 Flipping a per-pane benchmark and flipping back must hit the memo instead of
 recomputing, and the memo must be invalidated when Refresh prices rebuilds the
-selection slice. We assert this by spying on `builder.rolling_correlation` and
-counting how often it actually runs as we drive the rendered widget tree.
+selection slice. We assert this by spying on
+`multi_strategy.rolling_correlation` and counting how often it actually runs as
+we drive the rendered widget tree.
 """
 
 from __future__ import annotations
 
 import ipywidgets as W
-import src.layout.builder as builder_mod
+import src.layout.multi_strategy as ms_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 
@@ -38,14 +39,16 @@ def _benchmark_dropdowns(app) -> list[W.Dropdown]:
 
 
 def _spy_rolling_correlation(monkeypatch) -> dict:
-    real = builder_mod.rolling_correlation
+    # The Rolling Correlation compute lives in the multi_strategy pane engine
+    # (extracted from builder in v0.9.12-review #156), so spy there.
+    real = ms_mod.rolling_correlation
     calls = {"n": 0}
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "rolling_correlation", counting)
+    monkeypatch.setattr(ms_mod, "rolling_correlation", counting)
     return calls
 
 
