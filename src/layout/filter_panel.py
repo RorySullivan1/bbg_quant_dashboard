@@ -254,7 +254,11 @@ def make_filter_panel(meta: pd.DataFrame) -> SimpleNamespace:
 
     # --- Clear section / Clear all --------------------------------------------
     def _clear_quant() -> None:
-        for _op, box in quant.specs.values():
+        # Reset both the operator (back to the ≥ default) and the value box, so
+        # "Clear section" on Quantitative fully resets the row — matching the
+        # Multi-Strategy tab's clear behaviour (they had drifted).
+        for op, box in quant.specs.values():
+            op.value = "≥"
             box.value = ""
 
     def _clear_characteristics() -> None:

@@ -27,7 +27,7 @@ than no numbers.
    contract), `pyproject.toml` (ruff/black config; tooling-only, not a package),
    `requirements.txt`, and the nearest existing modules and their tests. New
    metrics almost always belong in `src/stats/` (`_common`/`performance`/`risk`/
-   `rolling`/`factors`, re-exported from `__init__.py`) with a unit test in
+   `rolling`/`factors`/`regime`/`calendar`, re-exported from `__init__.py`) with a unit test in
    `tests/test_stats.py`.
 2. Infer and follow the existing conventions — the `src/stats/` split, snake_case
    naming, pandas-DataFrame-in/Series-out style, no BQL in metric functions (they

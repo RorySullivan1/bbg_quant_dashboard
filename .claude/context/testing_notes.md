@@ -12,8 +12,8 @@ pytest -q
 against small fixed frames (fixtures in `tests/conftest.py`); `tests/test_smoke.py`
 is the regression guard — it builds the whole dashboard on the mock-price
 fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
-also run in CI (`.github/workflows/ci.yml`) on every push/PR to `v0.7.5` and
-`main`.
+also run in CI (`.github/workflows/ci.yml`) on every push/PR to the version
+integration branches (`v*`) and `main`.
 
 Off-terminal, the mock-price fallback is deterministic per ticker, so:
 

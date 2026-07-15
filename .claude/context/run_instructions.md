@@ -18,7 +18,7 @@ installs the deps through pip so the `requirements.txt` pins stay the single
 source of truth):
 ```
 conda env create -f environment.yml
-conda activate bbg_quant
+conda activate bbg-quant
 voila dashboard.ipynb
 ```
 `bql` is injected by BQuant's own kernel on a terminal, so this conda env is

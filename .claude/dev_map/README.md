@@ -8,13 +8,15 @@ to `vX.Y.Z.md`; `TEMPLATE.md` is not a version, so it's skipped by the list
 below.
 
 - **Current shipped version:** see [`.meta/VERSION`](../../.meta/VERSION)
-  (`0.8.11`). Keep that file and the "Branching" section of `CLAUDE.md`
+  (`0.9.11`). Keep that file and the "Branching" section of `CLAUDE.md`
   in sync on every bump.
 
 ### Roadmap status
 
 Each checkbox tracks **implementation / shipping**, not whether the stub is
-drafted — every stub below is already written. Convention:
+drafted — every stub below is already written (the v0.9.x line is filled in
+through the shipped Single Strategy tab and the in-progress v0.9.12
+review/optimization cycle). Convention:
 
 - `[ ]` — not started.
 - `[ ]` + _(in progress)_ — work underway on a `vX.Y.Z` branch.
@@ -82,11 +84,16 @@ them as PRs land. Keep this list and each stub's `> **Status:**` line in sync.
   window dropdown beside the Quantitative Z-Score base-metric selector (sets the
   base-metric lookback for the cross-sectional z, independent of the Period); and
   halve the Key-Highlights card-area height (45vh → 22.5vh) (shipped).
-- [ ] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
+- [x] `v0.9.0` — Single Strategy Tab: a third top-level tab with a per-strategy
   profile + cumulative chart, a tabbed monthly-return calendar table, and
-  tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter).
-  _(in progress — Workstream A `description` field landed; the v0.7.0 factor
-  dependency is now shipped)._
+  tabbed analytics charts (weekly-vs-benchmark, histogram, factor scatter)
+  (shipped; the Single Strategy tab is live).
+- [ ] `v0.9.12` — Single Strategy Filter + Code-Review & Optimization: a
+  live-narrowing "Filters" accordion on the Single Strategy tab (shipped) plus a
+  code-review-and-optimization pass — documentation comprehensiveness fixes + CI
+  trigger fix, with follow-up refactors tracked as `v0.9.12-review` issues.
+  _(in progress — Workstream 1 filter shipped; Workstream 2 review/optimization
+  underway)._
 - [ ] `v1.0.0` — Release Hardening: testing, final optimization, documentation,
   compliant legal-disclaimer placement, enhancements, and the 1.0 release
   mechanics.

@@ -25,7 +25,7 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
 
 `COLUMN_MAP` in `src/data.py` renames these to internal snake_case
 (`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
-`currency`, `live_date`, `description`). `IndexFamilyName` maps to the
+`live_date`, `currency`, `description`). `IndexFamilyName` maps to the
 internal `category` field — there is no separate "family" dimension. The
 metadata DataFrame also has a derived `ticker` column = `<key> + " Index"`.
 `Currency` and `Description` are metadata (BQL only supplies `px_last`, not

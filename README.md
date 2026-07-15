@@ -93,7 +93,7 @@ bbg_quant_dashboard/
 │   ├── stats/                 # metrics package: _common / performance / risk /
 │   │                          #   rolling / factors / regime / calendar
 │   └── layout/                # UI package: builder + theme/chrome/filters/panes/
-│                              #   platform/single_strategy/charts/grids/html/state
+│                              #   platform/filter_panel/single_strategy/charts/grids/html/state
 │                              #   (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
                                #   cache/commentary/grids/platform/single_strategy/
