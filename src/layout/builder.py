@@ -79,7 +79,13 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
-from .filters import _checkbox_group, _q_row, _section_label, _ticker_options
+from .filters import (
+    CheckboxMultiSelect,
+    _checkbox_group,
+    _q_row,
+    _section_label,
+    _ticker_options,
+)
 from .grids import (
     _perf_grid,
     _universe_grid,
@@ -291,17 +297,28 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     search_w = W.Text(
         placeholder="Search ticker or name…",
-        layout=W.Layout(width="100%"),
+        layout=W.Layout(flex="1 1 auto"),
     )
-    # The SelectMultiple fills 100% of a flex holder (built below) that grows to
-    # the bottom of the left panel, which the parent HBox stretches to the
-    # filter panel's height. A plain `flex` on the select itself isn't honored,
-    # but `height="100%"` inside a grown holder is — so it reaches the bottom.
-    ticker_w = W.SelectMultiple(
+    # A "Clear" button to the right of the search box wipes the strategy
+    # *selection* (distinct from "Clear all", which resets the filters/search
+    # but deliberately keeps the picked strategies).
+    clear_sel_btn = W.Button(
+        description="Clear",
+        tooltip="Clear the strategy selection",
+        layout=W.Layout(width="auto", margin="0 0 0 6px"),
+    )
+    clear_sel_btn.add_class("bbg-btn-secondary")
+    search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
+    # The picker is a scrollable checkbox list (CheckboxMultiSelect), capped at
+    # the same 240px as the categorical filter groups on the right
+    # (`_checkbox_group`) so the two panels match; longer catalogs scroll inside
+    # the box (`overflow="auto"`) rather than growing to fill the panel.
+    ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", height="100%"),
+        layout=W.Layout(width="100%", max_height="240px", overflow="auto"),
     )
+    clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
 
     # Analysis date range — a slider flanked by two date boxes, two-way
     # linked. Its bounds are rebuilt at recompute time to the overlap window
@@ -368,20 +385,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             StatusTone.SUCCESS,
         )
 
-    # Left: the strategies picker — search box above the dropdown.
-    # Holder grows to fill the left panel's free vertical space; the dropdown
-    # fills the holder, so it reaches the bottom of the container regardless of
-    # the (stretched) panel height.
-    ticker_holder = W.Box(
-        [ticker_w],
-        layout=W.Layout(
-            width="100%",
-            flex="1 1 auto",
-            min_height="220px",
-            display="flex",
-        ),
-    )
-
     # --- Analysis date-range box plumbing --------------------------------
     def _set_date_bounds(index, reset: bool, *, keep=None) -> None:
         """Set the two date boxes to the selection's overlap window. On
@@ -442,7 +445,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_w, ticker_holder],
+        [_section_label("Strategies"), search_row, ticker_w],
         layout=W.Layout(
             width="38%",
             padding="8px",
@@ -472,12 +475,18 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", padding="2px 4px"),
     )
 
+    # The Quantitative view has a row per metric (Sharpe/Sortino/…/Z), so it's
+    # by far the tallest filter view; cap it at the same 240px as the other
+    # views and scroll, for a compact-but-sufficient panel that doesn't jump in
+    # height when switched to.
     quant_view = W.VBox(
         [
             W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
             *quant.rows,
         ],
-        layout=W.Layout(width="100%", padding="2px 4px"),
+        layout=W.Layout(
+            width="100%", padding="2px 4px", max_height="240px", overflow="auto"
+        ),
     )
 
     filter_views: dict[str, W.Widget] = {

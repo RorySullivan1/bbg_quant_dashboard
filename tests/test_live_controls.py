@@ -15,6 +15,7 @@ import ipywidgets as W
 import plotly.graph_objects as go
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
+from src.layout.filters import CheckboxMultiSelect
 
 
 def _walk(widget):
@@ -113,7 +114,7 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
 
     # Clear the selection, then click Refresh prices so the recompute runs the
     # empty-selection branch (which sets `state.cur_prep = None`).
-    ticker_w = next(w for w in _walk(app) if isinstance(w, W.SelectMultiple))
+    ticker_w = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
     ticker_w.value = ()
     refresh_btn = next(
         w
