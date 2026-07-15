@@ -70,8 +70,18 @@ def test_make_filter_panel_structure():
 def test_single_strategy_panel_embeds_filters():
     ss = make_single_strategy_panel(_meta())
     assert hasattr(ss, "filters")
-    # The filter accordion is the first child of the tab, above the picker row.
-    assert ss.root.children[0] is ss.filters.root
+    # The "Filters" accordion is the first child of the tab and is a two-column
+    # panel: the strategy picker + benchmark controls on the left, the filter
+    # criteria (the panel's right_panel) on the right.
+    accordion = ss.root.children[0]
+    assert isinstance(accordion, W.Accordion)
+    assert accordion.titles == ("Filters",)
+    filter_box = accordion.children[0]
+    left, right = filter_box.children
+    assert ss.picker in left.children  # picker lives in the left column
+    assert ss.bench_dd in left.children
+    assert ss.bench_chk in left.children
+    assert right is ss.filters.right_panel  # criteria on the right
 
 
 # --- matching reducer --------------------------------------------------------
@@ -211,7 +221,13 @@ def test_single_strategy_filter_live_narrows_picker():
         if isinstance(w, W.Dropdown) and w.description == "Strategy"
     )
     accordion = next(w for w in _walk(panel) if isinstance(w, W.Accordion))
-    checks = [w for w in _walk(accordion) if isinstance(w, W.Checkbox)]
+    # The accordion's left column also holds the "Show benchmark" toggle; a
+    # filter checkbox is any other checkbox (a categorical filter value).
+    checks = [
+        w
+        for w in _walk(accordion)
+        if isinstance(w, W.Checkbox) and w.description != "Show benchmark"
+    ]
     assert checks, "the Filters accordion should carry categorical checkboxes"
 
     n_all = len(picker.options)

@@ -92,12 +92,14 @@ renders the full dashboard without a Bloomberg session. Verify by:
   (Section 2); and the two side-by-side analysis panes each swap analyses on
   their own picker + per-pane benchmark dropdown (Section 3) — all computed
   from the cached prices, no BQL.
-- The Single Strategy **"Filters" accordion** (v0.9.12): toggling any filter
-  box (Asset Class / Category / Theme / Return Type / Characteristics /
-  Quantitative) narrows the strategy picker **live** — no Refresh-prices
-  button. When the currently-picked strategy is filtered out, the first
-  still-matching strategy is auto-selected and the whole tab re-renders; when
-  nothing matches, the picker empties and the sections clear without a
+- The Single Strategy **"Filters" accordion** (v0.9.12): a two-column panel —
+  the strategy picker + benchmark selector + "Show benchmark" toggle on the
+  **left**, the filter criteria (Asset Class / Category / Theme / Return Type /
+  Characteristics / Quantitative) on the **right**, stretched to equal height.
+  Toggling any criteria box narrows the strategy picker **live** — no
+  Refresh-prices button. When the currently-picked strategy is filtered out, the
+  first still-matching strategy is auto-selected and the whole tab re-renders;
+  when nothing matches, the picker empties and the sections clear without a
   traceback. **Clear all** restores the full catalog.
 - Clicking Refresh prices with 2+ tickers — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows
