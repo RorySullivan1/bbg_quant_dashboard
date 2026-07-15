@@ -39,10 +39,8 @@ from ..stats import (
     drawdown_series,
     perf_table,
     return_distribution_stats,
-    rolling_autocorr,
     rolling_metric_zscore,
     rolling_sharpe_zscore,
-    tercile_bounds,
     universe_perf,
 )
 from ..style import (
@@ -69,7 +67,6 @@ from .grids import (
     _perf_grid,
     _universe_grid,
     _update_perf_grid,
-    _update_universe_grid,
 )
 from .html import (
     STYLE_CTX,
@@ -91,9 +88,12 @@ from .platform import (
     _factor_beta_scatter,
     _regime_scatter,
     _sunburst,
-    _update_factor_scatter,
-    _update_regime_scatter,
-    _update_sunburst,
+    regime_bucket_options,
+    render_factor_scatter,
+    render_regime_scatter,
+    render_sunburst,
+    render_universe_grid,
+    wire_platform_analytics,
 )
 from .single_strategy import (
     _CALENDAR_TABS,
@@ -400,7 +400,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
     # narrow nothing and never fetch — changing one recomputes only the grid's
     # dynamic z-score column from the cached prices and re-sorts the grid by it
-    # (see `_render_universe_grid`). Window / Lookback values are trading-day
+    # (see `platform.render_universe_grid`). Window / Lookback values are trading-day
     # counts; the `.label` of each (e.g. "Sharpe" / "1M" / "1Y") builds the
     # column header. Default: z(1M Sharpe, 1Y).
     z_metric_dd = W.Dropdown(
@@ -496,14 +496,6 @@ def build_app(verbose: bool = False) -> W.VBox:
     # controls stack in the Regime tab's left column (built below).
     regime_scatter_fig = _regime_scatter()
 
-    def _regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
-        """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
-        fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
-        spec = REGIME_SPECS[regime_type]
-        if spec.get("mode") == "level":
-            return [(label, (low, high)) for label, low, high in spec["buckets"]]
-        return [(label, key) for label, key in spec["bucket_labels"]]
-
     regime_type_dd = W.Dropdown(
         options=list(REGIME_SPECS.keys()),
         value="Volatility",
@@ -512,7 +504,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="240px"),
     )
     # Conditional indicator-source dropdown — benchmark for Trend, region for
-    # Rate-level; hidden (via `_sync_regime_controls`) for regimes with no
+    # Rate-level; hidden (via `platform._sync_regime_controls`) for regimes with no
     # `selector` (Volatility / Risk regime).
     regime_selector_dd = W.Dropdown(
         options=[("—", "")],
@@ -521,7 +513,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         style={"description_width": "60px"},
         layout=W.Layout(width="240px"),
     )
-    _init_buckets = _regime_bucket_options("Volatility")
+    _init_buckets = regime_bucket_options("Volatility")
     regime_bucket_dd = W.Dropdown(
         options=_init_buckets,
         value=_init_buckets[0][1],
@@ -628,17 +620,6 @@ def build_app(verbose: bool = False) -> W.VBox:
         "factor": (factor_pill, factor_controls, factor_scatter_fig),
     }
 
-    def _activate_platform_tab(which: str) -> None:
-        for key, (pill, _controls, _fig) in _analytics_tabs.items():
-            _style_tab_button(pill, active=(key == which))
-        _pill, controls, fig = _analytics_tabs[which]
-        tab_controls_box.children = (controls,)
-        chart_box.children = (fig,)
-
-    sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
-    regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
-    factor_pill.on_click(lambda _b: _activate_platform_tab("factor"))
-
     analytics_card = W.VBox(
         [
             W.HTML(
@@ -650,6 +631,33 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%"),
     )
     analytics_card.add_class("bbg-card")
+
+    # Bundle the Platform-analytics widget handles and hand the orchestration to
+    # `platform.py` (v0.9.12-review #156): `wire_platform_analytics` wires the
+    # z-score-column controls, the three tab pills, the regime dropdowns, the
+    # shared lookback, and the sunburst controls; the `render_*` functions
+    # (called on load / Refresh below) redraw each chart live from the cache.
+    pa = SimpleNamespace(
+        z_metric_dd=z_metric_dd,
+        z_window_dd=z_window_dd,
+        z_lookback_dd=z_lookback_dd,
+        lookback_selector=lookback_selector,
+        factor_scatter_fig=factor_scatter_fig,
+        sunburst_fig=sunburst_fig,
+        regime_scatter_fig=regime_scatter_fig,
+        sb_metric_dd=sb_metric_dd,
+        sb_window_dd=sb_window_dd,
+        regime_type_dd=regime_type_dd,
+        regime_selector_dd=regime_selector_dd,
+        regime_bucket_dd=regime_bucket_dd,
+        sunburst_pill=sunburst_pill,
+        regime_pill=regime_pill,
+        factor_pill=factor_pill,
+        analytics_tabs=_analytics_tabs,
+        tab_controls_box=tab_controls_box,
+        chart_box=chart_box,
+    )
+    wire_platform_analytics(state, meta, pa)
 
     platform_panel = W.VBox(
         [
@@ -704,33 +712,6 @@ def build_app(verbose: bool = False) -> W.VBox:
     selected_btn.on_click(lambda _b: _activate_tab("selected"))
     single_btn.on_click(lambda _b: _activate_tab("single"))
 
-    def _render_universe_grid(_change=None) -> None:
-        """Render the all-catalog grid with the dynamic z-score column from the
-        current Metric/Window/Lookback dropdowns. Reads the cached perf table
-        (`state.universe_up`) and computes only the z-score column live from the
-        already-fetched `arp_universe_prices` — no BQL, no full recompute. The
-        dropdown observers and the load/refresh paths both call this."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            zcol = rolling_metric_zscore(
-                state.arp_universe_prices,
-                metric=z_metric_dd.value,
-                window=z_window_dd.value,
-                zscore_window=z_lookback_dd.value,
-            )
-            zlabel = f"{z_metric_dd.label} {z_window_dd.label}/{z_lookback_dd.label}"
-            _update_universe_grid(
-                state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
-            )
-        except Exception:
-            state.init_errors.append(
-                f"all-catalog grid z-score render failed:\n{traceback.format_exc()}"
-            )
-
-    for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
-        _dd.observe(_render_universe_grid, names="value")
-
     def _default_selection() -> tuple[str, ...]:
         """The startup strategy selection: the 5 indices with the highest
         z-score of (1W Sharpe, 1Y) over the fetched cache, so the Multi-Strategy
@@ -753,150 +734,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             except Exception:
                 pass
         return tuple(opt[:5])
-
-    def _render_factor_scatter(_change=None) -> None:
-        """Render the Platform 3D factor-beta scatter (β to the equity risk
-        premium, term premium, and trend factor, per strategy, colored by asset
-        class) at the currently-selected lookback. Computes live from the
-        fetched cache — the factor series from `universe_prices`, per-strategy
-        returns from `arp_universe_prices` — so the lookback toggle re-slices
-        only, no BQL. No in-figure title; the "Factor exposures" section header
-        stands alone (v0.7.1)."""
-        if state.arp_universe_prices.empty or state.universe_prices.empty:
-            return
-        try:
-            _update_factor_scatter(
-                factor_scatter_fig,
-                state.arp_universe_prices,
-                state.universe_prices,
-                meta,
-                years=lookback_selector.value / TRADING_DAYS_PER_YEAR,
-            )
-        except Exception:
-            state.init_errors.append(
-                f"factor-beta scatter render failed:\n{traceback.format_exc()}"
-            )
-
-    def _render_sunburst(_change=None) -> None:
-        """Render the Platform asset class → theme → ticker sunburst from the
-        Metric/Window Z-score controls + the shared lookback: arcs sized by
-        gross-|z| share, colored by the level-averaged z. Computes live from the
-        ARP-only cache via `platform_sunburst_frame` — the controls re-slice
-        only, no BQL. No in-figure title; the active tab labels the chart."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            _update_sunburst(
-                sunburst_fig,
-                state.arp_universe_prices,
-                meta,
-                metric=sb_metric_dd.value,
-                window=sb_window_dd.value,
-                lookback=lookback_selector.value,
-                label=f"{sb_window_dd.label} {sb_metric_dd.label}",
-            )
-        except Exception:
-            state.init_errors.append(
-                f"sunburst render failed:\n{traceback.format_exc()}"
-            )
-
-    # --- Regime Analysis closures: live re-slice of the cache on the regime /
-    # source / bucket dropdowns and the shared lookback toggle — no BQL.
-    def _regime_indicator() -> pd.Series | None:
-        """The regime indicator series from the cache, per the active regime's
-        mode, or None when its ticker(s) are absent from the fetch (→
-        unconditioned all-days view):
-
-        - ``level`` — the raw indicator level (Volatility = VIX).
-        - ``autocorr_tercile`` — the selected benchmark's rolling return autocorr.
-        - ``level_tercile`` — the selected region's rate level.
-        """
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        mode = spec.get("mode")
-        prices = state.universe_prices
-        if mode == "autocorr_tercile":
-            ticker = regime_selector_dd.value
-            if not ticker or ticker not in prices.columns:
-                return None
-            rets = daily_returns(prices[[ticker]])[ticker]
-            return rolling_autocorr(rets, window=spec.get("autocorr_window", 21))
-        ticker = (
-            regime_selector_dd.value if mode == "level_tercile" else spec.get("ticker")
-        )
-        if not ticker or ticker not in prices.columns:
-            return None
-        return prices[ticker]
-
-    def _resolve_regime_bucket() -> tuple[float | None, float | None]:
-        """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
-        read the tuple straight off the bucket dropdown; tercile regimes derive
-        the bounds from the live indicator's 1/3 & 2/3 quantiles over the
-        lookback window (`tercile_bounds`). ``(None, None)`` when no indicator is
-        available (→ unconditioned all-days view)."""
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        if spec.get("mode") == "level":
-            low, high = regime_bucket_dd.value
-            return (low, high)
-        indicator = _regime_indicator()
-        if indicator is None:
-            return (None, None)
-        return tercile_bounds(
-            indicator.tail(lookback_selector.value), regime_bucket_dd.value
-        )
-
-    def _render_regime_scatter(_change=None) -> None:
-        """Render the regime risk/return scatter at the current regime / source /
-        bucket + lookback, live from the cache (no BQL)."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            low, high = _resolve_regime_bucket()
-            _update_regime_scatter(
-                regime_scatter_fig,
-                state.arp_universe_prices,
-                _regime_indicator(),
-                meta,
-                low=low,
-                high=high,
-                lookback=lookback_selector.value,
-            )
-        except Exception:
-            state.init_errors.append(
-                f"regime scatter render failed:\n{traceback.format_exc()}"
-            )
-
-    def _sync_regime_controls(_change=None) -> None:
-        # Repopulate the bucket dropdown for the active regime's mode and show /
-        # hide the indicator-source dropdown (only regimes carrying a `selector`).
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        selector = spec.get("selector", [])
-        if selector:
-            regime_selector_dd.options = selector
-            regime_selector_dd.value = selector[0][1]
-            regime_selector_dd.layout.display = ""
-        else:
-            regime_selector_dd.layout.display = "none"
-        options = _regime_bucket_options(regime_type_dd.value)
-        regime_bucket_dd.options = options
-        regime_bucket_dd.value = options[0][1]
-
-    def _on_regime_type(_change=None) -> None:
-        _sync_regime_controls()
-        _render_regime_scatter()
-
-    regime_type_dd.observe(_on_regime_type, names="value")
-    regime_selector_dd.observe(lambda _c: _render_regime_scatter(), names="value")
-    regime_bucket_dd.observe(lambda _c: _render_regime_scatter(), names="value")
-    _sync_regime_controls()
-
-    # The shared lookback drives all three analytics tabs (the sunburst now
-    # shares it too — its own lookback dropdown was removed in the tab rework).
-    for _render in (_render_factor_scatter, _render_regime_scatter, _render_sunburst):
-        lookback_selector.observe(_render, names="value")
-
-    # The sunburst's own Metric/Window controls re-render only the sunburst.
-    for _dd in (sb_metric_dd, sb_window_dd):
-        _dd.observe(_render_sunburst, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
@@ -967,10 +804,10 @@ def build_app(verbose: bool = False) -> W.VBox:
             state.universe_up = universe_perf(state.arp_universe_prices)
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
-            _render_universe_grid()
-            _render_factor_scatter()
-            _render_sunburst()
-            _render_regime_scatter()
+            render_universe_grid(state, meta, pa)
+            render_factor_scatter(state, meta, pa)
+            render_sunburst(state, meta, pa)
+            render_regime_scatter(state, meta, pa)
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -1214,10 +1051,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         )
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
-            _render_universe_grid()
-            _render_factor_scatter()
-            _render_sunburst()
-            _render_regime_scatter()
+            render_universe_grid(state, meta, pa)
+            render_factor_scatter(state, meta, pa)
+            render_sunburst(state, meta, pa)
+            render_regime_scatter(state, meta, pa)
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
