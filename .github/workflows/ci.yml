@@ -1,12 +1,15 @@
 name: CI
 
-# Lint, format-check, and test on the current integration branch (and main) and
-# any PR targeting them. Mirrors the local commands documented in CLAUDE.md.
+# Lint, format-check, and test on every version integration branch (`v*`, e.g.
+# v0.9.0) and `main`, and any PR targeting them. Mirrors the local commands
+# documented in CLAUDE.md. The `v*` glob means new integration branches are
+# covered without editing this file each cycle (previously pinned to v0.7.5,
+# so v0.8.x / v0.9.x PRs ran no CI).
 on:
   push:
-    branches: ["v0.7.5", "main"]
+    branches: ["v*", "main"]
   pull_request:
-    branches: ["v0.7.5", "main"]
+    branches: ["v*", "main"]
 
 jobs:
   checks:
