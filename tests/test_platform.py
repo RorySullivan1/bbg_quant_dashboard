@@ -426,3 +426,41 @@ def test_platform_analytics_tab_swap():
     assert chart_box.children[0] is not first  # swapped to the factor scatter
     pills["Sunburst"].click()
     assert chart_box.children[0] is first  # back to the sunburst
+
+
+def test_platform_analytics_render_is_lazy(monkeypatch):
+    """v0.9.13 #168: only the visible (Sunburst) analytics tab renders on load;
+    Regime / Factor render on their pill's first activation and not again while
+    fresh."""
+    import ipywidgets as W
+    import src.layout.platform as plat
+    from src.layout import build_app
+
+    calls = {"sunburst": 0, "regime": 0, "factor": 0}
+
+    def _spy(name, real):
+        def render(state, meta, pa):
+            calls[name] += 1
+            return real(state, meta, pa)
+
+        return render
+
+    for name in ("sunburst", "regime", "factor"):
+        monkeypatch.setitem(
+            plat._ANALYTICS_RENDERERS, name, _spy(name, plat._ANALYTICS_RENDERERS[name])
+        )
+
+    app = build_app(verbose=False)
+    # On load only the visible Sunburst tab is computed.
+    assert calls == {"sunburst": 1, "regime": 0, "factor": 0}
+
+    analytics_card = app.children[5].children[0].children[3]
+    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+
+    pills["Factor exposures"].click()  # first activation → render once
+    assert calls["factor"] == 1
+    pills["Sunburst"].click()  # already fresh → no re-render
+    pills["Factor exposures"].click()  # still fresh → no re-render
+    assert calls["factor"] == 1
+    assert calls["sunburst"] == 1
+    assert calls["regime"] == 0  # never activated → never rendered

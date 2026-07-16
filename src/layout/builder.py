@@ -90,10 +90,8 @@ from .platform import (
     _factor_beta_scatter,
     _regime_scatter,
     _sunburst,
+    invalidate_analytics,
     regime_bucket_options,
-    render_factor_scatter,
-    render_regime_scatter,
-    render_sunburst,
     render_universe_grid,
     wire_platform_analytics,
 )
@@ -648,6 +646,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         analytics_tabs=_analytics_tabs,
         tab_controls_box=tab_controls_box,
         chart_box=chart_box,
+        # Lazy-render state: `active_analytics` is the visible tab (Sunburst is
+        # the default), `fresh` is the set of tabs rendered against current data.
+        active_analytics="sunburst",
+        fresh=set(),
     )
     wire_platform_analytics(state, meta, pa)
 
@@ -801,9 +803,12 @@ def build_app(verbose: bool = False) -> W.VBox:
             _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
             t_grid = time.perf_counter()
             render_universe_grid(state, meta, pa)
-            render_factor_scatter(state, meta, pa)
-            render_sunburst(state, meta, pa)
-            render_regime_scatter(state, meta, pa)
+            # Only the visible analytics tab (Sunburst) computes on load; the
+            # hidden Regime / Factor tabs render on their pill's first click.
+            # invalidate_analytics clears the freshness set first, discarding the
+            # no-op "regime" mark left by _sync_regime_controls firing during
+            # wiring (when the cache was still empty).
+            invalidate_analytics(state, meta, pa)
             _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
         except Exception:
             state.init_errors.append(
@@ -1066,9 +1071,9 @@ def build_app(verbose: bool = False) -> W.VBox:
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
             render_universe_grid(state, meta, pa)
-            render_factor_scatter(state, meta, pa)
-            render_sunburst(state, meta, pa)
-            render_regime_scatter(state, meta, pa)
+            # Fresh data → every analytics tab is stale; re-render the visible
+            # one now, the hidden two lazily on next activation.
+            invalidate_analytics(state, meta, pa)
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
