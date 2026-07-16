@@ -340,45 +340,97 @@ def make_filter_panel(
                 continue
         return out
 
+    # Memo for the whole-catalog quant metrics, so a threshold keystroke or a
+    # categorical toggle re-masks a cached table instead of recomputing the
+    # per-ticker metrics over the whole catalog. The per-ticker metrics are
+    # candidate-independent, so the table is computed once over the full ARP
+    # universe (keyed by period + the three benchmark dropdowns) and sliced per
+    # call; the Z column's raw metric is memoized separately by its own
+    # window/benchmark and cross-sectioned over the current candidates (so the
+    # z-score stays candidate-relative, as before). Invalidated when the cache
+    # frame identity changes — a Refresh replaces ``state.arp_universe_prices``.
+    _quant_memo: dict = {}
+    _quant_memo_arp: list = [None]
+
+    def _quant_universe_rets(state: object, arp: pd.DataFrame) -> pd.DataFrame:
+        rets = getattr(state, "universe_rets", None)
+        if rets is None or rets.empty:
+            return daily_returns(arp)
+        return rets
+
+    def _quant_full_table(state, arp, universe, years, beta_b, trey_b, jens_b):
+        key = ("main", years, beta_b, trey_b, jens_b)
+        cached = _quant_memo.get(key)
+        if cached is not None:
+            return cached
+        rets = _quant_universe_rets(state, arp)
+        qt = quant_metrics_table(arp, None, years, returns=rets)
+        # Beta / Treynor / Jensen carry their own (independent) benchmark
+        # dropdowns, so they can't share one beta here; the whole table is
+        # memoized instead, so this runs once per (period, benchmarks) config.
+        qt["Beta"] = ann_beta(rets, universe.get(beta_b), years)
+        qt["Treynor"] = treynor_ratio(rets, arp, universe.get(trey_b), years)
+        qt["Jensen"] = jensen_alpha(rets, arp, universe.get(jens_b), years)
+        _quant_memo[key] = qt
+        return qt
+
+    def _quant_z_raw(state, arp, universe, z_years, z_bench_name, z_metric):
+        key = ("z", z_years, z_bench_name, z_metric)
+        cached = _quant_memo.get(key)
+        if cached is not None:
+            return cached
+        z_bench = universe.get(z_bench_name) if z_bench_name is not None else None
+        zt = quant_metrics_table(
+            arp, z_bench, z_years, returns=_quant_universe_rets(state, arp)
+        )
+        _quant_memo[key] = zt[z_metric]
+        return zt[z_metric]
+
     def _quant_keep(candidates: pd.Index, state: object) -> pd.Index:
         """Narrow ``candidates`` to tickers passing every active quant threshold.
 
         Mirrors the Multi-Strategy ``_quant_keep``: the metric table is computed
-        from the cached ARP prices, with Beta / Treynor / Jensen overwritten per
-        their own benchmark dropdowns (from the full ``universe_prices`` cache),
-        and the Z-Score column derived on demand over its own window. AND across
-        thresholds. No thresholds / empty cache → every candidate is kept.
+        from the cached ARP prices, with Beta / Treynor / Jensen per their own
+        benchmark dropdowns (from the full ``universe_prices`` cache), and the
+        Z-Score column derived on demand over its own window. AND across
+        thresholds. No thresholds / empty cache → every candidate is kept. The
+        per-ticker metrics are memoized over the whole catalog and sliced to the
+        candidates here (see the memo above), so repeated filter changes re-mask
+        a cached table rather than recomputing it.
         """
         thresholds = _quant_thresholds()
         arp = getattr(state, "arp_universe_prices", None)
         if not thresholds or arp is None or arp.empty:
             return candidates
-        prices = arp.reindex(columns=candidates).dropna(how="all", axis=1)
-        if prices.shape[1] == 0:
+        sub = arp.reindex(columns=list(candidates)).dropna(how="all", axis=1)
+        if sub.shape[1] == 0:
             return candidates
+        if _quant_memo_arp[0] != id(arp):  # a Refresh replaced the cache frame
+            _quant_memo.clear()
+            _quant_memo_arp[0] = id(arp)
         universe = getattr(state, "universe_prices", None)
         if universe is None:
             universe = pd.DataFrame()
+        cand = sub.columns
         years = quant.period_dd.value
-        rets = daily_returns(prices)
-        qt = quant_metrics_table(prices, None, years, returns=rets)
-        qt["Beta"] = ann_beta(rets, universe.get(quant.bench_dd["Beta"].value), years)
-        qt["Treynor"] = treynor_ratio(
-            rets, prices, universe.get(quant.bench_dd["Treynor"].value), years
+        full = _quant_full_table(
+            state,
+            arp,
+            universe,
+            years,
+            quant.bench_dd["Beta"].value,
+            quant.bench_dd["Treynor"].value,
+            quant.bench_dd["Jensen"].value,
         )
-        qt["Jensen"] = jensen_alpha(
-            rets, prices, universe.get(quant.bench_dd["Jensen"].value), years
-        )
+        qt = full.loc[full.index.intersection(cand)].copy()
         if "Z" in thresholds:
             z_metric = quant.z_metric_dd.value
             z_years = quant.z_window_dd.value / TRADING_DAYS_PER_YEAR
-            z_bench = (
-                universe.get(quant.bench_dd[z_metric].value)
-                if z_metric in quant.bench_dd
-                else None
+            z_bench_name = (
+                quant.bench_dd[z_metric].value if z_metric in quant.bench_dd else None
             )
-            zt = quant_metrics_table(prices, z_bench, z_years, returns=rets)
-            qt["Z"] = zscore_cross_section(zt[z_metric])
+            z_raw = _quant_z_raw(state, arp, universe, z_years, z_bench_name, z_metric)
+            qt["Z"] = zscore_cross_section(z_raw.loc[z_raw.index.intersection(cand)])
         keep = qt.index
         for name, (op, value) in thresholds.items():
             col = qt[name]

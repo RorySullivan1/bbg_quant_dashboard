@@ -197,6 +197,48 @@ def test_matching_quant_le_operator(multiyear_prices, benchmark):
     assert set(got) == set(multiyear_prices.columns)
 
 
+def test_quant_table_is_memoized_across_repeats_and_toggles(
+    multiyear_prices, benchmark, monkeypatch
+):
+    # v0.9.13 #167: the whole-catalog quant table is memoized, so a repeated
+    # match, or a categorical toggle (changing candidates but not the metric
+    # params), re-masks the cached table instead of recomputing it — while a
+    # cache refresh (new arp frame) invalidates it.
+    import src.layout.filter_panel as fp
+
+    calls = {"n": 0}
+    real = fp.quant_metrics_table
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fp, "quant_metrics_table", counting)
+
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    state = _quant_state(multiyear_prices, benchmark)
+    op, box = panel.quant.specs["Sharpe"]
+    op.value = "≥"
+    box.value = "-1000000"  # loose threshold, every ticker clears it
+
+    r1 = panel.matching(meta, state)
+    after_first = calls["n"]
+    assert after_first >= 1  # the first match computed the table
+
+    r2 = panel.matching(meta, state)  # identical params → memo hit
+    assert calls["n"] == after_first
+    assert list(r1) == list(r2)
+
+    _check(panel.asset_checks, "Equity")  # narrows candidates, same metric params
+    panel.matching(meta, state)
+    assert calls["n"] == after_first  # candidate-independent table → still cached
+
+    state.arp_universe_prices = multiyear_prices.copy()  # a Refresh replaces the frame
+    panel.matching(meta, state)
+    assert calls["n"] > after_first  # new frame identity → recomputed
+
+
 # --- live end-to-end narrowing through build_app -----------------------------
 
 
