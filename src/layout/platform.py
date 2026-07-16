@@ -490,16 +490,6 @@ def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
     return [(label, key) for label, key in spec["bucket_labels"]]
 
 
-def activate_platform_tab(pa: SimpleNamespace, which: str) -> None:
-    """Swap the analytics card to tab ``which`` — restyle the pills, swap the
-    left-column controls (``tab_controls_box``) and the chart (``chart_box``)."""
-    for key, (pill, _controls, _fig) in pa.analytics_tabs.items():
-        _style_tab_button(pill, active=(key == which))
-    _pill, controls, fig = pa.analytics_tabs[which]
-    pa.tab_controls_box.children = (controls,)
-    pa.chart_box.children = (fig,)
-
-
 def render_universe_grid(
     state: object, meta: pd.DataFrame, pa: SimpleNamespace
 ) -> None:
@@ -636,6 +626,55 @@ def _sync_regime_controls(pa: SimpleNamespace) -> None:
     pa.regime_bucket_dd.value = options[0][1]
 
 
+# The three analytics tabs and their render functions. Only one is ever visible
+# at a time, so charts render **lazily** — the visible tab on load/Refresh, the
+# hidden two on their pill's first activation (v0.9.13 #168), rather than
+# computing all three up front.
+_ANALYTICS_RENDERERS = {
+    "sunburst": render_sunburst,
+    "regime": render_regime_scatter,
+    "factor": render_factor_scatter,
+}
+
+
+def _render_analytics(
+    state, meta: pd.DataFrame, pa: SimpleNamespace, which: str
+) -> None:
+    """Render one analytics tab and mark it fresh (rendered against current data)."""
+    _ANALYTICS_RENDERERS[which](state, meta, pa)
+    pa.fresh.add(which)
+
+
+def render_active_analytics(state, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
+    """Render whichever analytics tab is currently shown — called on load and
+    Refresh so only the visible chart is computed, not all three."""
+    _render_analytics(state, meta, pa, pa.active_analytics)
+
+
+def invalidate_analytics(state, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
+    """Mark every analytics tab stale (the data or shared lookback changed) and
+    re-render only the visible one; the hidden two re-render lazily when next
+    activated."""
+    pa.fresh.clear()
+    render_active_analytics(state, meta, pa)
+
+
+def activate_platform_tab(
+    state, meta: pd.DataFrame, pa: SimpleNamespace, which: str
+) -> None:
+    """Switch the analytics card to tab ``which``: render it first if it isn't
+    fresh (lazy first-view), restyle the pills, and swap the left-column controls
+    (``tab_controls_box``) and the chart (``chart_box``)."""
+    pa.active_analytics = which
+    if which not in pa.fresh:
+        _render_analytics(state, meta, pa, which)
+    for key, (pill, _controls, _fig) in pa.analytics_tabs.items():
+        _style_tab_button(pill, active=(key == which))
+    _pill, controls, fig = pa.analytics_tabs[which]
+    pa.tab_controls_box.children = (controls,)
+    pa.chart_box.children = (fig,)
+
+
 def wire_platform_analytics(
     state: object, meta: pd.DataFrame, pa: SimpleNamespace
 ) -> None:
@@ -645,30 +684,34 @@ def wire_platform_analytics(
     for _dd in (pa.z_metric_dd, pa.z_window_dd, pa.z_lookback_dd):
         _dd.observe(lambda _c: render_universe_grid(state, meta, pa), names="value")
 
-    pa.sunburst_pill.on_click(lambda _b: activate_platform_tab(pa, "sunburst"))
-    pa.regime_pill.on_click(lambda _b: activate_platform_tab(pa, "regime"))
-    pa.factor_pill.on_click(lambda _b: activate_platform_tab(pa, "factor"))
+    pa.sunburst_pill.on_click(
+        lambda _b: activate_platform_tab(state, meta, pa, "sunburst")
+    )
+    pa.regime_pill.on_click(lambda _b: activate_platform_tab(state, meta, pa, "regime"))
+    pa.factor_pill.on_click(lambda _b: activate_platform_tab(state, meta, pa, "factor"))
 
     def _on_regime_type(_change=None):
         _sync_regime_controls(pa)
-        render_regime_scatter(state, meta, pa)
+        _render_analytics(state, meta, pa, "regime")
 
     pa.regime_type_dd.observe(_on_regime_type, names="value")
     pa.regime_selector_dd.observe(
-        lambda _c: render_regime_scatter(state, meta, pa), names="value"
+        lambda _c: _render_analytics(state, meta, pa, "regime"), names="value"
     )
     pa.regime_bucket_dd.observe(
-        lambda _c: render_regime_scatter(state, meta, pa), names="value"
+        lambda _c: _render_analytics(state, meta, pa, "regime"), names="value"
     )
 
-    # The shared lookback drives all three analytics tabs.
-    for _render in (render_factor_scatter, render_regime_scatter, render_sunburst):
-        pa.lookback_selector.observe(
-            lambda _c, r=_render: r(state, meta, pa), names="value"
-        )
+    # The shared lookback drives all three analytics tabs — mark them stale and
+    # re-render only the visible one; the hidden two refresh on next activation.
+    pa.lookback_selector.observe(
+        lambda _c: invalidate_analytics(state, meta, pa), names="value"
+    )
 
     # The sunburst's own Metric/Window controls re-render only the sunburst.
     for _dd in (pa.sb_metric_dd, pa.sb_window_dd):
-        _dd.observe(lambda _c: render_sunburst(state, meta, pa), names="value")
+        _dd.observe(
+            lambda _c: _render_analytics(state, meta, pa, "sunburst"), names="value"
+        )
 
     _sync_regime_controls(pa)
