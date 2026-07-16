@@ -11,6 +11,12 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
+# Hard cap on the Multi-Strategy selection. Correlation / analysis over the
+# selected set is O(n²) in the number of picked strategies, so the picker is
+# bounded to keep it fast (and the heatmaps / charts legible); a further pick is
+# rejected with an error popup. See `CheckboxMultiSelect(max_selected=...)`.
+MAX_SELECTED_STRATEGIES = 25
+
 # Short metric windows (trading days) for the Platform z-score views.
 # The sunburst's Z-score control offers 1W / 1M / 3M / 6M (default 1W Sharpe);
 # the all-catalog grid z-score column offers 1M / 3M / 6M.

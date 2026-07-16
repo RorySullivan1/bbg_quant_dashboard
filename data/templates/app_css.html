@@ -141,6 +141,47 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
+/* Strategy-selection cap (v0.9.13 #181): a live count above the picker, and a
+   fixed top-centre auto-fading error popup when a pick over the cap is rejected. */
+.bbg-strat-count {
+  font-family: {{mono}};
+  font-size: {{caption_size}};
+  color: {{text_muted}};
+  padding: 2px 0 5px 0;
+}
+.bbg-strat-count.is-full {
+  color: {{red}};
+  font-weight: 700;
+}
+.bbg-limit-popup {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  animation: bbg-limit-fade 3.6s ease forwards;
+}
+.bbg-limit-popup.is-hidden { display: none; }
+.bbg-limit-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: {{surface}};
+  color: {{text_color}};
+  border: 1px solid {{red}};
+  border-left: 4px solid {{red}};
+  border-radius: 6px;
+  padding: 12px 18px;
+  font-family: {{mono}};
+  font-size: {{label_size}};
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.bbg-limit-icon { color: {{red}}; font-size: {{body_size}}; }
+@keyframes bbg-limit-fade {
+  0%, 75% { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
+
 /* Plotly FigureWidget chart backdrop. Charts render on a transparent
    `paper_bgcolor`/`plot_bgcolor` (see `theme._chart_layout`) so the themed
    card behind them shows through. FigureWidget, however, gives its own wrapper

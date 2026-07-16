@@ -24,14 +24,24 @@ def test_build_app_renders_expected_tree():
     assert isinstance(app, W.VBox)
 
     # injected CSS, banner, status toast, commentary, top tab bar, tab content,
-    # perf disclaimer, legal disclosure, loading overlay — 9 children in this
-    # order (see builder.py). The leading W.HTML is the global stylesheet
-    # (`_app_css()`); the trailing W.HTML is the `.bbg-overlay` (Workstream C).
+    # perf disclaimer, legal disclosure, loading overlay, selection-cap popup —
+    # 10 children in this order (see builder.py). The leading W.HTML is the
+    # global stylesheet (`_app_css()`); the trailing two W.HTMLs are the
+    # `.bbg-overlay` (Workstream C) and the `.bbg-limit-popup` (v0.9.13 #181).
     children = app.children
-    assert len(children) == 9
-    css, banner, status, commentary, tab_bar, tab_content, perf_disc, legal, overlay = (
-        children
-    )
+    assert len(children) == 10
+    (
+        css,
+        banner,
+        status,
+        commentary,
+        tab_bar,
+        tab_content,
+        perf_disc,
+        legal,
+        overlay,
+        limit_popup,
+    ) = children
     assert isinstance(css, W.HTML)
     assert "<style" in css.value
     assert isinstance(banner, W.HBox)
@@ -43,6 +53,9 @@ def test_build_app_renders_expected_tree():
     assert isinstance(overlay, W.HTML)
     # On the mock-price path the load succeeds, so the overlay is dismissed.
     assert "is-hidden" in overlay.value
+    # The selection-cap popup starts hidden (shown only on an over-cap pick).
+    assert isinstance(limit_popup, W.HTML)
+    assert "is-hidden" in limit_popup.value
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
