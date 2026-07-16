@@ -53,6 +53,12 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Typing in the strategies search box (left panel, above the dropdown)
   — the dropdown narrows to substring matches on ticker or name;
   already-selected tickers stay visible.
+- The **selection cap** (v0.9.13 #181): a `Selected Strategies: n/25` count
+  sits above the picker and updates live as boxes are ticked (turning red at
+  25/25). Ticking a 26th strategy is **rejected** — the checkbox snaps back,
+  the count stays 25/25, and a red auto-fading "Maximum 25 strategies" popup
+  appears at the top of the viewport. (The bundled mock catalog has only ~4
+  indices, so exercising the cap needs a larger catalog / a live terminal.)
 - The **Analysis date range** row (full-width, below the two panels):
   select a basket → Refresh prices → the two hyphen-separated date boxes
   span the overlap window. Editing a box enforces `min ≤ max` but does

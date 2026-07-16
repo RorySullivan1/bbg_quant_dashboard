@@ -81,6 +81,35 @@ def test_checkbox_multiselect_fires_value_observers():
     assert seen == [("BBB",)]
 
 
+# --- v0.9.13 #181: hard selection cap ---------------------------------------
+
+
+def test_checkbox_multiselect_rejects_pick_over_max_selected():
+    limits = []
+    m = CheckboxMultiSelect(
+        options=_opts(), value=("AAA", "BBB"), max_selected=2, on_limit=limits.append
+    )
+    m.children[2].value = True  # tick CCC → would be 3, over the cap of 2
+    assert set(m.value) == {"AAA", "BBB"}  # selection unchanged
+    assert m.children[2].value is False  # the offending checkbox reverted
+    assert limits == [2]  # on_limit called with the cap
+
+
+def test_checkbox_multiselect_deselect_at_cap_then_reselect():
+    m = CheckboxMultiSelect(options=_opts(), value=("AAA", "BBB"), max_selected=2)
+    m.children[0].value = False  # deselect AAA (under the cap now)
+    assert set(m.value) == {"BBB"}
+    m.children[2].value = True  # room again → CCC accepted
+    assert set(m.value) == {"BBB", "CCC"}
+
+
+def test_checkbox_multiselect_no_cap_when_max_selected_none():
+    m = CheckboxMultiSelect(options=_opts(), value=())
+    for cb in m.children:
+        cb.value = True
+    assert set(m.value) == {"AAA", "BBB", "CCC"}  # uncapped by default
+
+
 # --- Wired into the app ------------------------------------------------------
 
 
@@ -95,6 +124,40 @@ def test_multi_strategy_picker_is_a_checkbox_list():
     assert picker.layout.max_height == "240px"
     assert picker.layout.overflow == "auto"
     assert picker.layout.flex is None
+
+
+def test_selection_cap_and_count_wired_into_app():
+    app = build_app(verbose=False)
+    _mount_multi_strategy(app)
+    picker = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
+    count_w = next(
+        w
+        for w in _walk(app)
+        if isinstance(w, W.HTML) and "Selected Strategies:" in w.value
+    )
+    popup = next(
+        w for w in _walk(app) if isinstance(w, W.HTML) and "bbg-limit-popup" in w.value
+    )
+    assert "/25" in count_w.value
+
+    if len(picker.children) < 26:
+        import pytest
+
+        pytest.skip("mock catalog too small to exercise the 26th pick")
+
+    picker.value = ()
+    assert "0/25" in count_w.value
+    for cb in picker.children[:25]:
+        cb.value = True
+    assert len(picker.value) == 25
+    assert "25/25" in count_w.value and "is-full" in count_w.value
+    assert "is-hidden" in popup.value  # popup not shown yet
+
+    picker.children[25].value = True  # the 26th pick → rejected
+    assert len(picker.value) == 25  # selection unchanged
+    assert picker.children[25].value is False  # reverted
+    assert "is-hidden" not in popup.value  # popup now visible
+    assert "Maximum 25" in popup.value
 
 
 def test_clear_button_clears_the_strategy_selection():

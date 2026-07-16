@@ -19,6 +19,7 @@ from ..config import (
     HALF_YEAR_WINDOW,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
+    MAX_SELECTED_STRATEGIES,
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
@@ -54,8 +55,11 @@ from .chrome import (
     _banner,
     _loading_overlay,
     _make_tab_button,
+    _render_limit_popup,
     _render_overlay,
     _render_status,
+    _render_strat_count,
+    _selection_limit_popup,
     _status_banner,
     _style_tab_button,
 )
@@ -167,6 +171,21 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
     clear_sel_btn.add_class("bbg-btn-secondary")
     search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
+    # Selection cap (v0.9.13 #181): the picker is hard-capped at
+    # MAX_SELECTED_STRATEGIES (correlation/analysis over the selected set is
+    # O(n²)); a pick over the cap is rejected with a fixed auto-fading error
+    # popup, and a live "Selected Strategies: n/cap" count sits above the list.
+    limit_popup_w = _selection_limit_popup()
+    _limit_nonce = [0]
+
+    def _show_limit_popup(cap: int) -> None:
+        _limit_nonce[0] += 1
+        limit_popup_w.value = _render_limit_popup(
+            f"Maximum {cap} strategies — deselect one to add another.",
+            nonce=_limit_nonce[0],
+            hidden=False,
+        )
+
     # The picker is a scrollable checkbox list (CheckboxMultiSelect), capped at
     # the same 240px as the categorical filter groups on the right
     # (`_checkbox_group`) so the two panels match; longer catalogs scroll inside
@@ -174,9 +193,23 @@ def build_app(verbose: bool = False) -> W.VBox:
     ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
+        max_selected=MAX_SELECTED_STRATEGIES,
+        on_limit=_show_limit_popup,
         layout=W.Layout(width="100%", max_height="240px", overflow="auto"),
     )
     clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
+
+    # Live count above the picker; updates on every selection change.
+    strat_count_w = W.HTML(
+        _render_strat_count(len(ticker_w.value), MAX_SELECTED_STRATEGIES)
+    )
+
+    def _update_strat_count(_change=None) -> None:
+        strat_count_w.value = _render_strat_count(
+            len(ticker_w.value), MAX_SELECTED_STRATEGIES
+        )
+
+    ticker_w.observe(_update_strat_count, names="value")
 
     # Analysis date range — a slider flanked by two date boxes, two-way
     # linked. Its bounds are rebuilt at recompute time to the overlap window
@@ -323,7 +356,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_row, ticker_w],
+        [_section_label("Strategies"), search_row, strat_count_w, ticker_w],
         layout=W.Layout(
             width="38%",
             padding="8px",
@@ -1252,6 +1285,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             perf_disclaimer_w,
             legal_w,
             overlay_w,  # fixed-position loading overlay (v0.6.5 Workstream C)
+            limit_popup_w,  # fixed-position selection-cap error popup (#181)
         ],
         layout=W.Layout(width="100%"),
     )

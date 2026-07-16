@@ -26,12 +26,22 @@ class CheckboxMultiSelect(W.VBox):
     options = traitlets.Any(())  # list[(label, value)] | list[value]
     value = traitlets.Tuple()  # tuple of selected values
 
-    def __init__(self, *, options=(), value=(), **kwargs) -> None:
+    def __init__(
+        self, *, options=(), value=(), max_selected=None, on_limit=None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self.add_class("bbg-strat-list")
         self._checks: dict = {}  # value -> W.Checkbox currently shown
         self._pool: dict = {}  # value -> W.Checkbox, reused across rebuilds
         self._guard = False  # suppress observer feedback loops
+        # Optional hard cap on how many values may be selected at once; a toggle
+        # that would exceed it is rejected (the checkbox reverts) and
+        # ``on_limit(max_selected)`` — if given — is called so the caller can
+        # surface an error. Programmatic ``value`` sets are trusted (the app only
+        # ever sets a within-cap selection), so the cap is enforced on user
+        # toggles, not on the trait.
+        self.max_selected = max_selected
+        self._on_limit = on_limit
         self.observe(self._rebuild_rows, names="options")
         self.observe(self._sync_checks, names="value")
         self.options = list(options)
@@ -101,7 +111,18 @@ class CheckboxMultiSelect(W.VBox):
             return
         self._guard = True
         try:
-            self.value = tuple(v for v, cb in self._checks.items() if cb.value)
+            checked = tuple(v for v, cb in self._checks.items() if cb.value)
+            if self.max_selected is not None and len(checked) > self.max_selected:
+                # Over the cap — revert the just-checked box(es) and keep the
+                # current selection, then let the caller pop an error.
+                allowed = set(self.value)
+                for val, cb in self._checks.items():
+                    if cb.value and val not in allowed:
+                        cb.value = False  # guarded — won't re-enter _on_toggle
+                if self._on_limit is not None:
+                    self._on_limit(self.max_selected)
+                return
+            self.value = checked
         finally:
             self._guard = False
 
