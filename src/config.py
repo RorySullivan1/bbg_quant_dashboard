@@ -52,6 +52,16 @@ DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
 CACHE_TTL_HOURS = 12
 
+# The startup BQL fetch is issued in ticker batches rather than one whole-
+# universe request: a single request for hundreds of tickers over a multi-year
+# window risks BQL's per-request row / wall-clock limits, and a single
+# unresolvable ticker would otherwise fail the entire load. Each batch is
+# retried with exponential backoff and, if it still fails, degrades to NaN
+# columns so the rest of the catalog still loads (see `src/bql_client.py`).
+BQL_BATCH_SIZE = 100  # tickers per BQL request
+BQL_MAX_RETRIES = 2  # extra attempts per batch after the first (so up to 3 tries)
+BQL_RETRY_BACKOFF_S = 1.0  # base backoff; attempt n waits BACKOFF * 2**n seconds
+
 # Solution values that make up the dashboard universe — compared
 # case-insensitively against the metadata `solution` column. Covers Alternative
 # Risk Premia (short "ARP" / long form, kept so the filter survives a future JSON

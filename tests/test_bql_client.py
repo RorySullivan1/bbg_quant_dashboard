@@ -122,6 +122,124 @@ def test_mock_vix_is_a_bounded_level_spanning_buckets():
     assert df["AAA Index"].iloc[0] > 50
 
 
+# --- v0.9.13: batched / fault-isolated BQL fetch (#164) ----------------------
+
+
+_DATES = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03"])
+
+
+def _wide(tickers: list[str]) -> pd.DataFrame:
+    """A stand-in for one batch's reshaped wide frame."""
+    return pd.DataFrame({t: [100.0, 101.0, 102.0] for t in tickers}, index=_DATES)
+
+
+def _fake_raw(tickers: list[str]) -> pd.DataFrame:
+    """A long-form BQL-style response: ID index + DATE / px_last columns."""
+    rows = [
+        {"DATE": d, "px_last": 100.0 + i} for t in tickers for i, d in enumerate(_DATES)
+    ]
+    idx = pd.Index([t for t in tickers for _ in _DATES], name="ID")
+    return pd.DataFrame(rows, index=idx)
+
+
+def test_chunked_splits_evenly_and_remainder():
+    assert bc._chunked(["a", "b", "c", "d", "e"], 2) == [["a", "b"], ["c", "d"], ["e"]]
+    assert bc._chunked(["a"], 100) == [["a"]]
+    assert bc._chunked([], 100) == []
+
+
+def test_reshape_bql_response_pivots_long_to_wide():
+    tickers = ["A Index", "B Index"]
+    wide = bc._reshape_bql_response(_fake_raw(tickers), tickers, _START, _END)
+    assert list(wide.columns) == tickers
+    assert isinstance(wide.index, pd.DatetimeIndex)
+    assert wide.index.is_monotonic_increasing
+    assert wide["A Index"].tolist() == [100.0, 101.0, 102.0]
+
+
+def test_reshape_bql_response_empty_raises():
+    with pytest.raises(RuntimeError, match="no rows"):
+        bc._reshape_bql_response(pd.DataFrame(), ["A Index"], _START, _END)
+    with pytest.raises(RuntimeError, match="no rows"):
+        bc._reshape_bql_response(None, ["A Index"], _START, _END)
+
+
+def test_assemble_batches_concatenates_and_orders_to_request():
+    tickers = ["A Index", "B Index", "C Index", "D Index", "E Index"]
+    calls: list[list[str]] = []
+
+    def fetch_batch(batch, s, e):
+        calls.append(batch)
+        return _wide(batch)
+
+    out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+    # 5 tickers → batches of 2/2/1.
+    assert [len(b) for b in calls] == [2, 2, 1]
+    # Result carries every ticker, in the requested order.
+    assert list(out.columns) == tickers
+    assert not out.isna().any().any()
+
+
+def test_assemble_batches_isolates_a_failing_batch_to_nan_columns():
+    tickers = ["A Index", "B Index", "C Index", "D Index"]
+
+    def fetch_batch(batch, s, e):
+        if "C Index" in batch:  # the second batch (C, D) fails outright
+            raise RuntimeError("BQL limit hit")
+        return _wide(batch)
+
+    with pytest.warns(UserWarning, match="degrading those to NaN"):
+        out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+
+    assert list(out.columns) == tickers
+    assert not out["A Index"].isna().any()  # good batch survives
+    assert out["C Index"].isna().all()  # failed batch → NaN columns
+    assert out["D Index"].isna().all()
+
+
+def test_assemble_batches_all_failing_raises():
+    def fetch_batch(batch, s, e):
+        raise RuntimeError("session dead")
+
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(RuntimeError, match="Every BQL batch failed"),
+    ):
+        bc._assemble_batches(
+            ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=1
+        )
+
+
+def test_fetch_batch_with_retry_recovers_then_succeeds():
+    attempts = {"n": 0}
+
+    def flaky(batch, s, e):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("transient")
+        return _wide(batch)
+
+    out = bc._fetch_batch_with_retry(
+        ["A Index"], _START, _END, flaky, retries=2, backoff=0
+    )
+    assert attempts["n"] == 3  # failed twice, third try succeeded
+    assert list(out.columns) == ["A Index"]
+
+
+def test_fetch_batch_with_retry_exhausts_and_reraises():
+    attempts = {"n": 0}
+
+    def always_fail(batch, s, e):
+        attempts["n"] += 1
+        raise RuntimeError("permanent")
+
+    with pytest.raises(RuntimeError, match="permanent"):
+        bc._fetch_batch_with_retry(
+            ["A Index"], _START, _END, always_fail, retries=2, backoff=0
+        )
+    assert attempts["n"] == 3  # first try + 2 retries
+
+
 def test_mock_rate_indicators_are_levels():
     # Regional rates mock as positive mean-reverting levels (terciles of level →
     # Rate-level regime), unlike the ~100+ GBM strategies.
