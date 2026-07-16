@@ -50,6 +50,10 @@ class DashboardState:
     # ARP-only view (benchmark columns reindexed out).
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     arp_universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # daily_returns(arp_universe_prices) computed once per fetch and threaded
+    # into the Platform renders (factor scatter / regime / grid z-score /
+    # default selection) so they don't each re-derive it (v0.9.13 #166).
+    universe_rets: pd.DataFrame = field(default_factory=pd.DataFrame)
     # The all-catalog perf table (universe_perf of arp_universe_prices), cached
     # at load/refresh so the Platform grid's Metric/Window/Lookback dropdowns
     # re-rank by recomputing only the z-score column — no universe_perf rerun,
