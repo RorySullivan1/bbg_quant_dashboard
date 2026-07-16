@@ -719,6 +719,7 @@ def build_app(verbose: bool = False) -> W.VBox:
                     metric="sharpe",
                     window=WEEK_WINDOW,
                     zscore_window=TRADING_DAYS_PER_YEAR,
+                    returns=state.universe_rets,
                 ).dropna()
                 top = [t for t in z.nlargest(5).index if t in opt]
                 if top:
@@ -787,6 +788,9 @@ def build_app(verbose: bool = False) -> W.VBox:
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
+        # Whole-universe returns computed once and threaded into the Platform
+        # renders + default selection below, so none re-derive daily_returns.
+        state.universe_rets = daily_returns(state.arp_universe_prices)
         # Startup selection: the top 5 indices by z(1W Sharpe, 1Y) so the
         # Multi-Strategy views render populated on load (the initial _recompute
         # below reads this selection).
@@ -1058,6 +1062,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
+        state.universe_rets = daily_returns(state.arp_universe_prices)
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
             render_universe_grid(state, meta, pa)

@@ -192,6 +192,7 @@ def _update_factor_scatter(
     meta: pd.DataFrame,
     *,
     years: float,
+    returns: pd.DataFrame | None = None,
 ) -> None:
     """Populate the 3D factor-beta scatter from the cached prices: per-strategy
     betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
@@ -206,7 +207,7 @@ def _update_factor_scatter(
     erp = equity_risk_premium(universe_prices)
     tp = term_premium(universe_prices)
     trend = trend_returns(universe_prices)
-    rets = daily_returns(arp_prices)
+    rets = daily_returns(arp_prices) if returns is None else returns
     frame = pd.DataFrame(
         {
             "x": factor_beta(rets, erp, years),
@@ -410,15 +411,24 @@ def _update_regime_scatter(
     low: float | None,
     high: float | None,
     lookback: int,
+    returns: pd.DataFrame | None = None,
 ) -> None:
     """Populate the regime risk/return scatter: per-strategy vol/return/Sharpe
     over the lookback window restricted to the regime-bucket days (mean-based
-    annualization via `regime_risk_return`), one trace per asset class. No BQL."""
+    annualization via `regime_risk_return`), one trace per asset class. No BQL.
+
+    ``returns`` (the shared ``universe_rets``) avoids re-deriving daily returns:
+    ``daily_returns(arp).tail(lookback - 1)`` is exactly ``daily_returns(arp.tail(
+    lookback))`` — a ``lookback``-row price slice yields ``lookback - 1`` returns,
+    the same trailing rows as slicing the full-history returns."""
     if arp_prices.empty:
         with fig.batch_update():
             fig.data = ()
         return
-    rets = daily_returns(arp_prices.tail(lookback))
+    if returns is None:
+        rets = daily_returns(arp_prices.tail(lookback))
+    else:
+        rets = returns.tail(lookback - 1)
     mask = _regime_window_mask(indicator, rets.index, low, high)
     frame = regime_risk_return(rets, mask).dropna(subset=["vol", "ret"])
     if frame.empty:
@@ -505,6 +515,7 @@ def render_universe_grid(
             metric=pa.z_metric_dd.value,
             window=pa.z_window_dd.value,
             zscore_window=pa.z_lookback_dd.value,
+            returns=state.universe_rets,
         )
         zlabel = (
             f"{pa.z_metric_dd.label} {pa.z_window_dd.label}/{pa.z_lookback_dd.label}"
@@ -528,6 +539,7 @@ def render_factor_scatter(
             state.universe_prices,
             meta,
             years=pa.lookback_selector.value / TRADING_DAYS_PER_YEAR,
+            returns=state.universe_rets,
         )
 
 
@@ -604,6 +616,7 @@ def render_regime_scatter(
             low=low,
             high=high,
             lookback=pa.lookback_selector.value,
+            returns=state.universe_rets,
         )
 
 

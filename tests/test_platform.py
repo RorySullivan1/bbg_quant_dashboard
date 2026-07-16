@@ -25,7 +25,7 @@ from src.layout.platform import (
     _update_sunburst,
 )
 from src.layout.theme import _v_ref
-from src.stats import tercile_bounds
+from src.stats import daily_returns, tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
@@ -85,6 +85,54 @@ def test_update_factor_scatter_one_trace_per_asset_class():
     for tr in by_name.values():
         assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
         assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
+
+
+def _scatter_xyz(fig) -> dict:
+    """{trace name: (x, y, [z])} for the marker traces, for equality checks."""
+    out = {}
+    for tr in fig.data:
+        if isinstance(tr, (go.Scatter, go.Scatter3d)):
+            coords = [tuple(tr.x), tuple(tr.y)]
+            if isinstance(tr, go.Scatter3d):
+                coords.append(tuple(tr.z))
+            out[tr.name] = coords
+    return out
+
+
+def test_factor_scatter_returns_arg_matches_recompute():
+    # v0.9.13 #166: threading the shared universe_rets must produce a byte-
+    # identical scatter to letting the updater re-derive daily_returns.
+    universe = _universe()
+    arp = universe[["AAA Index", "BBB Index"]]
+    fig_a = _factor_beta_scatter()
+    _update_factor_scatter(fig_a, arp, universe, _meta(), years=1)
+    fig_b = _factor_beta_scatter()
+    _update_factor_scatter(
+        fig_b, arp, universe, _meta(), years=1, returns=daily_returns(arp)
+    )
+    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+
+
+def test_regime_scatter_returns_arg_matches_recompute():
+    # v0.9.13 #166: daily_returns(arp).tail(lookback - 1) is exactly
+    # daily_returns(arp.tail(lookback)), so the threaded path matches.
+    arp, vix = _regime_universe()
+    fig_a = _regime_scatter()
+    _update_regime_scatter(
+        fig_a, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    fig_b = _regime_scatter()
+    _update_regime_scatter(
+        fig_b,
+        arp,
+        vix,
+        _regime_meta(),
+        low=15.0,
+        high=25.0,
+        lookback=200,
+        returns=daily_returns(arp),
+    )
+    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
 
 
 def test_factor_scatter_has_three_zero_planes():

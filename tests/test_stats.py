@@ -401,6 +401,21 @@ def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
         assert z.name == f"{metric}_zscore"
 
 
+def test_rolling_metric_zscore_returns_arg_matches_prices(multiyear_prices):
+    # v0.9.13 #166: passing a precomputed returns frame (the shared
+    # universe_rets) is identical to letting the function derive it from prices —
+    # both slice to the same trailing window before the rolling compute.
+    rets = stats.daily_returns(multiyear_prices)
+    for metric in ("sharpe", "sortino", "return", "vol"):
+        via_prices = stats.rolling_metric_zscore(
+            multiyear_prices, metric=metric, window=63, zscore_window=126
+        )
+        via_returns = stats.rolling_metric_zscore(
+            multiyear_prices, metric=metric, window=63, zscore_window=126, returns=rets
+        )
+        pd.testing.assert_series_equal(via_prices, via_returns)
+
+
 def test_rolling_metric_zscore_unknown_metric_raises(multiyear_prices):
     with pytest.raises(ValueError):
         stats.rolling_metric_zscore(
