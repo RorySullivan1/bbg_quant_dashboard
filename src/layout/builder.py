@@ -12,7 +12,7 @@ from IPython import get_ipython
 from IPython.display import display
 
 from ..bql_client import _cache_path, fetch_prices
-from ..commentary import build_launch_cards, build_superlatives
+from ..commentary import build_launch_cards, build_superlatives, superlative_returns
 from ..config import (
     BENCHMARK_TICKERS,
     FACTOR_TICKERS,
@@ -843,6 +843,14 @@ def build_app(verbose: bool = False) -> W.VBox:
         w.observe(_on_filter_change, names="value")
     search_w.observe(_on_filter_change, names="value")
 
+    # Whole-catalog Key Highlights are independent of the selection and change
+    # only when prices are refetched, so memoize them: the superlatives per
+    # window (the toggle offers four) and the window-independent launch cards
+    # once. `_recompute` — the single data-load / Refresh point — clears this,
+    # so a re-toggle among the four windows is a cache hit rather than a full
+    # whole-catalog recompute.
+    highlights_cache: dict = {}
+
     def _render_highlights_panel(window_days):
         """Render the whole-catalog Key Highlights panel at ``window_days``.
 
@@ -852,21 +860,35 @@ def build_app(verbose: bool = False) -> W.VBox:
         live window-toggle observer; a compute failure surfaces in-place rather
         than blanking the panel."""
         try:
-            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
-            universe_window = state.arp_universe_prices.loc[
-                state.arp_universe_prices.index >= window_start
-            ]
-            if universe_window.empty:
+            universe = state.arp_universe_prices
+            if universe.empty:
                 state.highlights_w.value = _render_highlights([], [])
                 return
-            universe_rets = daily_returns(universe_window)
-            superlatives = build_superlatives(
-                meta, universe_window, universe_rets, window_days=window_days
-            )
-            launches = build_launch_cards(meta, state.arp_universe_prices, as_of=today)
+            if "launches" not in highlights_cache:
+                highlights_cache["launches"] = build_launch_cards(
+                    meta, universe, as_of=today
+                )
+            superlatives = highlights_cache.get(window_days)
+            if superlatives is None:
+                window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+                universe_window = universe.loc[universe.index >= window_start]
+                if universe_window.empty:
+                    state.highlights_w.value = _render_highlights([], [])
+                    return
+                # Only the trailing window feeds the returns-based metrics (MACD,
+                # a fixed-lookback oscillator, reads the full price history
+                # itself), so derive daily_returns over just the span they need
+                # — not the whole 5-year slice.
+                window_rets = superlative_returns(
+                    universe_window, window_days=window_days
+                )
+                superlatives = build_superlatives(
+                    meta, universe_window, window_rets, window_days=window_days
+                )
+                highlights_cache[window_days] = superlatives
             state.highlights_w.value = _render_highlights(
                 superlatives,
-                launches,
+                highlights_cache["launches"],
                 window_label=WINDOW_LABELS.get(window_days, "Past Month"),
             )
         except Exception:
@@ -883,6 +905,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         # no-selection guard branches below). Benchmark flips don't call
         # _recompute, so the memo survives across them within a stable slice.
         state.memo.clear()
+        # The highlights are whole-catalog; a fresh fetch invalidates them.
+        highlights_cache.clear()
         error_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
