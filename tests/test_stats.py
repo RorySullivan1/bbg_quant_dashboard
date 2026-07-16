@@ -718,6 +718,52 @@ def test_return_autocorr_empty_passthrough():
     assert stats.return_autocorr(pd.DataFrame(), window_days=21).empty
 
 
+def test_return_autocorr_leading_nan_matches_dropna_reference(bdays):
+    # v0.9.13: the vectorized autocorr must match a per-column
+    # dropna().autocorr() on a ragged frame — one full column, one
+    # late-launching column (leading NaNs), one all-NaN column.
+    idx = bdays(30)
+    rng = np.random.default_rng(7)
+    full = rng.normal(0.0, 0.01, len(idx))
+    late = full.copy()
+    late[:12] = np.nan  # launches partway → only leading NaNs, no interior gaps
+    rets = pd.DataFrame(
+        {
+            "FULL Index": full,
+            "LATE Index": late,
+            "DEAD Index": np.full(len(idx), np.nan),
+        },
+        index=idx,
+    )
+    got = stats.return_autocorr(rets, window_days=30)
+    for col in ("FULL Index", "LATE Index"):
+        expected = rets[col].dropna().autocorr(lag=1)
+        assert got[col] == pytest.approx(expected, rel=1e-9, abs=1e-12)
+    assert np.isnan(got["DEAD Index"])  # no valid data → NaN
+
+
+def test_longest_streaks_vectorized_across_columns_and_nan(bdays):
+    # v0.9.13: vectorized streaks over multiple columns at once — zeros break a
+    # run, a leading NaN doesn't seed a run, an all-NaN column is NaN.
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "UP Index": [0.01, 0.01, 0.0, 0.01, 0.01, 0.01],  # 0 breaks → 3
+            "DN Index": [-0.01, -0.01, -0.01, 0.01, -0.01, -0.01],  # 3 down then 2
+            "LATE Index": [np.nan, np.nan, 0.01, 0.01, 0.01, -0.01],  # up run 3
+            "DEAD Index": [np.nan] * 6,
+        },
+        index=idx,
+    )
+    up = stats.longest_up_streak(rets, window_days=21)
+    dn = stats.longest_down_streak(rets, window_days=21)
+    assert up["UP Index"] == 3.0
+    assert dn["DN Index"] == 3.0
+    assert up["LATE Index"] == 3.0
+    assert dn["LATE Index"] == 1.0
+    assert np.isnan(up["DEAD Index"]) and np.isnan(dn["DEAD Index"])
+
+
 def test_macd_histogram_recent_up_positive_recent_down_negative(bdays):
     idx = bdays(80)
     # Flat for 60 days then a sharp recent move — the histogram reflects the

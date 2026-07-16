@@ -12,6 +12,7 @@ from .config import (
 from .stats import (
     ann_sharpe,
     asset_class_demeaned_zscore,
+    daily_returns,
     longest_down_streak,
     longest_up_streak,
     macd_histogram,
@@ -22,6 +23,32 @@ from .stats import (
     return_skew,
     win_rate,
 )
+
+
+def superlative_returns(
+    prices: pd.DataFrame, *, window_days: int = SUPERLATIVE_WINDOW_DAYS
+) -> pd.DataFrame:
+    """Daily returns over just the trailing span ``build_superlatives`` needs.
+
+    Every returns-based superlative tails to ``window_days``, and the deepest
+    reach is the Sharpe card's ``ann_volatility``, which slices returns to its
+    ~``window_days``-trading-day date window. Deriving returns from the full
+    multi-year price history is therefore wasted work. This returns
+    ``daily_returns`` over a price tail that is a strict superset of every
+    returns-based metric's window — including one extra leading row so the
+    oldest kept return is computed against its true prior price — so feeding it
+    to ``build_superlatives`` yields identical cards to feeding the full-history
+    returns, without the whole-history ``pct_change``.
+    """
+    if prices.empty:
+        return prices
+    end = prices.index.max()
+    reach_days = int(window_days / TRADING_DAYS_PER_YEAR * 365.25)
+    n_reach = int((prices.index >= end - timedelta(days=reach_days)).sum())
+    # +1 price row so the oldest kept return has its true prior; and at least
+    # window_days + 1 rows for the count-based (``.tail(window_days)``) metrics.
+    n_slice = max(n_reach + 1, window_days + 1)
+    return daily_returns(prices.tail(n_slice))
 
 
 def build_superlatives(
