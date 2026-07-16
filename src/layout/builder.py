@@ -785,77 +785,11 @@ def build_app(verbose: bool = False) -> W.VBox:
             + list(REGIME_TICKERS)
         )
     )
-    _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
-    t_fetch = time.perf_counter()
-    try:
-        state.universe_prices, fetch_source = fetch_prices(
-            fetch_tickers, universe_start, today
-        )
-        fetch_elapsed = time.perf_counter() - t_fetch
-        text, tone = _format_loaded(state.universe_prices, fetch_source, fetch_elapsed)
-        _set_status(text, tone=tone)
-    except Exception:
-        _set_progress(60, "Load failed — see error below", error=True)
-        _set_status("Load failed — see error below", tone=StatusTone.ERROR)
-        state.init_errors.append(
-            f"Universe fetch ({universe_start} → {today}) failed:\n"
-            f"{traceback.format_exc()}"
-        )
-
-    if not state.universe_prices.empty:
-        # Drop indices with no recent price movement (stale / delisted / all-NaN)
-        # from the displayed `meta`; `meta_all` (everything fetched) is kept so a
-        # resumed ticker can be re-admitted on a later Refresh. Then refresh the
-        # strategies dropdown so the dropped tickers leave it too.
-        live = set(
-            active_columns(state.universe_prices.reindex(columns=meta_all["ticker"]))
-        )
-        meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
-        # Resetting the options clears `ticker_w.value`; reselect below once the
-        # cache (and so the z-score ranking) is available.
-        state.ticker_w.options = _ticker_options(meta)
-        # The single-strategy picker mirrors the pruned catalog (all live
-        # strategies, unfiltered); resetting its options auto-selects the first.
-        single_strategy.picker.options = _ticker_options(meta)
-        # Surface how many indices the recent-performance prune dropped, so a
-        # silently-thinned universe (stale / flat / all-NaN columns) is visible.
-        _log(
-            f"pruned to {len(meta)} of {len(meta_all)} indices with recent "
-            f"performance ({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
-        )
-        # ARP universe view of the cache — used for the all-catalog grid and
-        # the whole-catalog highlights so benchmark columns never leak in.
-        state.arp_universe_prices = state.universe_prices.reindex(
-            columns=meta["ticker"]
-        )
-        # Whole-universe returns computed once and threaded into the Platform
-        # renders + default selection below, so none re-derive daily_returns.
-        state.universe_rets = daily_returns(state.arp_universe_prices)
-        # Startup selection: the top 5 indices by z(1W Sharpe, 1Y) so the
-        # Multi-Strategy views render populated on load (the initial _recompute
-        # below reads this selection).
-        state.ticker_w.value = _default_selection()
-        t_perf = time.perf_counter()
-        try:
-            state.universe_up = universe_perf(state.arp_universe_prices)
-            _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
-            t_grid = time.perf_counter()
-            render_universe_grid(state, meta, pa)
-            # Only the visible analytics tab (Sunburst) computes on load; the
-            # hidden Regime / Factor tabs render on their pill's first click.
-            # invalidate_analytics clears the freshness set first, discarding the
-            # no-op "regime" mark left by _sync_regime_controls firing during
-            # wiring (when the cache was still empty).
-            invalidate_analytics(state, meta, pa)
-            _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
-        except Exception:
-            state.init_errors.append(
-                f"universe_perf computation failed:\n{traceback.format_exc()}"
-            )
-        _set_progress(85, "Building catalog…")
-    else:
-        state.arp_universe_prices = pd.DataFrame()
-        state.universe_up = pd.DataFrame()
+    # The blocking startup fetch + prune + compute + first render is deferred to
+    # `_run_initial_load` (defined below) so it can run on a worker thread while
+    # the loading overlay paints — see `_start_initial_load` at the end, which
+    # mirrors the Refresh threading pattern (v0.9.13 #179). Headless / pytest
+    # runs it synchronously, so a built tree is fully populated on return.
 
     def _on_filter_change(_change=None):
         # Categorical + Characteristics via the shared panel; then the search
@@ -1292,13 +1226,101 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Opt the app container into the injected dark-chrome class.
     app.add_class("bbg-app")
 
-    t_initial = time.perf_counter()
-    _recompute()
-    _render_single()
-    _log(f"initial recompute (selected viz) in {time.perf_counter() - t_initial:.2f}s")
-    _log(f"build_app TOTAL: {time.perf_counter() - t0:.2f}s")
-    # Dismiss the overlay once data is loaded; on a fatal fetch failure leave
-    # the error overlay up (the traceback also renders in the commentary block).
-    if not state.universe_prices.empty:
-        _set_progress(100, "Ready", hidden=True)
+    def _run_initial_load():
+        """The blocking startup work — fetch, prune, compute, first render —
+        formerly inline. Runnable on a worker thread (see `_start_initial_load`)
+        so the overlay paints while the kernel fetches, mirroring `_run_refresh`.
+        `nonlocal meta` is re-pointed to the recent-performance-pruned catalog."""
+        nonlocal meta
+        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
+        t_fetch = time.perf_counter()
+        try:
+            state.universe_prices, fetch_source = fetch_prices(
+                fetch_tickers, universe_start, today
+            )
+            fetch_elapsed = time.perf_counter() - t_fetch
+            text, tone = _format_loaded(
+                state.universe_prices, fetch_source, fetch_elapsed
+            )
+            _set_status(text, tone=tone)
+        except Exception:
+            _set_progress(60, "Load failed — see error below", error=True)
+            _set_status("Load failed — see error below", tone=StatusTone.ERROR)
+            state.init_errors.append(
+                f"Universe fetch ({universe_start} → {today}) failed:\n"
+                f"{traceback.format_exc()}"
+            )
+
+        if not state.universe_prices.empty:
+            # Drop indices with no recent price movement (stale / delisted /
+            # all-NaN); `meta_all` (everything fetched) is kept so a resumed
+            # ticker can be re-admitted on a later Refresh.
+            live = set(
+                active_columns(
+                    state.universe_prices.reindex(columns=meta_all["ticker"])
+                )
+            )
+            meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+            state.ticker_w.options = _ticker_options(meta)
+            single_strategy.picker.options = _ticker_options(meta)
+            _log(
+                f"pruned to {len(meta)} of {len(meta_all)} indices with recent "
+                f"performance ({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
+            )
+            state.arp_universe_prices = state.universe_prices.reindex(
+                columns=meta["ticker"]
+            )
+            # Whole-universe returns computed once and threaded into the Platform
+            # renders + default selection so none re-derive daily_returns.
+            state.universe_rets = daily_returns(state.arp_universe_prices)
+            # Startup selection: top 5 by z(1W Sharpe, 1Y) so the Multi-Strategy
+            # views load populated (the _recompute below reads this selection).
+            state.ticker_w.value = _default_selection()
+            try:
+                state.universe_up = universe_perf(state.arp_universe_prices)
+                render_universe_grid(state, meta, pa)
+                # Only the visible analytics tab (Sunburst) computes on load; the
+                # hidden Regime / Factor tabs render on first pill click.
+                invalidate_analytics(state, meta, pa)
+            except Exception:
+                state.init_errors.append(
+                    f"universe_perf computation failed:\n{traceback.format_exc()}"
+                )
+            _set_progress(85, "Building catalog…")
+        else:
+            state.arp_universe_prices = pd.DataFrame()
+            state.universe_up = pd.DataFrame()
+
+        # First render of the selected-set views + Single Strategy tab, then
+        # dismiss the overlay. On a fatal fetch failure the error overlay stays
+        # up (the traceback also renders in the commentary block).
+        _recompute()
+        _render_single()
+        if not state.universe_prices.empty:
+            _set_progress(100, "Ready", hidden=True)
+        _log(f"build_app initial load TOTAL: {time.perf_counter() - t0:.2f}s")
+
+    def _start_initial_load():
+        """Run the initial load synchronously when headless (pytest must see a
+        populated tree on return), else on a worker thread so the frontend can
+        paint the already-displayed overlay before the kernel blocks on the
+        fetch — the same background-thread load `_refresh_prices` uses."""
+        if get_ipython() is None:
+            _run_initial_load()
+            return
+
+        def _worker():
+            try:
+                # Hold the just-shown overlay visible for a beat so the frontend
+                # paints it before an instant (mock / warm-cache) load flips it
+                # hidden — otherwise show→hide coalesce into one frame.
+                time.sleep(_OVERLAY_PAINT_DELAY_S)
+                _run_initial_load()
+            except Exception:
+                state.init_errors.append(traceback.format_exc())
+                _set_progress(60, "Load failed — see error below", error=True)
+
+        threading.Thread(target=_worker, name="bbg-initial-load", daemon=True).start()
+
+    _start_initial_load()
     return app

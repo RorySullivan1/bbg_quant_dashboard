@@ -87,6 +87,52 @@ def _join_refresh_worker(timeout: float = 30.0) -> None:
             t.join(timeout)
 
 
+def _join_initial_load_worker(timeout: float = 30.0) -> None:
+    for t in threading.enumerate():
+        if t.name == "bbg-initial-load":
+            t.join(timeout)
+
+
+# --- v0.9.13 #179: threaded initial load ------------------------------------
+
+
+def test_headless_initial_load_is_synchronous(monkeypatch):
+    """With no frontend, `build_app()` runs the fetch + compute inline, so the
+    returned tree is fully populated — the contract every other suite relies on.
+    No worker thread lingers and the overlay is already dismissed."""
+    calls = _patch_fetch_counter(monkeypatch)
+    app = build_app(verbose=False)
+
+    assert calls["n"] == 1  # the initial load fetched inline during build
+    assert not any(t.name == "bbg-initial-load" for t in threading.enumerate())
+    assert "is-hidden" in _overlay(app).value  # dismissed on the synchronous path
+
+
+def test_frontend_initial_load_uses_worker_thread(monkeypatch):
+    """With a (faked) live frontend, `build_app()` returns immediately with the
+    fetch deferred to a `bbg-initial-load` worker — so the frontend can paint the
+    visible overlay before the kernel blocks on the fetch. Once the worker
+    finishes, the tree is loaded and the overlay dismissed."""
+    import src.layout.builder as builder_mod
+
+    monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
+    monkeypatch.setattr(builder_mod, "display", lambda *a, **k: None)
+    calls = _patch_fetch_counter(monkeypatch)
+
+    app = build_app(verbose=False)
+
+    # Build returned while the worker is still in its paint-hold beat: the fetch
+    # hasn't run yet and the overlay is up.
+    assert any(t.name == "bbg-initial-load" for t in threading.enumerate())
+    assert calls["n"] == 0  # fetch deferred off the build thread
+    assert "is-hidden" not in _overlay(app).value  # overlay visible while loading
+
+    _join_initial_load_worker()
+
+    assert calls["n"] == 1  # the worker did the fetch
+    assert "is-hidden" in _overlay(app).value  # ...and dismissed the overlay
+
+
 def test_headless_refresh_runs_synchronously(monkeypatch):
     """With no frontend, `.click()` returns only after the refetch — the
     existing synchronous contract the other suites rely on."""
