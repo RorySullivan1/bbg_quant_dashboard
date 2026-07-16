@@ -337,6 +337,21 @@ def test_common_window_bounds_empty_returns_none():
     assert stats.common_window_bounds(pd.DataFrame()) == (None, None)
 
 
+def test_common_window_bounds_ignores_all_nan_column(bdays):
+    # v0.9.13 #170: the vectorized first/last-valid must map an all-NaN column to
+    # NaT (not the frame's first index), so max/min skip it — matching the old
+    # per-column apply. Bounds come from the one column with data.
+    idx = bdays(5)
+    prices = pd.DataFrame(
+        {
+            "AAA Index": [100.0, 101.0, 102.0, 103.0, 104.0],
+            "DEAD Index": [np.nan] * 5,
+        },
+        index=idx,
+    )
+    assert stats.common_window_bounds(prices) == (idx[0], idx[4])
+
+
 def test_active_columns_drops_flat_and_empty(bdays):
     idx = bdays(40)
     prices = pd.DataFrame(

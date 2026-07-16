@@ -784,7 +784,12 @@ def build_app(verbose: bool = False) -> W.VBox:
         # The single-strategy picker mirrors the pruned catalog (all live
         # strategies, unfiltered); resetting its options auto-selects the first.
         single_strategy.picker.options = _ticker_options(meta)
-        _log(f"pruned to {len(meta)} indices with recent performance")
+        # Surface how many indices the recent-performance prune dropped, so a
+        # silently-thinned universe (stale / flat / all-NaN columns) is visible.
+        _log(
+            f"pruned to {len(meta)} of {len(meta_all)} indices with recent "
+            f"performance ({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
+        )
         # ARP universe view of the cache — used for the all-catalog grid and
         # the whole-catalog highlights so benchmark columns never leak in.
         state.arp_universe_prices = state.universe_prices.reindex(
@@ -1064,6 +1069,10 @@ def build_app(verbose: bool = False) -> W.VBox:
             meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
             _on_filter_change()
             single_strategy.picker.options = _ticker_options(meta)
+            _log(
+                f"refresh pruned to {len(meta)} of {len(meta_all)} indices "
+                f"({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
+            )
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
