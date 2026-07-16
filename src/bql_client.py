@@ -8,7 +8,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import CACHE_DIR, CACHE_TTL_HOURS, LEVEL_INDICATOR_MOCK
+from .config import (
+    BQL_BATCH_SIZE,
+    BQL_MAX_RETRIES,
+    BQL_RETRY_BACKOFF_S,
+    CACHE_DIR,
+    CACHE_TTL_HOURS,
+    LEVEL_INDICATOR_MOCK,
+)
 
 try:
     import bql  # type: ignore
@@ -126,19 +133,29 @@ def _cache_write(day: date, df: pd.DataFrame) -> None:
         )
 
 
-def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
-    bq = bql.Service()
-    px = bq.data.px_last(
-        dates=bq.func.range(start.isoformat(), end.isoformat()),
-        fill="prev",
-    )
-    request = bql.Request(tickers, {BQL_FIELD_KEY: px})
-    response = bq.execute(request)
+def _chunked(seq: list[str], size: int) -> list[list[str]]:
+    """Split ``seq`` into consecutive chunks of at most ``size`` items."""
+    size = max(1, size)
+    return [seq[i : i + size] for i in range(0, len(seq), size)]
 
-    raw = response[0].df()
+
+def _reshape_bql_response(
+    raw: pd.DataFrame | None,
+    batch: list[str],
+    start: date,
+    end: date,
+) -> pd.DataFrame:
+    """Pivot one batch's long-form BQL response into a wide date×ticker frame.
+
+    Raises ``RuntimeError`` on an empty response or unlocatable columns so the
+    caller can retry the batch or degrade it to NaN columns. The ID column is
+    cast to ``category`` before the pivot — a per-row string label over a
+    multi-year daily response is a large object-dtype column, and categorizing
+    it shrinks the pivot's transient memory.
+    """
     if raw is None or raw.empty:
         raise RuntimeError(
-            f"BQL returned no rows for {len(tickers)} tickers "
+            f"BQL returned no rows for {len(batch)} tickers "
             f"({start.isoformat()} → {end.isoformat()}). "
             "Check that the tickers include the ' Index' suffix and resolve on the terminal."
         )
@@ -160,17 +177,108 @@ def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
             f"Raw shape: {raw.shape}, index: {list(raw.index.names)}."
         )
 
+    df[id_col] = df[id_col].astype("category")
     wide = df.pivot(index=date_col, columns=id_col, values=value_col)
     wide.index = pd.to_datetime(wide.index)
-    wide = wide.sort_index()
-    aligned = wide.reindex(columns=tickers)
+    return wide.sort_index()
+
+
+def _fetch_batch_with_retry(
+    batch: list[str],
+    start: date,
+    end: date,
+    fetch_batch,
+    *,
+    retries: int = BQL_MAX_RETRIES,
+    backoff: float = BQL_RETRY_BACKOFF_S,
+) -> pd.DataFrame:
+    """Call ``fetch_batch(batch, start, end)`` with bounded exponential backoff.
+
+    Retries transient BQL failures (network blips, momentary server limits) up
+    to ``retries`` extra times; re-raises the last error if they all fail so the
+    batch can be degraded to NaN columns by the caller.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return fetch_batch(batch, start, end)
+        except Exception as exc:  # noqa: BLE001 — retry any BQL failure
+            last_exc = exc
+            if attempt < retries and backoff > 0:
+                time.sleep(backoff * (2**attempt))
+    assert last_exc is not None
+    raise last_exc
+
+
+def _assemble_batches(
+    tickers: list[str],
+    start: date,
+    end: date,
+    fetch_batch,
+    *,
+    batch_size: int = BQL_BATCH_SIZE,
+) -> pd.DataFrame:
+    """Fetch ``tickers`` in batches via ``fetch_batch``, isolating failures.
+
+    Each batch of ``batch_size`` tickers is fetched (with retry) independently;
+    a batch that still fails degrades to NaN columns — warned, not fatal — so a
+    handful of unresolvable tickers can't blank the whole dashboard. Only when
+    **every** batch fails (nothing fetched) does this raise. The surviving
+    batches are concatenated and reindexed to the full requested ticker list.
+    """
+    frames: list[pd.DataFrame] = []
+    failed: list[str] = []
+    for batch in _chunked(tickers, batch_size):
+        try:
+            frames.append(_fetch_batch_with_retry(batch, start, end, fetch_batch))
+        except Exception as exc:  # noqa: BLE001 — one bad batch shouldn't fail all
+            failed.extend(batch)
+            warnings.warn(
+                f"BQL batch of {len(batch)} tickers failed after retries "
+                f"({exc}); degrading those to NaN columns. "
+                f"Sample: {batch[:5]}.",
+                stacklevel=2,
+            )
+
+    if not frames:
+        raise RuntimeError(
+            f"Every BQL batch failed for {len(tickers)} tickers "
+            f"({start.isoformat()} → {end.isoformat()}). "
+            "Check the terminal session and that tickers include the ' Index' suffix."
+        )
+    if failed:
+        warnings.warn(
+            f"{len(failed)} of {len(tickers)} tickers could not be fetched and "
+            f"are NaN in the result (e.g. {failed[:5]}).",
+            stacklevel=2,
+        )
+
+    combined = frames[0] if len(frames) == 1 else pd.concat(frames, axis=1)
+    combined = combined.sort_index()
+    aligned = combined.reindex(columns=tickers)
     if aligned.dropna(how="all", axis=1).empty:
         raise RuntimeError(
-            f"BQL response columns {list(wide.columns)[:5]}{'…' if len(wide.columns) > 5 else ''} "
-            f"did not match any requested ticker (sample requested: {tickers[:5]}). "
+            f"BQL response columns {list(combined.columns)[:5]}"
+            f"{'…' if len(combined.columns) > 5 else ''} did not match any "
+            f"requested ticker (sample requested: {tickers[:5]}). "
             "The reindex produced an all-NaN frame."
         )
     return aligned
+
+
+def _fetch_via_bql(tickers: list[str], start: date, end: date) -> pd.DataFrame:
+    """Batched whole-universe px_last fetch (one BQL request per ticker batch)."""
+    bq = bql.Service()
+    px = bq.data.px_last(
+        dates=bq.func.range(start.isoformat(), end.isoformat()),
+        fill="prev",
+    )
+
+    def fetch_batch(batch: list[str], s: date, e: date) -> pd.DataFrame:
+        response = bq.execute(bql.Request(batch, {BQL_FIELD_KEY: px}))
+        return _reshape_bql_response(response[0].df(), batch, s, e)
+
+    return _assemble_batches(tickers, start, end, fetch_batch)
 
 
 def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:

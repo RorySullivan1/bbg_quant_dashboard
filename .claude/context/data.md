@@ -52,3 +52,13 @@ Project-specific hooks:
 - `src/bql_client.py`'s case-insensitive column resolver is `_pick_column`.
 - The mock path is `_mock_prices`. If you change the BQL query, update
   `_mock_prices` in lockstep so live and mock paths return the same shape.
+- **Batched fetch (v0.9.13, #164):** the startup fetch is not one whole-universe
+  request — `_fetch_via_bql` issues one BQL request per **batch** of
+  `BQL_BATCH_SIZE` tickers (default 100) via `_assemble_batches`, so hundreds of
+  tickers over a multi-year window don't hit BQL's per-request row / wall-clock
+  limits. Each batch is retried with exponential backoff
+  (`BQL_MAX_RETRIES` / `BQL_RETRY_BACKOFF_S`, see `_fetch_batch_with_retry`); a
+  batch that still fails **degrades to NaN columns** (warned, not fatal) so a few
+  unresolvable tickers can't blank the load. Only when *every* batch fails does
+  the fetch raise. `_reshape_bql_response` pivots each batch's long-form response
+  (casting the ID column to `category` first to shrink the pivot).
