@@ -6,7 +6,14 @@ import numpy as np
 import pandas as pd
 
 from ..config import PERF_TABLE_YEARS, TRADING_DAYS_PER_YEAR
-from ._common import _has_enough_history, _slice_last_years, daily_returns, max_drawdown
+from ._common import (
+    _first_valid_index,
+    _has_enough_history,
+    _last_valid_index,
+    _slice_last_years,
+    daily_returns,
+    max_drawdown,
+)
 
 
 def cum_perf(prices: pd.DataFrame) -> pd.DataFrame:
@@ -321,8 +328,8 @@ def since_inception_perf(prices: pd.DataFrame) -> pd.DataFrame:
     if prices.empty:
         return pd.DataFrame()
 
-    first_valid = prices.apply(pd.Series.first_valid_index)
-    last_valid = prices.apply(pd.Series.last_valid_index)
+    first_valid = _first_valid_index(prices)
+    last_valid = _last_valid_index(prices)
     span_days = (last_valid - first_valid).dt.total_seconds() / 86_400.0
     span_years = span_days / 365.25
     valid = span_years > 0
