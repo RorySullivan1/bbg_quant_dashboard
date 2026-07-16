@@ -188,31 +188,66 @@ def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Se
     var = bench.var()
     if not var or np.isnan(var):
         return pd.Series(np.nan, index=returns.columns)
-    cov = sliced.apply(lambda col: col.cov(bench))
-    return cov.divide(var)
+    # Vectorized pairwise-complete covariance of every column vs the benchmark
+    # in one pass, replacing a per-column ``.apply(col.cov(bench))`` loop that
+    # scaled linearly with the ticker count. Each column's covariance uses only
+    # the rows where both it and the benchmark are non-NaN (matching
+    # ``Series.cov``); the benchmark's own ``var`` is the full-window scalar, as
+    # before.
+    a = sliced.to_numpy(dtype=float)  # (n_days, n_tickers)
+    b = bench.to_numpy(dtype=float)  # (n_days,)
+    mask = ~np.isnan(a) & ~np.isnan(b)[:, None]
+    cnt = mask.sum(axis=0)
+    safe = np.where(cnt > 0, cnt, 1)
+    mean_a = np.where(mask, a, 0.0).sum(axis=0) / safe
+    mean_b = np.where(mask, b[:, None], 0.0).sum(axis=0) / safe
+    da = np.where(mask, a - mean_a, 0.0)
+    db = np.where(mask, b[:, None] - mean_b, 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = (da * db).sum(axis=0) / (cnt - 1)  # ddof=1, like Series.cov
+    cov = np.where(cnt >= 2, cov, np.nan)  # <2 paired points → NaN
+    return pd.Series(cov / var, index=returns.columns)
 
 
 def treynor_ratio(
-    returns: pd.DataFrame, prices: pd.DataFrame, benchmark: pd.Series, years: float
+    returns: pd.DataFrame,
+    prices: pd.DataFrame,
+    benchmark: pd.Series,
+    years: float,
+    *,
+    beta: pd.Series | None = None,
 ) -> pd.Series:
-    """Annualized return divided by beta vs `benchmark` (risk-free = 0)."""
+    """Annualized return divided by beta vs `benchmark` (risk-free = 0).
+
+    Pass ``beta`` (already ``ann_beta(returns, benchmark, years)``) to avoid
+    recomputing it — e.g. ``quant_metrics_table`` shares one beta across the
+    Beta / Treynor / Jensen columns.
+    """
     ret = ann_return(prices, years)
-    beta = ann_beta(returns, benchmark, years).replace(0, np.nan)
-    return ret.divide(beta)
+    if beta is None:
+        beta = ann_beta(returns, benchmark, years)
+    return ret.divide(beta.replace(0, np.nan))
 
 
 def jensen_alpha(
-    returns: pd.DataFrame, prices: pd.DataFrame, benchmark: pd.Series, years: float
+    returns: pd.DataFrame,
+    prices: pd.DataFrame,
+    benchmark: pd.Series,
+    years: float,
+    *,
+    beta: pd.Series | None = None,
 ) -> pd.Series:
     """Jensen's alpha (risk-free = 0): asset return − beta · benchmark return.
 
     All annualized over the trailing `years` window. Returns a Series per ticker.
+    Pass ``beta`` to reuse a beta already computed vs the same ``benchmark``.
     """
     bench = _benchmark_series(benchmark)
     if bench is None:
         return pd.Series(np.nan, index=prices.columns)
     bench_ret = ann_return(bench.to_frame(), years).iloc[0]
-    beta = ann_beta(returns, benchmark, years)
+    if beta is None:
+        beta = ann_beta(returns, benchmark, years)
     return ann_return(prices, years) - beta * bench_ret
 
 
@@ -300,14 +335,18 @@ def quant_metrics_table(
     if prices.empty:
         return pd.DataFrame(columns=columns)
     rets = daily_returns(prices) if returns is None else returns
+    # Beta vs the benchmark is computed once and shared across the Beta /
+    # Treynor / Jensen columns (they all measure vs the same benchmark), instead
+    # of each recomputing it.
+    beta = ann_beta(rets, benchmark, years)
     return pd.DataFrame(
         {
             "Sharpe": ann_sharpe(rets, prices, years),
             "Sortino": sortino_ratio(rets, prices, years),
             "Calmar": calmar_ratio(prices, years),
-            "Beta": ann_beta(rets, benchmark, years),
-            "Treynor": treynor_ratio(rets, prices, benchmark, years),
-            "Jensen": jensen_alpha(rets, prices, benchmark, years),
+            "Beta": beta,
+            "Treynor": treynor_ratio(rets, prices, benchmark, years, beta=beta),
+            "Jensen": jensen_alpha(rets, prices, benchmark, years, beta=beta),
             "VaR": historical_var(rets, years, var_confidence),
             "RSI": rsi(prices, rsi_window),
         }

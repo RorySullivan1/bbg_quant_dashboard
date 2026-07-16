@@ -265,6 +265,52 @@ def test_quant_metrics_table_empty_input_keeps_columns():
     assert "Sharpe" in table.columns
 
 
+def _ann_beta_reference(
+    rets: pd.DataFrame, bench: pd.Series, years: float
+) -> pd.Series:
+    """The pre-v0.9.13 per-column ``Series.cov`` implementation, for comparison."""
+    end = rets.index.max()
+    start = end - pd.Timedelta(days=int(years * 365.25))
+    sliced = rets.loc[rets.index >= start]
+    b = bench.reindex(sliced.index)
+    return sliced.apply(lambda col: col.cov(b)).divide(b.var())
+
+
+def test_ann_beta_vectorized_matches_per_column_cov(multiyear_prices, benchmark):
+    # v0.9.13 #167: the vectorized beta must match the old per-column cov loop,
+    # including on a ragged column (a late-launching ticker with leading NaNs).
+    rets = stats.daily_returns(multiyear_prices).copy()
+    ragged = rets.columns[0]
+    rets.iloc[:40, rets.columns.get_loc(ragged)] = np.nan  # leading gap
+    got = stats.ann_beta(rets, benchmark, years=1)
+    ref = _ann_beta_reference(rets, benchmark, years=1)
+    pd.testing.assert_series_equal(got, ref, check_names=False)
+
+
+def test_quant_table_shares_one_beta_across_beta_treynor_jensen(
+    multiyear_prices, benchmark
+):
+    # Sharing one beta internally must not change Treynor / Jensen vs standalone.
+    table = stats.quant_metrics_table(multiyear_prices, benchmark, years=1)
+    rets = stats.daily_returns(multiyear_prices)
+    pd.testing.assert_series_equal(
+        table["Treynor"],
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1),
+        check_names=False,
+    )
+    pd.testing.assert_series_equal(
+        table["Jensen"],
+        stats.jensen_alpha(rets, multiyear_prices, benchmark, 1),
+        check_names=False,
+    )
+    # Passing an explicit beta matches computing it internally.
+    beta = stats.ann_beta(rets, benchmark, 1)
+    pd.testing.assert_series_equal(
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1, beta=beta),
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1),
+    )
+
+
 # --- overlap window --------------------------------------------------------
 
 
