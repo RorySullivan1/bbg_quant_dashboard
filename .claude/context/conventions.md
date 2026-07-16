@@ -70,22 +70,31 @@ CSS, style tokens — live in `style.md`.)
   `NFCIRISK` with the Risk regime) ride this same fetch — *no second BQL call* — and, like the
   benchmarks, are excluded from the ARP-universe views via
   `reindex(columns=meta["ticker"])`.
-- **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
-  fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
-  `(tuple(sorted(tickers)), start, end)`) checked **before** the
-  **on-disk trading-day** parquet `data/.cache/prices_{YYYY-MM-DD}.parquet`.
-  On cold start the call hits BQL/mock and writes both tiers; subsequent
-  same-day startups within `CACHE_TTL_HOURS` read back from memory or the
-  parquet without hitting BQL. A stale TTL, a missing/corrupt file, or a
-  cache that doesn't cover every requested ticker all fall through to a
-  live fetch. The disk write is **best-effort**: on a read-only filesystem
-  (or any write failure) `_cache_write` warns once, sets
-  `_disk_cache_writable = False`, and the in-memory cache carries the
-  session — the app never crashes on a read-only FS. (An in-memory hit
-  reports `source="cache"` with no parquet, so `_format_loaded`'s mtime
-  stamp is best-effort.) `_cache_read` swallows read errors as a clean
-  miss. `_clear_caches()` resets both tiers for tests. The directory is
-  gitignored.
+- **Two-tier price cache (v0.6.9; incremental in v0.9.13 #165)**.
+  `fetch_prices` is fronted by an **in-memory session superset** — one growing
+  frame `_MEM_SUPERSET` plus the date interval it covers `_MEM_COVER` — checked
+  **before** the **on-disk trading-day** parquet
+  `data/.cache/prices_{YYYY-MM-DD}.parquet`. Any request whose tickers ⊆ the
+  superset's columns **and** whose `[start, end]` ⊆ the covered interval is
+  served by *slicing* (`_covers` → `_serve`), no BQL. On a **miss**, only the
+  missing rectangle is fetched — new tickers over the needed span, and/or the
+  existing columns over the uncovered date extension (`_delta_specs`, non-
+  overlapping so cached values are never disturbed) — then merged in
+  (`_merge_superset`, fresh wins). So **extending the lookback or adding an
+  index costs a delta, not a whole-universe refetch** — the key v0.9.13
+  scalability fix. The cover is tracked separately from the data index, so a
+  weekend/holiday `end` (no trading row) still counts as covered.
+  `use_cache=False` (Refresh) refetches the full request and overwrites the
+  overlap. The disk write is **best-effort**: on a read-only filesystem (or any
+  write failure) `_cache_write` warns once, sets `_disk_cache_writable = False`,
+  and the in-memory superset carries the session — the app never crashes on a
+  read-only FS. `_cache_read` is containment-aware (column-pushdown
+  `read_parquet(columns=…)`, left-date coverage) and swallows read errors as a
+  clean miss; `_cache_write` writes the superset and prunes past-TTL files
+  (`_prune_cache_files`). `_clear_caches()` resets both tiers for tests. The
+  directory is gitignored. *(Not yet done: a pyarrow dataset partitioned by
+  ticker for per-ticker on-disk append — the disk tier still writes one whole-
+  superset parquet per `end` day.)*
 - **Refresh prices button** (formerly Apply): re-fetches from BQL with
   `use_cache=False`, overwrites the parquet, then recomputes everything.
   Filter-only re-slicing (today the button always refetches) will be

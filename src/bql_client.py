@@ -27,10 +27,17 @@ except Exception:
 
 BQL_FIELD_KEY = "px_last"
 
-# In-memory session cache for fetched prices, checked before the on-disk
-# parquet so the BQuant filesystem (which may be read-only) is never required.
-# Keyed by ``(tuple(sorted(tickers)), start, end)`` → the wide price frame.
-_MEM_CACHE: dict[tuple, pd.DataFrame] = {}
+# In-memory session cache. Rather than an exact-key map (which forced a full
+# refetch whenever the lookback shifted or one ticker was added), the session
+# holds a single growing **superset** frame plus the date interval it covers.
+# Any request whose tickers ⊆ the superset's columns and whose [start, end] ⊆
+# the covered interval is served by *slicing* — no BQL. A miss fetches only the
+# missing rectangle (new tickers, and/or the uncovered date extension) and
+# merges it in, so extending the lookback or adding an index costs a delta, not
+# a whole-universe refetch. The covered interval is tracked separately from the
+# data index so a weekend/holiday `end` (no trading row) still counts as covered.
+_MEM_SUPERSET: pd.DataFrame | None = None
+_MEM_COVER: tuple[date, date] | None = None
 
 # Tri-state writability of the on-disk parquet cache: ``None`` until probed,
 # then ``True``/``False``. Once ``False`` (e.g. a read-only filesystem) we stop
@@ -39,10 +46,83 @@ _disk_cache_writable: bool | None = None
 
 
 def _clear_caches() -> None:
-    """Reset the in-memory cache and disk-writability probe (test hook)."""
-    global _disk_cache_writable
-    _MEM_CACHE.clear()
+    """Reset the in-memory superset and disk-writability probe (test hook)."""
+    global _disk_cache_writable, _MEM_SUPERSET, _MEM_COVER
+    _MEM_SUPERSET = None
+    _MEM_COVER = None
     _disk_cache_writable = None
+
+
+def _live_fetch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
+    """One live fetch (BQL on a terminal, deterministic mock off it)."""
+    if _HAS_BQL:
+        return _fetch_via_bql(tickers, start, end)
+    return _mock_prices(tickers, start, end)
+
+
+def _covers(tickers: list[str], start: date, end: date) -> bool:
+    """Whether the in-memory superset can serve ``(tickers, [start, end])``."""
+    if _MEM_SUPERSET is None or _MEM_COVER is None:
+        return False
+    if not set(tickers) <= set(_MEM_SUPERSET.columns):
+        return False
+    return _MEM_COVER[0] <= start and _MEM_COVER[1] >= end
+
+
+def _serve(tickers: list[str], start: date, end: date) -> pd.DataFrame:
+    """Slice the superset to ``(tickers, [start, end])`` in requested order."""
+    sub = _MEM_SUPERSET.loc[pd.Timestamp(start) : pd.Timestamp(end)]
+    return sub.reindex(columns=list(tickers)).copy()
+
+
+def _merge_superset(base: pd.DataFrame | None, incoming: pd.DataFrame) -> pd.DataFrame:
+    """Union ``incoming`` into ``base`` (incoming wins on any overlap)."""
+    if incoming is None or incoming.empty:
+        return base if base is not None else incoming
+    if base is None or base.empty:
+        return incoming.sort_index()
+    return incoming.combine_first(base).sort_index()
+
+
+def _extend_cover(
+    cover: tuple[date, date] | None, start: date, end: date
+) -> tuple[date, date]:
+    if cover is None:
+        return (start, end)
+    return (min(cover[0], start), max(cover[1], end))
+
+
+def _delta_specs(
+    cover: tuple[date, date] | None,
+    columns,
+    tickers: list[str],
+    start: date,
+    end: date,
+) -> list[tuple[list[str], date, date]]:
+    """The minimal (tickers, start, end) rectangles to fetch so the superset
+    covers ``(tickers, [start, end])`` while staying a full grid.
+
+    With nothing cached (or on a forced refresh) that's the whole request. Else:
+    the existing columns are extended over any uncovered date range (non-
+    overlapping with what's held, so cached values are never disturbed), and any
+    new tickers are fetched over the full needed span.
+    """
+    if cover is None:
+        return [(list(tickers), start, end)]
+    cur_start, cur_end = cover
+    existing_cols = list(columns)
+    new_cols = [t for t in tickers if t not in set(columns)]
+    need_start, need_end = min(start, cur_start), max(end, cur_end)
+    specs: list[tuple[list[str], date, date]] = []
+    if existing_cols and start < cur_start:
+        specs.append((existing_cols, start, cur_start - timedelta(days=1)))
+    if existing_cols and end > cur_end:
+        specs.append((existing_cols, cur_end + timedelta(days=1), end))
+    if new_cols:
+        specs.append((new_cols, need_start, need_end))
+    if not specs:  # defensive: shouldn't happen on a genuine miss
+        specs.append((list(tickers), start, end))
+    return specs
 
 
 def fetch_prices(
@@ -59,42 +139,58 @@ def fetch_prices(
     Falls back to a deterministic synthetic series when bql is unavailable
     (off-terminal development), so the dashboard renders end-to-end.
 
-    When `use_cache=True` (default) the in-memory session cache is checked
-    first, then a same-day parquet under `CACHE_DIR` that covers every
-    requested ticker within `CACHE_TTL_HOURS`; either is returned without
-    hitting BQL. On a miss or with `use_cache=False` the live fetch result is
-    written to both caches before returning. Disk writes are best-effort: on a
-    read-only filesystem the in-memory cache still serves the session.
+    When `use_cache=True` (default) the request is served from the in-memory
+    session superset if its tickers and date range are already covered; else a
+    same-day parquet under `CACHE_DIR` (within `CACHE_TTL_HOURS`) is tried the
+    same way. On a miss, only the missing rectangle — new tickers and/or the
+    uncovered date extension — is fetched and merged into the superset, so a
+    lookback change or an added index costs a delta rather than a whole-universe
+    refetch. `use_cache=False` (Refresh prices) refetches the full request and
+    overwrites the overlapping region. Disk writes are best-effort: on a
+    read-only filesystem the in-memory superset still serves the session.
     """
+    global _MEM_SUPERSET, _MEM_COVER
     if not tickers:
         return pd.DataFrame(), "cache"
 
-    key = (tuple(sorted(tickers)), start, end)
     if use_cache:
-        mem = _MEM_CACHE.get(key)
-        if mem is not None:
-            return mem.reindex(columns=tickers), "cache"
-        cached = _cache_read(end, tickers)
-        if cached is not None:
-            _MEM_CACHE[key] = cached
-            return cached, "cache"
+        if _covers(tickers, start, end):
+            return _serve(tickers, start, end), "cache"
+        disk = _cache_read(end, tickers, start)
+        if disk is not None:
+            _MEM_SUPERSET = _merge_superset(_MEM_SUPERSET, disk)
+            _MEM_COVER = _extend_cover(_MEM_COVER, start, end)
+            if _covers(tickers, start, end):
+                return _serve(tickers, start, end), "cache"
 
-    if _HAS_BQL:
-        df = _fetch_via_bql(tickers, start, end)
-        source = "bql"
-    else:
-        df = _mock_prices(tickers, start, end)
-        source = "mock"
-    _cache_write(end, df)
-    _MEM_CACHE[key] = df
-    return df, source
+    # Fetch only what's missing (the whole request when nothing is cached or on
+    # a forced refresh), then merge into the superset.
+    base_cover = _MEM_COVER if (use_cache and _MEM_SUPERSET is not None) else None
+    base_cols = _MEM_SUPERSET.columns if _MEM_SUPERSET is not None else []
+    specs = _delta_specs(base_cover, base_cols, tickers, start, end)
+    source = "bql" if _HAS_BQL else "mock"
+    merged = _MEM_SUPERSET
+    for spec_tickers, spec_start, spec_end in specs:
+        merged = _merge_superset(
+            merged, _live_fetch(spec_tickers, spec_start, spec_end)
+        )
+    _MEM_SUPERSET = merged
+    _MEM_COVER = _extend_cover(_MEM_COVER, start, end)
+    _cache_write(end, _MEM_SUPERSET)
+    return _serve(tickers, start, end), source
 
 
 def _cache_path(day: date) -> Path:
     return CACHE_DIR / f"prices_{day.isoformat()}.parquet"
 
 
-def _cache_read(day: date, tickers: list[str]) -> pd.DataFrame | None:
+def _cache_read(day: date, tickers: list[str], start: date) -> pd.DataFrame | None:
+    """Read the same-day parquet, serving a ticker/date subset by containment.
+
+    Returns the requested tickers over the file's dates when the file holds
+    every requested ticker and reaches back to at least ``start`` (its `end` is
+    the filename day). A missing ticker or too-short a history is a clean miss.
+    """
     path = _cache_path(day)
     if not path.exists():
         return None
@@ -104,13 +200,16 @@ def _cache_read(day: date, tickers: list[str]) -> pd.DataFrame | None:
         age_hours = (time.time() - path.stat().st_mtime) / 3600
         if age_hours >= CACHE_TTL_HOURS:
             return None
-        df = pd.read_parquet(path)
+        df = pd.read_parquet(path, columns=list(tickers))
     except Exception:
         return None
-    missing = set(tickers) - set(df.columns)
-    if missing:
+    if set(tickers) - set(df.columns):
         return None
-    return df.reindex(columns=tickers)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    if df.index.empty or df.index.min() > pd.Timestamp(start):
+        return None
+    return df.reindex(columns=list(tickers))
 
 
 def _cache_write(day: date, df: pd.DataFrame) -> None:
@@ -118,12 +217,13 @@ def _cache_write(day: date, df: pd.DataFrame) -> None:
     # unwritable (e.g. a read-only BQuant terminal) don't keep retrying — the
     # in-memory cache carries the session.
     global _disk_cache_writable
-    if df.empty or _disk_cache_writable is False:
+    if df is None or df.empty or _disk_cache_writable is False:
         return
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         df.to_parquet(_cache_path(day), engine="pyarrow")
         _disk_cache_writable = True
+        _prune_cache_files()
     except Exception as exc:
         _disk_cache_writable = False
         warnings.warn(
@@ -131,6 +231,25 @@ def _cache_write(day: date, df: pd.DataFrame) -> None:
             "Continuing with the in-memory session cache only.",
             stacklevel=2,
         )
+
+
+def _prune_cache_files() -> None:
+    """Delete parquet cache files older than the TTL (best-effort).
+
+    The cache writes one file per `end` date; without pruning they accumulate
+    without bound. Never raises — a prune failure must not disturb the write
+    that just succeeded.
+    """
+    try:
+        cutoff = time.time() - CACHE_TTL_HOURS * 3600
+        for path in CACHE_DIR.glob("prices_*.parquet"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                pass
+    except Exception:
+        pass
 
 
 def _chunked(seq: list[str], size: int) -> list[list[str]]:

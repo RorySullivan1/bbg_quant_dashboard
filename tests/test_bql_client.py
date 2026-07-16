@@ -15,7 +15,9 @@ bypasses permission bits).
 
 from __future__ import annotations
 
-from datetime import date
+import os
+import time
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -106,6 +108,99 @@ def test_use_cache_false_refetches(monkeypatch):
     bc.fetch_prices(_TICKERS, _START, _END, use_cache=False)  # Refresh prices
 
     assert calls["n"] == 2  # use_cache=False bypasses the cache reads
+
+
+# --- v0.9.13: incremental / containment cache (#165) -------------------------
+
+
+def _spy_live(monkeypatch) -> list[tuple[list[str], date, date]]:
+    """Record every live fetch's (tickers, start, end); still run the real mock."""
+    calls: list[tuple[list[str], date, date]] = []
+    real = bc._live_fetch
+
+    def spy(tickers, start, end):
+        calls.append((list(tickers), start, end))
+        return real(tickers, start, end)
+
+    monkeypatch.setattr(bc, "_live_fetch", spy)
+    return calls
+
+
+def test_ticker_subset_is_served_without_refetch(monkeypatch):
+    calls = _spy_live(monkeypatch)
+    bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
+    df, src = bc.fetch_prices(["A Index", "C Index"], _START, _END)
+    assert src == "cache"  # subset of a cached superset → sliced, no fetch
+    assert len(calls) == 1  # only the first (full) fetch hit the wire
+    assert list(df.columns) == ["A Index", "C Index"]
+
+
+def test_narrower_date_range_is_served_without_refetch(monkeypatch):
+    calls = _spy_live(monkeypatch)
+    bc.fetch_prices(_TICKERS, _START, _END)
+    mid = date(2020, 2, 1)
+    df, src = bc.fetch_prices(_TICKERS, _START, mid)  # sub-range of the cover
+    assert src == "cache"
+    assert len(calls) == 1
+    assert df.index.max() <= pd.Timestamp(mid)
+
+
+def test_added_ticker_fetches_only_the_new_ticker(monkeypatch):
+    calls = _spy_live(monkeypatch)
+    df1, _ = bc.fetch_prices(["A Index", "B Index"], _START, _END)
+    df2, src2 = bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
+    assert src2 == "mock"  # a delta was fetched
+    assert calls[0][0] == ["A Index", "B Index"]  # first call: the two originals
+    assert calls[1][0] == ["C Index"]  # second call: only the added ticker
+    assert list(df2.columns) == ["A Index", "B Index", "C Index"]
+    # The originals are served unchanged from the superset.
+    pd.testing.assert_frame_equal(df2[["A Index", "B Index"]], df1)
+
+
+def test_extended_lookback_fetches_only_the_new_range(monkeypatch):
+    calls = _spy_live(monkeypatch)
+    mid = date(2020, 2, 1)
+    bc.fetch_prices(_TICKERS, mid, _END)  # cover [mid, END]
+    _, src2 = bc.fetch_prices(_TICKERS, _START, _END)  # extend back to START
+    assert src2 == "mock"
+    # The delta is the existing tickers over just the uncovered older range,
+    # ending the day before the previous cover start (no overlap with cache).
+    assert calls[1][0] == _TICKERS
+    assert calls[1][1] == _START
+    assert calls[1][2] == mid - timedelta(days=1)
+    assert bc._covers(_TICKERS, _START, _END)  # now fully covered in memory
+
+
+def test_disk_superset_serves_a_ticker_subset(monkeypatch):
+    calls = _spy_live(monkeypatch)
+    full, _ = bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
+    assert (bc.CACHE_DIR / f"prices_{_END.isoformat()}.parquet").exists()
+
+    # New session (in-memory dropped) but the disk parquet is warm.
+    bc._MEM_SUPERSET = None
+    bc._MEM_COVER = None
+    calls.clear()
+
+    sub, src = bc.fetch_prices(["A Index", "C Index"], _START, _END)
+    assert src == "cache"  # served from the disk superset
+    assert calls == []  # no live fetch
+    assert list(sub.columns) == ["A Index", "C Index"]
+    # Values identical; the parquet round-trip drops the index's BusinessDay freq.
+    pd.testing.assert_frame_equal(sub, full[["A Index", "C Index"]], check_freq=False)
+
+
+def test_prune_removes_stale_cache_files():
+    bc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    stale = bc.CACHE_DIR / "prices_2000-01-01.parquet"
+    stale.write_bytes(b"stale")  # prune only inspects mtime, not contents
+    old = time.time() - (bc.CACHE_TTL_HOURS + 1) * 3600
+    os.utime(stale, (old, old))
+
+    df = pd.DataFrame({"A Index": [1.0, 2.0], "B Index": [3.0, 4.0]})
+    bc._cache_write(_END, df)  # writes today's file and prunes stale ones
+
+    assert not stale.exists()  # older-than-TTL file pruned
+    assert (bc.CACHE_DIR / f"prices_{_END.isoformat()}.parquet").exists()  # fresh kept
 
 
 def test_mock_vix_is_a_bounded_level_spanning_buckets():
