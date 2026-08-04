@@ -35,7 +35,7 @@ def _universe(n: int = 400) -> pd.DataFrame:
     idx = pd.bdate_range("2022-01-03", periods=n)
     rng = np.random.default_rng(3)
     specs = {
-        "SPX Index": (0.0004, 0.011),
+        "SPXFP Index": (0.0004, 0.011),  # equity factor leg (EQUITY_FACTOR_TICKER)
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
         "BSLXAT Index": (0.0001, 0.006),
