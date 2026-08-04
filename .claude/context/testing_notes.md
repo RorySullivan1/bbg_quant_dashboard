@@ -65,7 +65,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   **not** redraw; clicking Refresh prices re-slices the perf grid + all
   pane charts to the chosen window. Refreshing the **same** basket
   preserves a narrowed range; changing the basket resets the boxes to the
-  new full overlap. Pairing a recently-launched index with SPX shrinks the
+  new full overlap. Pairing a recently-launched index with SPTR shrinks the
   bounds to the short overlap. `Clear all` snaps the range to full span. A
   single-ticker or non-overlapping basket renders without a traceback.
 - Cold start (no `data/.cache/`) — the loading overlay advances through its
@@ -134,7 +134,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
 - Each pane has its OWN Rolling Correlation / Rolling Beta benchmark
-  dropdown — setting the left pane's benchmark to SPX and the right
+  dropdown — setting the left pane's benchmark to SPTR and the right
   pane's to MXWO, then clicking Refresh prices, produces two
   independently-titled charts.
 - On the Correlation Heatmap view, ticking **Benchmark** reveals a
@@ -142,7 +142,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   reveals a **`>` / `<`** dropdown and a 0–100% tail dropdown and
   **immediately** recomputes the matrix over the selected benchmark-return
   tail (v0.6.9 live control — no Refresh needed), adding the benchmark as a
-  row/column, with the title noting e.g. "SPX Index worst 20% days".
+  row/column, with the title noting e.g. "SPTR Index worst 20% days".
   Flipping `<`→`>` or changing the % re-renders that one heatmap live; the
   other pane is unaffected. Unticking **Regime** (or **Benchmark**) reverts
   to the full-sample correlation. (Each per-pane benchmark dropdown — Rolling Correlation /

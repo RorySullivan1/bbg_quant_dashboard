@@ -408,7 +408,7 @@ def _factor_frame(idx) -> pd.DataFrame:
     """Seeded prices including the factor proxy tickers + one strategy."""
     rng = np.random.default_rng(11)
     specs = {
-        "SPX Index": (0.0004, 0.011),
+        "SPXFP Index": (0.0004, 0.011),  # equity factor leg (EQUITY_FACTOR_TICKER)
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
         "BSLXAT Index": (0.0001, 0.006),
@@ -499,8 +499,8 @@ def test_rolling_metric_zscore_positive_for_recent_strength(bdays):
 def test_equity_risk_premium_is_equity_minus_short(bdays):
     prices = _factor_frame(bdays(300))
     erp = stats.equity_risk_premium(prices)
-    rets = stats.daily_returns(prices[["SPX Index", "LD12TRUU Index"]])
-    expected = rets["SPX Index"] - rets["LD12TRUU Index"]
+    rets = stats.daily_returns(prices[["SPXFP Index", "LD12TRUU Index"]])
+    expected = rets["SPXFP Index"] - rets["LD12TRUU Index"]
     pd.testing.assert_series_equal(erp, expected, check_names=False)
     assert erp.name == "equity_risk_premium"
 

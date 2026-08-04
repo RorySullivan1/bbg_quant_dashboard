@@ -75,7 +75,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = multiyear_prices.copy()
-    universe["SPX Index"] = benchmark  # a benchmark column rides along
+    universe["SPXFP Index"] = benchmark  # a benchmark column rides along
     state = SimpleNamespace(universe_prices=universe)
     window_start = universe.index.min()
 
@@ -87,7 +87,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
 
     # Toggling the overlay adds the benchmark trace.
     ss.bench_chk.value = True
-    ss.bench_dd.value = "SPX Index"
+    ss.bench_dd.value = "SPXFP Index"
     render_single_strategy(ss, state, meta, window_start)
     assert len(ss.line_fig.data) == 2
 
@@ -96,7 +96,7 @@ def test_render_single_strategy_reacts_to_picker(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = multiyear_prices.copy()
-    universe["SPX Index"] = benchmark
+    universe["SPXFP Index"] = benchmark
     state = SimpleNamespace(universe_prices=universe)
     window_start = universe.index.min()
 
@@ -143,7 +143,7 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = multiyear_prices.copy()
-    universe["SPX Index"] = benchmark
+    universe["SPXFP Index"] = benchmark
     state = SimpleNamespace(universe_prices=universe)
     ss.picker.value = "AAA Index"
 
@@ -160,10 +160,10 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
     meta = _meta()
     ss = make_single_strategy_panel(meta)
     universe = multiyear_prices.copy()
-    universe["SPX Index"] = benchmark
+    universe["SPXFP Index"] = benchmark
     state = SimpleNamespace(universe_prices=universe)
     ss.picker.value = "AAA Index"
-    ss.bench_dd.value = "SPX Index"
+    ss.bench_dd.value = "SPXFP Index"
 
     for kind in ("outperformance", "vol_adjusted", "beta", "correlation"):
         set_calendar_kind(ss, kind)
@@ -192,7 +192,7 @@ def _universe_with_factors(multiyear_prices, benchmark):
     import numpy as np
 
     universe = multiyear_prices.copy()
-    universe["SPX Index"] = benchmark  # benchmark + equity factor leg
+    universe["SPXFP Index"] = benchmark  # benchmark + equity factor leg
     rng = np.random.default_rng(11)
     for col, drift in (("LD12TRUU Index", 5e-5), ("LUTLTRUU Index", 1e-4)):
         rets = rng.normal(drift, 0.003, len(universe))
@@ -200,7 +200,7 @@ def _universe_with_factors(multiyear_prices, benchmark):
     return universe
 
 
-def _set_pane(pane, label, bench="SPX Index"):
+def _set_pane(pane, label, bench="SPXFP Index"):
     """Point a pane at one analysis (and benchmark) without going through the
     widget observer wiring (the builder owns rendering)."""
     pane.bench_dd.value = bench

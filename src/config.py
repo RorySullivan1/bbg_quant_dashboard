@@ -86,7 +86,8 @@ LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 # call. Used by the Rolling Correlation and Rolling Beta tabs only — never
 # shown in the all-catalog grid or the highlights cards.
 BENCHMARK_TICKERS: list[str] = [
-    "SPX Index",  # S&P 500
+    "SPTR Index",  # S&P 500 Total Return
+    "SPXFP Index",  # S&P 500 (equity factor-leg reference)
     "MXWO Index",  # MSCI World
     "LBUSTRUU Index",  # Bloomberg US Aggregate
     "BCOM Index",  # Bloomberg Commodity
@@ -99,7 +100,7 @@ BENCHMARK_TICKERS: list[str] = [
     "BSLXAV Index",  # Bloomberg cross-asset value
     "BSLXAT Index",  # Bloomberg cross-asset trend (also TREND_TICKER)
 ]
-DEFAULT_BENCHMARK = "SPX Index"
+DEFAULT_BENCHMARK = "SPTR Index"
 
 # Factor proxies for the v0.7.0 Platform factor-beta scatter. Total-return
 # index proxies that ride the *same* single startup fetch as the benchmarks
@@ -108,9 +109,9 @@ DEFAULT_BENCHMARK = "SPX Index"
 # "premia" are return spreads, not true excess-of-risk-free premia:
 #   equity risk premium ≈ equity TR return − short-rate TR return
 #   term premium        ≈ long-Treasury TR return − short-rate TR return
-# The equity leg reuses SPX (already a benchmark); only the two rate/bond
+# The equity leg reuses SPXFP (already a benchmark); only the two rate/bond
 # proxies below are *new* tickers, so `FACTOR_TICKERS` lists just those.
-EQUITY_FACTOR_TICKER = "SPX Index"  # equity proxy (also in BENCHMARK_TICKERS)
+EQUITY_FACTOR_TICKER = "SPXFP Index"  # equity proxy (also in BENCHMARK_TICKERS)
 LONG_TREASURY_TICKER = "LUTLTRUU Index"  # Bloomberg US Long Treasury TR
 SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 # Trend factor (v0.7.1): the Bloomberg cross-asset trend index. The Platform

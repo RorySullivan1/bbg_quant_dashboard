@@ -63,7 +63,8 @@ CSS, style tokens — live in `style.md`.)
   all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
   tabs, the v0.7.0 Platform factor scatter + the v0.8.x sunburst, and the v0.8.5
   Regime Analysis charts — slices from that cache. The `FACTOR_TICKERS` (v0.7.0: a
-  long-Treasury + short-rate TR proxy, the equity leg reuses SPX; v0.7.1 adds
+  long-Treasury + short-rate TR proxy, the equity leg reuses `SPXFP Index`
+  (`EQUITY_FACTOR_TICKER`, also a benchmark); v0.7.1 adds
   the `TREND_TICKER` = `BSLXAT Index` cross-asset trend factor for the scatter's
   z-axis) and the `REGIME_TICKERS` (the Regime Analysis indicators: `VIX Index`
   and the regional rates `FEDL01` / `EONIA` / `MUTKCALM`; v0.8.9 dropped
