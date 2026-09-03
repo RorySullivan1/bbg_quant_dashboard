@@ -6,7 +6,8 @@ import plotly.graph_objects as go
 from ipydatagrid import DataGrid, TextRenderer
 
 from ..config import LOOKBACK_YEARS, TRADING_DAYS_PER_YEAR
-from ..stats import ann_return, ann_sharpe, ann_volatility
+from ..stats import ann_return, ann_sharpe, ann_volatility, poly_fit
+from ..style import Color
 from .theme import SHARPE_WINDOW_LABEL, _palette_color, _short_ticker
 
 
@@ -61,14 +62,13 @@ def _update_line_series(
             fig.layout.title.text = title
 
 
-def _update_line(fig: go.FigureWidget, perf: pd.DataFrame, meta: pd.DataFrame) -> None:
+def _update_line(fig: go.FigureWidget, perf: pd.DataFrame) -> None:
     _update_line_series(fig, perf)
 
 
 def _update_outperformance(
     fig: go.FigureWidget,
     df: pd.DataFrame,
-    meta: pd.DataFrame,
     *,
     benchmark_label: str,
 ) -> None:
@@ -98,10 +98,19 @@ def _update_heatmap(
             fig.layout.title.text = title
 
 
-def _update_sharpe_line(
-    fig: go.FigureWidget, zser: pd.DataFrame, meta: pd.DataFrame
-) -> None:
+def _update_sharpe_line(fig: go.FigureWidget, zser: pd.DataFrame) -> None:
     _update_line_series(fig, zser, tail_n=TRADING_DAYS_PER_YEAR)
+
+
+def _clear_scatter(fig: go.FigureWidget) -> None:
+    """Blank the risk/return scatter's single trace (no valid data)."""
+    with fig.batch_update():
+        fig.data[0].x = []
+        fig.data[0].y = []
+        fig.data[0].marker.size = []
+        fig.data[0].marker.color = []
+        fig.data[0].text = []
+        fig.data[0].customdata = []
 
 
 def _update_scatter(
@@ -111,13 +120,7 @@ def _update_scatter(
     meta: pd.DataFrame,
 ) -> None:
     if prices.empty or rets.empty:
-        with fig.batch_update():
-            fig.data[0].x = []
-            fig.data[0].y = []
-            fig.data[0].marker.size = []
-            fig.data[0].marker.color = []
-            fig.data[0].text = []
-            fig.data[0].customdata = []
+        _clear_scatter(fig)
         return
     vol = ann_volatility(rets, LOOKBACK_YEARS)
     ret = ann_return(prices, LOOKBACK_YEARS)
@@ -126,13 +129,7 @@ def _update_scatter(
         subset=["vol", "ret"]
     )
     if frame.empty:
-        with fig.batch_update():
-            fig.data[0].x = []
-            fig.data[0].y = []
-            fig.data[0].marker.size = []
-            fig.data[0].marker.color = []
-            fig.data[0].text = []
-            fig.data[0].customdata = []
+        _clear_scatter(fig)
         return
     s_clipped = frame["sharpe"].fillna(0).clip(lower=0)
     if s_clipped.max() > 0:
@@ -152,16 +149,13 @@ def _update_scatter(
         fig.data[0].customdata = frame["sharpe"].values
 
 
-def _update_drawdown(
-    fig: go.FigureWidget, dd: pd.DataFrame, meta: pd.DataFrame
-) -> None:
+def _update_drawdown(fig: go.FigureWidget, dd: pd.DataFrame) -> None:
     _update_line_series(fig, dd, value_format=".2%")
 
 
 def _update_rolling_ref(
     fig: go.FigureWidget,
     df: pd.DataFrame,
-    meta: pd.DataFrame,
     *,
     title_prefix: str,
     benchmark_label: str,
@@ -246,3 +240,164 @@ def _update_return_dist(
             renderers[col] = f2
     stats_grid.data = display
     stats_grid.renderers = renderers
+
+
+def _update_weekly_scatter(fig: go.FigureWidget, x: pd.Series, y: pd.Series) -> None:
+    """Scatter of paired weekly returns (x = benchmark, y = strategy) with a
+    quadratic least-squares fit, so a curved line reveals convexity (a smile =
+    the strategy outperforms in big up *and* down weeks) rather than a single
+    straight β. The annotation reports the central β (linear term), the convexity
+    (x² term, signed) and R². Fewer than three aligned points clears the fit
+    line (markers still draw); fewer than two clears the figure."""
+    frame = (
+        pd.DataFrame({"x": x, "y": y}).dropna()
+        if x is not None and y is not None
+        else pd.DataFrame(columns=["x", "y"])
+    )
+    # Mutate the pre-allocated traces + annotation in place (see
+    # `_weekly_scatter_chart`): a same-count trace *replacement* can fail to
+    # repaint on older widget-manager frontends, an in-place restyle does not.
+    marker, fit_line = fig.data[0], fig.data[1]
+    annotation = fig.layout.annotations[0]
+    if len(frame) < 2:
+        with fig.batch_update():
+            marker.x, marker.y = (), ()
+            fit_line.x, fit_line.y = (), ()
+            annotation.visible = False
+        return
+    fit = poly_fit(frame["x"], frame["y"], degree=2)
+    has_fit = not np.isnan(fit.convexity)
+    with fig.batch_update():
+        marker.x = frame["x"].to_numpy()
+        marker.y = frame["y"].to_numpy()
+        if has_fit:
+            # Dense x grid so the quadratic renders as a smooth curve, sorted so
+            # the connected line never doubles back on itself.
+            xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
+            fit_line.x = xs
+            fit_line.y = np.polyval(fit.coeffs, xs)
+            annotation.text = (
+                f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
+                f"  R²={fit.r_squared:.2f}"
+            )
+            annotation.visible = True
+        else:
+            fit_line.x, fit_line.y = (), ()
+            annotation.visible = False
+
+
+def _update_factor_corr_scatter(
+    fig: go.FigureWidget, x: pd.Series, y: pd.Series, color: pd.Series
+) -> None:
+    """Monthly factor-correlation scatter: x = corr to the equity risk premium,
+    y = corr to the term premium, one marker per month colored / sized by that
+    month's risk-adjusted return (diverging RdYlGn around 0). Empty → cleared."""
+    if x is None or y is None:
+        with fig.batch_update():
+            fig.data = ()
+        return
+    frame = pd.DataFrame({"x": x, "y": y, "c": color}).dropna(subset=["x", "y"])
+    if frame.empty:
+        with fig.batch_update():
+            fig.data = ()
+        return
+    c = frame["c"].fillna(0.0)
+    cmax = max(0.5, float(c.abs().max()))
+    denom = float(c.abs().max()) or 1.0
+    sizes = (8 + 14 * (c.abs() / denom)).tolist()
+    trace = go.Scatter(
+        x=frame["x"].to_numpy(),
+        y=frame["y"].to_numpy(),
+        mode="markers",
+        marker=dict(
+            size=sizes,
+            color=c.tolist(),
+            colorscale="RdYlGn",
+            cmid=0,
+            cmin=-cmax,
+            cmax=cmax,
+            showscale=True,
+            colorbar=dict(title=dict(text="Risk-adj"), thickness=10),
+            line=dict(width=0.5, color=Color.CHART_BG.value),
+        ),
+        text=[d.strftime("%Y-%m") for d in frame.index],
+        hovertemplate=(
+            "%{text}<br>ERP corr %{x:.2f}<br>Term corr %{y:.2f}<extra></extra>"
+        ),
+    )
+    with fig.batch_update():
+        fig.data = ()
+        fig.add_traces([trace])
+
+
+def _update_factor_scoring(fig: go.FigureWidget, betas: pd.Series | None) -> None:
+    """Bar chart of a strategy's β to each macro-factor proxy (equity risk
+    premium / term premium / trend). `betas` is a Series indexed by factor label;
+    bars are green when positive, red when negative. None / all-NaN clears."""
+    if betas is None or betas.dropna().empty:
+        with fig.batch_update():
+            fig.data[0].x = []
+            fig.data[0].y = []
+            fig.data[0].marker.color = []
+        return
+    s = betas.dropna()
+    colors = [
+        Color.GREEN_600.value if v >= 0 else Color.RED_600.value for v in s.values
+    ]
+    with fig.batch_update():
+        fig.data[0].x = list(s.index)
+        fig.data[0].y = s.values
+        fig.data[0].marker.color = colors
+
+
+def _stub_placeholder(fig: go.FigureWidget, text: str) -> None:
+    """Clear a figure and show one centered muted placeholder annotation — the
+    shared body of the not-yet-implemented analysis stubs."""
+    with fig.batch_update():
+        fig.data = ()
+        fig.layout.annotations = ()
+        fig.add_annotation(
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            text=text,
+            font=dict(color=Color.TEXT_MUTED.value, size=13),
+        )
+
+
+def _update_perf_ranking(fig: go.FigureWidget, scores: pd.Series | None = None) -> None:
+    """Radar/spider ranking of the strategy across performance metrics. Metrics
+    are wired in a later pass; with no scores the figure shows a placeholder.
+    When given, `scores` is a Series of metric→value plotted as a closed loop."""
+    if scores is None or scores.dropna().empty:
+        _stub_placeholder(fig, "Performance metrics coming soon")
+        return
+    s = scores.dropna()
+    theta = [*s.index, s.index[0]]  # close the loop back to the first axis
+    r = [*s.values, s.values[0]]
+    with fig.batch_update():
+        fig.data = ()
+        fig.layout.annotations = ()
+        fig.add_traces(
+            [
+                go.Scatterpolar(
+                    r=r,
+                    theta=theta,
+                    fill="toself",
+                    line=dict(color=_palette_color(0)),
+                )
+            ]
+        )
+
+
+def _update_pca(fig: go.FigureWidget, *_args, **_kwargs) -> None:
+    """PCA scree (stub): explained-variance bars + a cumulative line. Wired in a
+    later pass; for now it shows a placeholder."""
+    _stub_placeholder(fig, "PCA analysis — coming soon")
+
+
+def _update_defensive(fig: go.FigureWidget, *_args, **_kwargs) -> None:
+    """Defensive scoring (stub). Wired in a later pass; shows a placeholder."""
+    _stub_placeholder(fig, "Defensive scoring — coming soon")

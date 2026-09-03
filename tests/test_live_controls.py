@@ -15,6 +15,8 @@ import ipywidgets as W
 import plotly.graph_objects as go
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
+from src.layout.benchmarks import BenchmarkSelect
+from src.layout.filters import CheckboxMultiSelect
 
 
 def _walk(widget):
@@ -25,22 +27,33 @@ def _walk(widget):
 
 
 def _mount_multi_strategy(app) -> None:
-    """Click the Multi-Strategy Analysis tab so its panel (the strategies
+    """Click the Multi-Strategy tab so its panel (the strategies
     picker + analysis panes) is mounted into the tree and reachable by
     ``_walk`` (the default mounted tab is Platform)."""
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
+
+
+def _option_values(dd) -> list:
+    """A dropdown's option *values*, for both option shapes.
+
+    Benchmark selectors carry ``(label, value)`` pairs since #191 (the catalog
+    source needs a label distinct from the ticker), so an identity check
+    against `BENCHMARK_TICKERS` no longer finds them.
+    """
+    return [o[1] if isinstance(o, tuple) else o for o in dd.options]
 
 
 def _benchmark_dropdowns(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and list(w.options) == list(BENCHMARK_TICKERS)
+        if isinstance(w, BenchmarkSelect)
+        and set(BENCHMARK_TICKERS) <= set(_option_values(w))
     ]
 
 
@@ -113,7 +126,7 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
 
     # Clear the selection, then click Refresh prices so the recompute runs the
     # empty-selection branch (which sets `state.cur_prep = None`).
-    ticker_w = next(w for w in _walk(app) if isinstance(w, W.SelectMultiple))
+    ticker_w = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
     ticker_w.value = ()
     refresh_btn = next(
         w

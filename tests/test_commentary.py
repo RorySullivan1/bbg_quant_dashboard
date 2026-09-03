@@ -92,6 +92,43 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
     )
 
 
+def test_build_superlatives_returns_slice_is_equivalent(bdays):
+    # v0.9.13: the highlights panel derives the returns frame over only the
+    # trailing window (+1 row) rather than the full 5-year slice. Every
+    # returns-based metric tails to ``window_days`` internally, so feeding the
+    # short slice must produce byte-identical cards to feeding the full returns.
+    idx = bdays(200)
+    rng = np.random.default_rng(11)
+    prices = pd.DataFrame(
+        {
+            "AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.003, 0.01, len(idx))),
+            "BBB Index": 100.0 * np.cumprod(1.0 + rng.normal(-0.002, 0.01, len(idx))),
+            "CCC Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0, 0.015, len(idx))),
+        },
+        index=idx,
+    )
+    meta = _meta(
+        [
+            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
+            {"ticker": "BBB Index", "name": "Beta", "live_date": "2010-01-01"},
+            {"ticker": "CCC Index", "name": "Gamma", "live_date": "2010-01-01"},
+        ]
+    )
+    full_rets = daily_returns(prices)
+    for window_days in (5, 21, 63, 126):  # the four superlative-toggle windows
+        short = commentary.superlative_returns(prices, window_days=window_days)
+        # The slice is a genuine trailing subset, not the whole history…
+        assert len(short) < len(full_rets)
+        # …yet every card is byte-identical to feeding the full-history returns.
+        full = commentary.build_superlatives(
+            meta, prices, full_rets, window_days=window_days
+        )
+        sliced = commentary.build_superlatives(
+            meta, prices, short, window_days=window_days
+        )
+        assert full == sliced, f"window_days={window_days}"
+
+
 def test_build_superlatives_z_ranked_value_is_raw_metric(bdays):
     # Two asset classes: Equity sits structurally higher than Bond. The raw top
     # performer is the high-class name (EQ2, +12%), but the asset-class-demeaned

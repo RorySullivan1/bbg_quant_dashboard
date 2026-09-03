@@ -11,6 +11,12 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
+# Hard cap on the Multi-Strategy selection. Correlation / analysis over the
+# selected set is O(n²) in the number of picked strategies, so the picker is
+# bounded to keep it fast (and the heatmaps / charts legible); a further pick is
+# rejected with an error popup. See `CheckboxMultiSelect(max_selected=...)`.
+MAX_SELECTED_STRATEGIES = 25
+
 # Short metric windows (trading days) for the Platform z-score views.
 # The sunburst's Z-score control offers 1W / 1M / 3M / 6M (default 1W Sharpe);
 # the all-catalog grid z-score column offers 1M / 3M / 6M.
@@ -18,6 +24,22 @@ WEEK_WINDOW = 5  # ~1 week  (sunburst default window)
 MONTH_WINDOW = 21  # ~1 month
 QUARTER_WINDOW = 63  # ~3 months
 HALF_YEAR_WINDOW = 126  # ~6 months
+
+# The shared 1W / 1M / 3M / 6M window option list (superlatives toggle, sunburst
+# Z-score window, Quantitative Z-Score window) and the window-day → prose-label
+# map for the highlights board title, so these aren't re-spelled at each widget.
+SHORT_WINDOW_OPTIONS: list[tuple[str, int]] = [
+    ("1W", WEEK_WINDOW),
+    ("1M", MONTH_WINDOW),
+    ("3M", QUARTER_WINDOW),
+    ("6M", HALF_YEAR_WINDOW),
+]
+WINDOW_LABELS: dict[int, str] = {
+    WEEK_WINDOW: "Past Week",
+    MONTH_WINDOW: "Past Month",
+    QUARTER_WINDOW: "Past Quarter",
+    HALF_YEAR_WINDOW: "Past 6 Months",
+}
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
@@ -34,7 +56,32 @@ DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 # unwritable, the disk tier is skipped and the in-memory cache carries the
 # session (see `src/bql_client.py`).
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
+
+# Benchmarks the user added at runtime (#194). A sibling of the catalog rather
+# than a file under `data/.cache/`: the cache is semantically deletable — safe
+# to wipe at any time — and user configuration is not. Gitignored, so one
+# user's benchmarks are never committed and shipped to everyone.
+USER_BENCHMARKS_PATH = REPO_ROOT / "data" / "user_benchmarks.json"
 CACHE_TTL_HOURS = 12
+
+# The startup BQL fetch is issued in ticker batches rather than one whole-
+# universe request: a single request for hundreds of tickers over a multi-year
+# window risks BQL's per-request row / wall-clock limits. Each batch is retried
+# with exponential backoff and, if it still fails, is re-fetched one ticker at a
+# time so only the genuinely unresolvable tickers degrade to NaN columns (see
+# `src/bql_client.py`). That per-ticker pass — not this batch size — is what
+# stops one bad ticker blanking the load: whenever the universe fits in a single
+# batch, batch-level isolation isolates nothing. So tune this purely for
+# throughput against BQL's request limits.
+# A user-added benchmark (#193) whose history starts more than this many days
+# after the lookback window opens is accepted but flagged — a partial series is
+# usable for correlation and beta, but the user should know the comparison does
+# not span the whole window rather than wondering why a chart starts late.
+BENCHMARK_SHORT_HISTORY_DAYS = 30
+
+BQL_BATCH_SIZE = 100  # tickers per BQL request
+BQL_MAX_RETRIES = 2  # extra attempts per batch after the first (so up to 3 tries)
+BQL_RETRY_BACKOFF_S = 1.0  # base backoff; attempt n waits BACKOFF * 2**n seconds
 
 # Solution values that make up the dashboard universe — compared
 # case-insensitively against the metadata `solution` column. Covers Alternative
@@ -54,13 +101,21 @@ LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 # call. Used by the Rolling Correlation and Rolling Beta tabs only — never
 # shown in the all-catalog grid or the highlights cards.
 BENCHMARK_TICKERS: list[str] = [
-    "SPX Index",  # S&P 500
+    "SPTR Index",  # S&P 500 Total Return
+    "SPXFP Index",  # S&P 500 (equity factor-leg reference)
     "MXWO Index",  # MSCI World
     "LBUSTRUU Index",  # Bloomberg US Aggregate
     "BCOM Index",  # Bloomberg Commodity
-    "BBG6040 Index",  # Bloomberg 60/40
+    "BMADM64 Index",  # Bloomberg 60/40
+    # Bloomberg systematic risk-premia / cross-asset strategy benchmarks.
+    "BSLRP Index",  # Bloomberg systematic risk premia
+    "BSLMARP Index",  # Bloomberg multi-asset risk premia
+    "BSLXAC Index",  # Bloomberg cross-asset carry
+    "BSLXACV Index",  # Bloomberg cross-asset carry/value
+    "BSLXAV Index",  # Bloomberg cross-asset value
+    "BSLXAT Index",  # Bloomberg cross-asset trend (also TREND_TICKER)
 ]
-DEFAULT_BENCHMARK = "SPX Index"
+DEFAULT_BENCHMARK = "SPTR Index"
 
 # Factor proxies for the v0.7.0 Platform factor-beta scatter. Total-return
 # index proxies that ride the *same* single startup fetch as the benchmarks
@@ -69,9 +124,9 @@ DEFAULT_BENCHMARK = "SPX Index"
 # "premia" are return spreads, not true excess-of-risk-free premia:
 #   equity risk premium ≈ equity TR return − short-rate TR return
 #   term premium        ≈ long-Treasury TR return − short-rate TR return
-# The equity leg reuses SPX (already a benchmark); only the two rate/bond
+# The equity leg reuses SPXFP (already a benchmark); only the two rate/bond
 # proxies below are *new* tickers, so `FACTOR_TICKERS` lists just those.
-EQUITY_FACTOR_TICKER = "SPX Index"  # equity proxy (also in BENCHMARK_TICKERS)
+EQUITY_FACTOR_TICKER = "SPXFP Index"  # equity proxy (also in BENCHMARK_TICKERS)
 LONG_TREASURY_TICKER = "LUTLTRUU Index"  # Bloomberg US Long Treasury TR
 SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 # Trend factor (v0.7.1): the Bloomberg cross-asset trend index. The Platform
@@ -131,7 +186,12 @@ REGIME_SPECS: dict[str, dict] = {
     },
     "Trend": {
         "mode": "autocorr_tercile",
-        "selector": [(t.replace(" Index", ""), t) for t in BENCHMARK_TICKERS],
+        # Resolved from the live benchmark registry at render time (#190), not
+        # frozen here at import: a benchmark added at runtime has to show up in
+        # this picker too. `platform._regime_selector_options` reads this marker
+        # and builds the (label, ticker) pairs; regimes with a literal
+        # `"selector"` (Rate-level) are unaffected.
+        "selector_source": "benchmarks",
         "autocorr_window": 21,
         "bucket_labels": [
             ("Low (mean-reverting)", "low"),

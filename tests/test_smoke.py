@@ -12,7 +12,9 @@ from __future__ import annotations
 import ipywidgets as W
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
+from src.layout.filters import CheckboxMultiSelect
 from src.layout.html import STYLE_CTX, render_template
+from src.style import Color
 
 
 def test_build_app_renders_expected_tree():
@@ -22,14 +24,24 @@ def test_build_app_renders_expected_tree():
     assert isinstance(app, W.VBox)
 
     # injected CSS, banner, status toast, commentary, top tab bar, tab content,
-    # perf disclaimer, legal disclosure, loading overlay — 9 children in this
-    # order (see builder.py). The leading W.HTML is the global stylesheet
-    # (`_app_css()`); the trailing W.HTML is the `.bbg-overlay` (Workstream C).
+    # perf disclaimer, legal disclosure, loading overlay, selection-cap popup —
+    # 10 children in this order (see builder.py). The leading W.HTML is the
+    # global stylesheet (`_app_css()`); the trailing two W.HTMLs are the
+    # `.bbg-overlay` (Workstream C) and the `.bbg-limit-popup` (v0.9.13 #181).
     children = app.children
-    assert len(children) == 9
-    css, banner, status, commentary, tab_bar, tab_content, perf_disc, legal, overlay = (
-        children
-    )
+    assert len(children) == 10
+    (
+        css,
+        banner,
+        status,
+        commentary,
+        tab_bar,
+        tab_content,
+        perf_disc,
+        legal,
+        overlay,
+        limit_popup,
+    ) = children
     assert isinstance(css, W.HTML)
     assert "<style" in css.value
     assert isinstance(banner, W.HBox)
@@ -41,6 +53,9 @@ def test_build_app_renders_expected_tree():
     assert isinstance(overlay, W.HTML)
     # On the mock-price path the load succeeds, so the overlay is dismissed.
     assert "is-hidden" in overlay.value
+    # The selection-cap popup starts hidden (shown only on an over-cap pick).
+    assert isinstance(limit_popup, W.HTML)
+    assert "is-hidden" in limit_popup.value
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
@@ -207,7 +222,7 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     )
     ms.click()
     panel = app.children[5].children[0]
-    ticker_w = next(w for w in _walk(panel) if isinstance(w, W.SelectMultiple))
+    ticker_w = next(w for w in _walk(panel) if isinstance(w, CheckboxMultiSelect))
 
     # Expected: the top-5 (capped) by z(1W Sharpe, 1Y) over the fetched universe.
     meta = load_metadata()
@@ -440,8 +455,31 @@ def test_app_css_has_overlay_and_toast_rules():
     css = render_template("app_css", **STYLE_CTX)
     for rule in (".bbg-overlay", ".bbg-progress", ".bbg-toast"):
         assert rule in css
-    assert "#FFA000" in css  # Color.ACCENT, tokens substituted
+    assert Color.ACCENT.value in css  # accent token substituted
     assert "{{" not in css
+
+
+def test_app_css_plotly_backdrop_is_transparent():
+    # Charts render transparent (theme._chart_layout) so the themed card shows
+    # through. The plotly backdrop CSS must force the wrapper DIVs / SVG layers
+    # transparent to defeat the FigureWidget theme-following default background
+    # (plotly.py #3811), AND force the paper `.bg` rect transparent so a remount
+    # (Stack view swap) can't redraw it with the plotly_dark dark paper color.
+    css = render_template("app_css", **STYLE_CTX)
+    assert ".js-plotly-plot" in css
+    # Isolate the plotly backdrop section (up to the next CSS section).
+    start = css.find(".bbg-app .js-plotly-plot")
+    block = css[start : css.find("Workstream D", start)]
+    # Wrapper + SVG-layer background is transparent — never an opaque color
+    # (an opaque `.main-svg` background hides the chart's plotted data).
+    assert "background: transparent !important" in block
+    assert str(Color.CHROME_BG) not in block  # no opaque backdrop leaked in
+    assert str(Color.CHART_BG) not in block
+    # Every plotly background rect (paper + subplot + legend) fill is forced
+    # transparent, so a remount can't redraw them with the plotly_dark dark
+    # colors (the revisit-goes-dark fix, incl. legend / plot-area backgrounds).
+    assert ".main-svg .bg" in block
+    assert "fill: transparent !important" in block
 
 
 def test_tab_button_classes():
@@ -474,15 +512,15 @@ def test_dark_grid_style():
     from src.layout.grids import _dark_grid_style
 
     gs = _dark_grid_style()
-    assert gs["background_color"] == "#0d1117"  # Color.CHROME_BG
-    assert gs["header_background_color"] == "#161b22"  # Color.SURFACE
-    assert gs["grid_line_color"] == "#30363d"  # Color.BORDER
+    assert gs["background_color"] == Color.CHROME_BG.value
+    assert gs["header_background_color"] == Color.SURFACE.value
+    assert gs["grid_line_color"] == Color.BORDER.value
 
 
 def test_grids_are_dark_themed():
     from src.layout.grids import _perf_grid, _universe_grid
 
     for grid in (_perf_grid(), _universe_grid()):
-        assert grid.grid_style["background_color"] == "#0d1117"
-        assert grid.header_renderer.text_color == "#e6edf3"  # Color.TEXT
+        assert grid.grid_style["background_color"] == Color.CHROME_BG.value
+        assert grid.header_renderer.text_color == Color.TEXT.value
         assert "bbg-grid" in grid._dom_classes

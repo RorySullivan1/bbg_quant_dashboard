@@ -25,7 +25,7 @@ from src.layout.platform import (
     _update_sunburst,
 )
 from src.layout.theme import _v_ref
-from src.stats import tercile_bounds
+from src.stats import daily_returns, tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
 
 
@@ -35,7 +35,7 @@ def _universe(n: int = 400) -> pd.DataFrame:
     idx = pd.bdate_range("2022-01-03", periods=n)
     rng = np.random.default_rng(3)
     specs = {
-        "SPX Index": (0.0004, 0.011),
+        "SPXFP Index": (0.0004, 0.011),  # equity factor leg (EQUITY_FACTOR_TICKER)
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
         "BSLXAT Index": (0.0001, 0.006),
@@ -85,6 +85,54 @@ def test_update_factor_scatter_one_trace_per_asset_class():
     for tr in by_name.values():
         assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
         assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
+
+
+def _scatter_xyz(fig) -> dict:
+    """{trace name: (x, y, [z])} for the marker traces, for equality checks."""
+    out = {}
+    for tr in fig.data:
+        if isinstance(tr, (go.Scatter, go.Scatter3d)):
+            coords = [tuple(tr.x), tuple(tr.y)]
+            if isinstance(tr, go.Scatter3d):
+                coords.append(tuple(tr.z))
+            out[tr.name] = coords
+    return out
+
+
+def test_factor_scatter_returns_arg_matches_recompute():
+    # v0.9.13 #166: threading the shared universe_rets must produce a byte-
+    # identical scatter to letting the updater re-derive daily_returns.
+    universe = _universe()
+    arp = universe[["AAA Index", "BBB Index"]]
+    fig_a = _factor_beta_scatter()
+    _update_factor_scatter(fig_a, arp, universe, _meta(), years=1)
+    fig_b = _factor_beta_scatter()
+    _update_factor_scatter(
+        fig_b, arp, universe, _meta(), years=1, returns=daily_returns(arp)
+    )
+    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+
+
+def test_regime_scatter_returns_arg_matches_recompute():
+    # v0.9.13 #166: daily_returns(arp).tail(lookback - 1) is exactly
+    # daily_returns(arp.tail(lookback)), so the threaded path matches.
+    arp, vix = _regime_universe()
+    fig_a = _regime_scatter()
+    _update_regime_scatter(
+        fig_a, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+    )
+    fig_b = _regime_scatter()
+    _update_regime_scatter(
+        fig_b,
+        arp,
+        vix,
+        _regime_meta(),
+        low=15.0,
+        high=25.0,
+        lookback=200,
+        returns=daily_returns(arp),
+    )
+    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
 
 
 def test_factor_scatter_has_three_zero_planes():
@@ -305,3 +353,114 @@ def test_update_regime_scatter_tercile_bounds_condition_differently():
     low_xy = [tuple(tr.x) for tr in fig_low.data]
     high_xy = [tuple(tr.x) for tr in fig_high.data]
     assert low_xy != high_xy
+
+
+# --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
+# The render/wire logic was extracted from build_app into platform.py; these
+# guard that build_app still wires it correctly end-to-end.
+
+
+def _walk(w):
+    yield w
+    for c in getattr(w, "children", ()) or ():
+        yield from _walk(c)
+
+
+def test_platform_regime_controls_resync_on_type_change():
+    """The regime Type dropdown is wired (platform.wire_platform_analytics ->
+    _sync_regime_controls) to repopulate the Source / Bucket dropdowns: a
+    tercile regime (Trend) shows the Source dropdown and Low/Middle/High
+    buckets; Volatility hides the Source and uses fixed VIX-level buckets."""
+    import ipywidgets as W
+    from src.layout import build_app
+
+    app = build_app(verbose=False)
+    panel = app.children[5].children[0]  # Platform is the default tab
+    # Mount the Regime analytics tab so its controls are in the widget tree.
+    next(
+        b
+        for b in _walk(app)
+        if isinstance(b, W.Button) and b.description == "Regime analysis"
+    ).click()
+    type_dd = next(
+        w for w in _walk(panel) if isinstance(w, W.Dropdown) and w.description == "Type"
+    )
+    source_dd = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Dropdown) and w.description == "Source"
+    )
+    bucket_dd = next(
+        w
+        for w in _walk(panel)
+        if isinstance(w, W.Dropdown) and w.description == "Bucket"
+    )
+
+    assert type_dd.value == "Volatility"
+    assert source_dd.layout.display == "none"  # no source for Volatility
+    vix_buckets = [o[0] for o in bucket_dd.options]
+
+    type_dd.value = "Trend"  # tercile regime — wired observer re-syncs
+    assert source_dd.layout.display != "none"
+    assert len(source_dd.options) > 0
+    assert [o[0] for o in bucket_dd.options] != vix_buckets
+
+    type_dd.value = "Volatility"  # back to fixed buckets, source hidden
+    assert source_dd.layout.display == "none"
+    assert [o[0] for o in bucket_dd.options] == vix_buckets
+
+
+def test_platform_analytics_tab_swap():
+    """Clicking the analytics pills swaps the chart shown in the card
+    (platform.activate_platform_tab, wired by build_app)."""
+    import ipywidgets as W
+    from src.layout import build_app
+
+    app = build_app(verbose=False)
+    panel = app.children[5].children[0]
+    analytics_card = panel.children[3]
+    chart_box = analytics_card.children[2].children[1]  # analytics_body -> chart_box
+    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+    first = chart_box.children[0]
+    pills["Factor exposures"].click()
+    assert chart_box.children[0] is not first  # swapped to the factor scatter
+    pills["Sunburst"].click()
+    assert chart_box.children[0] is first  # back to the sunburst
+
+
+def test_platform_analytics_render_is_lazy(monkeypatch):
+    """v0.9.13 #168: only the visible (Sunburst) analytics tab renders on load;
+    Regime / Factor render on their pill's first activation and not again while
+    fresh."""
+    import ipywidgets as W
+    import src.layout.platform as plat
+    from src.layout import build_app
+
+    calls = {"sunburst": 0, "regime": 0, "factor": 0}
+
+    def _spy(name, real):
+        def render(state, meta, pa):
+            calls[name] += 1
+            return real(state, meta, pa)
+
+        return render
+
+    for name in ("sunburst", "regime", "factor"):
+        monkeypatch.setitem(
+            plat._ANALYTICS_RENDERERS, name, _spy(name, plat._ANALYTICS_RENDERERS[name])
+        )
+
+    app = build_app(verbose=False)
+    # On load only the visible Sunburst tab is computed.
+    assert calls == {"sunburst": 1, "regime": 0, "factor": 0}
+
+    analytics_card = app.children[5].children[0].children[3]
+    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+
+    pills["Factor exposures"].click()  # first activation → render once
+    assert calls["factor"] == 1
+    pills["Sunburst"].click()  # already fresh → no re-render
+    pills["Factor exposures"].click()  # still fresh → no re-render
+    assert calls["factor"] == 1
+    assert calls["sunburst"] == 1
+    assert calls["regime"] == 0  # never activated → never rendered

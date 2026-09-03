@@ -6,7 +6,14 @@ import numpy as np
 import pandas as pd
 
 from ..config import PERF_TABLE_YEARS, TRADING_DAYS_PER_YEAR
-from ._common import _has_enough_history, _slice_last_years, daily_returns, max_drawdown
+from ._common import (
+    _first_valid_index,
+    _has_enough_history,
+    _last_valid_index,
+    _slice_last_years,
+    daily_returns,
+    max_drawdown,
+)
 
 
 def cum_perf(prices: pd.DataFrame) -> pd.DataFrame:
@@ -49,6 +56,25 @@ def period_return(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     return out.rename("period_return")
 
 
+def _longest_streak(window: pd.DataFrame, *, positive: bool) -> pd.Series:
+    """Longest run of consecutive strictly-signed days per column, vectorized.
+
+    NaN/zero days break the run. Columns with no valid data are NaN; the rest
+    are non-negative integer-valued floats. Loops over the (short) window rows
+    doing whole-row numpy ops, so cost scales with the window length rather than
+    the ticker count — no per-column Python loop.
+    """
+    arr = window.to_numpy(dtype=float)
+    hit = arr > 0 if positive else arr < 0  # NaN compares False for both signs
+    cur = np.zeros(arr.shape[1])
+    best = np.zeros(arr.shape[1])
+    for row in hit:
+        cur = np.where(row, cur + 1.0, 0.0)
+        best = np.maximum(best, cur)
+    best[np.isnan(arr).all(axis=0)] = np.nan  # all-NaN column → NaN
+    return pd.Series(best, index=window.columns, dtype=float)
+
+
 def longest_up_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     """Per-ticker longest run of consecutive positive daily returns in the window.
 
@@ -60,18 +86,7 @@ def longest_up_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Ser
     if returns.empty:
         return pd.Series(dtype=float)
     window = returns.tail(window_days)
-    out: dict[str, float] = {}
-    for col in window.columns:
-        series = window[col]
-        if series.notna().sum() == 0:
-            out[col] = np.nan
-            continue
-        best = cur = 0
-        for is_up in (series > 0).to_numpy():
-            cur = cur + 1 if is_up else 0
-            best = max(best, cur)
-        out[col] = float(best)
-    return pd.Series(out, dtype=float).rename("longest_up_streak")
+    return _longest_streak(window, positive=True).rename("longest_up_streak")
 
 
 def longest_down_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
@@ -85,18 +100,7 @@ def longest_down_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.S
     if returns.empty:
         return pd.Series(dtype=float)
     window = returns.tail(window_days)
-    out: dict[str, float] = {}
-    for col in window.columns:
-        series = window[col]
-        if series.notna().sum() == 0:
-            out[col] = np.nan
-            continue
-        best = cur = 0
-        for is_down in (series < 0).to_numpy():
-            cur = cur + 1 if is_down else 0
-            best = max(best, cur)
-        out[col] = float(best)
-    return pd.Series(out, dtype=float).rename("longest_down_streak")
+    return _longest_streak(window, positive=False).rename("longest_down_streak")
 
 
 def ma_spread(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
@@ -163,14 +167,35 @@ def return_autocorr(
     if returns.empty:
         return pd.Series(dtype=float)
     window = returns.tail(window_days)
-    out: dict[str, float] = {}
-    for col in window.columns:
-        series = window[col].dropna()
-        if len(series) < lag + 3:
-            out[col] = np.nan
-            continue
-        out[col] = series.autocorr(lag=lag)
-    return pd.Series(out, dtype=float).rename("return_autocorr")
+    arr = window.to_numpy(dtype=float)
+    if arr.shape[0] <= lag:
+        out = np.full(arr.shape[1], np.nan)
+        return pd.Series(out, index=window.columns, dtype=float).rename(
+            "return_autocorr"
+        )
+    # Vectorized lag-``lag`` Pearson autocorrelation across all columns at once.
+    # This pipeline's series are gap-free once they start (prices are
+    # forward-filled, so a late-launching ticker only carries *leading* NaNs),
+    # so masking to pairs where both the value and its lagged copy are valid
+    # correlates exactly the same consecutive points a per-column
+    # ``dropna().autocorr(lag)`` would — no interior gaps to bridge.
+    cur = arr[lag:]
+    lagged = arr[:-lag]
+    both = ~np.isnan(cur) & ~np.isnan(lagged)
+    count = both.sum(axis=0)
+    cur = np.where(both, cur, 0.0)
+    lagged = np.where(both, lagged, 0.0)
+    sum_c, sum_l = cur.sum(axis=0), lagged.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = (cur * lagged).sum(axis=0) - sum_c * sum_l / count
+        var_c = (cur * cur).sum(axis=0) - sum_c * sum_c / count
+        var_l = (lagged * lagged).sum(axis=0) - sum_l * sum_l / count
+        corr = cov / np.sqrt(var_c * var_l)
+    # Match the old guard: fewer than ``lag + 3`` valid points → NaN. With
+    # contiguous validity, valid points = both-valid pairs + lag, so the
+    # threshold on the pair count is a constant 3.
+    corr[count < 3] = np.nan
+    return pd.Series(corr, index=window.columns, dtype=float).rename("return_autocorr")
 
 
 def macd_histogram(
@@ -303,8 +328,8 @@ def since_inception_perf(prices: pd.DataFrame) -> pd.DataFrame:
     if prices.empty:
         return pd.DataFrame()
 
-    first_valid = prices.apply(pd.Series.first_valid_index)
-    last_valid = prices.apply(pd.Series.last_valid_index)
+    first_valid = _first_valid_index(prices)
+    last_valid = _last_valid_index(prices)
     span_days = (last_valid - first_valid).dt.total_seconds() / 86_400.0
     span_years = span_days / 365.25
     valid = span_years > 0

@@ -265,6 +265,52 @@ def test_quant_metrics_table_empty_input_keeps_columns():
     assert "Sharpe" in table.columns
 
 
+def _ann_beta_reference(
+    rets: pd.DataFrame, bench: pd.Series, years: float
+) -> pd.Series:
+    """The pre-v0.9.13 per-column ``Series.cov`` implementation, for comparison."""
+    end = rets.index.max()
+    start = end - pd.Timedelta(days=int(years * 365.25))
+    sliced = rets.loc[rets.index >= start]
+    b = bench.reindex(sliced.index)
+    return sliced.apply(lambda col: col.cov(b)).divide(b.var())
+
+
+def test_ann_beta_vectorized_matches_per_column_cov(multiyear_prices, benchmark):
+    # v0.9.13 #167: the vectorized beta must match the old per-column cov loop,
+    # including on a ragged column (a late-launching ticker with leading NaNs).
+    rets = stats.daily_returns(multiyear_prices).copy()
+    ragged = rets.columns[0]
+    rets.iloc[:40, rets.columns.get_loc(ragged)] = np.nan  # leading gap
+    got = stats.ann_beta(rets, benchmark, years=1)
+    ref = _ann_beta_reference(rets, benchmark, years=1)
+    pd.testing.assert_series_equal(got, ref, check_names=False)
+
+
+def test_quant_table_shares_one_beta_across_beta_treynor_jensen(
+    multiyear_prices, benchmark
+):
+    # Sharing one beta internally must not change Treynor / Jensen vs standalone.
+    table = stats.quant_metrics_table(multiyear_prices, benchmark, years=1)
+    rets = stats.daily_returns(multiyear_prices)
+    pd.testing.assert_series_equal(
+        table["Treynor"],
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1),
+        check_names=False,
+    )
+    pd.testing.assert_series_equal(
+        table["Jensen"],
+        stats.jensen_alpha(rets, multiyear_prices, benchmark, 1),
+        check_names=False,
+    )
+    # Passing an explicit beta matches computing it internally.
+    beta = stats.ann_beta(rets, benchmark, 1)
+    pd.testing.assert_series_equal(
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1, beta=beta),
+        stats.treynor_ratio(rets, multiyear_prices, benchmark, 1),
+    )
+
+
 # --- overlap window --------------------------------------------------------
 
 
@@ -289,6 +335,21 @@ def test_common_window_bounds_no_overlap_returns_none(bdays):
 
 def test_common_window_bounds_empty_returns_none():
     assert stats.common_window_bounds(pd.DataFrame()) == (None, None)
+
+
+def test_common_window_bounds_ignores_all_nan_column(bdays):
+    # v0.9.13 #170: the vectorized first/last-valid must map an all-NaN column to
+    # NaT (not the frame's first index), so max/min skip it — matching the old
+    # per-column apply. Bounds come from the one column with data.
+    idx = bdays(5)
+    prices = pd.DataFrame(
+        {
+            "AAA Index": [100.0, 101.0, 102.0, 103.0, 104.0],
+            "DEAD Index": [np.nan] * 5,
+        },
+        index=idx,
+    )
+    assert stats.common_window_bounds(prices) == (idx[0], idx[4])
 
 
 def test_active_columns_drops_flat_and_empty(bdays):
@@ -347,7 +408,7 @@ def _factor_frame(idx) -> pd.DataFrame:
     """Seeded prices including the factor proxy tickers + one strategy."""
     rng = np.random.default_rng(11)
     specs = {
-        "SPX Index": (0.0004, 0.011),
+        "SPXFP Index": (0.0004, 0.011),  # equity factor leg (EQUITY_FACTOR_TICKER)
         "LUTLTRUU Index": (0.0002, 0.005),
         "LD12TRUU Index": (0.00005, 0.0005),
         "BSLXAT Index": (0.0001, 0.006),
@@ -401,6 +462,21 @@ def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
         assert z.name == f"{metric}_zscore"
 
 
+def test_rolling_metric_zscore_returns_arg_matches_prices(multiyear_prices):
+    # v0.9.13 #166: passing a precomputed returns frame (the shared
+    # universe_rets) is identical to letting the function derive it from prices —
+    # both slice to the same trailing window before the rolling compute.
+    rets = stats.daily_returns(multiyear_prices)
+    for metric in ("sharpe", "sortino", "return", "vol"):
+        via_prices = stats.rolling_metric_zscore(
+            multiyear_prices, metric=metric, window=63, zscore_window=126
+        )
+        via_returns = stats.rolling_metric_zscore(
+            multiyear_prices, metric=metric, window=63, zscore_window=126, returns=rets
+        )
+        pd.testing.assert_series_equal(via_prices, via_returns)
+
+
 def test_rolling_metric_zscore_unknown_metric_raises(multiyear_prices):
     with pytest.raises(ValueError):
         stats.rolling_metric_zscore(
@@ -423,8 +499,8 @@ def test_rolling_metric_zscore_positive_for_recent_strength(bdays):
 def test_equity_risk_premium_is_equity_minus_short(bdays):
     prices = _factor_frame(bdays(300))
     erp = stats.equity_risk_premium(prices)
-    rets = stats.daily_returns(prices[["SPX Index", "LD12TRUU Index"]])
-    expected = rets["SPX Index"] - rets["LD12TRUU Index"]
+    rets = stats.daily_returns(prices[["SPXFP Index", "LD12TRUU Index"]])
+    expected = rets["SPXFP Index"] - rets["LD12TRUU Index"]
     pd.testing.assert_series_equal(erp, expected, check_names=False)
     assert erp.name == "equity_risk_premium"
 
@@ -718,6 +794,52 @@ def test_return_autocorr_empty_passthrough():
     assert stats.return_autocorr(pd.DataFrame(), window_days=21).empty
 
 
+def test_return_autocorr_leading_nan_matches_dropna_reference(bdays):
+    # v0.9.13: the vectorized autocorr must match a per-column
+    # dropna().autocorr() on a ragged frame — one full column, one
+    # late-launching column (leading NaNs), one all-NaN column.
+    idx = bdays(30)
+    rng = np.random.default_rng(7)
+    full = rng.normal(0.0, 0.01, len(idx))
+    late = full.copy()
+    late[:12] = np.nan  # launches partway → only leading NaNs, no interior gaps
+    rets = pd.DataFrame(
+        {
+            "FULL Index": full,
+            "LATE Index": late,
+            "DEAD Index": np.full(len(idx), np.nan),
+        },
+        index=idx,
+    )
+    got = stats.return_autocorr(rets, window_days=30)
+    for col in ("FULL Index", "LATE Index"):
+        expected = rets[col].dropna().autocorr(lag=1)
+        assert got[col] == pytest.approx(expected, rel=1e-9, abs=1e-12)
+    assert np.isnan(got["DEAD Index"])  # no valid data → NaN
+
+
+def test_longest_streaks_vectorized_across_columns_and_nan(bdays):
+    # v0.9.13: vectorized streaks over multiple columns at once — zeros break a
+    # run, a leading NaN doesn't seed a run, an all-NaN column is NaN.
+    idx = bdays(6)
+    rets = pd.DataFrame(
+        {
+            "UP Index": [0.01, 0.01, 0.0, 0.01, 0.01, 0.01],  # 0 breaks → 3
+            "DN Index": [-0.01, -0.01, -0.01, 0.01, -0.01, -0.01],  # 3 down then 2
+            "LATE Index": [np.nan, np.nan, 0.01, 0.01, 0.01, -0.01],  # up run 3
+            "DEAD Index": [np.nan] * 6,
+        },
+        index=idx,
+    )
+    up = stats.longest_up_streak(rets, window_days=21)
+    dn = stats.longest_down_streak(rets, window_days=21)
+    assert up["UP Index"] == 3.0
+    assert dn["DN Index"] == 3.0
+    assert up["LATE Index"] == 3.0
+    assert dn["LATE Index"] == 1.0
+    assert np.isnan(up["DEAD Index"]) and np.isnan(dn["DEAD Index"])
+
+
 def test_macd_histogram_recent_up_positive_recent_down_negative(bdays):
     idx = bdays(80)
     # Flat for 60 days then a sharp recent move — the histogram reflects the
@@ -890,3 +1012,269 @@ def test_tercile_bounds_degenerate_selects_all():
     assert stats.tercile_bounds(pd.Series(dtype=float), "low") == (-np.inf, np.inf)
     flat = pd.Series([5.0] * 10)
     assert stats.tercile_bounds(flat, "high") == (-np.inf, np.inf)
+
+
+# --- v0.9.0 calendar / resampled-return helpers ----------------------------
+
+_CAL_MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+
+
+def _cal_cols(kind: str) -> list[str]:
+    return [*_CAL_MONTHS, *stats.calendar_summary_columns(kind)]
+
+
+_CAL_COLS = _cal_cols("absolute")
+
+
+def test_monthly_returns_compounds_within_month(bdays):
+    # 1%/day for 11 business days, all inside January → 10 compounded steps.
+    idx = bdays(11, start="2021-01-04")
+    prices = pd.DataFrame({"X Index": 100.0 * 1.01 ** np.arange(11)}, index=idx)
+    m = stats.monthly_returns(prices)
+    assert len(m) == 1
+    assert m.index.is_month_end.all()
+    assert m["X Index"].iloc[0] == pytest.approx(1.01**10 - 1)
+
+
+def test_monthly_returns_reconcile_to_total_return(multiyear_prices):
+    # Compounding every month back together equals the full-period total return.
+    m = stats.monthly_returns(multiyear_prices)
+    compounded = (1.0 + m).prod() - 1.0
+    tot = stats.total_return(multiyear_prices)
+    np.testing.assert_allclose(compounded.to_numpy(), tot.to_numpy(), rtol=1e-9)
+
+
+def test_monthly_returns_empty_passthrough():
+    assert stats.monthly_returns(pd.DataFrame()).empty
+
+
+def test_weekly_returns_anchored_on_friday(bdays):
+    idx = bdays(10, start="2021-01-04")  # Mon Jan 4 .. Fri Jan 15
+    prices = pd.DataFrame({"X Index": 100.0 * 1.01 ** np.arange(10)}, index=idx)
+    w = stats.weekly_returns(prices)
+    assert (w.index.dayofweek == 4).all()  # every bin ends on a Friday
+
+
+def test_monthly_realized_vol_is_within_month_std(bdays):
+    idx = bdays(5, start="2021-01-04")
+    vals = [0.01, -0.01, 0.02, -0.02, 0.0]
+    rets = pd.DataFrame({"X Index": vals}, index=idx)
+    rv = stats.monthly_realized_vol(rets)
+    assert rv["X Index"].iloc[0] == pytest.approx(np.std(vals, ddof=1))
+
+
+def test_calendar_return_table_columns_and_year_reconciles(multiyear_prices):
+    table = stats.calendar_return_table(multiyear_prices["AAA Index"])
+    assert list(table.columns) == _CAL_COLS
+    for _, row in table.iterrows():
+        months = row[_CAL_MONTHS].dropna().to_numpy()
+        compounded = float(np.prod(1.0 + months) - 1.0)
+        assert row["Return"] == pytest.approx(compounded)
+    # A full calendar year has a finite annualized Sharpe + Vol.
+    assert np.isfinite(table.loc[2022, "Sharpe"])
+    assert np.isfinite(table.loc[2022, "Vol"]) and table.loc[2022, "Vol"] > 0
+
+
+def test_calendar_return_table_empty_keeps_columns():
+    out = stats.calendar_return_table(pd.Series(dtype=float))
+    assert out.empty
+    assert list(out.columns) == _CAL_COLS
+
+
+def test_calendar_return_table_invalid_kind_raises(multiyear_prices):
+    with pytest.raises(ValueError, match="unknown kind"):
+        stats.calendar_return_table(multiyear_prices["AAA Index"], kind="bogus")
+
+
+def test_calendar_outperformance_requires_benchmark(multiyear_prices):
+    out = stats.calendar_return_table(
+        multiyear_prices["AAA Index"], kind="outperformance", benchmark=None
+    )
+    assert out.empty
+    assert list(out.columns) == _cal_cols("outperformance")
+
+
+def test_calendar_outperformance_is_strategy_minus_benchmark(
+    multiyear_prices, benchmark
+):
+    s = multiyear_prices["AAA Index"]
+    op = stats.calendar_return_table(s, kind="outperformance", benchmark=benchmark)
+    m_s = stats.monthly_returns(s.to_frame("x"))["x"]
+    m_b = stats.monthly_returns(benchmark.to_frame("b"))["b"]
+    ts = m_s.index[5]
+    expected = m_s.loc[ts] - m_b.reindex(m_s.index).loc[ts]
+    assert op.loc[ts.year, _CAL_MONTHS[ts.month - 1]] == pytest.approx(expected)
+    # Summary columns: strategy & benchmark annual returns and both Sharpes, with
+    # Excess reconciling to Return − Bench.
+    assert list(op.columns) == _cal_cols("outperformance")
+    year = ts.year
+    assert op.loc[year, "Excess"] == pytest.approx(
+        op.loc[year, "Return"] - op.loc[year, "Bench"]
+    )
+    assert np.isfinite(op.loc[year, "Bench Sharpe"])
+
+
+def test_calendar_vol_adjusted_is_return_over_vol(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    va = stats.calendar_return_table(s, kind="vol_adjusted")
+    m = stats.monthly_returns(s.to_frame("x"))["x"]
+    rvol = stats.monthly_realized_vol(stats.daily_returns(s.to_frame("x")))["x"]
+    ts = m.index[5]
+    expected = m.loc[ts] / rvol.loc[ts]
+    assert va.loc[ts.year, _CAL_MONTHS[ts.month - 1]] == pytest.approx(expected)
+
+
+def test_ols_fit_recovers_a_perfect_line():
+    x = np.arange(10, dtype=float)
+    fit = stats.ols_fit(x, 3.0 + 2.0 * x)
+    assert fit.slope == pytest.approx(2.0)
+    assert fit.intercept == pytest.approx(3.0)
+    assert fit.r_squared == pytest.approx(1.0)
+
+
+def test_ols_fit_drops_nan_pairs():
+    x = np.array([0.0, 1.0, 2.0, np.nan])
+    y = np.array([1.0, 3.0, 5.0, 10.0])
+    fit = stats.ols_fit(x, y)
+    assert fit.slope == pytest.approx(2.0)
+
+
+def test_ols_fit_degenerate_is_nan():
+    one = stats.ols_fit([1.0], [2.0])
+    assert np.isnan(one.slope) and np.isnan(one.r_squared)
+    flat_x = stats.ols_fit([5.0, 5.0, 5.0], [1.0, 2.0, 3.0])
+    assert np.isnan(flat_x.slope)
+
+
+def test_poly_fit_recovers_a_perfect_parabola():
+    x = np.linspace(-2.0, 2.0, 21)
+    # y = 3x² + 2x + 1 → convexity 3, linear (central β) 2.
+    fit = stats.poly_fit(x, 3.0 * x**2 + 2.0 * x + 1.0, degree=2)
+    assert fit.convexity == pytest.approx(3.0)
+    assert fit.slope == pytest.approx(2.0)
+    assert fit.coeffs[-1] == pytest.approx(1.0)  # intercept
+    assert fit.r_squared == pytest.approx(1.0)
+
+
+def test_poly_fit_sign_distinguishes_convex_from_concave():
+    x = np.linspace(-1.0, 1.0, 15)
+    convex = stats.poly_fit(x, x**2, degree=2)
+    concave = stats.poly_fit(x, -(x**2), degree=2)
+    assert convex.convexity > 0
+    assert concave.convexity < 0
+
+
+def test_poly_fit_drops_nan_pairs():
+    x = np.array([-2.0, -1.0, 0.0, 1.0, 2.0, np.nan])
+    y = np.array([4.0, 1.0, 0.0, 1.0, 4.0, 99.0])  # y = x², last pair dropped
+    fit = stats.poly_fit(x, y, degree=2)
+    assert fit.convexity == pytest.approx(1.0)
+    assert fit.slope == pytest.approx(0.0, abs=1e-9)
+
+
+def test_poly_fit_degenerate_is_nan():
+    # Too few points for a quadratic, and a zero-variance x, both yield NaN.
+    two = stats.poly_fit([0.0, 1.0], [0.0, 1.0], degree=2)
+    assert np.isnan(two.convexity) and np.isnan(two.r_squared)
+    flat_x = stats.poly_fit([5.0, 5.0, 5.0], [1.0, 2.0, 3.0], degree=2)
+    assert np.isnan(flat_x.slope)
+
+
+def test_monthly_factor_correlations_self_is_one(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    factor = stats.daily_returns(s.to_frame("f"))["f"]
+    mc = stats.monthly_factor_correlations(s, factor, window=63)
+    assert mc.index.is_month_end.all()
+    valid = mc.dropna()
+    assert (valid <= 1.0 + 1e-9).all()
+    assert (valid >= -1.0 - 1e-9).all()
+    assert valid.iloc[-1] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_monthly_factor_correlations_empty():
+    out = stats.monthly_factor_correlations(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    )
+    assert out.empty
+
+
+def test_calendar_resample_rules_are_offset_objects():
+    """Regression guard: the calendar resamplers use pandas offset objects, not
+    the "ME" / "W-FRI" alias strings (which raise on pandas < 2.2, as shipped by
+    some BQuant runtimes). The single-pandas test sandbox accepts both spellings,
+    so this pins the version-portable intent directly."""
+    from src.stats import calendar as cal
+
+    assert isinstance(cal._MONTH_END, pd.offsets.MonthEnd)
+    assert isinstance(cal._WEEK_FRI, pd.offsets.Week)
+    assert cal._WEEK_FRI.weekday == 4  # Friday-anchored, == "W-FRI"
+
+
+def test_monthly_beta_and_correlation_self(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    mb = stats.monthly_beta(s, s)
+    mc = stats.monthly_correlation(s, s)
+    assert mb.index.is_month_end.all()
+    assert mc.index.is_month_end.all()
+    # A series vs itself: beta ≈ 1, correlation ≈ 1 for every populated month.
+    assert mb.dropna().sub(1.0).abs().max() == pytest.approx(0.0, abs=1e-9)
+    assert mc.dropna().sub(1.0).abs().max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_monthly_correlation_in_unit_range(multiyear_prices, benchmark):
+    mc = stats.monthly_correlation(multiyear_prices["AAA Index"], benchmark).dropna()
+    assert (mc <= 1.0 + 1e-9).all()
+    assert (mc >= -1.0 - 1e-9).all()
+
+
+def test_monthly_beta_correlation_empty():
+    assert stats.monthly_beta(pd.Series(dtype=float), pd.Series(dtype=float)).empty
+    assert stats.monthly_correlation(
+        pd.Series(dtype=float), pd.Series(dtype=float)
+    ).empty
+
+
+def test_calendar_beta_correlation_need_benchmark(multiyear_prices):
+    s = multiyear_prices["AAA Index"]
+    for kind in ("beta", "correlation"):
+        out = stats.calendar_return_table(s, kind=kind, benchmark=None)
+        assert out.empty
+        assert list(out.columns) == _cal_cols(kind)
+
+
+def test_calendar_beta_correlation_shape(multiyear_prices, benchmark):
+    s = multiyear_prices["AAA Index"]
+    for kind in ("beta", "correlation"):
+        table = stats.calendar_return_table(s, kind=kind, benchmark=benchmark)
+        # A single annual summary column: Beta / Correlation, no Sharpe.
+        assert list(table.columns) == _cal_cols(kind)
+        assert not table.empty
+
+
+def test_calendar_summary_columns_per_kind():
+    assert stats.calendar_summary_columns("absolute") == ("Return", "Vol", "Sharpe")
+    assert stats.calendar_summary_columns("outperformance") == (
+        "Return",
+        "Bench",
+        "Excess",
+        "Sharpe",
+        "Bench Sharpe",
+    )
+    assert stats.calendar_summary_columns("vol_adjusted") == ("Sharpe",)
+    assert stats.calendar_summary_columns("beta") == ("Beta",)
+    assert stats.calendar_summary_columns("correlation") == ("Correlation",)
+    with pytest.raises(ValueError, match="unknown kind"):
+        stats.calendar_summary_columns("bogus")

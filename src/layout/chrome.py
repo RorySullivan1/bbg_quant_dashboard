@@ -85,6 +85,33 @@ def _render_overlay(
     )
 
 
+def _selection_limit_popup() -> W.HTML:
+    """Fixed top-centre, auto-fading error popup for the strategy-selection cap
+    (v0.9.13 #181). Starts hidden; ``_render_limit_popup`` re-renders it with a
+    changing nonce so the CSS fade animation restarts on each rejected pick."""
+    return W.HTML(_render_limit_popup("", nonce=0, hidden=True))
+
+
+def _render_limit_popup(text: str, *, nonce: int, hidden: bool) -> str:
+    return render_template(
+        "selection_limit_popup",
+        **STYLE_CTX,
+        text=html.escape(text),
+        nonce=int(nonce),
+        state_class="is-hidden" if hidden else "",
+    )
+
+
+def _render_strat_count(n: int, cap: int) -> str:
+    """The 'Selected Strategies: n/cap' line above the picker; turns accent-red
+    once the cap is reached."""
+    full = " is-full" if n >= cap else ""
+    return (
+        f"<div class='bbg-strat-count{full}'>Selected Strategies: "
+        f"{int(n)}/{int(cap)}</div>"
+    )
+
+
 def _style_tab_button(btn: W.Button, *, active: bool) -> None:
     # Active state is a CSS class toggle (`.bbg-pill.is-active`), not inline
     # `.style` — inline button colors would block the `:hover`/`:focus` states

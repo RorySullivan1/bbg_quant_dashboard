@@ -5,6 +5,8 @@ from datetime import date
 from functools import cache
 from pathlib import Path
 
+import pandas as pd
+
 from ..config import TEMPLATES_DIR, WEEKLY_COMMENTARY_PATH
 from ..style import Color, Font, FontSize, StatusTone
 from .theme import _sentiment_color
@@ -166,6 +168,54 @@ def _render_highlights(
         window_label=html.escape(window_label),
         superlatives=_render_superlative_cards(superlatives),
         launches=_render_launch_cards(launches),
+    )
+
+
+def _na(value: object) -> str:
+    """Display helper: ``None`` / ``NA`` / blank → an em dash, else the text."""
+    if value is None:
+        return "—"
+    try:
+        if pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or "—"
+
+
+def _fmt_date(value: object) -> str:
+    """Display helper: a date / timestamp → ``YYYY-MM-DD``; ``NaT`` / blank → em
+    dash. Tolerates strings and anything `pd.to_datetime` can parse."""
+    if value is None:
+        return "—"
+    try:
+        ts = pd.to_datetime(value, errors="coerce")
+    except (TypeError, ValueError):
+        return _na(value)
+    if pd.isna(ts):
+        return "—"
+    return ts.strftime("%Y-%m-%d")
+
+
+def _render_profile_card(row: pd.Series) -> str:
+    """Render the Single Strategy metadata card from one ``meta`` row.
+
+    Every field is `html.escape`'d and NA-safe (`_na` / `_fmt_date` → em dash), so
+    a record missing a ``description`` / ``currency`` / ``live_date`` still
+    renders cleanly."""
+    return render_template(
+        "profile_card",
+        **STYLE_CTX,
+        name=html.escape(_na(row.get("name"))),
+        ticker=html.escape(_na(row.get("ticker"))),
+        asset_class=html.escape(_na(row.get("asset_class"))),
+        currency=html.escape(_na(row.get("currency"))),
+        return_type=html.escape(_na(row.get("return_type"))),
+        theme=html.escape(_na(row.get("theme"))),
+        category=html.escape(_na(row.get("category"))),
+        launch_date=html.escape(_fmt_date(row.get("live_date"))),
+        description=html.escape(_na(row.get("description"))),
     )
 
 

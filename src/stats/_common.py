@@ -31,12 +31,28 @@ def _slice_last_years(df: pd.DataFrame, years: float) -> pd.DataFrame:
     return sliced
 
 
+def _first_valid_index(prices: pd.DataFrame) -> pd.Series:
+    """Per-column first non-NaN index label (NaT for all-NaN columns), vectorized.
+
+    ``notna().idxmax()`` gives the first ``True`` per column but returns the
+    first index even for an all-NaN column, so mask those to NaT.
+    """
+    mask = prices.notna()
+    return mask.idxmax().where(mask.any())
+
+
+def _last_valid_index(prices: pd.DataFrame) -> pd.Series:
+    """Per-column last non-NaN index label (NaT for all-NaN columns), vectorized."""
+    mask = prices.notna()
+    return mask[::-1].idxmax().where(mask.any())
+
+
 def _has_enough_history(prices: pd.DataFrame, years: float) -> pd.Series:
     if prices.empty:
         return pd.Series(dtype=bool)
     end = prices.index.max()
     required = end - pd.Timedelta(days=int(years * 365.25))
-    first_valid = prices.apply(lambda s: s.first_valid_index())
+    first_valid = _first_valid_index(prices)
     return first_valid.notna() & (first_valid <= required)
 
 
@@ -113,10 +129,8 @@ def common_window_bounds(
     """
     if prices.empty or prices.shape[1] == 0:
         return (None, None)
-    first_valid = prices.apply(pd.Series.first_valid_index)
-    last_valid = prices.apply(pd.Series.last_valid_index)
-    start = first_valid.max()
-    end = last_valid.min()
+    start = _first_valid_index(prices).max()
+    end = _last_valid_index(prices).min()
     if pd.isna(start) or pd.isna(end) or start > end:
         return (None, None)
     return (start, end)
@@ -134,9 +148,8 @@ def active_columns(prices: pd.DataFrame, *, window_days: int = 21) -> list[str]:
     if prices.empty or prices.shape[1] == 0:
         return []
     tail = prices.tail(window_days)
-    out: list[str] = []
-    for col in prices.columns:
-        s = tail[col].dropna()
-        if len(s) >= 2 and s.nunique() > 1:
-            out.append(col)
-    return out
+    # Vectorized over columns (no per-column Python loop): at least two non-NaN
+    # values AND at least two distinct ones. ``nunique() > 1`` already implies
+    # ``notna().sum() >= 2``, but both are kept to mirror the original predicate.
+    keep = (tail.notna().sum() >= 2) & (tail.nunique() > 1)
+    return [col for col in prices.columns if bool(keep[col])]

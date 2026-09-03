@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 import time
 import traceback
+import warnings
 from datetime import date
 from types import SimpleNamespace
 
@@ -10,80 +12,70 @@ import pandas as pd
 from IPython import get_ipython
 from IPython.display import display
 
-from ..bql_client import _cache_path, fetch_prices
-from ..commentary import build_launch_cards, build_superlatives
+from ..bql_client import TickersUnresolved, _cache_path, fetch_prices
+from ..commentary import build_launch_cards, build_superlatives, superlative_returns
 from ..config import (
-    BENCHMARK_TICKERS,
-    DEFAULT_BENCHMARK,
+    BENCHMARK_SHORT_HISTORY_DAYS,
     FACTOR_TICKERS,
     HALF_YEAR_WINDOW,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
+    MAX_SELECTED_STRATEGIES,
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
     REGIME_SPECS,
     REGIME_TICKERS,
+    SHORT_WINDOW_OPTIONS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
+    WINDOW_LABELS,
 )
-from ..data import apply_filters, load_metadata, unique_values
+from ..data import load_metadata
 from ..stats import (
     active_columns,
-    ann_beta,
     common_window_bounds,
     corr_matrix,
     cum_perf,
     daily_returns,
     drawdown_series,
-    excess_cum_return,
-    heatmap_corr_matrix,
-    jensen_alpha,
     perf_table,
-    quant_metrics_table,
     return_distribution_stats,
-    rolling_autocorr,
-    rolling_beta,
-    rolling_correlation,
     rolling_metric_zscore,
     rolling_sharpe_zscore,
-    tercile_bounds,
-    treynor_ratio,
     universe_perf,
-    zscore_cross_section,
 )
 from ..style import (
     Color,
     StatusTone,
 )
-from .charts import (
-    _update_drawdown,
-    _update_heatmap,
-    _update_line,
-    _update_outperformance,
-    _update_return_dist,
-    _update_rolling_ref,
-    _update_scatter,
-    _update_sharpe_line,
-)
+from ..user_benchmarks import load_user_benchmarks, save_user_benchmarks
+from .benchmarks import BenchmarkRegistry
 from .chrome import (
     _app_css,
     _banner,
     _loading_overlay,
     _make_tab_button,
+    _render_limit_popup,
     _render_overlay,
     _render_status,
+    _render_strat_count,
+    _selection_limit_popup,
     _status_banner,
     _style_tab_button,
 )
-from .filters import _checkbox_group, _q_row, _section_label, _ticker_options
+from .filter_panel import make_filter_panel
+from .filters import (
+    CheckboxMultiSelect,
+    _section_label,
+    _ticker_options,
+)
 from .grids import (
     _perf_grid,
     _universe_grid,
     _update_perf_grid,
-    _update_universe_grid,
 )
 from .html import (
     STYLE_CTX,
@@ -94,16 +86,40 @@ from .html import (
     _render_weekly_commentary,
     render_template,
 )
+from .multi_strategy import (
+    bind_lazy_render,
+    bind_live_controls,
+    clear_pane,
+    render_pane,
+)
 from .panes import _make_analysis_pane
 from .platform import (
     _factor_beta_scatter,
     _regime_scatter,
     _sunburst,
-    _update_factor_scatter,
-    _update_regime_scatter,
-    _update_sunburst,
+    invalidate_analytics,
+    regime_bucket_options,
+    render_universe_grid,
+    wire_platform_analytics,
+)
+from .single_strategy import (
+    _CALENDAR_TABS,
+    make_single_strategy_panel,
+    render_analysis_pane,
+    render_calendar,
+    render_single_strategy,
+    set_calendar_kind,
 )
 from .state import DashboardState
+
+# Minimum time the Refresh overlay is held visible before the worker thread
+# runs the (possibly instant) refetch and flips it hidden. The click handler
+# shows the overlay and returns; without this beat, an instant refetch — the
+# off-terminal mock path, or a warm cache — hides it again inside the same
+# animation frame, so the frontend coalesces show→hide and the overlay never
+# paints. A background-thread sleep doesn't block the kernel, so the frontend
+# is free to paint the visible overlay during it. (v0.9.0 refresh-overlay fix.)
+_OVERLAY_PAINT_DELAY_S = 0.35
 
 
 def build_app(verbose: bool = False) -> W.VBox:
@@ -116,16 +132,24 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Loading overlay (v0.6.5 Workstream C). `build_app` is synchronous, so we
     # display() the overlay first and push staged progress as each load step
     # completes, then mount the dashboard (which also contains `overlay_w`) and
-    # dismiss it. Caveat: in Voila the kernel may collapse the intermediate
-    # comm frames to the first/last, so the bar is best-effort — it always
-    # appears and dismisses, but frame-by-frame animation isn't guaranteed
-    # without a background-thread load (a deferred dev-map stretch).
+    # dismiss it. On the initial load this shows because display() mounts a
+    # *new* overlay view that is born visible and painted before the long
+    # synchronous build runs. Refresh has no such fresh mount, so it offloads
+    # its blocking work to a worker thread instead (see `_refresh_prices`) — the
+    # background-thread load the original caveat here flagged as the real fix.
     overlay_w = _loading_overlay()
 
     def _set_progress(
         pct: int, label: str, *, error: bool = False, hidden: bool = False
     ) -> None:
         overlay_w.value = _render_overlay(pct, label, error=error, hidden=hidden)
+        # Belt-and-braces dismissal. The `.bbg-overlay.is-hidden` rule only sets
+        # `opacity: 0`, so if the injected stylesheet isn't applied (or is
+        # stripped by the frontend) a "hidden" overlay stays fully opaque at
+        # `z-index: 9999` over the whole viewport — the dashboard then loads fine
+        # but is invisible behind it. Toggling `layout.display` hides it at the
+        # widget level, independent of any CSS.
+        overlay_w.layout.display = "none" if hidden else ""
 
     if get_ipython() is not None:
         display(overlay_w)
@@ -143,146 +167,59 @@ def build_app(verbose: bool = False) -> W.VBox:
     _log(f"loaded metadata: {len(meta)} tickers")
     _set_progress(25, f"Loaded {len(meta)} indices")
 
-    asset_content, asset_get, asset_checks = _checkbox_group(
-        unique_values(meta, "asset_class")
-    )
-    cat_content, cat_get, cat_checks = _checkbox_group(unique_values(meta, "category"))
-    theme_content, theme_get, theme_checks = _checkbox_group(
-        unique_values(meta, "theme")
-    )
-    ret_content, ret_get, ret_checks = _checkbox_group(
-        unique_values(meta, "return_type")
-    )
-
-    live_min = W.DatePicker(layout=W.Layout(width="160px"))
-    live_max = W.DatePicker(layout=W.Layout(width="160px"))
-
-    # Currency lives under Characteristics; "All" = no currency filter.
-    currency_dd = W.Dropdown(
-        options=["All"] + unique_values(meta, "currency"),
-        value="All",
-        description="Currency",
-        style={"description_width": "70px"},
-        layout=W.Layout(width="240px"),
-    )
-
-    def currency_get() -> list[str]:
-        return [] if currency_dd.value == "All" else [currency_dd.value]
-
-    # Quantitative filter — each metric row is [label] [≥/≤ dropdown] [value],
-    # with an inline parameter dropdown where relevant (Beta → benchmark,
-    # Z-Score → base metric). Ratios are computed from the already-fetched
-    # prices (no new BQL). Value is a Text box parsed to float, so a blank box
-    # means "no filter"; 0 stays a valid threshold.
-    q_period = W.Dropdown(
-        options=[("1Y", 1), ("3Y", 3), ("5Y", 5)],
-        value=1,
-        description="Period",
-        style={"description_width": "55px"},
-        layout=W.Layout(width="150px"),
-    )
-
-    def _bench_dd() -> W.Dropdown:
-        return W.Dropdown(
-            options=BENCHMARK_TICKERS,
-            value=DEFAULT_BENCHMARK,
-            layout=W.Layout(width="200px"),
-        )
-
-    # Each benchmark-based metric gets its own benchmark dropdown.
-    q_beta_bench = _bench_dd()
-    q_treynor_bench = _bench_dd()
-    q_jensen_bench = _bench_dd()
-    q_z_metric = W.Dropdown(
-        options=[
-            "Sharpe",
-            "Sortino",
-            "Calmar",
-            "Beta",
-            "Treynor",
-            "Jensen",
-            "VaR",
-            "RSI",
-        ],
-        value="Sharpe",
-        layout=W.Layout(width="120px"),
-    )
-    # Window the Z-Score's base metric is computed over (independent of the
-    # global Period); the metric is then z-scored cross-sectionally.
-    q_z_window = W.Dropdown(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
-        value=MONTH_WINDOW,
-        layout=W.Layout(width="70px"),
-    )
-
-    sharpe_row, sharpe_op, q_sharpe = _q_row("Sharpe")
-    sortino_row, sortino_op, q_sortino = _q_row("Sortino")
-    calmar_row, calmar_op, q_calmar = _q_row("Calmar")
-    beta_row, beta_op, q_beta = _q_row("Beta", trailing=q_beta_bench)
-    treynor_row, treynor_op, q_treynor = _q_row("Treynor", trailing=q_treynor_bench)
-    jensen_row, jensen_op, q_jensen = _q_row("Jensen α", trailing=q_jensen_bench)
-    var_row, var_op, q_var = _q_row("VaR %")
-    rsi_row, rsi_op, q_rsi = _q_row("RSI")
-    z_row, z_op, q_z = _q_row(
-        "Z-Score",
-        trailing=W.HBox(
-            [W.HTML("<div style='padding:0 6px;'>of</div>"), q_z_metric, q_z_window],
-            layout=W.Layout(align_items="center"),
-        ),
-    )
-    quant = SimpleNamespace(
-        period_dd=q_period,
-        z_metric_dd=q_z_metric,
-        z_window_dd=q_z_window,
-        # Each benchmark-based metric carries its own benchmark dropdown.
-        bench_dd={
-            "Beta": q_beta_bench,
-            "Treynor": q_treynor_bench,
-            "Jensen": q_jensen_bench,
-        },
-        rows=[
-            sharpe_row,
-            sortino_row,
-            calmar_row,
-            beta_row,
-            treynor_row,
-            jensen_row,
-            var_row,
-            rsi_row,
-            z_row,
-        ],
-        # metric name -> (operator dropdown, value box)
-        specs={
-            "Sharpe": (sharpe_op, q_sharpe),
-            "Sortino": (sortino_op, q_sortino),
-            "Calmar": (calmar_op, q_calmar),
-            "Beta": (beta_op, q_beta),
-            "Treynor": (treynor_op, q_treynor),
-            "Jensen": (jensen_op, q_jensen),
-            "VaR": (var_op, q_var),
-            "RSI": (rsi_op, q_rsi),
-            "Z": (z_op, q_z),
-        },
-    )
-
     search_w = W.Text(
         placeholder="Search ticker or name…",
-        layout=W.Layout(width="100%"),
+        layout=W.Layout(flex="1 1 auto"),
     )
-    # The SelectMultiple fills 100% of a flex holder (built below) that grows to
-    # the bottom of the left panel, which the parent HBox stretches to the
-    # filter panel's height. A plain `flex` on the select itself isn't honored,
-    # but `height="100%"` inside a grown holder is — so it reaches the bottom.
-    ticker_w = W.SelectMultiple(
+    # A "Clear" button to the right of the search box wipes the strategy
+    # *selection* (distinct from "Clear all", which resets the filters/search
+    # but deliberately keeps the picked strategies).
+    clear_sel_btn = W.Button(
+        description="Clear",
+        tooltip="Clear the strategy selection",
+        layout=W.Layout(width="auto", margin="0 0 0 6px"),
+    )
+    clear_sel_btn.add_class("bbg-btn-secondary")
+    search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
+    # Selection cap (v0.9.13 #181): the picker is hard-capped at
+    # MAX_SELECTED_STRATEGIES (correlation/analysis over the selected set is
+    # O(n²)); a pick over the cap is rejected with a fixed auto-fading error
+    # popup, and a live "Selected Strategies: n/cap" count sits above the list.
+    limit_popup_w = _selection_limit_popup()
+    _limit_nonce = [0]
+
+    def _show_limit_popup(cap: int) -> None:
+        _limit_nonce[0] += 1
+        limit_popup_w.value = _render_limit_popup(
+            f"Maximum {cap} strategies — deselect one to add another.",
+            nonce=_limit_nonce[0],
+            hidden=False,
+        )
+
+    # The picker is a scrollable checkbox list (CheckboxMultiSelect), capped at
+    # the same 240px as the categorical filter groups on the right
+    # (`_checkbox_group`) so the two panels match; longer catalogs scroll inside
+    # the box (`overflow="auto"`) rather than growing to fill the panel.
+    ticker_w = CheckboxMultiSelect(
         options=_ticker_options(meta),
         value=tuple(meta["ticker"].head(5)),
-        layout=W.Layout(width="100%", height="100%"),
+        max_selected=MAX_SELECTED_STRATEGIES,
+        on_limit=_show_limit_popup,
+        layout=W.Layout(width="100%", max_height="240px", overflow="auto"),
     )
+    clear_sel_btn.on_click(lambda _b: setattr(ticker_w, "value", ()))
+
+    # Live count above the picker; updates on every selection change.
+    strat_count_w = W.HTML(
+        _render_strat_count(len(ticker_w.value), MAX_SELECTED_STRATEGIES)
+    )
+
+    def _update_strat_count(_change=None) -> None:
+        strat_count_w.value = _render_strat_count(
+            len(ticker_w.value), MAX_SELECTED_STRATEGIES
+        )
+
+    ticker_w.observe(_update_strat_count, names="value")
 
     # Analysis date range — a slider flanked by two date boxes, two-way
     # linked. Its bounds are rebuilt at recompute time to the overlap window
@@ -305,19 +242,60 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
     # states — styled via CSS class, not inline `.style`, so `:hover` works.
     apply_btn.add_class("bbg-btn")
-    clear_section_btn = W.Button(
-        description="Clear section",
-        tooltip="Clear the active filter's selections",
-        layout=W.Layout(width="auto"),
+
+    # The live benchmark set (#190). Created before any selector, because every
+    # benchmark dropdown registers with it at construction instead of
+    # snapshotting `BENCHMARK_TICKERS` — that is what lets a benchmark added at
+    # runtime reach all of them at once. Seeded from the curated constant, so
+    # with nothing added the app renders exactly as it did before.
+    benchmarks = BenchmarkRegistry()
+    # Re-add anything the user persisted (#194) *after* construction, not as a
+    # constructor seed: the constructor's list becomes the curated set, and a
+    # user benchmark must stay removable. Added before the persister is
+    # installed so loading does not immediately re-save what it just read, and
+    # before the first `_fetch_tickers()`, so persisted benchmarks ride the
+    # startup fetch exactly like curated ones.
+    for _persisted in load_user_benchmarks():
+        benchmarks.add(_persisted)
+    # Catalog indices ride the same startup fetch as the benchmarks, so they can
+    # be offered as a second benchmark source at no BQL cost (#191). Seeded from
+    # the full catalog here and re-set from the pruned `meta` once the load has
+    # dropped stale/flat indices — a dead index makes a poor benchmark.
+    benchmarks.set_catalog(_ticker_options(meta))
+
+    # The Multi-Strategy filter UI is the reusable `make_filter_panel` (shared
+    # with the Single Strategy tab, v0.9.12-review #155): the pill bar over the
+    # categorical / Characteristics / Quantitative views, the Clear buttons, and
+    # the `apply_categorical` / `quant_keep` / `matching` reducers. Multi-Strategy
+    # composes it with its own left Strategies picker + Refresh button + analysis
+    # date-range row, so it passes the Refresh button as a leading action, its own
+    # 60%/bordered right-panel layout, and `build_root=False` (it wraps the pieces
+    # in its own "Filters" accordion below).
+    filter_panel = make_filter_panel(
+        meta,
+        leading_actions=(apply_btn,),
+        registry=benchmarks,
+        right_panel_layout=W.Layout(
+            width="60%", padding="8px", border=f"1px solid {Color.BORDER}"
+        ),
+        build_root=False,
     )
-    clear_all_btn = W.Button(
-        description="Clear all",
-        tooltip="Clear all filters and the search box",
-        layout=W.Layout(width="auto"),
-    )
-    # Secondary (outlined/muted) action style with hover/focus — via CSS class.
-    clear_section_btn.add_class("bbg-btn-secondary")
-    clear_all_btn.add_class("bbg-btn-secondary")
+
+    def _clear_all_extra(_b=None) -> None:
+        # `make_filter_panel`'s Clear all resets the filter widgets (and fires the
+        # observers); Multi-Strategy additionally wipes the search box and snaps
+        # the analysis date range back to its full overlap span.
+        search_w.value = ""
+        if state.cur_bound_start is not None and state.cur_bound_end is not None:
+            state.sync_guard = True
+            try:
+                range_min_box.value = state.cur_bound_start
+                range_max_box.value = state.cur_bound_end
+            finally:
+                state.sync_guard = False
+
+    filter_panel.clear_all_btn.on_click(_clear_all_extra)
+
     status_w = _status_banner()
 
     def _set_status(text: str, tone: StatusTone = StatusTone.INFO) -> None:
@@ -348,20 +326,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             f"fetched from {src_label} in {elapsed:.1f}s",
             StatusTone.SUCCESS,
         )
-
-    # Left: the strategies picker — search box above the dropdown.
-    # Holder grows to fill the left panel's free vertical space; the dropdown
-    # fills the holder, so it reaches the bottom of the container regardless of
-    # the (stretched) panel height.
-    ticker_holder = W.Box(
-        [ticker_w],
-        layout=W.Layout(
-            width="100%",
-            flex="1 1 auto",
-            min_height="220px",
-            display="flex",
-        ),
-    )
 
     # --- Analysis date-range box plumbing --------------------------------
     def _set_date_bounds(index, reset: bool, *, keep=None) -> None:
@@ -423,7 +387,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     range_max_box.observe(lambda c: _on_range_box(c, is_min=False), names="value")
 
     left_panel = W.VBox(
-        [_section_label("Strategies"), search_w, ticker_holder],
+        [_section_label("Strategies"), search_row, strat_count_w, ticker_w],
         layout=W.Layout(
             width="38%",
             padding="8px",
@@ -433,134 +397,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         ),
     )
 
-    # Right: filter panel — Refresh prices on top, then a pill header bar whose
-    # buttons swap which filter dimension's values are shown below.
-    date_range_row = W.HBox(
-        [
-            live_min,
-            W.HTML("<div style='padding:0 6px;font-size:16px;'>–</div>"),
-            live_max,
-        ],
-        layout=W.Layout(width="100%", align_items="center"),
-    )
-    characteristics_view = W.VBox(
-        [
-            _section_label("Launch date"),
-            date_range_row,
-            _section_label("Currency"),
-            currency_dd,
-        ],
-        layout=W.Layout(width="100%", padding="2px 4px"),
-    )
-
-    quant_view = W.VBox(
-        [
-            W.HBox([q_period], layout=W.Layout(width="100%", align_items="center")),
-            *quant.rows,
-        ],
-        layout=W.Layout(width="100%", padding="2px 4px"),
-    )
-
-    filter_views: dict[str, W.Widget] = {
-        "Asset Class": asset_content,
-        "Category": cat_content,
-        "Theme": theme_content,
-        "Return Type": ret_content,
-        "Characteristics": characteristics_view,
-        "Quantitative": quant_view,
-    }
-    filter_btns = {
-        label: _make_tab_button(label, active=(i == 0), width="auto", height="32px")
-        for i, label in enumerate(filter_views)
-    }
-    filter_header_row = W.HBox(
-        list(filter_btns.values()),
-        layout=W.Layout(
-            width="100%",
-            flex_flow="row wrap",
-            margin="2px 0 6px 0",
-        ),
-    )
-    filter_content = W.Box(
-        [filter_views["Asset Class"]],
-        layout=W.Layout(width="100%", min_height="250px"),
-    )
-
-    # The currently visible filter dimension (on `state`) drives "Clear section".
-    def _activate_filter(label: str) -> None:
-        state.active_filter = label
-        for lbl, btn in filter_btns.items():
-            _style_tab_button(btn, active=(lbl == label))
-        filter_content.children = (filter_views[label],)
-
-    for label, btn in filter_btns.items():
-        btn.on_click(lambda _b, lbl=label: _activate_filter(lbl))
-
-    # Maps each checkbox-based filter dimension to its checkboxes. The
-    # Characteristics view clears its date range instead. Clearing a value
-    # widget fires its `_on_filter_change` observer, so the dropdown re-narrows
-    # automatically — no manual recompute needed.
-    filter_checks = {
-        "Asset Class": asset_checks,
-        "Category": cat_checks,
-        "Theme": theme_checks,
-        "Return Type": ret_checks,
-    }
-
-    def _clear_quant() -> None:
-        for op, box in quant.specs.values():
-            box.value = ""
-            op.value = "≥"
-
-    def _clear_section(_b=None) -> None:
-        label = state.active_filter
-        if label == "Characteristics":
-            live_min.value = None
-            live_max.value = None
-            currency_dd.value = "All"
-        elif label == "Quantitative":
-            _clear_quant()
-        else:
-            for c in filter_checks[label]:
-                c.value = False
-
-    def _clear_all(_b=None) -> None:
-        for checks in filter_checks.values():
-            for c in checks:
-                c.value = False
-        live_min.value = None
-        live_max.value = None
-        currency_dd.value = "All"
-        _clear_quant()
-        search_w.value = ""
-        # Snap the analysis date range back to its full overlap span. The bounds
-        # themselves re-derive from the selection on the next Refresh prices.
-        if state.cur_bound_start is not None and state.cur_bound_end is not None:
-            state.sync_guard = True
-            try:
-                range_min_box.value = state.cur_bound_start
-                range_max_box.value = state.cur_bound_end
-            finally:
-                state.sync_guard = False
-
-    clear_section_btn.on_click(_clear_section)
-    clear_all_btn.on_click(_clear_all)
-
-    action_row = W.HBox(
-        [apply_btn, clear_section_btn, clear_all_btn],
-        layout=W.Layout(width="100%", margin="0 0 6px 0"),
-    )
-
-    right_panel = W.VBox(
-        [action_row, filter_header_row, filter_content],
-        layout=W.Layout(
-            width="60%",
-            padding="8px",
-            border=f"1px solid {Color.BORDER}",
-        ),
-    )
     filter_box = W.HBox(
-        [left_panel, right_panel],
+        [left_panel, filter_panel.right_panel],
         layout=W.Layout(width="100%", align_items="stretch"),
     )
     # Full-width analysis date-range row below the two panels: slider flanked
@@ -608,12 +446,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Live window for the Market Superlatives board — recomputes the panel from
     # the cache on change (no BQL), like the Platform lookback toggle.
     superlative_window = W.ToggleButtons(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
+        options=SHORT_WINDOW_OPTIONS,
         value=SUPERLATIVE_WINDOW_DAYS,
         layout=W.Layout(width="auto"),
     )
@@ -626,7 +459,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
     # narrow nothing and never fetch — changing one recomputes only the grid's
     # dynamic z-score column from the cached prices and re-sorts the grid by it
-    # (see `_render_universe_grid`). Window / Lookback values are trading-day
+    # (see `platform.render_universe_grid`). Window / Lookback values are trading-day
     # counts; the `.label` of each (e.g. "Sharpe" / "1M" / "1Y") builds the
     # column header. Default: z(1M Sharpe, 1Y).
     z_metric_dd = W.Dropdown(
@@ -702,12 +535,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="230px"),
     )
     sb_window_dd = W.Dropdown(
-        options=[
-            ("1W", WEEK_WINDOW),
-            ("1M", MONTH_WINDOW),
-            ("3M", QUARTER_WINDOW),
-            ("6M", HALF_YEAR_WINDOW),
-        ],
+        options=SHORT_WINDOW_OPTIONS,
         value=WEEK_WINDOW,
         description="Window",
         style={"description_width": "60px"},
@@ -722,14 +550,6 @@ def build_app(verbose: bool = False) -> W.VBox:
     # controls stack in the Regime tab's left column (built below).
     regime_scatter_fig = _regime_scatter()
 
-    def _regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
-        """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
-        fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
-        spec = REGIME_SPECS[regime_type]
-        if spec.get("mode") == "level":
-            return [(label, (low, high)) for label, low, high in spec["buckets"]]
-        return [(label, key) for label, key in spec["bucket_labels"]]
-
     regime_type_dd = W.Dropdown(
         options=list(REGIME_SPECS.keys()),
         value="Volatility",
@@ -738,7 +558,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="240px"),
     )
     # Conditional indicator-source dropdown — benchmark for Trend, region for
-    # Rate-level; hidden (via `_sync_regime_controls`) for regimes with no
+    # Rate-level; hidden (via `platform._sync_regime_controls`) for regimes with no
     # `selector` (Volatility / Risk regime).
     regime_selector_dd = W.Dropdown(
         options=[("—", "")],
@@ -747,7 +567,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         style={"description_width": "60px"},
         layout=W.Layout(width="240px"),
     )
-    _init_buckets = _regime_bucket_options("Volatility")
+    _init_buckets = regime_bucket_options("Volatility")
     regime_bucket_dd = W.Dropdown(
         options=_init_buckets,
         value=_init_buckets[0][1],
@@ -756,8 +576,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="240px"),
     )
 
-    pane_left = _make_analysis_pane("left")
-    pane_right = _make_analysis_pane("right")
+    pane_left = _make_analysis_pane("left", registry=benchmarks)
+    pane_right = _make_analysis_pane("right", registry=benchmarks)
     analysis_pane_row = W.HBox(
         [pane_left.root, pane_right.root],
         layout=W.Layout(width="100%", align_items="stretch"),
@@ -770,6 +590,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # closures stay nested and reference `state.<field>`; mutating an attribute
     # never rebinds a name, so `nonlocal` is unnecessary.
     state = DashboardState(
+        benchmarks=benchmarks,
         ticker_w=ticker_w,
         status_w=status_w,
         overlay_w=overlay_w,
@@ -854,17 +675,6 @@ def build_app(verbose: bool = False) -> W.VBox:
         "factor": (factor_pill, factor_controls, factor_scatter_fig),
     }
 
-    def _activate_platform_tab(which: str) -> None:
-        for key, (pill, _controls, _fig) in _analytics_tabs.items():
-            _style_tab_button(pill, active=(key == which))
-        _pill, controls, fig = _analytics_tabs[which]
-        tab_controls_box.children = (controls,)
-        chart_box.children = (fig,)
-
-    sunburst_pill.on_click(lambda _b: _activate_platform_tab("sunburst"))
-    regime_pill.on_click(lambda _b: _activate_platform_tab("regime"))
-    factor_pill.on_click(lambda _b: _activate_platform_tab("factor"))
-
     analytics_card = W.VBox(
         [
             W.HTML(
@@ -876,6 +686,37 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%"),
     )
     analytics_card.add_class("bbg-card")
+
+    # Bundle the Platform-analytics widget handles and hand the orchestration to
+    # `platform.py` (v0.9.12-review #156): `wire_platform_analytics` wires the
+    # z-score-column controls, the three tab pills, the regime dropdowns, the
+    # shared lookback, and the sunburst controls; the `render_*` functions
+    # (called on load / Refresh below) redraw each chart live from the cache.
+    pa = SimpleNamespace(
+        z_metric_dd=z_metric_dd,
+        z_window_dd=z_window_dd,
+        z_lookback_dd=z_lookback_dd,
+        lookback_selector=lookback_selector,
+        factor_scatter_fig=factor_scatter_fig,
+        sunburst_fig=sunburst_fig,
+        regime_scatter_fig=regime_scatter_fig,
+        sb_metric_dd=sb_metric_dd,
+        sb_window_dd=sb_window_dd,
+        regime_type_dd=regime_type_dd,
+        regime_selector_dd=regime_selector_dd,
+        regime_bucket_dd=regime_bucket_dd,
+        sunburst_pill=sunburst_pill,
+        regime_pill=regime_pill,
+        factor_pill=factor_pill,
+        analytics_tabs=_analytics_tabs,
+        tab_controls_box=tab_controls_box,
+        chart_box=chart_box,
+        # Lazy-render state: `active_analytics` is the visible tab (Sunburst is
+        # the default), `fresh` is the set of tabs rendered against current data.
+        active_analytics="sunburst",
+        fresh=set(),
+    )
+    wire_platform_analytics(state, meta, pa)
 
     platform_panel = W.VBox(
         [
@@ -891,56 +732,44 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
+    # The third top-level tab (v0.9.0): a per-strategy deep-dive. Built here so
+    # the tab wiring below can swap it in; its picker options are rebuilt against
+    # the pruned `meta` once the cache loads (alongside `ticker_w`).
+    single_strategy = make_single_strategy_panel(meta, registry=benchmarks)
+    state.single_strategy = single_strategy
+    single_panel = single_strategy.root
+
     platform_btn = _make_tab_button("Platform", active=True)
-    selected_btn = _make_tab_button("Multi-Strategy Analysis", active=False)
+    selected_btn = _make_tab_button("Multi-Strategy", active=False)
+    single_btn = _make_tab_button("Single Strategy", active=False)
     top_tab_bar = W.HBox(
-        [platform_btn, selected_btn],
-        layout=W.Layout(
-            width="100%",
-            padding="10px 16px 4px 16px",
-            border_bottom=f"1px solid {Color.BORDER}",
-        ),
+        [platform_btn, selected_btn, single_btn],
+        layout=W.Layout(width="100%"),
     )
+    # Stylize the band as the section header (distinct bg + accent underline +
+    # inverted active tab); padding/border/background live on `.bbg-tabband`
+    # in app_css.html so they stay token-driven.
+    top_tab_bar.add_class("bbg-tabband")
     top_tab_content = W.Box(
         [platform_panel],
         layout=W.Layout(width="100%"),
     )
 
+    _top_panels = {
+        "platform": platform_panel,
+        "selected": selected_panel,
+        "single": single_panel,
+    }
+
     def _activate_tab(which: str) -> None:
-        is_platform = which == "platform"
-        _style_tab_button(platform_btn, active=is_platform)
-        _style_tab_button(selected_btn, active=not is_platform)
-        top_tab_content.children = (platform_panel if is_platform else selected_panel,)
+        _style_tab_button(platform_btn, active=which == "platform")
+        _style_tab_button(selected_btn, active=which == "selected")
+        _style_tab_button(single_btn, active=which == "single")
+        top_tab_content.children = (_top_panels[which],)
 
     platform_btn.on_click(lambda _b: _activate_tab("platform"))
     selected_btn.on_click(lambda _b: _activate_tab("selected"))
-
-    def _render_universe_grid(_change=None) -> None:
-        """Render the all-catalog grid with the dynamic z-score column from the
-        current Metric/Window/Lookback dropdowns. Reads the cached perf table
-        (`state.universe_up`) and computes only the z-score column live from the
-        already-fetched `arp_universe_prices` — no BQL, no full recompute. The
-        dropdown observers and the load/refresh paths both call this."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            zcol = rolling_metric_zscore(
-                state.arp_universe_prices,
-                metric=z_metric_dd.value,
-                window=z_window_dd.value,
-                zscore_window=z_lookback_dd.value,
-            )
-            zlabel = f"{z_metric_dd.label} {z_window_dd.label}/{z_lookback_dd.label}"
-            _update_universe_grid(
-                state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
-            )
-        except Exception:
-            state.init_errors.append(
-                f"all-catalog grid z-score render failed:\n{traceback.format_exc()}"
-            )
-
-    for _dd in (z_metric_dd, z_window_dd, z_lookback_dd):
-        _dd.observe(_render_universe_grid, names="value")
+    single_btn.on_click(lambda _b: _activate_tab("single"))
 
     def _default_selection() -> tuple[str, ...]:
         """The startup strategy selection: the 5 indices with the highest
@@ -957,6 +786,7 @@ def build_app(verbose: bool = False) -> W.VBox:
                     metric="sharpe",
                     window=WEEK_WINDOW,
                     zscore_window=TRADING_DAYS_PER_YEAR,
+                    returns=state.universe_rets,
                 ).dropna()
                 top = [t for t in z.nlargest(5).index if t in opt]
                 if top:
@@ -964,150 +794,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             except Exception:
                 pass
         return tuple(opt[:5])
-
-    def _render_factor_scatter(_change=None) -> None:
-        """Render the Platform 3D factor-beta scatter (β to the equity risk
-        premium, term premium, and trend factor, per strategy, colored by asset
-        class) at the currently-selected lookback. Computes live from the
-        fetched cache — the factor series from `universe_prices`, per-strategy
-        returns from `arp_universe_prices` — so the lookback toggle re-slices
-        only, no BQL. No in-figure title; the "Factor exposures" section header
-        stands alone (v0.7.1)."""
-        if state.arp_universe_prices.empty or state.universe_prices.empty:
-            return
-        try:
-            _update_factor_scatter(
-                factor_scatter_fig,
-                state.arp_universe_prices,
-                state.universe_prices,
-                meta,
-                years=lookback_selector.value / TRADING_DAYS_PER_YEAR,
-            )
-        except Exception:
-            state.init_errors.append(
-                f"factor-beta scatter render failed:\n{traceback.format_exc()}"
-            )
-
-    def _render_sunburst(_change=None) -> None:
-        """Render the Platform asset class → theme → ticker sunburst from the
-        Metric/Window Z-score controls + the shared lookback: arcs sized by
-        gross-|z| share, colored by the level-averaged z. Computes live from the
-        ARP-only cache via `platform_sunburst_frame` — the controls re-slice
-        only, no BQL. No in-figure title; the active tab labels the chart."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            _update_sunburst(
-                sunburst_fig,
-                state.arp_universe_prices,
-                meta,
-                metric=sb_metric_dd.value,
-                window=sb_window_dd.value,
-                lookback=lookback_selector.value,
-                label=f"{sb_window_dd.label} {sb_metric_dd.label}",
-            )
-        except Exception:
-            state.init_errors.append(
-                f"sunburst render failed:\n{traceback.format_exc()}"
-            )
-
-    # --- Regime Analysis closures: live re-slice of the cache on the regime /
-    # source / bucket dropdowns and the shared lookback toggle — no BQL.
-    def _regime_indicator() -> pd.Series | None:
-        """The regime indicator series from the cache, per the active regime's
-        mode, or None when its ticker(s) are absent from the fetch (→
-        unconditioned all-days view):
-
-        - ``level`` — the raw indicator level (Volatility = VIX).
-        - ``autocorr_tercile`` — the selected benchmark's rolling return autocorr.
-        - ``level_tercile`` — the selected region's rate level.
-        """
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        mode = spec.get("mode")
-        prices = state.universe_prices
-        if mode == "autocorr_tercile":
-            ticker = regime_selector_dd.value
-            if not ticker or ticker not in prices.columns:
-                return None
-            rets = daily_returns(prices[[ticker]])[ticker]
-            return rolling_autocorr(rets, window=spec.get("autocorr_window", 21))
-        ticker = (
-            regime_selector_dd.value if mode == "level_tercile" else spec.get("ticker")
-        )
-        if not ticker or ticker not in prices.columns:
-            return None
-        return prices[ticker]
-
-    def _resolve_regime_bucket() -> tuple[float | None, float | None]:
-        """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
-        read the tuple straight off the bucket dropdown; tercile regimes derive
-        the bounds from the live indicator's 1/3 & 2/3 quantiles over the
-        lookback window (`tercile_bounds`). ``(None, None)`` when no indicator is
-        available (→ unconditioned all-days view)."""
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        if spec.get("mode") == "level":
-            low, high = regime_bucket_dd.value
-            return (low, high)
-        indicator = _regime_indicator()
-        if indicator is None:
-            return (None, None)
-        return tercile_bounds(
-            indicator.tail(lookback_selector.value), regime_bucket_dd.value
-        )
-
-    def _render_regime_scatter(_change=None) -> None:
-        """Render the regime risk/return scatter at the current regime / source /
-        bucket + lookback, live from the cache (no BQL)."""
-        if state.arp_universe_prices.empty:
-            return
-        try:
-            low, high = _resolve_regime_bucket()
-            _update_regime_scatter(
-                regime_scatter_fig,
-                state.arp_universe_prices,
-                _regime_indicator(),
-                meta,
-                low=low,
-                high=high,
-                lookback=lookback_selector.value,
-            )
-        except Exception:
-            state.init_errors.append(
-                f"regime scatter render failed:\n{traceback.format_exc()}"
-            )
-
-    def _sync_regime_controls(_change=None) -> None:
-        # Repopulate the bucket dropdown for the active regime's mode and show /
-        # hide the indicator-source dropdown (only regimes carrying a `selector`).
-        spec = REGIME_SPECS.get(regime_type_dd.value, {})
-        selector = spec.get("selector", [])
-        if selector:
-            regime_selector_dd.options = selector
-            regime_selector_dd.value = selector[0][1]
-            regime_selector_dd.layout.display = ""
-        else:
-            regime_selector_dd.layout.display = "none"
-        options = _regime_bucket_options(regime_type_dd.value)
-        regime_bucket_dd.options = options
-        regime_bucket_dd.value = options[0][1]
-
-    def _on_regime_type(_change=None) -> None:
-        _sync_regime_controls()
-        _render_regime_scatter()
-
-    regime_type_dd.observe(_on_regime_type, names="value")
-    regime_selector_dd.observe(lambda _c: _render_regime_scatter(), names="value")
-    regime_bucket_dd.observe(lambda _c: _render_regime_scatter(), names="value")
-    _sync_regime_controls()
-
-    # The shared lookback drives all three analytics tabs (the sunburst now
-    # shares it too — its own lookback dropdown was removed in the tab rework).
-    for _render in (_render_factor_scatter, _render_regime_scatter, _render_sunburst):
-        lookback_selector.observe(_render, names="value")
-
-    # The sunburst's own Metric/Window controls re-render only the sunburst.
-    for _dd in (sb_metric_dd, sb_window_dd):
-        _dd.observe(_render_sunburst, names="value")
 
     # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
     # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
@@ -1123,151 +809,141 @@ def build_app(verbose: bool = False) -> W.VBox:
     # are excluded from the ARP-universe grid and the highlights cards via
     # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
     # equity factor proxy is also a benchmark) while preserving order.
-    fetch_tickers = list(
-        dict.fromkeys(
-            list(meta["ticker"])
-            + list(BENCHMARK_TICKERS)
-            + list(FACTOR_TICKERS)
-            + list(REGIME_TICKERS)
-        )
-    )
-    _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
-    t_fetch = time.perf_counter()
-    try:
-        state.universe_prices, fetch_source = fetch_prices(
-            fetch_tickers, universe_start, today
-        )
-        fetch_elapsed = time.perf_counter() - t_fetch
-        text, tone = _format_loaded(state.universe_prices, fetch_source, fetch_elapsed)
-        _set_status(text, tone=tone)
-    except Exception:
-        _set_progress(60, "Load failed — see error below", error=True)
-        _set_status("Load failed — see error below", tone=StatusTone.ERROR)
-        state.init_errors.append(
-            f"Universe fetch ({universe_start} → {today}) failed:\n"
-            f"{traceback.format_exc()}"
-        )
-
-    if not state.universe_prices.empty:
-        # Drop indices with no recent price movement (stale / delisted / all-NaN)
-        # from the displayed `meta`; `meta_all` (everything fetched) is kept so a
-        # resumed ticker can be re-admitted on a later Refresh. Then refresh the
-        # strategies dropdown so the dropped tickers leave it too.
-        live = set(
-            active_columns(state.universe_prices.reindex(columns=meta_all["ticker"]))
-        )
-        meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
-        # Resetting the options clears `ticker_w.value`; reselect below once the
-        # cache (and so the z-score ranking) is available.
-        state.ticker_w.options = _ticker_options(meta)
-        _log(f"pruned to {len(meta)} indices with recent performance")
-        # ARP universe view of the cache — used for the all-catalog grid and
-        # the whole-catalog highlights so benchmark columns never leak in.
-        state.arp_universe_prices = state.universe_prices.reindex(
-            columns=meta["ticker"]
-        )
-        # Startup selection: the top 5 indices by z(1W Sharpe, 1Y) so the
-        # Multi-Strategy views render populated on load (the initial _recompute
-        # below reads this selection).
-        state.ticker_w.value = _default_selection()
-        t_perf = time.perf_counter()
-        try:
-            state.universe_up = universe_perf(state.arp_universe_prices)
-            _log(f"universe_perf computed in {time.perf_counter() - t_perf:.2f}s")
-            t_grid = time.perf_counter()
-            _render_universe_grid()
-            _render_factor_scatter()
-            _render_sunburst()
-            _render_regime_scatter()
-            _log(f"universe grid populated in {time.perf_counter() - t_grid:.2f}s")
-        except Exception:
-            state.init_errors.append(
-                f"universe_perf computation failed:\n{traceback.format_exc()}"
+    # Recomputed per fetch rather than captured once: a benchmark the user adds
+    # at runtime (#193) has to ride the Refresh and any lookback change too, or
+    # it would silently drop out of the cache the first time either happened.
+    # `benchmarks.tickers` is the curated list plus anything added, so this is a
+    # superset of the constant it replaces. Driven by `meta_all`, not the pruned
+    # `meta`, so a stale ticker that resumes can come back.
+    def _fetch_tickers() -> list[str]:
+        return list(
+            dict.fromkeys(
+                list(meta_all["ticker"])
+                + benchmarks.tickers
+                + list(FACTOR_TICKERS)
+                + list(REGIME_TICKERS)
             )
-        _set_progress(85, "Building catalog…")
-    else:
-        state.arp_universe_prices = pd.DataFrame()
-        state.universe_up = pd.DataFrame()
+        )
 
-    def _quant_thresholds() -> dict[str, tuple[str, float]]:
-        """Active quant filters as `{metric: (operator, value)}`; blank = off."""
-        out: dict[str, tuple[str, float]] = {}
-        for name, (op, box) in quant.specs.items():
-            raw = (box.value or "").strip()
-            if not raw:
-                continue
-            try:
-                out[name] = (op.value, float(raw))
-            except ValueError:
-                continue
-        return out
+    # --- user-added benchmarks (#193) ----------------------------------------
+    # A ticker the user typed is not in the startup fetch, so it needs its own
+    # trip to BQL. #176's containment cache makes that a *delta* — only the
+    # missing rectangle — rather than a whole-universe refetch, which is what
+    # keeps this inside the one-call-per-session contract.
+    #
+    # Two failure modes have to stay apart. Both surface as an empty column, so
+    # the data alone cannot separate them:
+    #
+    #   unresolvable      the ticker is wrong. #187's per-ticker isolation
+    #                     degrades it to a NaN column and *warns* rather than
+    #                     failing the load — that warning is the signal.
+    #   no data in window a real security that launched after the lookback
+    #                     started, or a stale one. No warning; just an empty
+    #                     column.
+    #
+    # Reported identically, users read the second as a bug, so the warning is
+    # captured and used to tell them apart.
 
-    def _quant_keep(candidates: pd.Index) -> pd.Index:
-        """Tickers (among `candidates`) passing the active ≥/≤ thresholds.
+    def _unresolved_message(ticker: str) -> str:
+        return (
+            f"{ticker} did not resolve. Check the ticker and its suffix — "
+            f"e.g. 'SPX Index', 'AAPL Equity'."
+        )
 
-        Metrics are computed from the already-fetched ARP prices — no BQL. If
-        the cache is empty or no thresholds are set, every candidate passes.
+    def _benchmark_window_note(series: pd.Series) -> str:
+        """A caveat for a ticker that resolved but covers only part of the window."""
+        first = series.first_valid_index()
+        if first is None:
+            return ""
+        start = pd.Timestamp(universe_start)
+        if first <= start + pd.Timedelta(days=BENCHMARK_SHORT_HISTORY_DAYS):
+            return ""
+        return f" History starts {first.date()}, not {universe_start}."
+
+    def _resolve_new_benchmark(ticker: str) -> bool:
+        """Fetch a benchmark the user typed; report what happened.
+
+        Returns True once the ticker's prices are in ``state.universe_prices``
+        and it is safe to select. Never raises: a bad ticker must not be able
+        to break a dashboard that is already loaded.
         """
-        thresholds = _quant_thresholds()
-        if not thresholds or state.arp_universe_prices.empty:
-            return candidates
-        prices = state.arp_universe_prices.reindex(columns=candidates).dropna(
-            how="all", axis=1
-        )
-        if prices.shape[1] == 0:
-            return candidates
-        years = quant.period_dd.value
-        # Non-benchmark metrics from the shared table; the benchmark-based ones
-        # (Beta / Treynor / Jensen) are recomputed each against its own dropdown.
-        # Compute returns once and share them with quant_metrics_table.
-        rets = daily_returns(prices)
-        qt = quant_metrics_table(prices, None, years, returns=rets)
-        qt["Beta"] = ann_beta(
-            rets, state.universe_prices.get(quant.bench_dd["Beta"].value), years
-        )
-        qt["Treynor"] = treynor_ratio(
-            rets,
-            prices,
-            state.universe_prices.get(quant.bench_dd["Treynor"].value),
-            years,
-        )
-        qt["Jensen"] = jensen_alpha(
-            rets,
-            prices,
-            state.universe_prices.get(quant.bench_dd["Jensen"].value),
-            years,
-        )
-        if "Z" in thresholds:
-            # Cross-sectional z of the base metric, computed over the Z-Score's
-            # own window (independent of the Period); recompute over that window,
-            # threading the base metric's benchmark when it's Beta/Treynor/Jensen.
-            z_metric = quant.z_metric_dd.value
-            z_years = quant.z_window_dd.value / TRADING_DAYS_PER_YEAR
-            z_bench = (
-                state.universe_prices.get(quant.bench_dd[z_metric].value)
-                if z_metric in quant.bench_dd
-                else None
+        existing = state.universe_prices
+        if ticker in existing.columns and existing[ticker].notna().any():
+            return True  # already rode a previous fetch
+
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                frame, _ = fetch_prices([ticker], universe_start, today)
+        except TickersUnresolved:
+            # A one-ticker request has no healthy peers to degrade against, so
+            # an unresolvable ticker arrives as this rather than as the NaN
+            # column #187 produces in a larger batch.
+            _set_status(_unresolved_message(ticker), tone=StatusTone.ERROR)
+            return False
+        except Exception:
+            # Anything else is the session or transport, not the ticker.
+            _set_status(
+                f"Could not fetch {ticker} — see error below.",
+                tone=StatusTone.ERROR,
             )
-            zt = quant_metrics_table(prices, z_bench, z_years, returns=rets)
-            qt["Z"] = zscore_cross_section(zt[z_metric])
-        keep = qt.index
-        for name, (op, value) in thresholds.items():
-            col = qt[name]
-            mask = col >= value if op == "≥" else col <= value
-            keep = keep.intersection(qt.index[mask])
-        return keep
+            state.errors_w.value += _render_error(
+                f"Adding benchmark {ticker} failed:\n{traceback.format_exc()}"
+            )
+            return False
+
+        series = frame[ticker] if ticker in frame.columns else None
+        if series is None or not series.notna().any():
+            # Unresolvable vs. simply empty — see the note above. In a request
+            # with healthy peers the bad ticker degrades to NaN and warns.
+            unresolved = any(ticker in str(w.message) for w in caught)
+            if unresolved:
+                message = _unresolved_message(ticker)
+            else:
+                message = (
+                    f"{ticker} resolved but has no price history between "
+                    f"{universe_start} and {today}."
+                )
+            _set_status(message, tone=StatusTone.ERROR)
+            return False
+
+        if state.universe_prices.empty:
+            state.universe_prices = series.to_frame(ticker)
+        else:
+            state.universe_prices[ticker] = series.reindex(state.universe_prices.index)
+        _set_status(
+            f"Added benchmark {ticker}.{_benchmark_window_note(series)}",
+            tone=StatusTone.SUCCESS,
+        )
+        return True
+
+    def _persist_benchmarks(tickers: list[str]) -> None:
+        """Store the user's benchmarks; say so when the filesystem refuses.
+
+        A failed save must never fail the add — on a read-only BQuant
+        filesystem the benchmark still works for the session, and the user is
+        told rather than discovering it at the next restart."""
+        if not save_user_benchmarks(tickers):
+            _set_status(
+                "Benchmark added for this session only — could not save it.",
+                tone=StatusTone.WARN,
+            )
+
+    benchmarks.set_resolver(_resolve_new_benchmark)
+    benchmarks.set_persister(_persist_benchmarks)
+
+    # The blocking startup fetch + prune + compute + first render is deferred to
+    # `_run_initial_load` (defined below) so it can run on a worker thread while
+    # the loading overlay paints — see `_start_initial_load` at the end, which
+    # mirrors the Refresh threading pattern (v0.9.13 #179). Headless / pytest
+    # runs it synchronously, so a built tree is fully populated on return.
 
     def _on_filter_change(_change=None):
-        filtered = apply_filters(
-            meta,
-            asset_classes=asset_get(),
-            categories=cat_get(),
-            themes=theme_get(),
-            return_types=ret_get(),
-            currencies=currency_get(),
-            live_date_min=live_min.value,
-            live_date_max=live_max.value,
-        )
+        # Categorical + Characteristics via the shared panel; then the search
+        # substring; then the quant thresholds. Currently-selected tickers that
+        # still pass the categorical filter are unioned back so a live filter
+        # toggle never drops a picked strategy from the option list.
+        filtered = filter_panel.apply_categorical(meta)
         query = (search_w.value or "").strip().lower()
         if query:
             mask = filtered["ticker"].str.lower().str.contains(
@@ -1277,7 +953,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         else:
             visible = filtered
 
-        quant_keep = _quant_keep(pd.Index(visible["ticker"]))
+        quant_keep = filter_panel.quant_keep(pd.Index(visible["ticker"]), state)
         visible = visible.loc[visible["ticker"].isin(quant_keep)]
 
         selected = list(state.ticker_w.value)
@@ -1289,333 +965,19 @@ def build_app(verbose: bool = False) -> W.VBox:
             t for t in selected if t in combined["ticker"].values
         )
 
-    for cb in (*asset_checks, *cat_checks, *theme_checks, *ret_checks):
-        cb.observe(_on_filter_change, names="value")
-    for w in (live_min, live_max, search_w, currency_dd):
+    # Every filter input narrows the picker live (the panel exposes them all);
+    # the search box is the Multi-Strategy tab's own, wired alongside.
+    for w in filter_panel.inputs:
         w.observe(_on_filter_change, names="value")
-    quant_inputs = [q_period, q_z_metric, q_z_window, *quant.bench_dd.values()]
-    for op, box in quant.specs.values():
-        quant_inputs += [op, box]
-    for w in quant_inputs:
-        w.observe(_on_filter_change, names="value")
+    search_w.observe(_on_filter_change, names="value")
 
-    def _clear_pane(pane: SimpleNamespace) -> None:
-        _update_line(pane.line_fig, pd.DataFrame(), meta)
-        _update_outperformance(
-            pane.outperf_fig, pd.DataFrame(), meta, benchmark_label=""
-        )
-        _update_sharpe_line(pane.sharpe_fig, pd.DataFrame(), meta)
-        _update_heatmap(pane.heat_fig, pd.DataFrame())
-        _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
-        _update_drawdown(pane.dd_fig, pd.DataFrame(), meta)
-        _update_rolling_ref(
-            pane.rcorr_fig,
-            pd.DataFrame(),
-            meta,
-            title_prefix="Rolling Correlation",
-            benchmark_label="",
-        )
-        _update_rolling_ref(
-            pane.rbeta_fig,
-            pd.DataFrame(),
-            meta,
-            title_prefix="Rolling Beta",
-            benchmark_label="",
-        )
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            pd.DataFrame(),
-            pd.DataFrame(),
-            meta,
-        )
-        # No selection -> no view holds current data; the lazy picker observer
-        # no-ops while cur_prep is None, so picks just swap to cleared figures.
-        pane.fresh = set()
-
-    # The four benchmark-dependent charts are each rendered by a small helper
-    # over the shared `(pane, prep, win_start, win_end, errors)` signature, so
-    # the same code serves both the full recompute (`_render_pane`) and the
-    # live benchmark/regime observers (`_bind_live_controls`). Each slices its
-    # benchmark series from the already-fetched `state.universe_prices` — no
-    # BQL fetch.
-    def _render_heatmap(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Correlation heatmap, three cases (per-pane, so the panes stay
-        # independent): Regime on → conditioned on the benchmark-return tail with
-        # the benchmark in the matrix; Benchmark on / Regime off → full-sample
-        # correlation with the benchmark added (v0.8.9); neither → plain
-        # full-sample correlation of the selected strategies (`prep.cm`). The two
-        # benchmark cases differ only in (pct, direction, memo key, title); both
-        # build the matrix through the single `heatmap_corr_matrix` helper, which
-        # always pins the benchmark last, so the left and right panes can never
-        # disagree on the row/column order.
-        if pane.heat_regime_chk.value:
-            hm_bench_ticker = pane.heat_dd.value
-            direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
-            pct_int = pane.heat_pct.value
-            memo_key = ("heatmap", hm_bench_ticker, direction, pct_int)
-            tail_lbl = "worst" if direction == "down" else "best"
-            title = (
-                f"Correlation — {hm_bench_ticker} {tail_lbl} "
-                f"{pct_int}% days ({LOOKBACK_YEARS}Y)"
-            )
-        elif pane.heat_benchmark_chk.value:
-            # Benchmark on, Regime off: full-sample correlation (pct=100% keeps
-            # every day) with the benchmark added as the last row/column.
-            hm_bench_ticker = pane.heat_dd.value
-            direction = "down"
-            pct_int = 100
-            memo_key = ("heatmap", hm_bench_ticker, "incl", 100)
-            title = f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)"
-        else:
-            _update_heatmap(
-                pane.heat_fig,
-                prep.cm,
-                title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-            )
-            return
-
-        try:
-
-            def _compute():
-                hm_bench_prices = state.universe_prices.get(hm_bench_ticker)
-                if hm_bench_prices is None or hm_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {hm_bench_ticker!r}."
-                    )
-                hm_bench_window = hm_bench_prices.loc[win_start:win_end]
-                hm_bench_returns = daily_returns(hm_bench_window.to_frame()).iloc[:, 0]
-                return heatmap_corr_matrix(
-                    prep.rets,
-                    hm_bench_returns,
-                    pct=pct_int / 100.0,
-                    direction=direction,
-                )
-
-            cm = state.memo.get_or_compute(memo_key, _compute)
-            _update_heatmap(pane.heat_fig, cm, title=title)
-        except Exception:
-            errors.append(traceback.format_exc())
-            _update_heatmap(pane.heat_fig, pd.DataFrame())
-
-    def _render_rolling_corr(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        rc_bench_ticker = pane.rcorr_dd.value
-        try:
-
-            def _compute_rcorr():
-                rc_bench_prices = state.universe_prices.get(rc_bench_ticker)
-                if rc_bench_prices is None or rc_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {rc_bench_ticker!r}."
-                    )
-                rc_bench_window = rc_bench_prices.loc[win_start:win_end]
-                rc_bench_returns = daily_returns(rc_bench_window.to_frame()).iloc[:, 0]
-                return rolling_correlation(prep.rets, rc_bench_returns)
-
-            rc = state.memo.get_or_compute(("rcorr", rc_bench_ticker), _compute_rcorr)
-            _update_rolling_ref(
-                pane.rcorr_fig,
-                rc,
-                meta,
-                title_prefix="Rolling Correlation",
-                benchmark_label=rc_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_rolling_beta(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        rb_bench_ticker = pane.rbeta_dd.value
-        try:
-
-            def _compute_rbeta():
-                rb_bench_prices = state.universe_prices.get(rb_bench_ticker)
-                if rb_bench_prices is None or rb_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {rb_bench_ticker!r}."
-                    )
-                rb_bench_window = rb_bench_prices.loc[win_start:win_end]
-                rb_bench_returns = daily_returns(rb_bench_window.to_frame()).iloc[:, 0]
-                return rolling_beta(prep.rets, rb_bench_returns)
-
-            rb = state.memo.get_or_compute(("rbeta", rb_bench_ticker), _compute_rbeta)
-            _update_rolling_ref(
-                pane.rbeta_fig,
-                rb,
-                meta,
-                title_prefix="Rolling Beta",
-                benchmark_label=rb_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_outperf(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Outperformance: cumulative excess return vs the benchmark (prices,
-        # not returns — every strategy series starts at 0).
-        op_bench_ticker = pane.outperf_dd.value
-        try:
-
-            def _compute_outperf():
-                op_bench_prices = state.universe_prices.get(op_bench_ticker)
-                if op_bench_prices is None or op_bench_prices.dropna().empty:
-                    raise ValueError(
-                        f"No price data for benchmark {op_bench_ticker!r}."
-                    )
-                op_bench_window = op_bench_prices.loc[win_start:win_end]
-                return excess_cum_return(prep.sel_window, op_bench_window)
-
-            oc = state.memo.get_or_compute(
-                ("outperf", op_bench_ticker), _compute_outperf
-            )
-            _update_outperformance(
-                pane.outperf_fig,
-                oc,
-                meta,
-                benchmark_label=op_bench_ticker,
-            )
-        except Exception:
-            errors.append(traceback.format_exc())
-
-    def _render_one(
-        pane: SimpleNamespace,
-        label: str,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Populate the single analysis view named `label` from `prep`. Lazy
-        # rendering (Workstream D) calls this for only the mounted view per
-        # recompute and builds the others on first pick.
-        if label == "Cumulative Performance":
-            _update_line(pane.line_fig, prep.perf, meta)
-        elif label == "1Y Sharpe-z Line":
-            _update_sharpe_line(pane.sharpe_fig, prep.sz_series, meta)
-        elif label == "Risk / Return":
-            _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
-        elif label == "Drawdown":
-            _update_drawdown(pane.dd_fig, prep.dd, meta)
-        elif label == "Return Distribution":
-            _update_return_dist(
-                pane.retdist_fig,
-                pane.retdist_stats_grid,
-                prep.rets,
-                prep.rd_stats,
-                meta,
-            )
-        elif label == "Correlation Heatmap":
-            _render_heatmap(pane, prep, win_start, win_end, errors)
-        elif label == "Rolling Correlation":
-            _render_rolling_corr(pane, prep, win_start, win_end, errors)
-        elif label == "Rolling Beta":
-            _render_rolling_beta(pane, prep, win_start, win_end, errors)
-        elif label == "Outperformance":
-            _render_outperf(pane, prep, win_start, win_end, errors)
-
-    def _render_pane(
-        pane: SimpleNamespace,
-        prep: SimpleNamespace,
-        win_start: pd.Timestamp,
-        win_end: pd.Timestamp,
-        errors: list[str],
-    ) -> None:
-        # Lazy (Workstream D): render only the currently-mounted view; the other
-        # eight are built on first pick (see _bind_lazy_render) and stay fresh
-        # until the next recompute resets `pane.fresh`.
-        label = pane.picker.value
-        _render_one(pane, label, prep, win_start, win_end, errors)
-        pane.fresh = {label}
-
-    def _bind_lazy_render(pane: SimpleNamespace) -> None:
-        # On a picker change, build the newly-shown view on demand if it hasn't
-        # been rendered for the current slice yet (panes.py already swaps it into
-        # view and syncs control visibility). No-op without a valid selection or
-        # when the view is already fresh; errors are swallowed like the live
-        # benchmark observers (a real failure resurfaces on the next Refresh).
-        def _on_pick_render(change):
-            label = change["new"]
-            if state.cur_prep is None or label in pane.fresh:
-                return
-            _render_one(
-                pane,
-                label,
-                state.cur_prep,
-                state.cur_win_start,
-                state.cur_win_end,
-                [],
-            )
-            pane.fresh.add(label)
-
-        pane.picker.observe(_on_pick_render, names="value")
-
-    def _bind_live_controls(pane: SimpleNamespace) -> None:
-        # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
-        # controls so changing one re-renders only its own chart, immediately,
-        # from the slice persisted on `state` at the last recompute — no BQL
-        # fetch, no full recompute, the other pane untouched. (Refresh prices
-        # stays the only path that refetches and re-runs filters/selection.)
-        def _make(render_fn):
-            def _handler(_change):
-                if state.cur_prep is None:
-                    return  # no valid selection — nothing to redraw, no fetch
-                # A single live chart swallows its errors: the helper's own
-                # except-branch leaves the chart in a safe state, and a
-                # genuinely broken benchmark still surfaces on the next
-                # Refresh prices (where errors flow into the commentary block).
-                render_fn(
-                    pane,
-                    state.cur_prep,
-                    state.cur_win_start,
-                    state.cur_win_end,
-                    [],
-                )
-
-            return _handler
-
-        pane.rcorr_dd.observe(_make(_render_rolling_corr), names="value")
-        pane.rbeta_dd.observe(_make(_render_rolling_beta), names="value")
-        pane.outperf_dd.observe(_make(_render_outperf), names="value")
-        # The Benchmark/Regime checkboxes keep their visibility-sync observers
-        # (in panes.py); this adds the data re-render on top. Toggling Benchmark
-        # off re-renders plain full-sample (it also clears Regime in panes.py).
-        for ctrl in (
-            pane.heat_benchmark_chk,
-            pane.heat_regime_chk,
-            pane.heat_dd,
-            pane.heat_dir,
-            pane.heat_pct,
-        ):
-            ctrl.observe(_make(_render_heatmap), names="value")
-
-    _WINDOW_LABELS = {
-        WEEK_WINDOW: "Past Week",
-        MONTH_WINDOW: "Past Month",
-        QUARTER_WINDOW: "Past Quarter",
-        HALF_YEAR_WINDOW: "Past 6 Months",
-    }
+    # Whole-catalog Key Highlights are independent of the selection and change
+    # only when prices are refetched, so memoize them: the superlatives per
+    # window (the toggle offers four) and the window-independent launch cards
+    # once. `_recompute` — the single data-load / Refresh point — clears this,
+    # so a re-toggle among the four windows is a cache hit rather than a full
+    # whole-catalog recompute.
+    highlights_cache: dict = {}
 
     def _render_highlights_panel(window_days):
         """Render the whole-catalog Key Highlights panel at ``window_days``.
@@ -1626,22 +988,36 @@ def build_app(verbose: bool = False) -> W.VBox:
         live window-toggle observer; a compute failure surfaces in-place rather
         than blanking the panel."""
         try:
-            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
-            universe_window = state.arp_universe_prices.loc[
-                state.arp_universe_prices.index >= window_start
-            ]
-            if universe_window.empty:
+            universe = state.arp_universe_prices
+            if universe.empty:
                 state.highlights_w.value = _render_highlights([], [])
                 return
-            universe_rets = daily_returns(universe_window)
-            superlatives = build_superlatives(
-                meta, universe_window, universe_rets, window_days=window_days
-            )
-            launches = build_launch_cards(meta, state.arp_universe_prices, as_of=today)
+            if "launches" not in highlights_cache:
+                highlights_cache["launches"] = build_launch_cards(
+                    meta, universe, as_of=today
+                )
+            superlatives = highlights_cache.get(window_days)
+            if superlatives is None:
+                window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+                universe_window = universe.loc[universe.index >= window_start]
+                if universe_window.empty:
+                    state.highlights_w.value = _render_highlights([], [])
+                    return
+                # Only the trailing window feeds the returns-based metrics (MACD,
+                # a fixed-lookback oscillator, reads the full price history
+                # itself), so derive daily_returns over just the span they need
+                # — not the whole 5-year slice.
+                window_rets = superlative_returns(
+                    universe_window, window_days=window_days
+                )
+                superlatives = build_superlatives(
+                    meta, universe_window, window_rets, window_days=window_days
+                )
+                highlights_cache[window_days] = superlatives
             state.highlights_w.value = _render_highlights(
                 superlatives,
-                launches,
-                window_label=_WINDOW_LABELS.get(window_days, "Past Month"),
+                highlights_cache["launches"],
+                window_label=WINDOW_LABELS.get(window_days, "Past Month"),
             )
         except Exception:
             state.highlights_w.value = _render_error(traceback.format_exc())
@@ -1657,6 +1033,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         # no-selection guard branches below). Benchmark flips don't call
         # _recompute, so the memo survives across them within a stable slice.
         state.memo.clear()
+        # The highlights are whole-catalog; a fresh fetch invalidates them.
+        highlights_cache.clear()
         error_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
@@ -1679,8 +1057,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                 state.cur_prep = None
                 _set_date_bounds(None, reset=True)
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(state.pane_left)
-                _clear_pane(state.pane_right)
+                clear_pane(state.pane_left, meta)
+                clear_pane(state.pane_right, meta)
             elif state.universe_prices.empty:
                 state.last_sel_key = None
                 state.cur_prep = None
@@ -1689,8 +1067,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
                 _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                _clear_pane(state.pane_left)
-                _clear_pane(state.pane_right)
+                clear_pane(state.pane_left, meta)
+                clear_pane(state.pane_right, meta)
             else:
                 sel_full = state.universe_prices.reindex(columns=tickers)
                 sel_5y = sel_full.loc[sel_full.index >= universe_window_start]
@@ -1702,8 +1080,8 @@ def build_app(verbose: bool = False) -> W.VBox:
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
                     _update_perf_grid(state.selected_perf_grid, pd.DataFrame(), meta)
-                    _clear_pane(state.pane_left)
-                    _clear_pane(state.pane_right)
+                    clear_pane(state.pane_left, meta)
+                    clear_pane(state.pane_right, meta)
                 else:
                     # Bounds = overlap window of the selected set; fall back to
                     # the full 5Y span if the series don't overlap at all.
@@ -1744,9 +1122,23 @@ def build_app(verbose: bool = False) -> W.VBox:
                     _log(f"selected prep built in {time.perf_counter() - t_prep:.2f}s")
                     _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
                     t_panes = time.perf_counter()
-                    _render_pane(state.pane_left, prep, win_start, win_end, pane_errors)
-                    _render_pane(
-                        state.pane_right, prep, win_start, win_end, pane_errors
+                    render_pane(
+                        state,
+                        meta,
+                        state.pane_left,
+                        prep,
+                        win_start,
+                        win_end,
+                        pane_errors,
+                    )
+                    render_pane(
+                        state,
+                        meta,
+                        state.pane_right,
+                        prep,
+                        win_start,
+                        win_end,
+                        pane_errors,
                     )
                     _log(
                         "panes rendered (mounted views only) in "
@@ -1760,16 +1152,16 @@ def build_app(verbose: bool = False) -> W.VBox:
 
         state.errors_w.value = error_html
 
-    def _refresh_prices(_btn=None):
+    def _run_refresh():
+        """The Refresh-prices blocking work: refetch, re-prune, recompute.
+
+        Split out of ``_refresh_prices`` so a live frontend can run it on a
+        worker thread (see ``_refresh_prices``). Drives the overlay's staged
+        progress from 60% (fetch) through dismissal at 100%."""
         nonlocal meta
-        # Re-show the overlay (it's already in the tree — just re-render its
-        # value visible) and re-run the staged bar.
-        _set_progress(0, "Refreshing…")
-        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
-        t_refresh = time.perf_counter()
         try:
-            state.universe_prices, source = fetch_prices(
-                fetch_tickers, universe_start, today, use_cache=False
+            state.universe_prices, _ = fetch_prices(
+                _fetch_tickers(), universe_start, today, use_cache=False
             )
         except Exception:
             _set_progress(60, "Load failed — see error below", error=True)
@@ -1780,7 +1172,6 @@ def build_app(verbose: bool = False) -> W.VBox:
             )
             _recompute()
             return
-        elapsed = time.perf_counter() - t_refresh
         # Re-prune stale indices from the full catalog against the fresh cache
         # (a resumed ticker can return), then refresh the strategies dropdown.
         if not state.universe_prices.empty:
@@ -1791,30 +1182,166 @@ def build_app(verbose: bool = False) -> W.VBox:
             )
             meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
             _on_filter_change()
+            single_strategy.picker.options = _ticker_options(meta)
+            benchmarks.set_catalog(_ticker_options(meta))
+            _log(
+                f"refresh pruned to {len(meta)} of {len(meta_all)} indices "
+                f"({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
+            )
         state.arp_universe_prices = state.universe_prices.reindex(
             columns=meta["ticker"]
         )
+        state.universe_rets = daily_returns(state.arp_universe_prices)
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
-            _render_universe_grid()
-            _render_factor_scatter()
-            _render_sunburst()
-            _render_regime_scatter()
+            render_universe_grid(state, meta, pa)
+            # Fresh data → every analytics tab is stale; re-render the visible
+            # one now, the hidden two lazily on next activation.
+            invalidate_analytics(state, meta, pa)
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
             )
         _set_progress(85, "Building catalog…")
-        text, tone = _format_loaded(state.universe_prices, source, elapsed)
-        _set_status(text, tone=tone)
+        # No post-load toast on Refresh: the loading overlay already signals
+        # progress, and the "Loaded N indices …" toast is reserved for the
+        # dashboard's *initial* load. (A refresh failure still toasts, above.)
         _recompute()
+        # Re-apply the Single Strategy filters against the fresh cache (arp is
+        # updated above) so its picker stays consistent with any active filter;
+        # this renders the tab once. (`_on_single_filter_change` is defined
+        # below but only ever called at runtime, like `_render_single`.)
+        _on_single_filter_change()
         _set_progress(100, "Ready", hidden=True)
 
+    def _render_single(_change=None) -> None:
+        """Re-render the Single Strategy tab's Section 1 from the cache. Bound to
+        the picker / benchmark controls and called on load + Refresh. Reads the
+        current (possibly re-pruned) `meta` and a 5Y window off `today`."""
+        # `_on_single_filter_change` sets the picker options+value in one shot;
+        # suppress the intermediate picker-observer renders and render once at
+        # the end there instead.
+        if getattr(single_strategy, "_suspend", False):
+            return
+        window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+        render_single_strategy(single_strategy, state, meta, window_start)
+
+    def _refresh_prices(_btn=None):
+        # Re-show the overlay (it's already in the tree — just re-render its
+        # value visible) and re-run the staged bar.
+        #
+        # The overlay only becomes visible once the frontend gets a paint
+        # cycle. On the initial load that happens naturally: `display(overlay_w)`
+        # mounts a *new* view that is born visible and painted before the long
+        # synchronous build runs. On Refresh the overlay view already exists
+        # (hidden), so flipping it visible→…→hidden all inside one synchronous
+        # click handler keeps the kernel busy the whole time; the frontend
+        # coalesces those comm updates and only ever paints the final hidden
+        # state, so the overlay never appears. This is the "background-thread
+        # load" the v0.6.5 Workstream C caveat flagged as the real fix: show the
+        # overlay, then hand the blocking fetch/recompute to a worker thread so
+        # the click handler returns and the frontend can paint the visible
+        # overlay before the kernel blocks on BQL.
+        _set_progress(0, "Refreshing…")
+        _set_progress(60, f"Fetching prices for {len(_fetch_tickers())} indices…")
+
+        if get_ipython() is None:
+            # Headless / pytest: run synchronously so callers observe the
+            # refetch immediately after `.click()` (no frontend to paint for).
+            _run_refresh()
+            return
+
+        if refresh_inflight["running"]:
+            return  # a refresh is already running; ignore re-clicks
+        refresh_inflight["running"] = True
+        apply_btn.disabled = True
+
+        def _worker():
+            try:
+                # Hold the just-shown overlay visible for a beat so the frontend
+                # actually paints it before an instant refetch (mock / warm
+                # cache) flips it hidden — otherwise show→hide coalesce into one
+                # frame and the overlay never appears. Harmless on a slow BQL
+                # fetch (it's already visible for far longer). Runs on this
+                # worker thread, so the kernel stays free to flush the paint.
+                time.sleep(_OVERLAY_PAINT_DELAY_S)
+                _run_refresh()
+            finally:
+                refresh_inflight["running"] = False
+                apply_btn.disabled = False
+
+        threading.Thread(target=_worker, name="bbg-refresh", daemon=True).start()
+
+    # Guards against a second Refresh being launched while a worker thread is
+    # still fetching/recomputing (the button is also disabled for the duration).
+    refresh_inflight = {"running": False}
     apply_btn.on_click(_refresh_prices)
-    _bind_live_controls(state.pane_left)
-    _bind_live_controls(state.pane_right)
-    _bind_lazy_render(state.pane_left)
-    _bind_lazy_render(state.pane_right)
+    bind_live_controls(state, meta, state.pane_left)
+    bind_live_controls(state, meta, state.pane_right)
+    bind_lazy_render(state, meta, state.pane_left)
+    bind_lazy_render(state, meta, state.pane_right)
+    single_strategy.picker.observe(_render_single, names="value")
+    single_strategy.bench_dd.observe(_render_single, names="value")
+    single_strategy.bench_chk.observe(_render_single, names="value")
+
+    def _on_single_filter_change(_change=None) -> None:
+        """Narrow the Single Strategy picker to the filter matches and re-render.
+
+        Live handler for the v0.9.12 "Filters" accordion: on any filter input
+        change, recompute the matching tickers from the cache, reset the picker
+        options, keep the current pick when it still matches (else auto-select
+        the first match, or clear when nothing matches), then render once.
+        """
+        matches = single_strategy.filters.matching(meta, state)
+        sub = meta.loc[meta["ticker"].isin(matches)]
+        options = _ticker_options(sub)
+        cur = single_strategy.picker.value
+        # Set options + value atomically without triggering the picker-observer
+        # render mid-flight (resetting options fires an intermediate value=None).
+        single_strategy._suspend = True
+        try:
+            single_strategy.picker.options = options
+            if cur in set(sub["ticker"]):
+                single_strategy.picker.value = cur
+            elif options:
+                single_strategy.picker.value = options[0][1]
+            else:
+                single_strategy.picker.value = None
+        finally:
+            single_strategy._suspend = False
+        _render_single()
+
+    for _w in single_strategy.filters.inputs:
+        _w.observe(_on_single_filter_change, names="value")
+
+    def _make_cal_kind_handler(which: str):
+        def _handler(_b=None) -> None:
+            set_calendar_kind(single_strategy, which)
+            render_calendar(single_strategy, state)
+
+        return _handler
+
+    for pill, (_label, kind) in zip(
+        single_strategy.cal_pills, _CALENDAR_TABS, strict=True
+    ):
+        pill.on_click(_make_cal_kind_handler(kind))
+
+    # Section 3 two-pane analysis: each pane re-renders its mounted view when its
+    # analysis picker or benchmark dropdown changes (panes.py already swapped the
+    # stack + benchmark visibility on the pick). The shared strategy / window
+    # come from `single_strategy.picker` and `today`; no BQL, the other pane
+    # untouched.
+    def _make_pane_render_handler(pane: SimpleNamespace):
+        def _handler(_change=None) -> None:
+            window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
+            render_analysis_pane(single_strategy, pane, state, meta, window_start)
+
+        return _handler
+
+    for pane in (single_strategy.pane_left, single_strategy.pane_right):
+        handler = _make_pane_render_handler(pane)
+        pane.picker.observe(handler, names="value")
+        pane.bench_dd.observe(handler, names="value")
 
     perf_disclaimer_w = W.HTML(
         _load_disclaimer(
@@ -1840,18 +1367,117 @@ def build_app(verbose: bool = False) -> W.VBox:
             perf_disclaimer_w,
             legal_w,
             overlay_w,  # fixed-position loading overlay (v0.6.5 Workstream C)
+            limit_popup_w,  # fixed-position selection-cap error popup (#181)
         ],
         layout=W.Layout(width="100%"),
     )
     # Opt the app container into the injected dark-chrome class.
     app.add_class("bbg-app")
 
-    t_initial = time.perf_counter()
-    _recompute()
-    _log(f"initial recompute (selected viz) in {time.perf_counter() - t_initial:.2f}s")
-    _log(f"build_app TOTAL: {time.perf_counter() - t0:.2f}s")
-    # Dismiss the overlay once data is loaded; on a fatal fetch failure leave
-    # the error overlay up (the traceback also renders in the commentary block).
-    if not state.universe_prices.empty:
-        _set_progress(100, "Ready", hidden=True)
+    def _run_initial_load():
+        """The blocking startup work — fetch, prune, compute, first render —
+        formerly inline. Runnable on a worker thread (see `_start_initial_load`)
+        so the overlay paints while the kernel fetches, mirroring `_run_refresh`.
+        `nonlocal meta` is re-pointed to the recent-performance-pruned catalog."""
+        nonlocal meta
+        _set_progress(60, f"Fetching prices for {len(_fetch_tickers())} indices…")
+        t_fetch = time.perf_counter()
+        try:
+            state.universe_prices, fetch_source = fetch_prices(
+                _fetch_tickers(), universe_start, today
+            )
+            fetch_elapsed = time.perf_counter() - t_fetch
+            text, tone = _format_loaded(
+                state.universe_prices, fetch_source, fetch_elapsed
+            )
+            _set_status(text, tone=tone)
+        except Exception:
+            _set_progress(60, "Load failed — see error below", error=True)
+            _set_status("Load failed — see error below", tone=StatusTone.ERROR)
+            state.init_errors.append(
+                f"Universe fetch ({universe_start} → {today}) failed:\n"
+                f"{traceback.format_exc()}"
+            )
+
+        if not state.universe_prices.empty:
+            # Drop indices with no recent price movement (stale / delisted /
+            # all-NaN); `meta_all` (everything fetched) is kept so a resumed
+            # ticker can be re-admitted on a later Refresh.
+            live = set(
+                active_columns(
+                    state.universe_prices.reindex(columns=meta_all["ticker"])
+                )
+            )
+            meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
+            state.ticker_w.options = _ticker_options(meta)
+            single_strategy.picker.options = _ticker_options(meta)
+            benchmarks.set_catalog(_ticker_options(meta))
+            _log(
+                f"pruned to {len(meta)} of {len(meta_all)} indices with recent "
+                f"performance ({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
+            )
+            state.arp_universe_prices = state.universe_prices.reindex(
+                columns=meta["ticker"]
+            )
+            # Whole-universe returns computed once and threaded into the Platform
+            # renders + default selection so none re-derive daily_returns.
+            state.universe_rets = daily_returns(state.arp_universe_prices)
+            # Startup selection: top 5 by z(1W Sharpe, 1Y) so the Multi-Strategy
+            # views load populated (the _recompute below reads this selection).
+            state.ticker_w.value = _default_selection()
+            try:
+                state.universe_up = universe_perf(state.arp_universe_prices)
+                render_universe_grid(state, meta, pa)
+                # Only the visible analytics tab (Sunburst) computes on load; the
+                # hidden Regime / Factor tabs render on first pill click.
+                invalidate_analytics(state, meta, pa)
+            except Exception:
+                state.init_errors.append(
+                    f"universe_perf computation failed:\n{traceback.format_exc()}"
+                )
+            _set_progress(85, "Building catalog…")
+        else:
+            state.arp_universe_prices = pd.DataFrame()
+            state.universe_up = pd.DataFrame()
+
+        # First render of the selected-set views + Single Strategy tab, then
+        # dismiss the overlay. On a fatal fetch failure the error overlay stays
+        # up (the traceback also renders in the commentary block).
+        _recompute()
+        _render_single()
+        if not state.universe_prices.empty:
+            _set_progress(100, "Ready", hidden=True)
+        _log(f"build_app initial load TOTAL: {time.perf_counter() - t0:.2f}s")
+
+    def _start_initial_load():
+        """Run the initial load **synchronously**, so ``build_app()`` only returns
+        once the dashboard is populated.
+
+        This deliberately does *not* offload to a worker thread the way
+        ``_refresh_prices`` does (v0.9.13 #179 tried that and broke the deployed
+        app). Refresh is safe to thread because it fires from a user click, long
+        after the page is live and the frontend is servicing comm updates. The
+        **initial** load is different: under **Voila** the notebook is executed to
+        completion and the page is then assembled from the resulting output, so a
+        ``build_app()`` that returns immediately hands Voila an *empty* dashboard
+        and the background thread races the page assembly — the app renders stuck
+        behind the loading overlay with nothing in it. ``get_ipython()`` is not
+        None under Voila either, so it cannot be used to tell an interactive
+        notebook (where threading is harmless) from a Voila render (where it is
+        fatal). Staying synchronous is correct in every environment; the cost is
+        only that the overlay can't animate during the load.
+        """
+        try:
+            _run_initial_load()
+        except Exception:
+            # Surface the failure instead of swallowing it: `_run_initial_load`
+            # renders `state.init_errors` via `_recompute`, but only if it gets
+            # that far — so write the traceback straight into the error box too.
+            state.init_errors.append(traceback.format_exc())
+            state.errors_w.value = "".join(
+                _render_error(err) for err in state.init_errors
+            )
+            _set_progress(60, "Load failed — see error below", error=True)
+
+    _start_initial_load()
     return app

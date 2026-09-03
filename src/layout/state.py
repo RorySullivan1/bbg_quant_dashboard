@@ -18,6 +18,7 @@ import ipywidgets as W
 import pandas as pd
 
 from ..cache import LRUCache
+from .benchmarks import BenchmarkRegistry
 
 
 @dataclass
@@ -42,10 +43,18 @@ class DashboardState:
     # live superlatives-window toggle never wipes them (v0.8.x)
 
     # --- mutable session state ---
+    # The Single Strategy tab namespace (picker + profile/chart/grid handles),
+    # set once in build_app; its observers re-render Section 1 (v0.9.0). Defaults
+    # to None so the dataclass stays valid before the panel is built.
+    single_strategy: object | None = None
     # The single startup BQL/mock fetch (benchmarks included) and its
     # ARP-only view (benchmark columns reindexed out).
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     arp_universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # daily_returns(arp_universe_prices) computed once per fetch and threaded
+    # into the Platform renders (factor scatter / regime / grid z-score /
+    # default selection) so they don't each re-derive it (v0.9.13 #166).
+    universe_rets: pd.DataFrame = field(default_factory=pd.DataFrame)
     # The all-catalog perf table (universe_perf of arp_universe_prices), cached
     # at load/refresh so the Platform grid's Metric/Window/Lookback dropdowns
     # re-rank by recomputing only the z-score column — no universe_perf rerun,
@@ -81,3 +90,10 @@ class DashboardState:
     # current-slice results. Makes flipping back to a previously-viewed
     # benchmark an instant cache hit (v0.6.9 Workstream B).
     memo: LRUCache = field(default_factory=LRUCache)
+
+    # The live benchmark set and the selectors bound to it (#190). Owns what
+    # used to be the frozen `BENCHMARK_TICKERS` snapshot each selector took at
+    # construction; `build_app` creates it before the widgets (they register on
+    # construction) and hands it here. Defaults to the curated list, so a state
+    # object built without one behaves exactly as before.
+    benchmarks: BenchmarkRegistry = field(default_factory=BenchmarkRegistry)

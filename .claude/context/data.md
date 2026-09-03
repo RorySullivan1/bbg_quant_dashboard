@@ -17,19 +17,22 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
     "Solution": "Beta",
     "ReturnType": "Total",
     "Currency": "USD",
-    "LiveDate": "1957-03-04"
+    "LiveDate": "1957-03-04",
+    "Description": "S&P 500 — description pending."
   }
 }
 ```
 
 `COLUMN_MAP` in `src/data.py` renames these to internal snake_case
 (`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
-`currency`, `live_date`). `IndexFamilyName` maps to the internal
-`category` field — there is no separate "family" dimension. The metadata
-DataFrame also has a derived `ticker` column = `<key> + " Index"`.
-`Currency` is metadata (BQL only supplies `px_last`, not reference
-fields); `load_metadata` pads any missing `COLUMN_MAP` column with `NA`,
-so records without a `Currency` key still load.
+`live_date`, `currency`, `description`). `IndexFamilyName` maps to the
+internal `category` field — there is no separate "family" dimension. The
+metadata DataFrame also has a derived `ticker` column = `<key> + " Index"`.
+`Currency` and `Description` are metadata (BQL only supplies `px_last`, not
+reference fields); `load_metadata` pads any missing `COLUMN_MAP` column with
+`NA`, so records without a `Currency` or `Description` key still load.
+`Description` (added in v0.9.0) is a free-text per-index blurb surfaced in the
+Single Strategy profile card; it is NA-safe when absent.
 
 **Universe membership (v0.8.9):** `build_app` keeps only records whose
 `solution` is in `UNIVERSE_SOLUTION_VALUES` (`src/config.py`) — **ARP**,
@@ -49,3 +52,13 @@ Project-specific hooks:
 - `src/bql_client.py`'s case-insensitive column resolver is `_pick_column`.
 - The mock path is `_mock_prices`. If you change the BQL query, update
   `_mock_prices` in lockstep so live and mock paths return the same shape.
+- **Batched fetch (v0.9.13, #164):** the startup fetch is not one whole-universe
+  request — `_fetch_via_bql` issues one BQL request per **batch** of
+  `BQL_BATCH_SIZE` tickers (default 100) via `_assemble_batches`, so hundreds of
+  tickers over a multi-year window don't hit BQL's per-request row / wall-clock
+  limits. Each batch is retried with exponential backoff
+  (`BQL_MAX_RETRIES` / `BQL_RETRY_BACKOFF_S`, see `_fetch_batch_with_retry`); a
+  batch that still fails **degrades to NaN columns** (warned, not fatal) so a few
+  unresolvable tickers can't blank the load. Only when *every* batch fails does
+  the fetch raise. `_reshape_bql_response` pivots each batch's long-form response
+  (casting the ID column to `category` first to shrink the pivot).

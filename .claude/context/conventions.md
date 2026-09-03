@@ -4,20 +4,28 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.8.11`.
-- **Branch naming**: every new branch starts with the current version
-  followed by a slash-separated descriptor of what's being worked on.
-  Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
-  Examples:
-  - `v0.6.0/enhancement/perf-grid-color-swatch`
-  - `v0.6.0/bugfix/empty-ticker-traceback`
-  - `v0.6.0/refactor/style-tokens`
-  - **Caveat:** when the integration branch is named exactly `v{X.Y.Z}` (as
-    with `v0.6.0`), git can't also host nested `v{X.Y.Z}/<type>/<desc>` refs,
-    so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
-    `v0.6.0-refactor-dashboard-state`).
-- When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix (e.g. `v0.9.0/...`).
+- **Current version**: `v0.9.14`.
+- **`main` is the trunk.** Work branches off `main` and lands back in `main`
+  by PR. There is no standing integration branch.
+- **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
+  the version the work is going into — e.g. `0.9.14-benchmark-registry`,
+  `0.9.15-fix-overlay-flash`. Flat (hyphens, not slashes): git cannot host a
+  nested `vX.Y.Z/<desc>` ref while a branch named exactly `vX.Y.Z` exists, and
+  the epic branches below are named exactly that.
+- **Integration branches are the exception, not the rule.** Cut one — named
+  exactly `vX.Y.Z` — only for a **multi-PR epic** whose parts are not
+  individually shippable. Sub-branches hang off it, it merges into `main` when
+  the epic completes, and it is then deleted. A single-PR change never needs
+  one.
+
+> **Why this changed (v0.9.14).** The old model cut one long-lived integration
+> branch per version, off `main`. In practice `v0.9.0` absorbed the v0.9.11,
+> v0.9.12, v0.9.13 *and* v0.9.14 cycles — a branch named `v0.9.0` carrying
+> version `0.9.14` — while `main` sat untouched for three months. Two concrete
+> costs: the "staging buffer before `main`" was never once flushed, so it
+> bought nothing; and GitHub only fires `Closes #N` when a PR merges into the
+> **default** branch, so every closing keyword written against the integration
+> branch was silently inert and its issues stayed open after shipping.
 
 ## Development workflow
 
@@ -26,21 +34,22 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 `.claude/settings.json` PreToolUse hooks **enforce** the gates below.
 
 1. **Plan first.** Enter plan mode (`Shift+Tab` ×2; there is no auto-default
-   plan-mode setting), read the target `.claude/dev_map/vX.Y.Z.md` stub,
-   explore, design, and get the plan approved before editing.
-2. **Branch.** Cut one integration branch per version (`vX.Y.Z`, off `main`),
-   then a **flat-named sub-branch per workstream** off it
-   (`vX.Y.Z-<desc>` — see the "Branching" caveat above). One workstream per
-   branch, mirroring the dev-map §9 PR sequencing.
-3. **Implement** only that workstream; respect the stub's non-goals; add/adjust
+   plan-mode setting), read the target GitHub issue, explore, design, and get
+   the plan approved before editing.
+2. **Branch** off `main`, flat-named `X.Y.Z-<desc>` (see "Branching" above).
+   One workstream per branch, one issue per branch. Only a multi-PR epic gets
+   an integration branch to stack on.
+3. **Implement** only that workstream; respect the issue's non-goals; add/adjust
    `tests/`.
 4. **Quality gates** — `ruff check src tests`, `black --check src tests`,
    `python -m pytest -q` must all be green. `.claude/hooks/quality-gates.sh`
    re-runs these on every `git commit` and **blocks** the commit on failure.
 5. **Commit & push** `-u origin <branch>`. Never push to `main`/`master` —
    `.claude/hooks/block-main-push.sh` blocks it; land changes via PR.
-6. **PR into the integration branch** (`vX.Y.Z`, not `main`); tick the dev-map
-   §9 checkbox. Defer `.meta/VERSION` + release-note edits to end-of-cycle.
+6. **PR into `main`** (or into the epic's integration branch, which itself
+   PRs into `main`); close the issue with a `Closes #N` keyword — which only
+   actually fires on the merge into `main`. Defer `.meta/VERSION` +
+   release-note edits to end-of-cycle.
 
 ## Conventions
 
@@ -61,29 +70,39 @@ CSS, style tokens — live in `style.md`.)
   all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
   tabs, the v0.7.0 Platform factor scatter + the v0.8.x sunburst, and the v0.8.5
   Regime Analysis charts — slices from that cache. The `FACTOR_TICKERS` (v0.7.0: a
-  long-Treasury + short-rate TR proxy, the equity leg reuses SPX; v0.7.1 adds
+  long-Treasury + short-rate TR proxy, the equity leg reuses `SPXFP Index`
+  (`EQUITY_FACTOR_TICKER`, also a benchmark); v0.7.1 adds
   the `TREND_TICKER` = `BSLXAT Index` cross-asset trend factor for the scatter's
   z-axis) and the `REGIME_TICKERS` (the Regime Analysis indicators: `VIX Index`
   and the regional rates `FEDL01` / `EONIA` / `MUTKCALM`; v0.8.9 dropped
   `NFCIRISK` with the Risk regime) ride this same fetch — *no second BQL call* — and, like the
   benchmarks, are excluded from the ARP-universe views via
   `reindex(columns=meta["ticker"])`.
-- **Two-tier price cache (v0.6.9 Workstream A)**. `fetch_prices` is
-  fronted by an **in-memory session cache** (`_MEM_CACHE`, keyed by
-  `(tuple(sorted(tickers)), start, end)`) checked **before** the
-  **on-disk trading-day** parquet `data/.cache/prices_{YYYY-MM-DD}.parquet`.
-  On cold start the call hits BQL/mock and writes both tiers; subsequent
-  same-day startups within `CACHE_TTL_HOURS` read back from memory or the
-  parquet without hitting BQL. A stale TTL, a missing/corrupt file, or a
-  cache that doesn't cover every requested ticker all fall through to a
-  live fetch. The disk write is **best-effort**: on a read-only filesystem
-  (or any write failure) `_cache_write` warns once, sets
-  `_disk_cache_writable = False`, and the in-memory cache carries the
-  session — the app never crashes on a read-only FS. (An in-memory hit
-  reports `source="cache"` with no parquet, so `_format_loaded`'s mtime
-  stamp is best-effort.) `_cache_read` swallows read errors as a clean
-  miss. `_clear_caches()` resets both tiers for tests. The directory is
-  gitignored.
+- **Two-tier price cache (v0.6.9; incremental in v0.9.13 #165)**.
+  `fetch_prices` is fronted by an **in-memory session superset** — one growing
+  frame `_MEM_SUPERSET` plus the date interval it covers `_MEM_COVER` — checked
+  **before** the **on-disk trading-day** parquet
+  `data/.cache/prices_{YYYY-MM-DD}.parquet`. Any request whose tickers ⊆ the
+  superset's columns **and** whose `[start, end]` ⊆ the covered interval is
+  served by *slicing* (`_covers` → `_serve`), no BQL. On a **miss**, only the
+  missing rectangle is fetched — new tickers over the needed span, and/or the
+  existing columns over the uncovered date extension (`_delta_specs`, non-
+  overlapping so cached values are never disturbed) — then merged in
+  (`_merge_superset`, fresh wins). So **extending the lookback or adding an
+  index costs a delta, not a whole-universe refetch** — the key v0.9.13
+  scalability fix. The cover is tracked separately from the data index, so a
+  weekend/holiday `end` (no trading row) still counts as covered.
+  `use_cache=False` (Refresh) refetches the full request and overwrites the
+  overlap. The disk write is **best-effort**: on a read-only filesystem (or any
+  write failure) `_cache_write` warns once, sets `_disk_cache_writable = False`,
+  and the in-memory superset carries the session — the app never crashes on a
+  read-only FS. `_cache_read` is containment-aware (column-pushdown
+  `read_parquet(columns=…)`, left-date coverage) and swallows read errors as a
+  clean miss; `_cache_write` writes the superset and prunes past-TTL files
+  (`_prune_cache_files`). `_clear_caches()` resets both tiers for tests. The
+  directory is gitignored. *(Not yet done: a pyarrow dataset partitioned by
+  ticker for per-ticker on-disk append — the disk tier still writes one whole-
+  superset parquet per `end` day.)*
 - **Refresh prices button** (formerly Apply): re-fetches from BQL with
   `use_cache=False`, overwrites the parquet, then recomputes everything.
   Filter-only re-slicing (today the button always refetches) will be
@@ -235,18 +254,22 @@ CSS, style tokens — live in `style.md`.)
   (a thin caller of the same `{{key}}` substitution as `render_template`);
   the legal disclosure has no placeholders. Edit the HTML files — not the
   Python — to change the wording.
-- **Selected perf grid uses 2-level MultiIndex columns** (Info / 1Y /
-  3Y / 5Y supercolumns over their leaves), matching the all-catalog
-  grid. Custom per-column widths are kept via ipydatagrid's
-  `"<level0>,<level1>"` comma-joined `column_widths` keys (built by
-  `_build_perf_column_widths`), so the grid both shows a two-row
-  header and fills a ~full-HD width (~2014px). This grid was flattened
-  to single-level strings once (`2a9cc6c`) because MultiIndex widths
-  were flaky; if they regress again, the fallback is uniform sizing
-  via `base_column_size` (no `column_widths`), like the all-catalog
-  grid. `_perf_renderers` matches on the column leaf
-  (`col[-1] if isinstance(col, tuple) else col`) so it serves both
-  grids.
+- **Both perf grids use flat single-index string columns (v0.9.11).**
+  The selected-strategy grid and the all-catalog grid both flatten the
+  (period, metric) column tuples to single-index labels (e.g.
+  `("1Y", "Return") -> "1Y Return"`) via `_flatten_perf_columns`, and
+  render under a **single-row header** (`base_column_header_size=26`).
+  Per-column pixel widths come from `_perf_column_widths` (a tiny
+  color-swatch column, uniform stat columns, and content-fit
+  descriptive / z-score columns fit to the header + actual cell
+  strings). Autofit is done in Python — a deterministic content-fit
+  (`_content_px`), not ipydatagrid's frontend `auto_fit_columns`, so
+  the color / stat columns stay pinned while only the descriptive
+  columns re-fit. `_perf_renderers` matches on the flat string name
+  (e.g. `name.endswith(" Sharpe")`) so it serves both grids. (This
+  replaced the earlier 2-level MultiIndex layout with comma-joined
+  `"<level0>,<level1>"` width keys and a two-row header — flattened in
+  v0.9.11.)
 - **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
   rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
@@ -277,9 +300,10 @@ CSS, style tokens — live in `style.md`.)
   `bquant-dashboard-spec` is the portable platform reference for the BQL
   fetch contract + recommended fetch patterns + standard BQuant UI stack —
   load it first when touching anything that fetches from BQL or designs the
-  dashboard). The forward roadmap is
-  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs, and a reusable
-  `TEMPLATE.md` skeleton new stubs copy from). The PreToolUse enforcement
+  dashboard). Forward scope is tracked in **GitHub issues**, labelled per
+  version cycle (e.g. `v0.9.13-perf`) rather than in an in-repo roadmap —
+  in-repo stubs drifted out of date against the shipped branches, so the
+  issue tracker is the single source of truth. The PreToolUse enforcement
   scripts live in `.claude/hooks/` (documented in `.claude/hooks/README.md`),
   and `.claude/templates/` holds portable, repo-agnostic copies of the hooks +
   `workstream` skill for lifting into other repos (not auto-loaded — the active

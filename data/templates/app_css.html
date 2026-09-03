@@ -10,6 +10,11 @@
   background: {{chrome_bg}};
   color: {{text_color}};
   font-family: {{sans}};
+  /* Positioning context for the loading overlay: `position: fixed` gets
+     trapped by transformed ancestors in some hosts (JupyterLab/Voila cell
+     wrappers), so the overlay anchors to this element and covers its full
+     height instead — see `.bbg-overlay`. */
+  position: relative;
 }
 
 /* Slim, dark-themed scrollbars (WebKit/Blink). */
@@ -47,14 +52,19 @@
   gap: 16px;
 }
 
-/* Workstream C — loading overlay + staged progress bar + post-load toast. */
+/* Workstream C — loading overlay + staged progress bar + post-load toast.
+   Both the dimmed scrim AND the progress card float with `position: fixed`
+   (the same mechanism the post-load `.bbg-toast` uses), so they cover / centre
+   on the VIEWPORT — the screen the user is actually looking at. An earlier
+   `position: absolute` scrim was anchored to the top of the (long) `.bbg-app`
+   page: once the page was scrolled at all, the mask sat off-screen while the
+   fixed card still showed, so Refresh looked like a bare dialog with no mask.
+   The overlay blocks interaction while up, so covering the viewport (not the
+   below-the-fold page) is exactly right. */
 .bbg-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: {{scrim}};
   opacity: 1;
   transition: opacity 0.3s ease;
@@ -64,6 +74,10 @@
   pointer-events: none;
 }
 .bbg-overlay-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   background: {{surface}};
   border: 1px solid {{border_color}};
   border-radius: 8px;
@@ -127,6 +141,80 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
+/* Strategy-selection cap (v0.9.13 #181): a live count above the picker, and a
+   fixed top-centre auto-fading error popup when a pick over the cap is rejected. */
+.bbg-strat-count {
+  font-family: {{mono}};
+  font-size: {{caption_size}};
+  color: {{text_muted}};
+  padding: 2px 0 5px 0;
+}
+.bbg-strat-count.is-full {
+  color: {{red}};
+  font-weight: 700;
+}
+.bbg-limit-popup {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  animation: bbg-limit-fade 3.6s ease forwards;
+}
+.bbg-limit-popup.is-hidden { display: none; }
+.bbg-limit-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: {{surface}};
+  color: {{text_color}};
+  border: 1px solid {{red}};
+  border-left: 4px solid {{red}};
+  border-radius: 6px;
+  padding: 12px 18px;
+  font-family: {{mono}};
+  font-size: {{label_size}};
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.bbg-limit-icon { color: {{red}}; font-size: {{body_size}}; }
+@keyframes bbg-limit-fade {
+  0%, 75% { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
+
+/* Plotly FigureWidget chart backdrop. Charts render on a transparent
+   `paper_bgcolor`/`plot_bgcolor` (see `theme._chart_layout`) so the themed
+   card behind them shows through. FigureWidget, however, gives its own wrapper
+   DIV a theme-following (light/dark) default background that `paper_bgcolor`
+   does not control; a Refresh's full trace swap (`fig.data=()` then
+   `add_traces`) can transiently expose it, flashing the chart to the browser's
+   default background (plotly.py #3811). Force the wrapper DIVs transparent so
+   the themed card always shows through instead.
+
+   `background: transparent` on `.main-svg` is intentional and SAFE (it only
+   removes a fill, revealing what's behind) — do NOT change it to a color: an
+   opaque background on the stacked `.main-svg` layers paints over the chart
+   and hides the plotted data entirely. */
+.bbg-app .js-plotly-plot,
+.bbg-app .js-plotly-plot .plot-container,
+.bbg-app .js-plotly-plot .svg-container,
+.bbg-app .js-plotly-plot .main-svg {
+  background: transparent !important;
+}
+
+/* And force every plotly background *rect* transparent. When a pane view is
+   revisited it is remounted into its Stack (`stack.children = ...`), so plotly
+   re-runs `newPlot` on fresh DOM and can redraw these rects with the
+   `plotly_dark` template's dark colors even though `paper_bgcolor` is
+   `rgba(0,0,0,0)` — which made a dark background reappear on the second view.
+   `.bg` covers the paper rect, the subplot plot-area, AND the legend
+   background, so the legend and plot area stay transparent (themed card shows
+   through) on first render and every remount. Every `.bg` rect sits *behind*
+   its content, so forcing it transparent never hides data. */
+.bbg-app .js-plotly-plot .main-svg .bg {
+  fill: transparent !important;
+}
+
 /* Workstream D — button hover/active/focus states + dark form controls.
    (`.bbg-grid` is filled by PR 5, the dark ipydatagrid theme.) */
 
@@ -153,6 +241,41 @@
 .bbg-app .bbg-pill:focus-visible {
   outline: 2px solid {{accent}};
   outline-offset: 1px;
+}
+
+/* ---- Top-level section tab bar, stylized as a header band -------------
+   The Platform / Multi-Strategy / Single Strategy tabs read as the *header*
+   of the section shown below: a distinct raised strip one step lighter than
+   both the page and the masthead, with a bold accent underline + drop shadow
+   so it separates from the content. Scoped to `.bbg-tabband` so ONLY these
+   tabs invert on selection — the filter / calendar `.bbg-pill`s elsewhere
+   keep their subtle style. */
+.bbg-app .bbg-tabband {
+  background: {{surface2}};
+  border-top: 1px solid {{border_color}};
+  border-bottom: 3px solid {{accent}};
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 12px 16px 10px 16px;
+}
+.bbg-app .bbg-tabband .bbg-pill {
+  background: transparent;
+  color: {{text_muted}};
+  border-color: {{border_color}};
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bbg-app .bbg-tabband .bbg-pill:hover {
+  background: {{surface}};
+  color: {{text_color}};
+}
+/* Selected tab: inverted — a bold accent fill with dark text (vs. the
+   subtle surface + accent-border used by the other pills), so the active
+   section clearly "owns" the header. */
+.bbg-app .bbg-tabband .bbg-pill.is-active {
+  background: {{accent}};
+  color: {{chrome_bg}};
+  border-color: {{accent}};
+  font-weight: 700;
 }
 
 /* Primary action (Refresh prices) — green, brightness shift on hover/active. */
@@ -215,6 +338,14 @@
 .bbg-app input[type="date"]:focus {
   border-color: {{accent}};
   outline: none;
+}
+/* Benchmark selector (#192): a Combobox behind a composite widget. Its input
+   already picks up the input[type="text"] rules above, so this only stops the
+   wrapper adding spacing of its own. The datalist popup the browser renders
+   for a combobox cannot be themed from here — that is a browser limitation,
+   not an omission. */
+.bbg-app .bbg-benchmark-select {
+  width: 100%;
 }
 .bbg-app input[type="checkbox"] {
   accent-color: {{accent}};

@@ -2,16 +2,18 @@
 
 Flipping a per-pane benchmark and flipping back must hit the memo instead of
 recomputing, and the memo must be invalidated when Refresh prices rebuilds the
-selection slice. We assert this by spying on `builder.rolling_correlation` and
-counting how often it actually runs as we drive the rendered widget tree.
+selection slice. We assert this by spying on
+`multi_strategy.rolling_correlation` and counting how often it actually runs as
+we drive the rendered widget tree.
 """
 
 from __future__ import annotations
 
 import ipywidgets as W
-import src.layout.builder as builder_mod
+import src.layout.multi_strategy as ms_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
+from src.layout.benchmarks import BenchmarkSelect
 
 
 def _walk(widget):
@@ -24,28 +26,41 @@ def _mount_multi_strategy(app) -> None:
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
+
+
+def _option_values(dd) -> list:
+    """A dropdown's option *values*, for both option shapes.
+
+    Benchmark selectors carry ``(label, value)`` pairs since #191 (the catalog
+    source needs a label distinct from the ticker), so an identity check
+    against `BENCHMARK_TICKERS` no longer finds them.
+    """
+    return [o[1] if isinstance(o, tuple) else o for o in dd.options]
 
 
 def _benchmark_dropdowns(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and list(w.options) == list(BENCHMARK_TICKERS)
+        if isinstance(w, BenchmarkSelect)
+        and set(BENCHMARK_TICKERS) <= set(_option_values(w))
     ]
 
 
 def _spy_rolling_correlation(monkeypatch) -> dict:
-    real = builder_mod.rolling_correlation
+    # The Rolling Correlation compute lives in the multi_strategy pane engine
+    # (extracted from builder in v0.9.12-review #156), so spy there.
+    real = ms_mod.rolling_correlation
     calls = {"n": 0}
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "rolling_correlation", counting)
+    monkeypatch.setattr(ms_mod, "rolling_correlation", counting)
     return calls
 
 

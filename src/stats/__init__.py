@@ -23,6 +23,20 @@ from ._common import (
     max_drawup,
     zscore_cross_section,
 )
+from .calendar import (
+    OLSFit,
+    PolyFit,
+    calendar_return_table,
+    calendar_summary_columns,
+    monthly_beta,
+    monthly_correlation,
+    monthly_factor_correlations,
+    monthly_realized_vol,
+    monthly_returns,
+    ols_fit,
+    poly_fit,
+    weekly_returns,
+)
 from .factors import (
     equity_risk_premium,
     factor_beta,
@@ -154,4 +168,17 @@ __all__ = [
     "trend_returns",
     "factor_beta",
     "platform_sunburst_frame",
+    # calendar
+    "monthly_returns",
+    "weekly_returns",
+    "monthly_realized_vol",
+    "calendar_return_table",
+    "calendar_summary_columns",
+    "monthly_beta",
+    "monthly_correlation",
+    "ols_fit",
+    "OLSFit",
+    "poly_fit",
+    "PolyFit",
+    "monthly_factor_correlations",
 ]

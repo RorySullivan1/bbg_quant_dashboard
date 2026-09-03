@@ -78,11 +78,21 @@ def rolling_metric_zscore(
     metric: str = "sharpe",
     window: int = SHARPE_WINDOW,
     zscore_window: int = SHARPE_ZSCORE_WINDOW,
+    returns: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Scalar z-score per ticker of the latest rolling ``metric`` vs its trailing
     ``zscore_window`` history. Generalizes ``sharpe_zscore`` across the metrics
     in ``_ROLLING_METRICS`` (``sharpe`` / ``sortino`` / ``return`` / ``vol``);
     ``metric="sharpe"`` reproduces ``sharpe_zscore(daily_returns(prices), …)``.
+
+    The z-score is a scalar over only the trailing ``zscore_window`` of the
+    rolling series, so only the last ``window + zscore_window`` observations
+    matter — the input is sliced to that tail before the (potentially
+    multi-year) rolling compute, which the whole-catalog Platform controls
+    trigger on every change. Pass ``returns`` (e.g. a shared ``universe_rets``)
+    to skip re-deriving ``daily_returns`` here; the result is identical either
+    way, since the tail of the rolling series depends only on the tail of the
+    returns.
     """
     try:
         metric_fn = _ROLLING_METRICS[metric]
@@ -90,7 +100,12 @@ def rolling_metric_zscore(
         raise ValueError(
             f"unknown metric {metric!r}; choose from {sorted(_ROLLING_METRICS)}"
         ) from None
-    series = metric_fn(daily_returns(prices), window)
+    need = window + zscore_window
+    if returns is None:
+        rets = daily_returns(prices.tail(need + 2))  # +1 for the pct_change drop
+    else:
+        rets = returns.tail(need + 1)
+    series = metric_fn(rets, window)
     tail = series.tail(zscore_window)
     mean = tail.mean()
     std = tail.std().replace(0, np.nan)

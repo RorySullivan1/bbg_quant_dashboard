@@ -15,16 +15,25 @@ Voila.
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
 block** (Weekly Commentary + a two-section Key Highlights panel: Market
-Superlatives and New Launches) → a **top-level pill-button tab bar** with two
+Superlatives and New Launches) → a **top-level pill-button tab bar** with three
 tabs — **Platform** (all-catalog performance grid + a Platform-analytics card
-of Sunburst / Regime / Factor-exposure charts) and **Multi-Strategy Analysis**
+of Sunburst / Regime / Factor-exposure charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
-analysis panes) → disclaimers. All compute lives in `src/`; the notebook is a
-one-liner that calls `build_app()`.
+analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
+live-narrowing filter accordion, a profile card + cumulative chart, a
+monthly-return calendar, and two analysis panes) → disclaimers. All compute
+lives in `src/`; the notebook is a one-liner that calls `build_app()`.
+
+Every benchmark selector is user-extensible (v0.9.14): it type-filters the
+curated `BENCHMARK_TICKERS` list *and* the catalog indices, and accepts a
+ticker that is on neither — fetching it as a delta, reporting an
+unresolvable ticker separately from one with no history in the window, and
+persisting additions to a gitignored `data/user_benchmarks.json` that
+degrades to session-only on a read-only filesystem.
 
 ## Current version
 
-`v0.8.11` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.14` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
@@ -33,7 +42,8 @@ The full reference material is split into focused files under
 `.claude/context/`. Read the relevant one before editing that area:
 
 - **`.claude/context/architecture.md`** — the module/architecture map and the
-  detailed UI screen-layout walkthrough (Platform + Multi-Strategy tabs).
+  detailed UI screen-layout walkthrough (Platform + Multi-Strategy + Single
+  Strategy tabs).
 - **`.claude/context/style.md`** — the visual design system: style tokens
   (`src/style.py`), the dark chrome CSS, the dark chart theme, color identity.
 - **`.claude/context/run_instructions.md`** — running on a BQuant terminal and

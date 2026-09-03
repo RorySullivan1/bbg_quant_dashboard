@@ -2,15 +2,16 @@
 
 Each pane renders only its currently-mounted view per recompute; the other
 eight are built on first pick and stay fresh until the next recompute. We prove
-this by spying on `builder.rolling_correlation` (the compute behind the Rolling
-Correlation view, which is NOT a default-mounted view) and counting how often
-it actually runs as we drive the picker.
+this by spying on `multi_strategy.rolling_correlation` (the compute behind the
+Rolling Correlation view, which is NOT a default-mounted view) and counting how
+often it actually runs as we drive the picker.
 """
 
 from __future__ import annotations
 
 import ipywidgets as W
 import src.layout.builder as builder_mod
+import src.layout.multi_strategy as ms_mod
 from src.layout import build_app
 
 
@@ -24,7 +25,7 @@ def _mount_multi_strategy(app) -> None:
     btn = next(
         w
         for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Multi-Strategy Analysis"
+        if isinstance(w, W.Button) and w.description == "Multi-Strategy"
     )
     btn.click()
 
@@ -38,14 +39,16 @@ def _pickers(app) -> list[W.Dropdown]:
 
 
 def _spy(monkeypatch, name: str) -> dict:
-    real = getattr(builder_mod, name)
+    # The Rolling Correlation compute lives in the multi_strategy pane engine
+    # (extracted from builder in v0.9.12-review #156), so spy there.
+    real = getattr(ms_mod, name)
     calls = {"n": 0}
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, name, counting)
+    monkeypatch.setattr(ms_mod, name, counting)
     return calls
 
 

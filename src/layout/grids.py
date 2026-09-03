@@ -38,7 +38,9 @@ def _dark_grid_kwargs() -> dict:
     return {
         "grid_style": _dark_grid_style(),
         "header_renderer": TextRenderer(
-            text_color=Color.TEXT, background_color=Color.SURFACE
+            text_color=Color.TEXT,
+            background_color=Color.SURFACE,
+            horizontal_alignment="center",
         ),
         "corner_renderer": TextRenderer(
             text_color=Color.TEXT, background_color=Color.SURFACE
@@ -47,12 +49,34 @@ def _dark_grid_kwargs() -> dict:
     }
 
 
+def _reassert_dark_theme(grid: DataGrid) -> None:
+    """Re-apply the dark grid theme after a ``grid.data`` reassignment.
+
+    The dark ``grid_style`` (background / zebra / header colors) and the
+    bright-text header/corner/default renderers are set once at construction
+    (``_dark_grid_kwargs``). Reassigning ``grid.data`` on a Refresh rebuilds the
+    frontend grid model, which drops the styling back to ipydatagrid's default
+    (white) background — the "reverts to the original background" symptom. The
+    per-column ``renderers`` are already rebuilt on each update (their column
+    keys change with the data), but ``grid_style`` is not, so re-assert the full
+    dark theme here. ``grid_style`` is force-synced via ``send_state`` because an
+    equal dict would otherwise short-circuit the traitlets diff and never
+    re-reach the frontend."""
+    kw = _dark_grid_kwargs()
+    grid.grid_style = kw["grid_style"]
+    grid.header_renderer = kw["header_renderer"]
+    grid.corner_renderer = kw["corner_renderer"]
+    grid.default_renderer = kw["default_renderer"]
+    grid.send_state("grid_style")
+
+
 def _perf_grid() -> DataGrid:
     grid = DataGrid(
         pd.DataFrame(),
         base_row_size=28,
-        base_column_size=80,  # default for numeric metric cols
-        base_row_header_size=120,
+        base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
+        base_column_header_size=26,  # single-row header (flat, single-index)
+        base_row_header_size=110,  # re-fit to the ticker content per update
         layout=W.Layout(width="100%", height="240px"),
         **_dark_grid_kwargs(),
     )
@@ -60,36 +84,79 @@ def _perf_grid() -> DataGrid:
     return grid
 
 
-PERF_COLOR_COLUMN_NAME: str = "Chart Color"
+# The per-strategy chart-color swatch column. Its header is intentionally blank
+# (a single space) — the column is a narrow color chip, not a labelled field —
+# so it reads as a nameless legend swatch rather than a clipped "Chart Color".
+PERF_COLOR_COLUMN_NAME: str = " "
 
 
-# Column widths in pixels, keyed by the column's *leaf* label. The grid uses
-# 2-level MultiIndex columns (Info / 1Y / 3Y / 5Y supercolumns over their
-# leaves); `_build_perf_column_widths` emits ipydatagrid's "<level0>,<level1>"
-# comma-joined keys from these. The descriptive text columns carry the slack
-# that makes the grid fill a wide dashboard — ipydatagrid has no responsive
-# stretch-to-container mode, so widths are set by hand to sum to ~full-HD
-# width (~2014px incl. the 120px row header + metric columns).
-_PERF_INFO_WIDTHS: dict[str, int] = {
-    PERF_COLOR_COLUMN_NAME: 90,  # color swatch — wide enough to show header
-    "Name": 360,
-    "Asset Class": 180,
-    "Theme": 280,
-}
+# Column sizing for the flat single-index perf / catalog grids (v0.9.11 visual
+# edits). Columns are single-index strings ("1Y Return", "Asset Class", …). The
+# color-swatch column is a tiny legend block; the stat (period-metric) columns
+# share one uniform width so 1Y / 3Y / 5Y stay aligned; the descriptive text
+# columns (Name / Asset Class / … and the ticker row-header) are fit to their
+# actual content in Python. We fit in Python — not via ipydatagrid's
+# `auto_fit_columns` — because that frontend autofit fits *every* column and
+# writes the result back over `column_widths`, so it can't be scoped to the
+# descriptive columns while keeping the color / stat columns pinned.
+_COLOR_COL_WIDTH: int = 30  # narrow swatch chip — visible color, minimal space
+_STAT_COL_WIDTH: int = 82  # uniform width for every Return/Vol/Sharpe/Max DD col
+_CHAR_PX: float = 7.6  # ~avg glyph width at the 12px grid font
+_TEXT_PAD: int = 24  # cell padding + a little header slack
+_TEXT_COL_MIN: int = 56
+_TEXT_COL_MAX: int = 340
+# Flat stat-column suffixes (a column is a "stat" if its name ends with one).
+_STAT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Sharpe", " Max DD")
 
 
-_PERF_METRIC_WIDTHS: dict[str, int] = {
-    "Return": 88,
-    "Vol": 76,
-    "Sharpe": 72,
-    "Max DD": 92,
-}
+def _content_px(header: object, values: object) -> int:
+    """Pixel width to fit ``header`` plus the widest of ``values`` at the grid
+    font — a deterministic stand-in for ipydatagrid's frontend-only autofit
+    (which can't be limited to a subset of columns). Clamped to keep long
+    strategy names from blowing out the row."""
+    longest = len(str(header))
+    for v in values or ():
+        s = "" if v is None else str(v)
+        if s and s.lower() != "nan":
+            longest = max(longest, len(s))
+    return int(min(_TEXT_COL_MAX, max(_TEXT_COL_MIN, longest * _CHAR_PX + _TEXT_PAD)))
 
 
-_PERF_INFO_TEXT_COLS: frozenset[str] = frozenset({"Name", "Asset Class", "Theme"})
+def _is_stat_col(name: str) -> bool:
+    return name.endswith(_STAT_SUFFIXES)
 
 
-# v0.7.0 Workstream A — the all-catalog grid's dynamic z-score supercolumn name
+def _is_zscore_col(name: str) -> bool:
+    return name == ZSCORE_SUPERCOL or name.startswith(ZSCORE_SUPERCOL + " ")
+
+
+def _flatten_perf_columns(columns: pd.Index) -> list[str]:
+    """Flatten (period, metric) column tuples to single-index labels, e.g.
+    ``("1Y", "Return") -> "1Y Return"``. Non-tuple names pass through."""
+    return [
+        " ".join(str(p) for p in c) if isinstance(c, tuple) else str(c) for c in columns
+    ]
+
+
+def _perf_column_widths(frame: pd.DataFrame) -> dict[str, int]:
+    """Per-column pixel widths for a flat perf / catalog grid: a tiny color
+    swatch, uniform stat columns, and content-fit descriptive / z-score
+    columns (fit to the header + the actual cell strings)."""
+    widths: dict[str, int] = {}
+    for col in frame.columns:
+        name = str(col)
+        if name == PERF_COLOR_COLUMN_NAME:
+            widths[name] = _COLOR_COL_WIDTH
+        elif _is_zscore_col(name):
+            widths[name] = _content_px(name, frame[col].tolist())
+        elif _is_stat_col(name):
+            widths[name] = _STAT_COL_WIDTH
+        else:
+            widths[name] = _content_px(name, frame[col].tolist())
+    return widths
+
+
+# v0.7.0 Workstream A — the all-catalog grid's dynamic z-score column name
 # and the diverging-heatmap thresholds for its conditional-formatted columns.
 ZSCORE_SUPERCOL: str = "Z-Score"
 # Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
@@ -104,13 +171,41 @@ def _zebra_expr() -> str:
     return f"(cell.row % 2 === 0 ? '{Color.CHROME_BG}' : '{Color.SURFACE}')"
 
 
+# Empty (NaN) numeric cells render as this dash rather than "NaN" / "NaN%".
+_MISSING_DASH: str = "-"
+
+
+def _dash_text_value(missing: str) -> VegaExpr:
+    """A `text_value` VegaExpr that shows `missing` (e.g. "-") for empty cells.
+
+    ipydatagrid's `missing` trait only substitutes on a strict JSON ``null``, but
+    a pandas ``NaN`` round-trips through serialization to a JS ``NaN`` (never
+    null), so that trait never fires for our data. The frontend instead renders
+    ``text_value || <the d3-formatted number>``, so returning ``''`` for real
+    values falls back to the renderer's normal numeric format while NaN cells
+    return `missing`. `cell.value` stays numeric, so any diverging background
+    ramp is unaffected.
+
+    Only wire this onto *numeric* columns: ``isNaN`` is true for any non-numeric
+    string, so on a text column it would blank every cell to the dash."""
+    return VegaExpr(f"isNaN(cell.value) ? '{missing}' : ''")
+
+
 def _diverging_bg_renderer(
     thresholds: tuple[float, float, float, float],
+    *,
+    fmt: str = ".2f",
+    missing: str = "",
 ) -> TextRenderer:
-    """A 2dp numeric renderer whose background is a diverging red→neutral→green
+    """A numeric renderer whose background is a diverging red→neutral→green
     ramp keyed to `cell.value` via the existing VegaExpr mechanism. NaN/null and
     the neutral band (between the two middle thresholds) fall back to the zebra
-    so empty / middling cells read normally."""
+    so empty / middling cells read normally. `fmt` is the display number format
+    (".2f" for ratios / Sharpe, ".2%" for return cells); `missing` is the text
+    shown for empty cells (e.g. "-") while the value stays numeric so the
+    background ramp is unaffected. The empty-cell text is driven through a
+    `text_value` VegaExpr (see `_dash_text_value`) because ipydatagrid's
+    `missing` trait never fires for a pandas NaN."""
     t0, t1, t2, t3 = thresholds
     zebra = _zebra_expr()
     expr = (
@@ -121,30 +216,38 @@ def _diverging_bg_renderer(
         f"cell.value < {t3} ? '{Color.HEAT_POS_SOFT}' : "
         f"'{Color.HEAT_POS_STRONG}'"
     )
-    return TextRenderer(
-        format=".2f", text_color=Color.TEXT, background_color=VegaExpr(expr)
+    renderer = TextRenderer(
+        format=fmt,
+        missing=missing,
+        text_color=Color.TEXT,
+        background_color=VegaExpr(expr),
+        horizontal_alignment="center",
     )
+    if missing:
+        renderer.text_value = _dash_text_value(missing)
+    return renderer
 
 
-def _build_perf_column_widths(columns: pd.Index) -> dict[str, int]:
-    """Map each MultiIndex column to a pixel width, keyed by ipydatagrid's
-    "<level0>,<level1>" comma-joined field name (e.g. "Info,Name",
-    "1Y,Return"). Info leaves take fixed widths; metric leaves
-    (Return/Vol/Sharpe/Max DD) take one width each so 1Y/3Y/5Y stay aligned."""
-    widths: dict[str, int] = {}
-    for col in columns:
-        leaf = col[-1] if isinstance(col, tuple) else col
-        key = ",".join(str(p) for p in col) if isinstance(col, tuple) else str(col)
-        if leaf in _PERF_INFO_WIDTHS:
-            widths[key] = _PERF_INFO_WIDTHS[leaf]
-        elif leaf in _PERF_METRIC_WIDTHS:
-            widths[key] = _PERF_METRIC_WIDTHS[leaf]
-    return widths
+def _plain_num_renderer(fmt: str, *, missing: str = "") -> TextRenderer:
+    """A numeric renderer with no diverging background (the grid zebra shows
+    through), but the same empty-cell dash handling as `_diverging_bg_renderer`.
+    Used for summary columns like Vol where a red→green ramp would imply a
+    good/bad axis that doesn't exist."""
+    renderer = TextRenderer(
+        format=fmt,
+        missing=missing,
+        text_color=Color.TEXT,
+        horizontal_alignment="center",
+    )
+    if missing:
+        renderer.text_value = _dash_text_value(missing)
+    return renderer
 
 
 def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
     if pt.empty:
         grid.data = pd.DataFrame()
+        _reassert_dark_theme(grid)
         return
     info_block = _build_info_block(
         meta,
@@ -155,19 +258,19 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     # Per-row color swatch: each cell carries the hex string; the renderer
     # paints background + text the same color so it shows as a solid block —
     # the universal legend for every chart in the panes. It leads the Info
-    # supercolumn so the grid acts as the legend left-to-right.
+    # columns so the grid acts as the legend left-to-right.
     info_block.insert(
         0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
     )
-    info_block.columns = pd.MultiIndex.from_product([["Info"], info_block.columns])
+    # Flat single-index columns ("1Y Return", …) — single-row header, autofit
+    # of the descriptive columns, and clean per-column widths (v0.9.11).
     perf = pt.copy()
-    perf.columns = pd.MultiIndex.from_tuples(
-        [(str(period), str(metric)) for period, metric in pt.columns]
-    )
+    perf.columns = _flatten_perf_columns(pt.columns)
     combined = pd.concat([info_block, perf], axis=1)
     combined.index.name = "Ticker"
     grid.data = combined
-    _apply_grid_styling(grid, combined.columns, widths=True, sharpe_heatmap=True)
+    _apply_grid_styling(grid, combined, sharpe_heatmap=True)
+    _reassert_dark_theme(grid)
 
 
 def _build_info_block(
@@ -193,43 +296,53 @@ def _build_info_block(
 
 
 def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
-    # Bright text on the dark body; no background_color so the `grid_style`
-    # zebra (`row_background_color`) shows through. The color-swatch keeps its
-    # VegaExpr bg/text (a renderer's own background overrides grid_style).
-    # `sharpe_heatmap` (all-catalog grid only) swaps the plain 2dp renderer for
-    # a diverging-background one on the Sharpe leaves + the Z-Score column,
-    # leaving the selected-strategy grid (defaults off) visually unchanged.
-    text = TextRenderer(text_color=Color.TEXT)
-    pct = TextRenderer(format=".2%", text_color=Color.TEXT)
-    f2 = TextRenderer(format=".2f", text_color=Color.TEXT)
+    # Columns are flat single-index strings ("1Y Sharpe", "Asset Class", the
+    # "Z-Score …" headline). Numeric cells are centered; descriptive text stays
+    # left. Bright text on the dark body; no background_color so the `grid_style`
+    # zebra shows through. `sharpe_heatmap` swaps the plain 2dp renderer for a
+    # diverging-background one on the Sharpe columns + the Z-Score column. Empty
+    # (NaN) numeric cells show "-" via a `text_value` expr; text columns + the
+    # color swatch keep plain text (`isNaN` is true for any non-numeric string).
+    dash = _dash_text_value(_MISSING_DASH)
+    text = TextRenderer(text_color=Color.TEXT)  # descriptive — left aligned
+    pct = TextRenderer(
+        format=".2%",
+        text_color=Color.TEXT,
+        text_value=dash,
+        horizontal_alignment="center",
+    )
+    f2 = TextRenderer(
+        format=".2f",
+        text_color=Color.TEXT,
+        text_value=dash,
+        horizontal_alignment="center",
+    )
     color_swatch = TextRenderer(
         background_color=VegaExpr("cell.value"),
         text_color=VegaExpr("cell.value"),
     )
     sharpe_renderer = (
-        _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
+        _diverging_bg_renderer(_SHARPE_HEAT_THRESHOLDS, missing=_MISSING_DASH)
+        if sharpe_heatmap
+        else f2
     )
     zscore_renderer = (
-        _diverging_bg_renderer(_ZSCORE_HEAT_THRESHOLDS) if sharpe_heatmap else f2
+        _diverging_bg_renderer(_ZSCORE_HEAT_THRESHOLDS, missing=_MISSING_DASH)
+        if sharpe_heatmap
+        else f2
     )
     renderers: dict = {}
     for col in columns:
-        # Columns are flat strings in the selected-strategy grid
-        # (e.g. "1Y Sharpe") but MultiIndex tuples in the all-catalog grid
-        # (e.g. ("1Y", "Sharpe")). Match on the metric leaf either way so
-        # `.endswith` is only ever called on a string.
-        leaf = col[-1] if isinstance(col, tuple) else col
-        if isinstance(col, tuple) and col[0] == ZSCORE_SUPERCOL:
+        name = str(col)
+        # Z-Score first: its name (e.g. "Z-Score 1M Sharpe") also ends in
+        # " Sharpe", so it must win over the Sharpe branch below.
+        if _is_zscore_col(name):
             renderers[col] = zscore_renderer
-        elif leaf == PERF_COLOR_COLUMN_NAME:
+        elif name == PERF_COLOR_COLUMN_NAME:
             renderers[col] = color_swatch
-        elif leaf in _PERF_INFO_TEXT_COLS:
-            renderers[col] = text
-        elif leaf == "Sharpe" or leaf.endswith(" Sharpe"):
+        elif name.endswith(" Sharpe"):
             renderers[col] = sharpe_renderer
-        elif leaf in ("Return", "Vol", "Max DD") or leaf.endswith(
-            (" Return", " Vol", " Max DD")
-        ):
+        elif name.endswith((" Return", " Vol", " Max DD")):
             renderers[col] = pct
         else:
             renderers[col] = text
@@ -238,27 +351,133 @@ def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
 
 def _apply_grid_styling(
     grid: DataGrid,
-    columns: pd.Index,
+    frame: pd.DataFrame,
     *,
-    widths: bool = False,
     sharpe_heatmap: bool = False,
 ) -> None:
     """Wire the shared per-column renderers (text / pct / 2dp / color-swatch)
-    onto a grid, and — for the selected-strategy grid — the hand-tuned
-    MultiIndex column widths. The all-catalog grid uses uniform
-    `base_column_size` (so it leaves `widths` off) and opts into the diverging
-    Sharpe / Z-Score `sharpe_heatmap`."""
-    grid.renderers = _perf_renderers(columns, sharpe_heatmap=sharpe_heatmap)
-    if widths:
-        grid.column_widths = _build_perf_column_widths(columns)
+    onto a grid, plus the flat single-index column widths (tiny color swatch,
+    uniform stat columns, content-fit descriptive columns) and a content-fit
+    ticker row-header. Shared by the selected-strategy / single-strategy perf
+    grids and the all-catalog grid; the latter opts into the diverging Sharpe /
+    Z-Score `sharpe_heatmap`."""
+    grid.renderers = _perf_renderers(frame.columns, sharpe_heatmap=sharpe_heatmap)
+    grid.column_widths = _perf_column_widths(frame)
+    grid.base_row_header_size = _content_px(
+        frame.index.name or "", frame.index.tolist()
+    )
+
+
+# v0.9.0 Workstream D — the Single Strategy monthly-return calendar.
+# Month / annual cells are returns: red below -5%, soft red to -1%, neutral
+# ±1%, soft green to +5%, strong green above. Vol-adjusted cells are
+# return/vol ratios on a wider unitless band. The Sharpe summary column reuses
+# the perf-grid Sharpe band.
+_CALENDAR_RETURN_THRESHOLDS: tuple[float, float, float, float] = (
+    -0.05,
+    -0.01,
+    0.01,
+    0.05,
+)
+_CALENDAR_VOLADJ_THRESHOLDS: tuple[float, float, float, float] = (
+    -1.0,
+    -0.25,
+    0.25,
+    1.0,
+)
+# Correlation cells diverge around 0; beta cells around the 1.0 market-beta
+# neutral band. The ramp encodes magnitude/sign, not good/bad.
+_CALENDAR_CORR_THRESHOLDS: tuple[float, float, float, float] = (-0.5, -0.1, 0.1, 0.5)
+_CALENDAR_BETA_THRESHOLDS: tuple[float, float, float, float] = (0.0, 0.7, 1.3, 2.0)
+# Renderer spec per calendar summary column: (thresholds | None, fmt). A
+# `None` threshold → a plain (non-diverging) renderer, used for Vol where a
+# good/bad color ramp would mislead. Return-like columns use the return ramp
+# (".2%"); Sharpe / Beta / Correlation use their own bands (".2f").
+_CALENDAR_SUMMARY_SPECS: dict[str, tuple[tuple[float, float, float, float] | None, str]]
+_CALENDAR_SUMMARY_SPECS = {
+    "Return": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Bench": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Excess": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
+    "Vol": (None, ".2%"),
+    "Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
+    "Bench Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
+    "Beta": (_CALENDAR_BETA_THRESHOLDS, ".2f"),
+    "Correlation": (_CALENDAR_CORR_THRESHOLDS, ".2f"),
+}
+# Empty (NaN) calendar cells render as the shared dash rather than "NaN".
+_CALENDAR_MISSING: str = _MISSING_DASH
+
+
+def _calendar_grid() -> DataGrid:
+    grid = DataGrid(
+        pd.DataFrame(),
+        base_row_size=26,
+        base_column_size=62,
+        base_row_header_size=54,
+        layout=W.Layout(width="100%", height="260px"),
+        **_dark_grid_kwargs(),
+    )
+    grid.add_class("bbg-grid")
+    return grid
+
+
+def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
+    """Renderers for the calendar grid, keyed by `kind`. Month cells use a
+    diverging ramp whose band/format match the kind (returns ".2%" for absolute /
+    outperformance, ratios ".2f" for vol-adjusted, beta / correlation ".2f"). The
+    trailing summary columns each take their own renderer from
+    `_CALENDAR_SUMMARY_SPECS` (e.g. Return as a ".2%" ramp, Sharpe on the Sharpe
+    band, Vol plain). Empty cells display ``-`` (`_CALENDAR_MISSING`) via the
+    renderers' numeric-preserving `text_value`."""
+    if kind == "vol_adjusted":
+        month_thr, month_fmt = _CALENDAR_VOLADJ_THRESHOLDS, ".2f"
+    elif kind == "beta":
+        month_thr, month_fmt = _CALENDAR_BETA_THRESHOLDS, ".2f"
+    elif kind == "correlation":
+        month_thr, month_fmt = _CALENDAR_CORR_THRESHOLDS, ".2f"
+    else:  # absolute / outperformance
+        month_thr, month_fmt = _CALENDAR_RETURN_THRESHOLDS, ".2%"
+    month_r = _diverging_bg_renderer(
+        month_thr, fmt=month_fmt, missing=_CALENDAR_MISSING
+    )
+    renderers: dict = {}
+    for col in columns:
+        spec = _CALENDAR_SUMMARY_SPECS.get(col)
+        if spec is None:  # a month cell (Jan…Dec)
+            renderers[col] = month_r
+            continue
+        thresholds, fmt = spec
+        renderers[col] = (
+            _plain_num_renderer(fmt, missing=_CALENDAR_MISSING)
+            if thresholds is None
+            else _diverging_bg_renderer(thresholds, fmt=fmt, missing=_CALENDAR_MISSING)
+        )
+    return renderers
+
+
+def _update_calendar_grid(grid: DataGrid, table: pd.DataFrame, *, kind: str) -> None:
+    """Render a `calendar_return_table` frame (years × Jan…Dec + the kind's
+    summary columns) into the calendar DataGrid, oldest year on top, with
+    diverging conditional formatting keyed to `kind`."""
+    if table is None or table.empty:
+        grid.data = pd.DataFrame()
+        _reassert_dark_theme(grid)
+        return
+    display = table.sort_index(ascending=True)
+    display.index = display.index.astype(int).astype(str)
+    display.index.name = ""
+    grid.data = display
+    grid.renderers = _calendar_renderers(display.columns, kind=kind)
+    _reassert_dark_theme(grid)
 
 
 def _universe_grid() -> DataGrid:
     grid = DataGrid(
         pd.DataFrame(),
         base_row_size=28,
-        base_column_size=92,
-        base_row_header_size=120,
+        base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
+        base_column_header_size=26,  # single-row header (flat, single-index)
+        base_row_header_size=110,  # re-fit to the ticker content per update
         layout=W.Layout(width="100%", height="360px"),
         **_dark_grid_kwargs(),
     )
@@ -275,11 +494,11 @@ def _build_universe_frame(
 ) -> pd.DataFrame:
     """Assemble the all-catalog grid's DataFrame (pure — no grid side effects).
 
-    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y, all
-    under 2-level MultiIndex supercolumns. When a `zcol` (per-ticker z-score
-    Series) + `zlabel` are given, a `(ZSCORE_SUPERCOL, zlabel)` column is
-    inserted right after the Info block — it's the headline ranking column, so
-    it sits next to the names — and the whole frame is sorted by it descending
+    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y, as flat
+    single-index labels ("1Y Return", …). When a `zcol` (per-ticker z-score
+    Series) + `zlabel` are given, a `"Z-Score <zlabel>"` column is inserted
+    right after the Info block — it's the headline ranking column, so it sits
+    next to the names — and the whole frame is sorted by it descending
     (insufficient-history tickers, NaN z, sink to the bottom)."""
     if meta.empty:
         return pd.DataFrame()
@@ -297,26 +516,21 @@ def _build_universe_frame(
         },
         date_cols=("live_date",),
     )
-    info.columns = pd.MultiIndex.from_product([["Info"], info.columns])
 
     blocks = [info]
-    z_key: tuple[str, str] | None = None
+    z_key: str | None = None
     if zcol is not None and zlabel is not None:
-        z_key = (ZSCORE_SUPERCOL, zlabel)
-        zframe = pd.DataFrame({zlabel: zcol.reindex(info.index)})
-        zframe.columns = pd.MultiIndex.from_product([[ZSCORE_SUPERCOL], zframe.columns])
-        blocks.append(zframe)
+        z_key = f"{ZSCORE_SUPERCOL} {zlabel}"
+        blocks.append(pd.DataFrame({z_key: zcol.reindex(info.index)}))
 
     if not up.empty:
-        up_norm = up.copy()
-        up_norm.columns = pd.MultiIndex.from_tuples(
-            [(str(a), str(b)) for a, b in up_norm.columns]
-        )
-        # Order: 1Y, 3Y, 5Y (Since-Inception dropped in v0.7.2).
+        # Order: 1Y, 3Y, 5Y (Since-Inception dropped in v0.7.2), then flatten
+        # the (period, metric) columns to single-index "1Y Return" labels.
         period_order = ["1Y", "3Y", "5Y"]
-        present = [p for p in period_order if p in up_norm.columns.get_level_values(0)]
-        up_norm = up_norm.reindex(columns=present, level=0)
-        blocks.append(up_norm.reindex(info.index))
+        present = [p for p in period_order if p in up.columns.get_level_values(0)]
+        up_norm = up.reindex(columns=present, level=0).reindex(info.index)
+        up_norm.columns = _flatten_perf_columns(up_norm.columns)
+        blocks.append(up_norm)
 
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
     if z_key is not None:
@@ -335,4 +549,5 @@ def _update_universe_grid(
 ) -> None:
     combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
     grid.data = combined
-    _apply_grid_styling(grid, combined.columns, sharpe_heatmap=True)
+    _apply_grid_styling(grid, combined, sharpe_heatmap=True)
+    _reassert_dark_theme(grid)

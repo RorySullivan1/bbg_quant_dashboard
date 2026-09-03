@@ -16,5 +16,4 @@ unchanged; these are the generic siblings.
 | `skills/bquant-dashboard-spec/SKILL.md` | Portable BQuant App platform reference — BQL fetch contract, single-call-per-session, two-tier price cache, mock fallback, benchmarks/factors ride-along, Refresh-prices control, standard UI stack (`ipywidgets` + plotly `FigureWidget` + `ipydatagrid` + Voila). | Copy into `.claude/skills/bquant-dashboard-spec/` as-is; no project-specific spots to edit. |
 
 See [`../hooks/README.md`](../hooks/README.md) for how the active hooks and these
-templates relate, and [`../dev_map/TEMPLATE.md`](../dev_map/TEMPLATE.md) for the
-reusable roadmap-stub skeleton.
+templates relate.
