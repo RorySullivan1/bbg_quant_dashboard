@@ -1,15 +1,24 @@
 name: CI
 
-# Lint, format-check, and test on every version integration branch (`v*`, e.g.
-# v0.9.0) and `main`, and any PR targeting them. Mirrors the local commands
-# documented in CLAUDE.md. The `v*` glob means new integration branches are
-# covered without editing this file each cycle (previously pinned to v0.7.5,
-# so v0.8.x / v0.9.x PRs ran no CI).
+# Lint, format-check, and test.
+#
+# `push` stays filtered to the trunk (`main`) and to epic integration branches
+# (`v*`), so an ordinary feature-branch push does not burn a run on its own —
+# its PR covers it.
+#
+# `pull_request` is deliberately **unfiltered**. Gating it on the base branch
+# means a PR into anything else — notably an epic's integration branch — runs
+# no CI at all, with no skipped check on the page to notice. That silently
+# happened to #198 and #199. Retargeting does not rescue it either: changing a
+# PR's base fires `pull_request: edited`, which is not in the default trigger
+# set (`opened`, `synchronize`, `reopened`), so the checks list stays empty
+# right up to the merge.
+#
+# Do not add a `branches:` filter to `pull_request` — that is the bug (#202).
 on:
   push:
-    branches: ["v*", "main"]
+    branches: ["main", "v*"]
   pull_request:
-    branches: ["v*", "main"]
 
 jobs:
   checks:
