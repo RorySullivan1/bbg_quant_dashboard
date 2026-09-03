@@ -94,6 +94,21 @@ def test_a_request_where_nothing_resolves_raises():
         bc._mock_prices(_TICKERS, _START, _END)
 
 
+def test_nothing_resolving_raises_the_typed_error():
+    # `TickersUnresolved` separates "your ticker is wrong" from "the session
+    # dropped" — the two are indistinguishable in a one-ticker request, which
+    # is exactly what adding a benchmark issues (#193).
+    bc._MOCK_UNRESOLVABLE.add("A Index")
+
+    with pytest.raises(bc.TickersUnresolved):
+        bc._mock_prices(["A Index"], _START, _END)
+
+
+def test_the_typed_error_is_still_a_runtime_error():
+    # Subclassing keeps every existing handler and test working.
+    assert issubclass(bc.TickersUnresolved, RuntimeError)
+
+
 def test_an_empty_request_is_not_a_failure():
     # No tickers is a no-op, not a "nothing resolved" error.
     out = bc._mock_prices([], _START, _END)

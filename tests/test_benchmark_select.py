@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ipywidgets as W
 import pytest
+import src.bql_client as bc
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect, normalize_ticker
@@ -286,15 +287,22 @@ def test_picking_a_curated_benchmark_still_works_end_to_end():
     assert all(sel.value == other for sel in _selectors(app))
 
 
-def test_an_unknown_ticker_typed_into_the_live_app_is_refused():
-    # Until #193 wires the delta fetch, a ticker the app has no prices for must
-    # not become the selection.
-    app = build_app(verbose=False)
-    _click(app, "Multi-Strategy")
+def test_an_unresolvable_ticker_typed_into_the_live_app_is_refused():
+    # A ticker with no prices behind it must not become the selection. Since
+    # #193 the app *fetches* an unknown ticker rather than refusing outright,
+    # so this needs the mock to actually say no (#195) — off-terminal every
+    # string otherwise resolves, which is exactly the gap #195 closed.
+    bad = "DEFINITELYNOTATICKER Index"
+    bc._MOCK_UNRESOLVABLE.add(bad)
+    try:
+        app = build_app(verbose=False)
+        _click(app, "Multi-Strategy")
 
-    sel = _selectors(app)[0]
-    before = sel.value
+        sel = _selectors(app)[0]
+        before = sel.value
 
-    sel._box.value = "definitelynotaticker"
+        sel._box.value = bad
 
-    assert sel.value == before
+        assert sel.value == before
+    finally:
+        bc._clear_caches()

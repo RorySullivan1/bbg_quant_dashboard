@@ -27,6 +27,20 @@ except Exception:
 
 BQL_FIELD_KEY = "px_last"
 
+
+class TickersUnresolved(RuntimeError):
+    """No ticker in the request resolved.
+
+    Distinct from a transport or session failure, which is what every *other*
+    exception out of a fetch means. Callers that add a single ticker need the
+    difference: a one-ticker request has no healthy peers to degrade against,
+    so #187's per-ticker isolation cannot turn a bad ticker into a NaN column —
+    it comes back as this, and "your ticker is wrong" is a very different
+    message from "the BQL session dropped". Subclasses ``RuntimeError`` so
+    existing handlers and tests are unaffected.
+    """
+
+
 # In-memory session cache. Rather than an exact-key map (which forced a full
 # refetch whenever the lookback shifted or one ticker was added), the session
 # holds a single growing **superset** frame plus the date interval it covers.
@@ -427,7 +441,7 @@ def _assemble_batches(
             failed.extend(lost)
 
     if not frames:
-        raise RuntimeError(
+        raise TickersUnresolved(
             f"Every BQL request failed for {len(tickers)} tickers "
             f"({start.isoformat()} → {end.isoformat()}) — batched, then retried "
             "one ticker at a time. Check the terminal session and that tickers "
@@ -496,7 +510,7 @@ def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
     if tickers and not resolved:
         # Matches `_assemble_batches`' terminal raise: a request where nothing
         # resolves is loud, never a silently all-NaN dashboard.
-        raise RuntimeError(
+        raise TickersUnresolved(
             f"Mock resolved none of {len(tickers)} tickers "
             f"({start.isoformat()} → {end.isoformat()})."
         )
