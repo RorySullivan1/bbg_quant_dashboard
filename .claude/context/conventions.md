@@ -28,21 +28,22 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 `.claude/settings.json` PreToolUse hooks **enforce** the gates below.
 
 1. **Plan first.** Enter plan mode (`Shift+Tab` ×2; there is no auto-default
-   plan-mode setting), read the target `.claude/dev_map/vX.Y.Z.md` stub,
-   explore, design, and get the plan approved before editing.
+   plan-mode setting), read the target GitHub issue, explore, design, and get
+   the plan approved before editing.
 2. **Branch.** Cut one integration branch per version (`vX.Y.Z`, off `main`),
    then a **flat-named sub-branch per workstream** off it
    (`vX.Y.Z-<desc>` — see the "Branching" caveat above). One workstream per
-   branch, mirroring the dev-map §9 PR sequencing.
-3. **Implement** only that workstream; respect the stub's non-goals; add/adjust
+   branch, one issue per branch.
+3. **Implement** only that workstream; respect the issue's non-goals; add/adjust
    `tests/`.
 4. **Quality gates** — `ruff check src tests`, `black --check src tests`,
    `python -m pytest -q` must all be green. `.claude/hooks/quality-gates.sh`
    re-runs these on every `git commit` and **blocks** the commit on failure.
 5. **Commit & push** `-u origin <branch>`. Never push to `main`/`master` —
    `.claude/hooks/block-main-push.sh` blocks it; land changes via PR.
-6. **PR into the integration branch** (`vX.Y.Z`, not `main`); tick the dev-map
-   §9 checkbox. Defer `.meta/VERSION` + release-note edits to end-of-cycle.
+6. **PR into the integration branch** (`vX.Y.Z`, not `main`); close the issue
+   with a `Closes #N` keyword. Defer `.meta/VERSION` + release-note edits to
+   end-of-cycle.
 
 ## Conventions
 
@@ -293,9 +294,10 @@ CSS, style tokens — live in `style.md`.)
   `bquant-dashboard-spec` is the portable platform reference for the BQL
   fetch contract + recommended fetch patterns + standard BQuant UI stack —
   load it first when touching anything that fetches from BQL or designs the
-  dashboard). The forward roadmap is
-  `.claude/dev_map/` (an index plus filled-in `vX.Y.Z` stubs, and a reusable
-  `TEMPLATE.md` skeleton new stubs copy from). The PreToolUse enforcement
+  dashboard). Forward scope is tracked in **GitHub issues**, labelled per
+  version cycle (e.g. `v0.9.13-perf`) rather than in an in-repo roadmap —
+  in-repo stubs drifted out of date against the shipped branches, so the
+  issue tracker is the single source of truth. The PreToolUse enforcement
   scripts live in `.claude/hooks/` (documented in `.claude/hooks/README.md`),
   and `.claude/templates/` holds portable, repo-agnostic copies of the hooks +
   `workstream` skill for lifting into other repos (not auto-loaded — the active

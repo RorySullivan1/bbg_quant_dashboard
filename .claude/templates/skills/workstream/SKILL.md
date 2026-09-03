@@ -1,6 +1,6 @@
 ---
 name: workstream
-description: A project-agnostic development loop — take one roadmap item from plan to merged PR. Plan-first, then a feature branch off the integration branch, the project's quality gates, commit, push, and a PR into the integration branch. Use when starting or implementing a roadmap/dev-map item, or when asked to "do a workstream", "start the next item", or "ship this change the usual way".
+description: A project-agnostic development loop — take one roadmap item from plan to merged PR. Plan-first, then a feature branch off the integration branch, the project's quality gates, commit, push, and a PR into the integration branch. Use when starting or implementing a roadmap item or tracked issue, or when asked to "do a workstream", "start the next item", or "ship this change the usual way".
 argument-hint: [workstream / roadmap item to implement]
 ---
 

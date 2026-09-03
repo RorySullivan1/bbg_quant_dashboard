@@ -1,6 +1,6 @@
 # Tooling configuration only — this is NOT a packaging migration.
 # No [build-system]/[project] tables: the app ships via Voila + requirements.txt,
-# not as an installable distribution. See .claude/dev_map/v0.6.0.md §4/§F.
+# not as an installable distribution.
 
 [tool.black]
 line-length = 88
