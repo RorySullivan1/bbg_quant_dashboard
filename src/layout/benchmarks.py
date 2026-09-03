@@ -98,6 +98,10 @@ class BenchmarkRegistry:
     def __init__(self, tickers: Iterable[str] | None = None) -> None:
         base = BENCHMARK_TICKERS if tickers is None else tickers
         self._tickers: list[str] = list(dict.fromkeys(base))
+        # The curated set, frozen at construction. Everything added later is a
+        # *user* benchmark: only those are persisted (#194) and only those can
+        # be removed — a curated benchmark is part of the shipped app.
+        self._curated: frozenset[str] = frozenset(self._tickers)
         # Catalog indices offered as a *second* source (#191): (label, ticker)
         # pairs, already fetched at startup, so selecting one costs no BQL.
         self._catalog: list[tuple[str, str]] = []
@@ -109,6 +113,10 @@ class BenchmarkRegistry:
         # until `build_app` installs one — without it an unknown ticker is
         # refused, which is the right default for any caller that cannot fetch.
         self._resolver: Callable[[str], bool] | None = None
+        # Called with the user-added tickers whenever they change (#194).
+        # Deliberately not fired by `set_catalog`: the catalog is derived from
+        # the shipped metadata, not user state, and saving it would be noise.
+        self._persister: Callable[[list[str]], None] | None = None
 
     # --- reading -----------------------------------------------------------
 
@@ -116,6 +124,11 @@ class BenchmarkRegistry:
     def tickers(self) -> list[str]:
         """A copy of the current benchmark list, in display order."""
         return list(self._tickers)
+
+    @property
+    def added(self) -> list[str]:
+        """The user-added tickers, in order — the curated ones excluded."""
+        return [t for t in self._tickers if t not in self._curated]
 
     @property
     def catalog(self) -> list[tuple[str, str]]:
@@ -156,8 +169,43 @@ class BenchmarkRegistry:
         if ticker in self._tickers:
             return False
         self._tickers.append(ticker)
+        self._persist()
         self._broadcast()
         return True
+
+    def remove(self, ticker: str) -> bool:
+        """Drop a **user-added** ticker and refresh every selector.
+
+        Returns ``False`` for a curated benchmark or one that was never added:
+        the shipped list is not the user's to edit, and persistence without a
+        remove path would leave a typo that happened to resolve stuck forever.
+
+        Any selector currently showing the removed ticker falls back to
+        ``fallback`` — otherwise it would be left holding a value that is no
+        longer an option, which reads as a broken control.
+        """
+        if ticker in self._curated or ticker not in self._tickers:
+            return False
+        self._tickers.remove(ticker)
+        fallback = self._tickers[0] if self._tickers else ""
+        for widget, _labeled, _catalog in self._selectors:
+            if getattr(widget, "value", None) == ticker:
+                widget.value = fallback
+        self._persist()
+        self._broadcast()
+        return True
+
+    def is_user_added(self, ticker: str) -> bool:
+        """Whether ``ticker`` is one the user added — and so may be removed."""
+        return ticker in self._tickers and ticker not in self._curated
+
+    def set_persister(self, persister: Callable[[list[str]], None] | None) -> None:
+        """Install the callable that stores the user-added tickers."""
+        self._persister = persister
+
+    def _persist(self) -> None:
+        if self._persister is not None:
+            self._persister(self.added)
 
     def set_catalog(self, entries: Iterable[tuple[str, str]]) -> None:
         """Replace the catalog-index source and refresh the selectors using it.
@@ -238,6 +286,9 @@ class BenchmarkRegistry:
         set_handler = getattr(widget, "set_commit_handler", None)
         if set_handler is not None:
             set_handler(self.request)
+        set_remove = getattr(widget, "set_remove_handler", None)
+        if set_remove is not None:
+            set_remove(self.is_user_added, self.remove)
         return widget
 
     def on_change(self, callback: Callable[[], None]) -> None:
@@ -315,6 +366,8 @@ class BenchmarkSelect(W.HBox):
     ) -> None:
         super().__init__(**kwargs)
         self._on_commit = on_commit
+        self._is_removable: Callable[[str], bool] | None = None
+        self._on_remove: Callable[[str], bool] | None = None
         self._by_label: dict[str, str] = {}
         self._guard = False
 
@@ -327,7 +380,17 @@ class BenchmarkSelect(W.HBox):
             layout=W.Layout(width=width),
         )
         self._box.add_class("bbg-benchmark-select")
-        self.children = (self._box,)
+        # Removal is contextual: the button shows only while the selection is a
+        # ticker the user added, so a curated benchmark carries no UI at all and
+        # the affordance appears exactly where it applies (#194).
+        self._remove_btn = W.Button(
+            description="\u00d7",
+            tooltip="Remove this benchmark",
+            layout=W.Layout(width="28px", display="none"),
+        )
+        self._remove_btn.add_class("bbg-btn-secondary")
+        self._remove_btn.on_click(self._on_remove_click)
+        self.children = (self._box, self._remove_btn)
         self.layout.width = width
 
         self.observe(self._render_options, names="options")
@@ -337,6 +400,30 @@ class BenchmarkSelect(W.HBox):
             self.value = default
 
     # --- the public surface ------------------------------------------------
+
+    def set_remove_handler(
+        self,
+        is_removable: Callable[[str], bool] | None,
+        on_remove: Callable[[str], bool] | None,
+    ) -> None:
+        """Install the predicate and action behind the remove button.
+
+        `BenchmarkRegistry.register` supplies both, so a selector shows the
+        button exactly for tickers the registry considers the user's own.
+        """
+        self._is_removable = is_removable
+        self._on_remove = on_remove
+        self._sync_remove_button()
+
+    def _sync_remove_button(self) -> None:
+        removable = bool(
+            self._is_removable and self.value and self._is_removable(self.value)
+        )
+        self._remove_btn.layout.display = "" if removable else "none"
+
+    def _on_remove_click(self, _b) -> None:
+        if self._on_remove is not None and self.value:
+            self._on_remove(self.value)
 
     def set_commit_handler(self, on_commit: Callable[[str], bool] | None) -> None:
         """Install the hook consulted when a ticker is not currently an option.
@@ -373,8 +460,10 @@ class BenchmarkSelect(W.HBox):
             self._show(self.value)
         finally:
             self._guard = False
+        self._sync_remove_button()
 
     def _render_value(self, *_) -> None:
+        self._sync_remove_button()
         if self._guard:
             return
         self._guard = True
@@ -425,3 +514,4 @@ class BenchmarkSelect(W.HBox):
             self._show(ticker)
         finally:
             self._guard = False
+        self._sync_remove_button()

@@ -15,6 +15,16 @@ fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
 also run in CI (`.github/workflows/ci.yml`) on every push/PR to the version
 integration branches (`v*`) and `main`.
 
+## User-benchmark isolation (#194)
+
+`conftest.py` carries a suite-wide **autouse** fixture redirecting
+`src.user_benchmarks.USER_BENCHMARKS_PATH` at a `tmp_path`. Every
+`build_app()` reads that path at startup and any test that adds a benchmark
+writes it, so without the fixture a test run leaves a real
+`data/user_benchmarks.json` in the working tree — leaking state into later
+tests *and* into the developer's repo. The module binds the path at import, so
+the patch targets the module attribute, not `config`.
+
 ## Making the mock reject a ticker (#195)
 
 The mock seeds its generator off `hash(ticker)`, so by default it resolves

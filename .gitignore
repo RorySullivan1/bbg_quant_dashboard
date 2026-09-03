@@ -5,3 +5,4 @@ __pycache__/
 data/.cache/
 .ruff_cache/
 .vscode/
+data/user_benchmarks.json

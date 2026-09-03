@@ -56,6 +56,12 @@ DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 # unwritable, the disk tier is skipped and the in-memory cache carries the
 # session (see `src/bql_client.py`).
 CACHE_DIR = REPO_ROOT / "data" / ".cache"
+
+# Benchmarks the user added at runtime (#194). A sibling of the catalog rather
+# than a file under `data/.cache/`: the cache is semantically deletable — safe
+# to wipe at any time — and user configuration is not. Gitignored, so one
+# user's benchmarks are never committed and shipped to everyone.
+USER_BENCHMARKS_PATH = REPO_ROOT / "data" / "user_benchmarks.json"
 CACHE_TTL_HOURS = 12
 
 # The startup BQL fetch is issued in ticker batches rather than one whole-
