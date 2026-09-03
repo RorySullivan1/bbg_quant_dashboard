@@ -28,7 +28,49 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+import ipywidgets as W
+import traitlets
+
 from ..config import BENCHMARK_TICKERS
+
+# Bloomberg security-type suffixes, lower-cased for matching. A ticker the user
+# types without one is assumed to be an index — every curated benchmark is —
+# but an explicit suffix is preserved, because " Equity"/" Curncy"/… name a
+# genuinely different security and silently rewriting one to " Index" would
+# fetch the wrong thing.
+_SUFFIXES: tuple[str, ...] = (
+    "index",
+    "equity",
+    "curncy",
+    "comdty",
+    "govt",
+    "corp",
+    "mtge",
+    "pfd",
+    "muni",
+)
+_DEFAULT_SUFFIX = "Index"
+
+
+def normalize_ticker(text: str) -> str:
+    """Normalize typed text into a Bloomberg ticker, or ``""`` if it is empty.
+
+    Users type ``spx``, not ``SPX Index``, but every BQL call needs the
+    security-type suffix. So: collapse whitespace, upper-case the root, and
+    append ``" Index"`` when no recognized suffix is present. An explicit
+    suffix is kept and title-cased to Bloomberg's own form.
+
+    Case- and space-insensitive by construction, which is what makes ``spx``
+    and ``SPX Index`` dedupe to one registry entry rather than two.
+    """
+    parts = str(text).split()
+    if not parts:
+        return ""
+    if len(parts) > 1 and parts[-1].lower() in _SUFFIXES:
+        root, suffix = parts[:-1], parts[-1].lower()
+    else:
+        root, suffix = parts, _DEFAULT_SUFFIX.lower()
+    return f"{' '.join(root).upper()} {suffix.capitalize()}"
 
 
 def benchmark_label(ticker: str) -> str:
@@ -186,3 +228,152 @@ class BenchmarkRegistry:
             self._apply(widget, labeled, include_catalog)
         for callback in self._callbacks:
             callback()
+
+
+class BenchmarkSelect(W.HBox):
+    """A benchmark selector that also accepts a ticker the user types (#192).
+
+    Wraps a ``W.Combobox`` but exposes the surface the app already reads — an
+    ``options`` trait of ``(label, value)`` pairs and a ``value`` trait holding
+    a **resolved ticker** — so every existing `bench_dd.value` read and
+    ``observe(..., names="value")`` keeps working unchanged. Same reason
+    ``CheckboxMultiSelect`` wraps checkboxes behind a ``SelectMultiple``
+    surface.
+
+    A raw ``Combobox`` could not be dropped in directly:
+
+    - its ``options`` trait is a tuple of **plain strings**, so it cannot carry
+      the ``(label, ticker)`` pairs the catalog source needs (#191); and
+    - its ``value`` is the raw text, which would put half-typed input straight
+      into the compute layer.
+
+    So the text box holds *display labels* and this widget resolves a committed
+    label back to its ticker, falling back to :func:`normalize_ticker` for
+    anything typed freehand.
+
+    **Commit, not keystroke.** ``continuous_update=False`` means the inner
+    Combobox syncs only on Enter or blur, so typing never re-renders or fetches
+    — only a deliberate commit does.
+
+    ``on_commit`` decides whether a ticker that is not currently an option is
+    acceptable. It receives the normalized ticker and returns ``True`` to
+    accept. The default rejects, reverting the box: without it an unknown
+    ticker would select something with no data behind it. #193 replaces it with
+    the delta-fetch, which is the piece that makes arbitrary tickers real.
+    """
+
+    options = traitlets.Any(())  # list[(label, value)] | list[value]
+    value = traitlets.Unicode("")  # the resolved ticker, never raw text
+
+    def __init__(
+        self,
+        description: str = "Benchmark",
+        *,
+        default: str = "",
+        width: str = "320px",
+        on_commit: Callable[[str], bool] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._on_commit = on_commit
+        self._by_label: dict[str, str] = {}
+        self._guard = False
+
+        self._box = W.Combobox(
+            placeholder="Ticker",
+            ensure_option=False,  # the whole point: accept what isn't listed
+            continuous_update=False,  # commit on Enter/blur, never per keystroke
+            description=description,
+            style={"description_width": "80px" if description else "0px"},
+            layout=W.Layout(width=width),
+        )
+        self._box.add_class("bbg-benchmark-select")
+        self.children = (self._box,)
+        self.layout.width = width
+
+        self.observe(self._render_options, names="options")
+        self.observe(self._render_value, names="value")
+        self._box.observe(self._on_text_commit, names="value")
+        if default:
+            self.value = default
+
+    # --- the public surface ------------------------------------------------
+
+    @property
+    def label(self) -> str:
+        """The text currently shown — the display label, not the ticker."""
+        return self._box.value
+
+    # --- internals ---------------------------------------------------------
+
+    def _pairs(self) -> list[tuple[str, str]]:
+        out = []
+        for opt in self.options or ():
+            if isinstance(opt, tuple):
+                out.append((str(opt[0]), opt[1]))
+            else:
+                out.append((str(opt), opt))
+        return out
+
+    def _render_options(self, *_) -> None:
+        pairs = self._pairs()
+        self._by_label = {label: value for label, value in pairs}
+        self._guard = True
+        try:
+            self._box.options = [label for label, _ in pairs]
+            # Re-show the current ticker under its (possibly new) label.
+            self._show(self.value)
+        finally:
+            self._guard = False
+
+    def _render_value(self, *_) -> None:
+        if self._guard:
+            return
+        self._guard = True
+        try:
+            self._show(self.value)
+        finally:
+            self._guard = False
+
+    def _show(self, ticker: str) -> None:
+        for label, value in self._pairs():
+            if value == ticker:
+                self._box.value = label
+                return
+        self._box.value = ticker
+
+    def _on_text_commit(self, _change) -> None:
+        if self._guard:
+            return
+        text = self._box.value
+        # A label picked from the list resolves directly; anything else is
+        # freehand and gets normalized (`spx` → `SPX Index`).
+        ticker = self._by_label.get(text) or normalize_ticker(text)
+
+        if not ticker:  # cleared — put the current selection back
+            self._guard = True
+            try:
+                self._show(self.value)
+            finally:
+                self._guard = False
+            return
+
+        known = ticker in {value for _, value in self._pairs()}
+        if not known:
+            accepted = self._on_commit(ticker) if self._on_commit else False
+            if not accepted:
+                # Revert: selecting a ticker with no data behind it is worse
+                # than refusing it. #193 makes these acceptable by fetching.
+                self._guard = True
+                try:
+                    self._show(self.value)
+                finally:
+                    self._guard = False
+                return
+
+        self._guard = True
+        try:
+            self.value = ticker
+            self._show(ticker)
+        finally:
+            self._guard = False

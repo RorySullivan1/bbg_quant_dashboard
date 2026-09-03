@@ -29,7 +29,7 @@ import src.layout.builder as builder_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.data import load_metadata
 from src.layout import build_app
-from src.layout.benchmarks import BenchmarkRegistry
+from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect
 
 
 def _walk(widget):
@@ -38,11 +38,11 @@ def _walk(widget):
         yield from _walk(child)
 
 
-def _option_values(dd: W.Dropdown) -> list:
+def _option_values(dd) -> list:
     return [o[1] if isinstance(o, tuple) else o for o in dd.options]
 
 
-def _option_labels(dd: W.Dropdown) -> list:
+def _option_labels(dd) -> list:
     return [o[0] if isinstance(o, tuple) else o for o in dd.options]
 
 
@@ -54,11 +54,11 @@ def _click(app, description: str) -> None:
     ).click()
 
 
-def _benchmark_selectors(app) -> list[W.Dropdown]:
+def _benchmark_selectors(app) -> list[BenchmarkSelect]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and DEFAULT_BENCHMARK in _option_values(w)
+        if isinstance(w, BenchmarkSelect) and DEFAULT_BENCHMARK in _option_values(w)
     ]
 
 

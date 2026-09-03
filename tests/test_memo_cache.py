@@ -13,6 +13,7 @@ import ipywidgets as W
 import src.layout.multi_strategy as ms_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
+from src.layout.benchmarks import BenchmarkSelect
 
 
 def _walk(widget):
@@ -30,7 +31,7 @@ def _mount_multi_strategy(app) -> None:
     btn.click()
 
 
-def _option_values(dd: W.Dropdown) -> list:
+def _option_values(dd) -> list:
     """A dropdown's option *values*, for both option shapes.
 
     Benchmark selectors carry ``(label, value)`` pairs since #191 (the catalog
@@ -44,7 +45,7 @@ def _benchmark_dropdowns(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown)
+        if isinstance(w, BenchmarkSelect)
         and set(BENCHMARK_TICKERS) <= set(_option_values(w))
     ]
 

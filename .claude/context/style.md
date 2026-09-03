@@ -80,3 +80,13 @@ the viewport rather than the below-the-fold page is exactly right.)
   stacks, and font sizes used by `src/layout/` and `data/templates/`
   reference the `Color`, `Font`, `FontSize`, `StatusTone`, and `Sentiment`
   enums. Adding a new color or size: extend the enum, don't inline.
+
+## Benchmark selector (#192)
+
+The benchmark selectors are `BenchmarkSelect` composites wrapping a
+`W.Combobox`, not `W.Dropdown`s. The input inherits the existing
+`.bbg-app input[type="text"]` dark rules, and `.bbg-benchmark-select` keeps the
+wrapper from adding spacing of its own. The **datalist popup** a browser renders
+for a combobox is not styleable from page CSS — that is a browser limitation,
+so the suggestion list appears in the browser's own chrome rather than the dark
+theme.

@@ -9,12 +9,11 @@ import plotly.graph_objects as go
 from ipydatagrid import DataGrid
 
 from ..config import (
-    BENCHMARK_TICKERS,
     DEFAULT_BENCHMARK,
     LOOKBACK_YEARS,
 )
 from ..style import Color
-from .benchmarks import BenchmarkRegistry
+from .benchmarks import BenchmarkRegistry, BenchmarkSelect
 from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref, _palette_color
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
@@ -43,15 +42,18 @@ def _make_benchmark_dropdown(
     `description` leaves no label gap.
 
     With a `registry` (#190) the options track the live benchmark set, so a
-    benchmark added at runtime reaches every selector. Without one the options
-    are the curated `BENCHMARK_TICKERS` snapshot, exactly as before — which is
-    what standalone callers and the widget-level tests use."""
-    dd = W.Dropdown(
-        options=BENCHMARK_TICKERS,
-        value=default,
+    benchmark added at runtime reaches every selector, and the catalog indices
+    ride along as a second source (#191). Without one the selector starts on
+    the curated `BENCHMARK_TICKERS` snapshot.
+
+    The control is a `BenchmarkSelect` (#192) — a combobox behind a
+    Dropdown-shaped surface, so it type-filters the list *and* accepts a ticker
+    that is not on it, while `.value` stays a resolved ticker for every
+    existing caller."""
+    dd = BenchmarkSelect(
         description=description,
-        style={"description_width": "80px" if description else "0px"},
-        layout=W.Layout(width=width),
+        default=default,
+        width=width,
     )
     if registry is not None:
         registry.register(dd, include_catalog=True)
