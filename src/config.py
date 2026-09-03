@@ -174,7 +174,12 @@ REGIME_SPECS: dict[str, dict] = {
     },
     "Trend": {
         "mode": "autocorr_tercile",
-        "selector": [(t.replace(" Index", ""), t) for t in BENCHMARK_TICKERS],
+        # Resolved from the live benchmark registry at render time (#190), not
+        # frozen here at import: a benchmark added at runtime has to show up in
+        # this picker too. `platform._regime_selector_options` reads this marker
+        # and builds the (label, ticker) pairs; regimes with a literal
+        # `"selector"` (Rate-level) are unaffected.
+        "selector_source": "benchmarks",
         "autocorr_window": 21,
         "bucket_labels": [
             ("Low (mean-reverting)", "low"),

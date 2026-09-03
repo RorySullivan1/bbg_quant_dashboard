@@ -50,6 +50,7 @@ from ..style import (
     Color,
     StatusTone,
 )
+from .benchmarks import BenchmarkRegistry
 from .chrome import (
     _app_css,
     _banner,
@@ -240,6 +241,13 @@ def build_app(verbose: bool = False) -> W.VBox:
     # states — styled via CSS class, not inline `.style`, so `:hover` works.
     apply_btn.add_class("bbg-btn")
 
+    # The live benchmark set (#190). Created before any selector, because every
+    # benchmark dropdown registers with it at construction instead of
+    # snapshotting `BENCHMARK_TICKERS` — that is what lets a benchmark added at
+    # runtime reach all of them at once. Seeded from the curated constant, so
+    # with nothing added the app renders exactly as it did before.
+    benchmarks = BenchmarkRegistry()
+
     # The Multi-Strategy filter UI is the reusable `make_filter_panel` (shared
     # with the Single Strategy tab, v0.9.12-review #155): the pill bar over the
     # categorical / Characteristics / Quantitative views, the Clear buttons, and
@@ -251,6 +259,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     filter_panel = make_filter_panel(
         meta,
         leading_actions=(apply_btn,),
+        registry=benchmarks,
         right_panel_layout=W.Layout(
             width="60%", padding="8px", border=f"1px solid {Color.BORDER}"
         ),
@@ -552,8 +561,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="240px"),
     )
 
-    pane_left = _make_analysis_pane("left")
-    pane_right = _make_analysis_pane("right")
+    pane_left = _make_analysis_pane("left", registry=benchmarks)
+    pane_right = _make_analysis_pane("right", registry=benchmarks)
     analysis_pane_row = W.HBox(
         [pane_left.root, pane_right.root],
         layout=W.Layout(width="100%", align_items="stretch"),
@@ -566,6 +575,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # closures stay nested and reference `state.<field>`; mutating an attribute
     # never rebinds a name, so `nonlocal` is unnecessary.
     state = DashboardState(
+        benchmarks=benchmarks,
         ticker_w=ticker_w,
         status_w=status_w,
         overlay_w=overlay_w,
@@ -710,7 +720,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # The third top-level tab (v0.9.0): a per-strategy deep-dive. Built here so
     # the tab wiring below can swap it in; its picker options are rebuilt against
     # the pruned `meta` once the cache loads (alongside `ticker_w`).
-    single_strategy = make_single_strategy_panel(meta)
+    single_strategy = make_single_strategy_panel(meta, registry=benchmarks)
     state.single_strategy = single_strategy
     single_panel = single_strategy.root
 
