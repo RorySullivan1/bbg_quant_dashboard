@@ -105,6 +105,10 @@ class BenchmarkRegistry:
         # option shape and whether the catalog source is offered.
         self._selectors: list[tuple[Any, bool, bool]] = []
         self._callbacks: list[Callable[[], None]] = []
+        # Decides whether a ticker nobody has heard of is usable (#193). None
+        # until `build_app` installs one — without it an unknown ticker is
+        # refused, which is the right default for any caller that cannot fetch.
+        self._resolver: Callable[[str], bool] | None = None
 
     # --- reading -----------------------------------------------------------
 
@@ -178,6 +182,35 @@ class BenchmarkRegistry:
         self._catalog = deduped
         self._broadcast()
 
+    def set_resolver(self, resolver: Callable[[str], bool] | None) -> None:
+        """Install the callable that decides whether an unknown ticker is usable.
+
+        ``resolver(ticker)`` returns ``True`` once the ticker's prices are in
+        the cache and it is safe to select. It owns reporting its own failures
+        — the registry deliberately knows nothing about the error surface.
+        """
+        self._resolver = resolver
+
+    def request(self, ticker: str) -> bool:
+        """Decide whether a selector may commit ``ticker``.
+
+        A ticker already offered — curated, previously added, or a catalog
+        index — is accepted with no round trip. Anything else goes to the
+        resolver, and is added to the benchmark list (reaching every selector)
+        only once the resolver confirms it has data. With no resolver
+        installed, unknown tickers are refused.
+        """
+        if ticker in self._tickers:
+            return True
+        if any(value == ticker for _, value in self._catalog):
+            return True
+        if self._resolver is None:
+            return False
+        if not self._resolver(ticker):
+            return False
+        self.add(ticker)
+        return True
+
     # --- subscribing -------------------------------------------------------
 
     def register(
@@ -199,6 +232,12 @@ class BenchmarkRegistry:
         """
         self._selectors.append((widget, labeled, include_catalog))
         self._apply(widget, labeled, include_catalog)
+        # A selector that can accept typed input routes its unknown-ticker
+        # decision back through the registry (#193). Duck-typed so the registry
+        # stays usable with a plain Dropdown.
+        set_handler = getattr(widget, "set_commit_handler", None)
+        if set_handler is not None:
+            set_handler(self.request)
         return widget
 
     def on_change(self, callback: Callable[[], None]) -> None:
@@ -298,6 +337,15 @@ class BenchmarkSelect(W.HBox):
             self.value = default
 
     # --- the public surface ------------------------------------------------
+
+    def set_commit_handler(self, on_commit: Callable[[str], bool] | None) -> None:
+        """Install the hook consulted when a ticker is not currently an option.
+
+        `BenchmarkRegistry.register` calls this, so a registered selector
+        defers the decision to the registry (and thus to its resolver) rather
+        than each selector carrying its own policy.
+        """
+        self._on_commit = on_commit
 
     @property
     def label(self) -> str:

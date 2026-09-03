@@ -67,6 +67,12 @@ CACHE_TTL_HOURS = 12
 # stops one bad ticker blanking the load: whenever the universe fits in a single
 # batch, batch-level isolation isolates nothing. So tune this purely for
 # throughput against BQL's request limits.
+# A user-added benchmark (#193) whose history starts more than this many days
+# after the lookback window opens is accepted but flagged — a partial series is
+# usable for correlation and beta, but the user should know the comparison does
+# not span the whole window rather than wondering why a chart starts late.
+BENCHMARK_SHORT_HISTORY_DAYS = 30
+
 BQL_BATCH_SIZE = 100  # tickers per BQL request
 BQL_MAX_RETRIES = 2  # extra attempts per batch after the first (so up to 3 tries)
 BQL_RETRY_BACKOFF_S = 1.0  # base backoff; attempt n waits BACKOFF * 2**n seconds

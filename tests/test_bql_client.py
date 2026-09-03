@@ -367,8 +367,9 @@ def test_assemble_batches_all_failing_raises():
     def fetch_batch(batch, s, e):
         raise RuntimeError("session dead")
 
-    # A dead session must stay loud rather than degrade to an all-NaN dashboard.
-    with pytest.raises(RuntimeError, match="Every BQL request failed"):
+    # A dead session must stay loud rather than degrade to an all-NaN dashboard,
+    # and typed so a caller can tell it from a transport failure (#193).
+    with pytest.raises(bc.TickersUnresolved, match="Every BQL request failed"):
         bc._assemble_batches(
             ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=1
         )

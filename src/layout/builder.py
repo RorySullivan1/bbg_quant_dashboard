@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
+import warnings
 from datetime import date
 from types import SimpleNamespace
 
@@ -11,10 +12,10 @@ import pandas as pd
 from IPython import get_ipython
 from IPython.display import display
 
-from ..bql_client import _cache_path, fetch_prices
+from ..bql_client import TickersUnresolved, _cache_path, fetch_prices
 from ..commentary import build_launch_cards, build_superlatives, superlative_returns
 from ..config import (
-    BENCHMARK_TICKERS,
+    BENCHMARK_SHORT_HISTORY_DAYS,
     FACTOR_TICKERS,
     HALF_YEAR_WINDOW,
     LEGAL_DISCLOSURE_PATH,
@@ -799,14 +800,116 @@ def build_app(verbose: bool = False) -> W.VBox:
     # are excluded from the ARP-universe grid and the highlights cards via
     # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
     # equity factor proxy is also a benchmark) while preserving order.
-    fetch_tickers = list(
-        dict.fromkeys(
-            list(meta["ticker"])
-            + list(BENCHMARK_TICKERS)
-            + list(FACTOR_TICKERS)
-            + list(REGIME_TICKERS)
+    # Recomputed per fetch rather than captured once: a benchmark the user adds
+    # at runtime (#193) has to ride the Refresh and any lookback change too, or
+    # it would silently drop out of the cache the first time either happened.
+    # `benchmarks.tickers` is the curated list plus anything added, so this is a
+    # superset of the constant it replaces. Driven by `meta_all`, not the pruned
+    # `meta`, so a stale ticker that resumes can come back.
+    def _fetch_tickers() -> list[str]:
+        return list(
+            dict.fromkeys(
+                list(meta_all["ticker"])
+                + benchmarks.tickers
+                + list(FACTOR_TICKERS)
+                + list(REGIME_TICKERS)
+            )
         )
-    )
+
+    # --- user-added benchmarks (#193) ----------------------------------------
+    # A ticker the user typed is not in the startup fetch, so it needs its own
+    # trip to BQL. #176's containment cache makes that a *delta* — only the
+    # missing rectangle — rather than a whole-universe refetch, which is what
+    # keeps this inside the one-call-per-session contract.
+    #
+    # Two failure modes have to stay apart. Both surface as an empty column, so
+    # the data alone cannot separate them:
+    #
+    #   unresolvable      the ticker is wrong. #187's per-ticker isolation
+    #                     degrades it to a NaN column and *warns* rather than
+    #                     failing the load — that warning is the signal.
+    #   no data in window a real security that launched after the lookback
+    #                     started, or a stale one. No warning; just an empty
+    #                     column.
+    #
+    # Reported identically, users read the second as a bug, so the warning is
+    # captured and used to tell them apart.
+
+    def _unresolved_message(ticker: str) -> str:
+        return (
+            f"{ticker} did not resolve. Check the ticker and its suffix — "
+            f"e.g. 'SPX Index', 'AAPL Equity'."
+        )
+
+    def _benchmark_window_note(series: pd.Series) -> str:
+        """A caveat for a ticker that resolved but covers only part of the window."""
+        first = series.first_valid_index()
+        if first is None:
+            return ""
+        start = pd.Timestamp(universe_start)
+        if first <= start + pd.Timedelta(days=BENCHMARK_SHORT_HISTORY_DAYS):
+            return ""
+        return f" History starts {first.date()}, not {universe_start}."
+
+    def _resolve_new_benchmark(ticker: str) -> bool:
+        """Fetch a benchmark the user typed; report what happened.
+
+        Returns True once the ticker's prices are in ``state.universe_prices``
+        and it is safe to select. Never raises: a bad ticker must not be able
+        to break a dashboard that is already loaded.
+        """
+        existing = state.universe_prices
+        if ticker in existing.columns and existing[ticker].notna().any():
+            return True  # already rode a previous fetch
+
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                frame, _ = fetch_prices([ticker], universe_start, today)
+        except TickersUnresolved:
+            # A one-ticker request has no healthy peers to degrade against, so
+            # an unresolvable ticker arrives as this rather than as the NaN
+            # column #187 produces in a larger batch.
+            _set_status(_unresolved_message(ticker), tone=StatusTone.ERROR)
+            return False
+        except Exception:
+            # Anything else is the session or transport, not the ticker.
+            _set_status(
+                f"Could not fetch {ticker} — see error below.",
+                tone=StatusTone.ERROR,
+            )
+            state.errors_w.value += _render_error(
+                f"Adding benchmark {ticker} failed:\n{traceback.format_exc()}"
+            )
+            return False
+
+        series = frame[ticker] if ticker in frame.columns else None
+        if series is None or not series.notna().any():
+            # Unresolvable vs. simply empty — see the note above. In a request
+            # with healthy peers the bad ticker degrades to NaN and warns.
+            unresolved = any(ticker in str(w.message) for w in caught)
+            if unresolved:
+                message = _unresolved_message(ticker)
+            else:
+                message = (
+                    f"{ticker} resolved but has no price history between "
+                    f"{universe_start} and {today}."
+                )
+            _set_status(message, tone=StatusTone.ERROR)
+            return False
+
+        if state.universe_prices.empty:
+            state.universe_prices = series.to_frame(ticker)
+        else:
+            state.universe_prices[ticker] = series.reindex(state.universe_prices.index)
+        _set_status(
+            f"Added benchmark {ticker}.{_benchmark_window_note(series)}",
+            tone=StatusTone.SUCCESS,
+        )
+        return True
+
+    benchmarks.set_resolver(_resolve_new_benchmark)
+
     # The blocking startup fetch + prune + compute + first render is deferred to
     # `_run_initial_load` (defined below) so it can run on a worker thread while
     # the loading overlay paints — see `_start_initial_load` at the end, which
@@ -1036,7 +1139,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         nonlocal meta
         try:
             state.universe_prices, _ = fetch_prices(
-                fetch_tickers, universe_start, today, use_cache=False
+                _fetch_tickers(), universe_start, today, use_cache=False
             )
         except Exception:
             _set_progress(60, "Load failed — see error below", error=True)
@@ -1118,7 +1221,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         # the click handler returns and the frontend can paint the visible
         # overlay before the kernel blocks on BQL.
         _set_progress(0, "Refreshing…")
-        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
+        _set_progress(60, f"Fetching prices for {len(_fetch_tickers())} indices…")
 
         if get_ipython() is None:
             # Headless / pytest: run synchronously so callers observe the
@@ -1255,11 +1358,11 @@ def build_app(verbose: bool = False) -> W.VBox:
         so the overlay paints while the kernel fetches, mirroring `_run_refresh`.
         `nonlocal meta` is re-pointed to the recent-performance-pruned catalog."""
         nonlocal meta
-        _set_progress(60, f"Fetching prices for {len(fetch_tickers)} indices…")
+        _set_progress(60, f"Fetching prices for {len(_fetch_tickers())} indices…")
         t_fetch = time.perf_counter()
         try:
             state.universe_prices, fetch_source = fetch_prices(
-                fetch_tickers, universe_start, today
+                _fetch_tickers(), universe_start, today
             )
             fetch_elapsed = time.perf_counter() - t_fetch
             text, tone = _format_loaded(
