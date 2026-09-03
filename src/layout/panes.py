@@ -54,7 +54,7 @@ def _make_benchmark_dropdown(
         layout=W.Layout(width=width),
     )
     if registry is not None:
-        registry.register(dd)
+        registry.register(dd, include_catalog=True)
     return dd
 
 

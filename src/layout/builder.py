@@ -247,6 +247,11 @@ def build_app(verbose: bool = False) -> W.VBox:
     # runtime reach all of them at once. Seeded from the curated constant, so
     # with nothing added the app renders exactly as it did before.
     benchmarks = BenchmarkRegistry()
+    # Catalog indices ride the same startup fetch as the benchmarks, so they can
+    # be offered as a second benchmark source at no BQL cost (#191). Seeded from
+    # the full catalog here and re-set from the pruned `meta` once the load has
+    # dropped stale/flat indices — a dead index makes a poor benchmark.
+    benchmarks.set_catalog(_ticker_options(meta))
 
     # The Multi-Strategy filter UI is the reusable `make_filter_panel` (shared
     # with the Single Strategy tab, v0.9.12-review #155): the pill bar over the
@@ -1053,6 +1058,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
             _on_filter_change()
             single_strategy.picker.options = _ticker_options(meta)
+            benchmarks.set_catalog(_ticker_options(meta))
             _log(
                 f"refresh pruned to {len(meta)} of {len(meta_all)} indices "
                 f"({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"
@@ -1280,6 +1286,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             meta = meta_all[meta_all["ticker"].isin(live)].reset_index(drop=True)
             state.ticker_w.options = _ticker_options(meta)
             single_strategy.picker.options = _ticker_options(meta)
+            benchmarks.set_catalog(_ticker_options(meta))
             _log(
                 f"pruned to {len(meta)} of {len(meta_all)} indices with recent "
                 f"performance ({len(meta_all) - len(meta)} dropped as stale/flat/all-NaN)"

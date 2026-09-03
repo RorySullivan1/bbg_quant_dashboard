@@ -56,9 +56,12 @@ class BenchmarkRegistry:
     def __init__(self, tickers: Iterable[str] | None = None) -> None:
         base = BENCHMARK_TICKERS if tickers is None else tickers
         self._tickers: list[str] = list(dict.fromkeys(base))
-        # (widget, labeled) pairs. `labeled` selects the option shape: plain
-        # ticker strings (the benchmark dropdowns) or (label, ticker) pairs.
-        self._selectors: list[tuple[Any, bool]] = []
+        # Catalog indices offered as a *second* source (#191): (label, ticker)
+        # pairs, already fetched at startup, so selecting one costs no BQL.
+        self._catalog: list[tuple[str, str]] = []
+        # (widget, labeled, include_catalog) triples. The two flags select the
+        # option shape and whether the catalog source is offered.
+        self._selectors: list[tuple[Any, bool, bool]] = []
         self._callbacks: list[Callable[[], None]] = []
 
     # --- reading -----------------------------------------------------------
@@ -68,8 +71,26 @@ class BenchmarkRegistry:
         """A copy of the current benchmark list, in display order."""
         return list(self._tickers)
 
-    def options(self, *, labeled: bool = False) -> list:
-        """The current options in a selector's shape — see ``labeled``."""
+    @property
+    def catalog(self) -> list[tuple[str, str]]:
+        """A copy of the catalog options, as ``(label, ticker)`` pairs."""
+        return list(self._catalog)
+
+    def options(self, *, labeled: bool = False, include_catalog: bool = False) -> list:
+        """The current options in a selector's shape.
+
+        ``labeled`` returns ``(label, ticker)`` pairs with the suffix stripped —
+        the compact form the Trend-regime source picker uses.
+
+        ``include_catalog`` appends the catalog indices after the benchmarks.
+        It implies a labeled shape, because a catalog entry carries its index
+        *name*; the benchmarks keep their full ticker as their label there, so
+        the two sources stay visually distinct (bare ticker vs. ticker + name)
+        and the curated ones stay first. `set_catalog` guarantees no ticker
+        appears in both, which would make a dropdown value ambiguous.
+        """
+        if include_catalog:
+            return [(t, t) for t in self._tickers] + list(self._catalog)
         if labeled:
             return [(benchmark_label(t), t) for t in self._tickers]
         return list(self._tickers)
@@ -92,9 +113,34 @@ class BenchmarkRegistry:
         self._broadcast()
         return True
 
+    def set_catalog(self, entries: Iterable[tuple[str, str]]) -> None:
+        """Replace the catalog-index source and refresh the selectors using it.
+
+        Called once the metadata is known and **again after the startup prune**,
+        since `build_app` re-points `meta` to the live catalog — a stale or
+        flat index makes a poor benchmark, so the offered set should follow the
+        pruned list rather than the full one.
+
+        Entries already present as benchmarks are dropped: the same ticker in a
+        dropdown twice makes its value ambiguous.
+        """
+        deduped: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for label, ticker in entries:
+            if ticker in self._tickers or ticker in seen:
+                continue
+            seen.add(ticker)
+            deduped.append((label, ticker))
+        if deduped == self._catalog:
+            return
+        self._catalog = deduped
+        self._broadcast()
+
     # --- subscribing -------------------------------------------------------
 
-    def register(self, widget: Any, *, labeled: bool = False) -> Any:
+    def register(
+        self, widget: Any, *, labeled: bool = False, include_catalog: bool = False
+    ) -> Any:
         """Bind ``widget``'s options to this registry and populate them now.
 
         Use for selectors that show benchmarks and nothing else. A selector
@@ -102,10 +148,15 @@ class BenchmarkRegistry:
         dropdown) must use :meth:`on_change` instead, so the registry never
         overwrites options belonging to another context.
 
+        ``include_catalog`` also offers the catalog indices — right for the
+        analysis-pane and quant-filter benchmark selectors, wrong for the
+        Trend-regime source picker, where a strategy's own autocorrelation is
+        not a market trend indicator.
+
         Returns the widget, so callers can register inline at construction.
         """
-        self._selectors.append((widget, labeled))
-        self._apply(widget, labeled)
+        self._selectors.append((widget, labeled, include_catalog))
+        self._apply(widget, labeled, include_catalog)
         return widget
 
     def on_change(self, callback: Callable[[], None]) -> None:
@@ -114,20 +165,24 @@ class BenchmarkRegistry:
 
     # --- internals ---------------------------------------------------------
 
-    def _apply(self, widget: Any, labeled: bool) -> None:
+    def _apply(self, widget: Any, labeled: bool, include_catalog: bool) -> None:
         # Save and restore around the options assignment rather than trusting
         # the widget to preserve it: for a (label, value) option list the
         # traitlet compares against the *values*, and the reset-to-first
         # behaviour on a miss differs across ipywidgets versions. Restoring
-        # explicitly makes "adding never moves an existing selection" true here
-        # rather than dependent on the widget library.
+        # explicitly makes "a change never moves an existing selection" true
+        # here rather than dependent on the widget library.
         previous = getattr(widget, "value", None)
-        widget.options = self.options(labeled=labeled)
-        if previous in self._tickers:
+        options = self.options(labeled=labeled, include_catalog=include_catalog)
+        widget.options = options
+        # Check against this widget's own option values, not just the benchmark
+        # list: a selector showing the catalog can legitimately be sitting on a
+        # catalog ticker.
+        if previous in [o[1] if isinstance(o, tuple) else o for o in options]:
             widget.value = previous
 
     def _broadcast(self) -> None:
-        for widget, labeled in self._selectors:
-            self._apply(widget, labeled)
+        for widget, labeled, include_catalog in self._selectors:
+            self._apply(widget, labeled, include_catalog)
         for callback in self._callbacks:
             callback()
