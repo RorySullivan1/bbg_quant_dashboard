@@ -37,11 +37,22 @@ def _mount_multi_strategy(app) -> None:
     btn.click()
 
 
+def _option_values(dd: W.Dropdown) -> list:
+    """A dropdown's option *values*, for both option shapes.
+
+    Benchmark selectors carry ``(label, value)`` pairs since #191 (the catalog
+    source needs a label distinct from the ticker), so an identity check
+    against `BENCHMARK_TICKERS` no longer finds them.
+    """
+    return [o[1] if isinstance(o, tuple) else o for o in dd.options]
+
+
 def _benchmark_dropdowns(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and list(w.options) == list(BENCHMARK_TICKERS)
+        if isinstance(w, W.Dropdown)
+        and set(BENCHMARK_TICKERS) <= set(_option_values(w))
     ]
 
 
