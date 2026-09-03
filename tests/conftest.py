@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import src.user_benchmarks as user_benchmarks
 
 
 def _bdays(n: int, start: str = "2021-01-04") -> pd.DatetimeIndex:
@@ -68,3 +69,24 @@ def benchmark(multiyear_prices) -> pd.Series:
         index=multiyear_prices.index,
         name="SPX Index",
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_benchmarks(monkeypatch, tmp_path):
+    """No test may touch the real ``data/user_benchmarks.json`` (#194).
+
+    Autouse and suite-wide on purpose: the path is read at startup by every
+    ``build_app()``, and any test that adds a benchmark writes it. Without this
+    a test run would leave a real file in the working tree — leaking state into
+    later tests *and* into the developer's repo, which is exactly the failure
+    it caused when the persistence wiring first landed.
+
+    The module binds the path at import, so the patch has to target the module
+    attribute rather than ``config``.
+    """
+    monkeypatch.setattr(
+        user_benchmarks, "USER_BENCHMARKS_PATH", tmp_path / "user_benchmarks.json"
+    )
+    user_benchmarks._reset()
+    yield
+    user_benchmarks._reset()

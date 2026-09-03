@@ -51,6 +51,7 @@ from ..style import (
     Color,
     StatusTone,
 )
+from ..user_benchmarks import load_user_benchmarks, save_user_benchmarks
 from .benchmarks import BenchmarkRegistry
 from .chrome import (
     _app_css,
@@ -248,6 +249,14 @@ def build_app(verbose: bool = False) -> W.VBox:
     # runtime reach all of them at once. Seeded from the curated constant, so
     # with nothing added the app renders exactly as it did before.
     benchmarks = BenchmarkRegistry()
+    # Re-add anything the user persisted (#194) *after* construction, not as a
+    # constructor seed: the constructor's list becomes the curated set, and a
+    # user benchmark must stay removable. Added before the persister is
+    # installed so loading does not immediately re-save what it just read, and
+    # before the first `_fetch_tickers()`, so persisted benchmarks ride the
+    # startup fetch exactly like curated ones.
+    for _persisted in load_user_benchmarks():
+        benchmarks.add(_persisted)
     # Catalog indices ride the same startup fetch as the benchmarks, so they can
     # be offered as a second benchmark source at no BQL cost (#191). Seeded from
     # the full catalog here and re-set from the pruned `meta` once the load has
@@ -908,7 +917,20 @@ def build_app(verbose: bool = False) -> W.VBox:
         )
         return True
 
+    def _persist_benchmarks(tickers: list[str]) -> None:
+        """Store the user's benchmarks; say so when the filesystem refuses.
+
+        A failed save must never fail the add — on a read-only BQuant
+        filesystem the benchmark still works for the session, and the user is
+        told rather than discovering it at the next restart."""
+        if not save_user_benchmarks(tickers):
+            _set_status(
+                "Benchmark added for this session only — could not save it.",
+                tone=StatusTone.WARN,
+            )
+
     benchmarks.set_resolver(_resolve_new_benchmark)
+    benchmarks.set_persister(_persist_benchmarks)
 
     # The blocking startup fetch + prune + compute + first render is deferred to
     # `_run_initial_load` (defined below) so it can run on a worker thread while
