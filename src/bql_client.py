@@ -44,13 +44,37 @@ _MEM_COVER: tuple[date, date] | None = None
 # attempting disk writes for the rest of the session.
 _disk_cache_writable: bool | None = None
 
+# --- off-terminal mock resolution seams (#195) -------------------------------
+# `_mock_prices` seeds a generator off `hash(ticker)`, so off-terminal it
+# resolves *any* string — which is right for its original purpose (the whole
+# dashboard renders without a terminal) and wrong for anything that has to cope
+# with a ticker the user typed. With no way to make the mock say "no", every
+# validation path is untestable off-terminal, and the test suite runs nowhere
+# else. That is the shape of failure #186 was: a caveat marked untestable in CI
+# that then broke in production.
+#
+# These two seams let a test drive the mock into the live path's two failure
+# modes, which are *different* and must not be conflated downstream:
+#
+#   _MOCK_UNRESOLVABLE  the ticker does not resolve at all — a wrong ticker.
+#   _MOCK_FIRST_TRADE   the ticker resolves but has no data before the given
+#                       date — a real security that launched mid-window, or a
+#                       stale one. Rows before it are NaN.
+#
+# Both are empty by default, so the mock's behaviour is unchanged for every
+# ticker the app actually uses. `_clear_caches` resets them.
+_MOCK_UNRESOLVABLE: set[str] = set()
+_MOCK_FIRST_TRADE: dict[str, date] = {}
+
 
 def _clear_caches() -> None:
-    """Reset the in-memory superset and disk-writability probe (test hook)."""
+    """Reset the in-memory superset, disk-writability probe, and mock seams."""
     global _disk_cache_writable, _MEM_SUPERSET, _MEM_COVER
     _MEM_SUPERSET = None
     _MEM_COVER = None
     _disk_cache_writable = None
+    _MOCK_UNRESOLVABLE.clear()
+    _MOCK_FIRST_TRADE.clear()
 
 
 def _live_fetch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
@@ -456,9 +480,35 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
 
 
 def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
+    """Deterministic synthetic prices, one column per ticker.
+
+    Mirrors the *contract* of the live path rather than its internals: a ticker
+    that doesn't resolve comes back as an all-NaN column (warned, not fatal) so
+    the rest of the frame still loads, and only a request where **nothing**
+    resolves raises. See the ``_MOCK_UNRESOLVABLE`` / ``_MOCK_FIRST_TRADE``
+    seams above for how a test drives those cases; with both empty — always, in
+    the app — every ticker resolves over the full window exactly as before.
+    """
     idx = pd.bdate_range(start=start, end=end)
+    resolved = [t for t in tickers if t not in _MOCK_UNRESOLVABLE]
+    unresolved = [t for t in tickers if t in _MOCK_UNRESOLVABLE]
+
+    if tickers and not resolved:
+        # Matches `_assemble_batches`' terminal raise: a request where nothing
+        # resolves is loud, never a silently all-NaN dashboard.
+        raise RuntimeError(
+            f"Mock resolved none of {len(tickers)} tickers "
+            f"({start.isoformat()} → {end.isoformat()})."
+        )
+    if unresolved:
+        warnings.warn(
+            f"{len(unresolved)} of {len(tickers)} tickers did not resolve in the "
+            f"mock and are NaN in the result (e.g. {unresolved[:5]}).",
+            stacklevel=2,
+        )
+
     out = pd.DataFrame(index=idx)
-    for ticker in tickers:
+    for ticker in resolved:
         rng = np.random.default_rng(abs(hash(ticker)) % (2**32))
         if ticker in LEVEL_INDICATOR_MOCK:
             # Mean-reverting absolute *level* (not a compounding price) so the
@@ -478,6 +528,16 @@ def _mock_prices(tickers: list[str], start: date, end: date) -> pd.DataFrame:
         vol = rng.uniform(0.08, 0.30) / np.sqrt(252)
         steps = rng.normal(loc=drift, scale=vol, size=len(idx))
         out[ticker] = 100 * np.exp(np.cumsum(steps))
+
+    # A ticker that launched mid-window resolves but has no data before its
+    # first trade date — NaN there, not a shorter frame, matching how BQL
+    # returns a security with no history at the start of the range.
+    for ticker, first in _MOCK_FIRST_TRADE.items():
+        if ticker in out.columns:
+            out.loc[out.index < pd.Timestamp(first), ticker] = np.nan
+
+    # Unresolved tickers come back as all-NaN columns, in the requested order.
+    out = out.reindex(columns=list(tickers))
     out.index.name = "DATE"
     return out
 

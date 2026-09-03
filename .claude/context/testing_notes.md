@@ -15,6 +15,25 @@ fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
 also run in CI (`.github/workflows/ci.yml`) on every push/PR to the version
 integration branches (`v*`) and `main`.
 
+## Making the mock reject a ticker (#195)
+
+The mock seeds its generator off `hash(ticker)`, so by default it resolves
+**any** string — right for rendering the dashboard without a terminal, wrong
+for anything that must cope with a ticker a user typed. Two module-level seams
+in `src/bql_client.py` let a test drive the mock into the live path's two
+failure modes, which are different and must stay distinguishable:
+
+| Seam | Meaning | Result |
+| --- | --- | --- |
+| `_MOCK_UNRESOLVABLE: set[str]` | a wrong ticker — nothing comes back, ever | all-NaN column, warned; raises only when *nothing* in the request resolves |
+| `_MOCK_FIRST_TRADE: dict[str, date]` | a real security with no history at the start of the window (launched mid-lookback, or stale) | NaN before that date, real data after; the frame keeps its full index |
+
+Both are empty by default, so app behaviour is unchanged. `_clear_caches()`
+resets them — they are mutable module state, so a test that sets one without
+that reset would leak into every test after it. `tests/test_mock_resolution.py`
+covers both, and pins them apart: reported as one generic error, a
+valid-but-no-data ticker reads to the user as a bug.
+
 Off-terminal, the mock-price fallback is deterministic per ticker, so:
 
 ```python
