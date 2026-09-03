@@ -4,7 +4,7 @@ description: >
   Acceptance/goal auditor — judges whether an implemented change actually achieves the
   goals and meets the acceptance criteria of its version, at the project altitude (not
   line-level code quality). Use proactively at the end of a development step, before
-  shipping: given a dev-map version stub (`.claude/dev_map/vX.Y.Z.md`) and the diff, it
+  shipping: given a tracked issue's acceptance criteria and the diff, it
   verifies each acceptance criterion against the evidence and returns a
   pass/fail verdict with the gaps. Pairs with the `workstream` skill as its
   goal-achievement gate before a PR. Trigger on "does this meet the acceptance criteria", "did we
@@ -33,10 +33,11 @@ that claims it's complete.
   don't quietly rewrite the bar to make the change pass.
 
 ## Method
-1. **Read the contract.** Load the dev-map stub for the version in play —
-   `.claude/dev_map/vX.Y.Z.md` (the current shipped version is in `.meta/VERSION`).
-   Extract every Goal and every Objective / acceptance criterion. If there are none,
-   **stop** and report that the step can't be audited without an acceptance bar.
+1. **Read the contract.** Load the GitHub issue(s) the change claims to close —
+   the workstream's scope lives there, labelled by version cycle (the current
+   shipped version is in `.meta/VERSION`). Extract every Goal and every Objective /
+   acceptance criterion. If there are none, **stop** and report that the step can't
+   be audited without an acceptance bar.
 2. **Read the change, read-only.** Inspect the diff (`git diff`, `git log`), the touched
    files, and the relevant tests. Orient on what was actually built — not what was intended.
 3. **Verify each criterion against evidence.** For each acceptance item, find the proof and

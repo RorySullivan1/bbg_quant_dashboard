@@ -60,10 +60,13 @@ CACHE_TTL_HOURS = 12
 
 # The startup BQL fetch is issued in ticker batches rather than one whole-
 # universe request: a single request for hundreds of tickers over a multi-year
-# window risks BQL's per-request row / wall-clock limits, and a single
-# unresolvable ticker would otherwise fail the entire load. Each batch is
-# retried with exponential backoff and, if it still fails, degrades to NaN
-# columns so the rest of the catalog still loads (see `src/bql_client.py`).
+# window risks BQL's per-request row / wall-clock limits. Each batch is retried
+# with exponential backoff and, if it still fails, is re-fetched one ticker at a
+# time so only the genuinely unresolvable tickers degrade to NaN columns (see
+# `src/bql_client.py`). That per-ticker pass — not this batch size — is what
+# stops one bad ticker blanking the load: whenever the universe fits in a single
+# batch, batch-level isolation isolates nothing. So tune this purely for
+# throughput against BQL's request limits.
 BQL_BATCH_SIZE = 100  # tickers per BQL request
 BQL_MAX_RETRIES = 2  # extra attempts per batch after the first (so up to 3 tries)
 BQL_RETRY_BACKOFF_S = 1.0  # base backoff; attempt n waits BACKOFF * 2**n seconds
