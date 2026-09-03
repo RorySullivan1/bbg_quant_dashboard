@@ -24,9 +24,16 @@ live-narrowing filter accordion, a profile card + cumulative chart, a
 monthly-return calendar, and two analysis panes) → disclaimers. All compute
 lives in `src/`; the notebook is a one-liner that calls `build_app()`.
 
+Every benchmark selector is user-extensible (v0.9.14): it type-filters the
+curated `BENCHMARK_TICKERS` list *and* the catalog indices, and accepts a
+ticker that is on neither — fetching it as a delta, reporting an
+unresolvable ticker separately from one with no history in the window, and
+persisting additions to a gitignored `data/user_benchmarks.json` that
+degrades to session-only on a read-only filesystem.
+
 ## Current version
 
-`v0.9.13` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.14` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
