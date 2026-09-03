@@ -55,6 +55,7 @@ from ..stats import (
     weekly_returns,
 )
 from ..style import Color
+from .benchmarks import BenchmarkRegistry
 from .charts import (
     _update_defensive,
     _update_drawdown,
@@ -92,7 +93,9 @@ _CALENDAR_BENCHMARK_KINDS: frozenset[str] = frozenset(
 )
 
 
-def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
+def make_single_strategy_panel(
+    meta: pd.DataFrame, *, registry: BenchmarkRegistry | None = None
+) -> SimpleNamespace:
     """Build the Single Strategy tab widgets and assemble ``.root``.
 
     Returns a ``SimpleNamespace`` of the live handles the builder binds and
@@ -114,6 +117,7 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     filters = make_filter_panel(
         meta,
         build_root=False,
+        registry=registry,
         right_panel_layout=W.Layout(
             width="62%", padding="8px", border=f"1px solid {Color.BORDER}"
         ),
@@ -127,7 +131,7 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
         style={"description_width": "70px"},
         layout=W.Layout(width="100%"),
     )
-    bench_dd = _make_benchmark_dropdown(width="100%")
+    bench_dd = _make_benchmark_dropdown(width="100%", registry=registry)
     bench_chk = W.Checkbox(
         value=False,
         description="Show benchmark",
@@ -210,8 +214,8 @@ def make_single_strategy_panel(meta: pd.DataFrame) -> SimpleNamespace:
     # Section 3 (Workstream E): a two-pane analysis section mirroring the
     # Multi-Strategy tab. The shared `picker` above feeds both panes; each pane
     # picks which analysis + benchmark to draw, for side-by-side comparison.
-    pane_left = _make_single_analysis_pane("left")
-    pane_right = _make_single_analysis_pane("right")
+    pane_left = _make_single_analysis_pane("left", registry=registry)
+    pane_right = _make_single_analysis_pane("right", registry=registry)
     s3_header = W.HTML(render_template("grid_header", **STYLE_CTX, text="Analytics"))
     analysis_row = W.HBox(
         [pane_left.root, pane_right.root],

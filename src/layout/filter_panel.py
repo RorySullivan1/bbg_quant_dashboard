@@ -45,6 +45,7 @@ from ..stats import (
     treynor_ratio,
     zscore_cross_section,
 )
+from .benchmarks import BenchmarkRegistry
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _checkbox_group, _q_row, _section_label
 from .panes import _make_benchmark_dropdown
@@ -65,6 +66,7 @@ def make_filter_panel(
     leading_actions: tuple[W.Widget, ...] = (),
     right_panel_layout: W.Layout | None = None,
     build_root: bool = True,
+    registry: BenchmarkRegistry | None = None,
 ) -> SimpleNamespace:
     """Build the reusable filter panel and its ``matching`` reducer.
 
@@ -141,7 +143,9 @@ def make_filter_panel(
 
     def _bench_dd() -> W.Dropdown:
         # The shared benchmark-dropdown factory (panes); no label, narrower box.
-        return _make_benchmark_dropdown(description="", width="200px")
+        return _make_benchmark_dropdown(
+            description="", width="200px", registry=registry
+        )
 
     q_beta_bench = _bench_dd()
     q_treynor_bench = _bench_dd()

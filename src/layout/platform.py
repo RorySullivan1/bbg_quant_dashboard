@@ -610,20 +610,45 @@ def render_regime_scatter(
         )
 
 
-def _sync_regime_controls(pa: SimpleNamespace) -> None:
+def _regime_selector_options(state: object, spec: dict) -> list[tuple[str, object]]:
+    """The indicator-source options for a regime, as ``(label, ticker)`` pairs.
+
+    Trend sources its list from the **live** benchmark registry (#190) rather
+    than a list frozen into ``REGIME_SPECS`` at import, so a benchmark added at
+    runtime is offered here too. Rate-level carries a literal ``selector`` and
+    is returned unchanged; regimes with neither return ``[]`` (→ the dropdown
+    hides)."""
+    if spec.get("selector_source") == "benchmarks":
+        return state.benchmarks.options(labeled=True)
+    return list(spec.get("selector", []))
+
+
+def _sync_regime_controls(state: object, pa: SimpleNamespace) -> None:
     """Repopulate the bucket dropdown for the active regime's mode and show /
-    hide the indicator-source dropdown (only regimes carrying a ``selector``)."""
+    hide the indicator-source dropdown (only regimes carrying a selector).
+
+    Also re-run on a benchmark-registry change, so this keeps the current source
+    **selected** whenever it survives into the new option list. Switching regime
+    type still falls back to the first option, since the old value belongs to a
+    different domain (a benchmark ticker is not a rate region)."""
     spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
-    selector = spec.get("selector", [])
+    selector = _regime_selector_options(state, spec)
     if selector:
+        previous = pa.regime_selector_dd.value
+        values = [value for _, value in selector]
         pa.regime_selector_dd.options = selector
-        pa.regime_selector_dd.value = selector[0][1]
+        pa.regime_selector_dd.value = previous if previous in values else selector[0][1]
         pa.regime_selector_dd.layout.display = ""
     else:
         pa.regime_selector_dd.layout.display = "none"
     options = regime_bucket_options(pa.regime_type_dd.value)
+    # Preserve the active bucket across a registry change for the same reason.
+    prev_bucket = pa.regime_bucket_dd.value
+    bucket_values = [value for _, value in options]
     pa.regime_bucket_dd.options = options
-    pa.regime_bucket_dd.value = options[0][1]
+    pa.regime_bucket_dd.value = (
+        prev_bucket if prev_bucket in bucket_values else options[0][1]
+    )
 
 
 # The three analytics tabs and their render functions. Only one is ever visible
@@ -691,7 +716,7 @@ def wire_platform_analytics(
     pa.factor_pill.on_click(lambda _b: activate_platform_tab(state, meta, pa, "factor"))
 
     def _on_regime_type(_change=None):
-        _sync_regime_controls(pa)
+        _sync_regime_controls(state, pa)
         _render_analytics(state, meta, pa, "regime")
 
     pa.regime_type_dd.observe(_on_regime_type, names="value")
@@ -714,4 +739,12 @@ def wire_platform_analytics(
             lambda _c: _render_analytics(state, meta, pa, "sunburst"), names="value"
         )
 
-    _sync_regime_controls(pa)
+    _sync_regime_controls(state, pa)
+
+    # A benchmark added at runtime has to reach the Trend regime's source
+    # dropdown too. That widget can't `register` with the registry: it is shared
+    # with the Rate-level regime, whose options are regions, so the registry
+    # would overwrite them whenever Rate-level was the active regime. Re-syncing
+    # instead repopulates it only while Trend is active, and preserves the
+    # current selection.
+    state.benchmarks.on_change(lambda: _sync_regime_controls(state, pa))

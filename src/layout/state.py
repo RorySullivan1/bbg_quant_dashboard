@@ -18,6 +18,7 @@ import ipywidgets as W
 import pandas as pd
 
 from ..cache import LRUCache
+from .benchmarks import BenchmarkRegistry
 
 
 @dataclass
@@ -89,3 +90,10 @@ class DashboardState:
     # current-slice results. Makes flipping back to a previously-viewed
     # benchmark an instant cache hit (v0.6.9 Workstream B).
     memo: LRUCache = field(default_factory=LRUCache)
+
+    # The live benchmark set and the selectors bound to it (#190). Owns what
+    # used to be the frozen `BENCHMARK_TICKERS` snapshot each selector took at
+    # construction; `build_app` creates it before the widgets (they register on
+    # construction) and hands it here. Defaults to the curated list, so a state
+    # object built without one behaves exactly as before.
+    benchmarks: BenchmarkRegistry = field(default_factory=BenchmarkRegistry)

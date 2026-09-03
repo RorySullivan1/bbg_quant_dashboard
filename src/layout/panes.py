@@ -14,6 +14,7 @@ from ..config import (
     LOOKBACK_YEARS,
 )
 from ..style import Color
+from .benchmarks import BenchmarkRegistry
 from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref, _palette_color
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
@@ -34,18 +35,27 @@ def _make_benchmark_dropdown(
     *,
     default: str = DEFAULT_BENCHMARK,
     width: str = "320px",
+    registry: BenchmarkRegistry | None = None,
 ) -> W.Dropdown:
-    """A benchmark selector over `BENCHMARK_TICKERS`. Every analysis-pane
-    benchmark dropdown (Rolling Correlation / Rolling Beta / Outperformance /
-    Correlation-Heatmap regime) and the Quantitative-filter benchmark rows use
-    this one factory. A blank `description` leaves no label gap."""
-    return W.Dropdown(
+    """A benchmark selector. Every analysis-pane benchmark dropdown (Rolling
+    Correlation / Rolling Beta / Outperformance / Correlation-Heatmap regime)
+    and the Quantitative-filter benchmark rows use this one factory. A blank
+    `description` leaves no label gap.
+
+    With a `registry` (#190) the options track the live benchmark set, so a
+    benchmark added at runtime reaches every selector. Without one the options
+    are the curated `BENCHMARK_TICKERS` snapshot, exactly as before — which is
+    what standalone callers and the widget-level tests use."""
+    dd = W.Dropdown(
         options=BENCHMARK_TICKERS,
         value=default,
         description=description,
         style={"description_width": "80px" if description else "0px"},
         layout=W.Layout(width=width),
     )
+    if registry is not None:
+        registry.register(dd)
+    return dd
 
 
 def _line_chart() -> go.FigureWidget:
@@ -352,7 +362,9 @@ _SINGLE_BENCHMARK_VIEWS: frozenset[str] = frozenset(
 )
 
 
-def _make_single_analysis_pane(side_label: str) -> SimpleNamespace:
+def _make_single_analysis_pane(
+    side_label: str, *, registry: BenchmarkRegistry | None = None
+) -> SimpleNamespace:
     """Build one Single-Strategy analysis pane — a self-contained 50%-width
     column with an analysis picker, a per-pane benchmark dropdown (shown only for
     the benchmark-dependent views), and every figure pre-allocated.
@@ -373,7 +385,7 @@ def _make_single_analysis_pane(side_label: str) -> SimpleNamespace:
     pca_fig = _pca_chart()
     defensive_fig = _defensive_chart()
 
-    bench_dd = _make_benchmark_dropdown()
+    bench_dd = _make_benchmark_dropdown(registry=registry)
 
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
@@ -437,7 +449,9 @@ def _make_single_analysis_pane(side_label: str) -> SimpleNamespace:
     )
 
 
-def _make_analysis_pane(side_label: str) -> SimpleNamespace:
+def _make_analysis_pane(
+    side_label: str, *, registry: BenchmarkRegistry | None = None
+) -> SimpleNamespace:
     """Build a self-contained analysis pane with all 9 figures pre-allocated.
 
     Returns a `SimpleNamespace` carrying every plotly `FigureWidget` the
@@ -469,9 +483,9 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
     retdist_fig = _return_dist_chart()
     retdist_stats_grid = _return_dist_stats_grid()
 
-    rcorr_benchmark_dd = _make_benchmark_dropdown()
-    rbeta_benchmark_dd = _make_benchmark_dropdown()
-    outperf_benchmark_dd = _make_benchmark_dropdown()
+    rcorr_benchmark_dd = _make_benchmark_dropdown(registry=registry)
+    rbeta_benchmark_dd = _make_benchmark_dropdown(registry=registry)
+    outperf_benchmark_dd = _make_benchmark_dropdown(registry=registry)
 
     # Correlation-Heatmap regime controls. The checkbox reveals a benchmark
     # selector, a Down/Up tail direction toggle, and a 0-100% (step 5) tail
@@ -488,7 +502,7 @@ def _make_analysis_pane(side_label: str) -> SimpleNamespace:
         indent=False,
         layout=W.Layout(width="120px"),
     )
-    heat_benchmark_dd = _make_benchmark_dropdown()
+    heat_benchmark_dd = _make_benchmark_dropdown(registry=registry)
     heat_regime_chk = W.Checkbox(
         value=False,
         description="Regime",
