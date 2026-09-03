@@ -26,6 +26,18 @@ from src.config import RATE_LEVEL_TICKERS, VIX_TICKER
 
 
 @pytest.fixture(autouse=True)
+def _no_retry_backoff(monkeypatch):
+    """Neutralize the retry backoff so the failure-path tests stay fast.
+
+    ``_fetch_batch_with_retry`` sleeps ``BACKOFF * 2**n`` between attempts, so
+    every test that exercises a failing batch would otherwise pay ~3s of real
+    wall clock. The retry ladder itself still runs — only the waiting is
+    removed, so attempt counts remain exactly as they are in production.
+    """
+    monkeypatch.setattr(bc.time, "sleep", lambda _seconds: None)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_cache(monkeypatch, tmp_path):
     """Fresh caches + a throwaway CACHE_DIR for every test."""
     bc._clear_caches()
@@ -275,33 +287,103 @@ def test_assemble_batches_concatenates_and_orders_to_request():
     assert not out.isna().any().any()
 
 
-def test_assemble_batches_isolates_a_failing_batch_to_nan_columns():
+def test_assemble_batches_isolates_a_failing_batch_to_the_bad_ticker():
+    # C is unresolvable and drags its whole batch (C, D) down. The per-ticker
+    # re-fetch must narrow that to C alone — D is innocent and must survive.
     tickers = ["A Index", "B Index", "C Index", "D Index"]
 
     def fetch_batch(batch, s, e):
-        if "C Index" in batch:  # the second batch (C, D) fails outright
+        if "C Index" in batch:
             raise RuntimeError("BQL limit hit")
         return _wide(batch)
 
-    with pytest.warns(UserWarning, match="degrading those to NaN"):
+    with pytest.warns(UserWarning, match="re-fetching its tickers individually"):
         out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
 
     assert list(out.columns) == tickers
     assert not out["A Index"].isna().any()  # good batch survives
-    assert out["C Index"].isna().all()  # failed batch → NaN columns
-    assert out["D Index"].isna().all()
+    assert out["C Index"].isna().all()  # only the bad ticker degrades
+    assert not out["D Index"].isna().any()  # salvaged from the failed batch
+
+
+def test_assemble_batches_single_bad_ticker_does_not_blank_a_one_batch_universe():
+    # The regression this guards: with the real BQL_BATCH_SIZE (100) and a ~22
+    # ticker universe, everything is ONE batch — so batch-level isolation used
+    # to mean no isolation, and one bad ticker raised for the entire load.
+    tickers = [f"T{i} Index" for i in range(22)]
+    bad = "T7 Index"
+
+    def fetch_batch(batch, s, e):
+        if bad in batch:
+            raise RuntimeError("unresolvable ticker")
+        return _wide(batch)
+
+    with pytest.warns(UserWarning):
+        out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=100)
+
+    assert list(out.columns) == tickers
+    assert out[bad].isna().all()
+    survivors = [t for t in tickers if t != bad]
+    assert not out[survivors].isna().any().any()
+
+
+def test_assemble_batches_salvage_pass_costs_one_request_per_ticker():
+    # The failed batch already burned its retry ladder, so the per-ticker sweep
+    # must not repeat it: one attempt per ticker, not one ladder per ticker.
+    tickers = ["A Index", "B Index", "C Index"]
+    calls: list[list[str]] = []
+
+    def fetch_batch(batch, s, e):
+        calls.append(list(batch))
+        if "C Index" in batch:
+            raise RuntimeError("bad ticker")
+        return _wide(batch)
+
+    with pytest.warns(UserWarning):
+        bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=3)
+
+    # 1 batch attempt + BQL_MAX_RETRIES retries, then exactly one try per ticker.
+    batch_attempts = [c for c in calls if len(c) == 3]
+    per_ticker = [c for c in calls if len(c) == 1]
+    assert len(batch_attempts) == bc.BQL_MAX_RETRIES + 1
+    assert per_ticker == [["A Index"], ["B Index"], ["C Index"]]
+
+
+def test_assemble_batches_healthy_path_issues_no_per_ticker_requests():
+    tickers = ["A Index", "B Index", "C Index", "D Index"]
+    calls: list[list[str]] = []
+
+    def fetch_batch(batch, s, e):
+        calls.append(list(batch))
+        return _wide(batch)
+
+    out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+
+    assert [len(c) for c in calls] == [2, 2]  # no single-ticker salvage requests
+    assert not out.isna().any().any()
 
 
 def test_assemble_batches_all_failing_raises():
     def fetch_batch(batch, s, e):
         raise RuntimeError("session dead")
 
-    with (
-        pytest.warns(UserWarning),
-        pytest.raises(RuntimeError, match="Every BQL batch failed"),
-    ):
+    # A dead session must stay loud rather than degrade to an all-NaN dashboard.
+    with pytest.raises(RuntimeError, match="Every BQL request failed"):
         bc._assemble_batches(
             ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=1
+        )
+
+
+def test_assemble_batches_all_failing_raises_after_per_ticker_retry():
+    def fetch_batch(batch, s, e):
+        raise RuntimeError("session dead")
+
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(RuntimeError, match="Every BQL request failed"),
+    ):
+        bc._assemble_batches(
+            ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=2
         )
 
 

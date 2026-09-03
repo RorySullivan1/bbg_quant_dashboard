@@ -329,6 +329,37 @@ def _fetch_batch_with_retry(
     raise last_exc
 
 
+def _salvage_batch(
+    batch: list[str],
+    start: date,
+    end: date,
+    fetch_batch,
+) -> tuple[list[pd.DataFrame], list[str]]:
+    """Re-fetch a failed batch's tickers one at a time.
+
+    A batch fails as a unit, so a single unresolvable ticker would otherwise
+    take every ticker beside it down. Fetching them individually narrows the
+    blast radius to the tickers that are actually bad.
+
+    Each ticker gets a *single* attempt (``retries=0``): the batch has already
+    exhausted the retry ladder, so repeating it per ticker would multiply an
+    already-slow failure path by the batch size for no added signal.
+
+    Returns ``(frames, failed)`` — the single-ticker frames that resolved, and
+    the tickers the caller should degrade to NaN columns.
+    """
+    frames: list[pd.DataFrame] = []
+    failed: list[str] = []
+    for ticker in batch:
+        try:
+            frames.append(
+                _fetch_batch_with_retry([ticker], start, end, fetch_batch, retries=0)
+            )
+        except Exception:  # noqa: BLE001 — one bad ticker shouldn't fail its peers
+            failed.append(ticker)
+    return frames, failed
+
+
 def _assemble_batches(
     tickers: list[str],
     start: date,
@@ -339,11 +370,17 @@ def _assemble_batches(
 ) -> pd.DataFrame:
     """Fetch ``tickers`` in batches via ``fetch_batch``, isolating failures.
 
-    Each batch of ``batch_size`` tickers is fetched (with retry) independently;
-    a batch that still fails degrades to NaN columns — warned, not fatal — so a
-    handful of unresolvable tickers can't blank the whole dashboard. Only when
-    **every** batch fails (nothing fetched) does this raise. The surviving
-    batches are concatenated and reindexed to the full requested ticker list.
+    Each batch of ``batch_size`` tickers is fetched (with retry) independently.
+    A batch that still fails is **re-fetched one ticker at a time** so only the
+    genuinely unresolvable tickers degrade to NaN columns — warned, not fatal.
+    Without that per-ticker pass the isolation is only as fine-grained as the
+    batch, which is no isolation at all whenever the universe fits in a single
+    batch: one bad ticker would blank the whole dashboard. Only when **every**
+    ticker fails, individually, does this raise. The surviving frames are
+    concatenated and reindexed to the full requested ticker list.
+
+    The per-ticker sweep runs only for a batch that already failed, so the
+    healthy path still costs exactly one request per batch.
     """
     frames: list[pd.DataFrame] = []
     failed: list[str] = []
@@ -351,19 +388,26 @@ def _assemble_batches(
         try:
             frames.append(_fetch_batch_with_retry(batch, start, end, fetch_batch))
         except Exception as exc:  # noqa: BLE001 — one bad batch shouldn't fail all
-            failed.extend(batch)
+            if len(batch) == 1:
+                # Already at ticker granularity — nothing left to narrow down.
+                failed.extend(batch)
+                continue
             warnings.warn(
                 f"BQL batch of {len(batch)} tickers failed after retries "
-                f"({exc}); degrading those to NaN columns. "
+                f"({exc}); re-fetching its tickers individually. "
                 f"Sample: {batch[:5]}.",
                 stacklevel=2,
             )
+            recovered, lost = _salvage_batch(batch, start, end, fetch_batch)
+            frames.extend(recovered)
+            failed.extend(lost)
 
     if not frames:
         raise RuntimeError(
-            f"Every BQL batch failed for {len(tickers)} tickers "
-            f"({start.isoformat()} → {end.isoformat()}). "
-            "Check the terminal session and that tickers include the ' Index' suffix."
+            f"Every BQL request failed for {len(tickers)} tickers "
+            f"({start.isoformat()} → {end.isoformat()}) — batched, then retried "
+            "one ticker at a time. Check the terminal session and that tickers "
+            "include the ' Index' suffix."
         )
     if failed:
         warnings.warn(
