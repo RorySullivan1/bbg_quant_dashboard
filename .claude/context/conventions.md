@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.11`.
+- **Current version**: `v0.9.14`.
 - **Branch naming**: every new branch starts with the current version
   followed by a slash-separated descriptor of what's being worked on.
   Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
@@ -19,7 +19,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 - When the dashboard bumps to the next version, update this section and
   open new branches under the new prefix. Because the integration branch is
   named exactly `vX.Y.Z`, use the flattened form (see the caveat above) —
-  e.g. `v0.9.12-<short-description>`.
+  e.g. `0.9.14-<short-description>`, as the v0.9.14 benchmark branches did.
 
 ## Development workflow
 
