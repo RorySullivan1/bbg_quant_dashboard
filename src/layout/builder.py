@@ -140,6 +140,13 @@ def build_app(verbose: bool = False) -> W.VBox:
         pct: int, label: str, *, error: bool = False, hidden: bool = False
     ) -> None:
         overlay_w.value = _render_overlay(pct, label, error=error, hidden=hidden)
+        # Belt-and-braces dismissal. The `.bbg-overlay.is-hidden` rule only sets
+        # `opacity: 0`, so if the injected stylesheet isn't applied (or is
+        # stripped by the frontend) a "hidden" overlay stays fully opaque at
+        # `z-index: 9999` over the whole viewport — the dashboard then loads fine
+        # but is invisible behind it. Toggling `layout.display` hides it at the
+        # widget level, independent of any CSS.
+        overlay_w.layout.display = "none" if hidden else ""
 
     if get_ipython() is not None:
         display(overlay_w)
@@ -1301,26 +1308,34 @@ def build_app(verbose: bool = False) -> W.VBox:
         _log(f"build_app initial load TOTAL: {time.perf_counter() - t0:.2f}s")
 
     def _start_initial_load():
-        """Run the initial load synchronously when headless (pytest must see a
-        populated tree on return), else on a worker thread so the frontend can
-        paint the already-displayed overlay before the kernel blocks on the
-        fetch — the same background-thread load `_refresh_prices` uses."""
-        if get_ipython() is None:
+        """Run the initial load **synchronously**, so ``build_app()`` only returns
+        once the dashboard is populated.
+
+        This deliberately does *not* offload to a worker thread the way
+        ``_refresh_prices`` does (v0.9.13 #179 tried that and broke the deployed
+        app). Refresh is safe to thread because it fires from a user click, long
+        after the page is live and the frontend is servicing comm updates. The
+        **initial** load is different: under **Voila** the notebook is executed to
+        completion and the page is then assembled from the resulting output, so a
+        ``build_app()`` that returns immediately hands Voila an *empty* dashboard
+        and the background thread races the page assembly — the app renders stuck
+        behind the loading overlay with nothing in it. ``get_ipython()`` is not
+        None under Voila either, so it cannot be used to tell an interactive
+        notebook (where threading is harmless) from a Voila render (where it is
+        fatal). Staying synchronous is correct in every environment; the cost is
+        only that the overlay can't animate during the load.
+        """
+        try:
             _run_initial_load()
-            return
-
-        def _worker():
-            try:
-                # Hold the just-shown overlay visible for a beat so the frontend
-                # paints it before an instant (mock / warm-cache) load flips it
-                # hidden — otherwise show→hide coalesce into one frame.
-                time.sleep(_OVERLAY_PAINT_DELAY_S)
-                _run_initial_load()
-            except Exception:
-                state.init_errors.append(traceback.format_exc())
-                _set_progress(60, "Load failed — see error below", error=True)
-
-        threading.Thread(target=_worker, name="bbg-initial-load", daemon=True).start()
+        except Exception:
+            # Surface the failure instead of swallowing it: `_run_initial_load`
+            # renders `state.init_errors` via `_recompute`, but only if it gets
+            # that far — so write the traceback straight into the error box too.
+            state.init_errors.append(traceback.format_exc())
+            state.errors_w.value = "".join(
+                _render_error(err) for err in state.init_errors
+            )
+            _set_progress(60, "Load failed — see error below", error=True)
 
     _start_initial_load()
     return app

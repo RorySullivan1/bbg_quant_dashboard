@@ -87,13 +87,7 @@ def _join_refresh_worker(timeout: float = 30.0) -> None:
             t.join(timeout)
 
 
-def _join_initial_load_worker(timeout: float = 30.0) -> None:
-    for t in threading.enumerate():
-        if t.name == "bbg-initial-load":
-            t.join(timeout)
-
-
-# --- v0.9.13 #179: threaded initial load ------------------------------------
+# --- initial load: must stay synchronous (deployed-app regression) ----------
 
 
 def test_headless_initial_load_is_synchronous(monkeypatch):
@@ -108,11 +102,16 @@ def test_headless_initial_load_is_synchronous(monkeypatch):
     assert "is-hidden" in _overlay(app).value  # dismissed on the synchronous path
 
 
-def test_frontend_initial_load_uses_worker_thread(monkeypatch):
-    """With a (faked) live frontend, `build_app()` returns immediately with the
-    fetch deferred to a `bbg-initial-load` worker — so the frontend can paint the
-    visible overlay before the kernel blocks on the fetch. Once the worker
-    finishes, the tree is loaded and the overlay dismissed."""
+def test_initial_load_is_synchronous_under_a_live_frontend(monkeypatch):
+    """Regression for the deployed-app failure: the **initial** load must stay
+    synchronous even with a live frontend.
+
+    Under Voila the notebook is executed to completion and the page is then
+    assembled from the resulting output, so a `build_app()` that returns before
+    the dashboard is populated serves an empty app stuck behind the loading
+    overlay. `get_ipython()` is not None under Voila either, so it can't
+    distinguish a notebook (threading harmless) from a Voila render (fatal) —
+    the initial load therefore never threads."""
     import src.layout.builder as builder_mod
 
     monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
@@ -121,16 +120,43 @@ def test_frontend_initial_load_uses_worker_thread(monkeypatch):
 
     app = build_app(verbose=False)
 
-    # Build returned while the worker is still in its paint-hold beat: the fetch
-    # hasn't run yet and the overlay is up.
-    assert any(t.name == "bbg-initial-load" for t in threading.enumerate())
-    assert calls["n"] == 0  # fetch deferred off the build thread
-    assert "is-hidden" not in _overlay(app).value  # overlay visible while loading
+    # `build_app` returned only after the load completed: no worker thread, the
+    # fetch already happened, and the overlay is dismissed.
+    assert not any(t.name == "bbg-initial-load" for t in threading.enumerate())
+    assert calls["n"] == 1
+    assert "is-hidden" in _overlay(app).value
 
-    _join_initial_load_worker()
 
-    assert calls["n"] == 1  # the worker did the fetch
-    assert "is-hidden" in _overlay(app).value  # ...and dismissed the overlay
+def test_dismissed_overlay_is_hidden_without_relying_on_css(monkeypatch):
+    """The overlay must be dismissed at the widget-layout level too.
+
+    `.bbg-overlay.is-hidden` only sets `opacity: 0`, so if the injected
+    stylesheet isn't applied the overlay would stay fully opaque at
+    `z-index: 9999` and hide the whole (successfully loaded) dashboard."""
+    app = build_app(verbose=False)
+    overlay = _overlay(app)
+    assert "is-hidden" in overlay.value  # CSS-level dismissal
+    assert overlay.layout.display == "none"  # ...and layout-level dismissal
+
+
+def test_failed_initial_load_renders_the_traceback(monkeypatch):
+    """A startup failure must surface the traceback in the error box rather than
+    only painting 'Load failed — see error below' with nothing below it."""
+    import src.layout.builder as builder_mod
+
+    def boom(*_a, **_k):
+        raise RuntimeError("simulated BQL outage")
+
+    monkeypatch.setattr(builder_mod, "fetch_prices", boom)
+
+    app = build_app(verbose=False)
+
+    errors = [
+        w
+        for w in _walk(app)
+        if isinstance(w, W.HTML) and "simulated BQL outage" in w.value
+    ]
+    assert errors, "the startup traceback must be rendered for the user"
 
 
 def test_headless_refresh_runs_synchronously(monkeypatch):
