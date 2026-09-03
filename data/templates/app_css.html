@@ -339,6 +339,14 @@
   border-color: {{accent}};
   outline: none;
 }
+/* Benchmark selector (#192): a Combobox behind a composite widget. Its input
+   already picks up the input[type="text"] rules above, so this only stops the
+   wrapper adding spacing of its own. The datalist popup the browser renders
+   for a combobox cannot be themed from here — that is a browser limitation,
+   not an omission. */
+.bbg-app .bbg-benchmark-select {
+  width: 100%;
+}
 .bbg-app input[type="checkbox"] {
   accent-color: {{accent}};
 }

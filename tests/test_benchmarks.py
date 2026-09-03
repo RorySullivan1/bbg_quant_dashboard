@@ -22,7 +22,11 @@ import pytest
 import src.layout.builder as builder_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
-from src.layout.benchmarks import BenchmarkRegistry, benchmark_label
+from src.layout.benchmarks import (
+    BenchmarkRegistry,
+    BenchmarkSelect,
+    benchmark_label,
+)
 
 NEW = "TESTBM Index"
 
@@ -143,7 +147,7 @@ def _walk(widget):
         yield from _walk(child)
 
 
-def _option_values(dd: W.Dropdown) -> list:
+def _option_values(dd) -> list:
     """A dropdown's option *values*, for both the plain and (label, value) shapes."""
     return [o[1] if isinstance(o, tuple) else o for o in dd.options]
 
@@ -156,14 +160,16 @@ def _click(app, description: str) -> None:
     ).click()
 
 
-def _all_benchmark_selectors(app) -> list[W.Dropdown]:
+def _all_benchmark_selectors(app) -> list[BenchmarkSelect]:
     """Every benchmark selector in the app, gathered by mounting each tab."""
     found: dict[int, W.Dropdown] = {}
     for tab in ("Multi-Strategy", "Single Strategy"):
         _click(app, tab)
         _click(app, "Quantitative")  # reveals the Beta/Treynor/Jensen rows
         for w in _walk(app):
-            if isinstance(w, W.Dropdown) and DEFAULT_BENCHMARK in _option_values(w):
+            if isinstance(w, BenchmarkSelect) and DEFAULT_BENCHMARK in _option_values(
+                w
+            ):
                 found[id(w)] = w
     return list(found.values())
 
