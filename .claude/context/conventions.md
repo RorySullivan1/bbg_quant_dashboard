@@ -5,21 +5,27 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 ## Branching
 
 - **Current version**: `v0.9.14`.
-- **Branch naming**: every new branch starts with the current version
-  followed by a slash-separated descriptor of what's being worked on.
-  Format: `v{MAJOR.MINOR.PATCH}/{type}/{short-description}`.
-  Examples:
-  - `v0.6.0/enhancement/perf-grid-color-swatch`
-  - `v0.6.0/bugfix/empty-ticker-traceback`
-  - `v0.6.0/refactor/style-tokens`
-  - **Caveat:** when the integration branch is named exactly `v{X.Y.Z}` (as
-    with `v0.6.0`), git can't also host nested `v{X.Y.Z}/<type>/<desc>` refs,
-    so use the flattened `v{X.Y.Z}-<type>-<desc>` form (e.g.
-    `v0.6.0-refactor-dashboard-state`).
-- When the dashboard bumps to the next version, update this section and
-  open new branches under the new prefix. Because the integration branch is
-  named exactly `vX.Y.Z`, use the flattened form (see the caveat above) —
-  e.g. `0.9.14-<short-description>`, as the v0.9.14 benchmark branches did.
+- **`main` is the trunk.** Work branches off `main` and lands back in `main`
+  by PR. There is no standing integration branch.
+- **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
+  the version the work is going into — e.g. `0.9.14-benchmark-registry`,
+  `0.9.15-fix-overlay-flash`. Flat (hyphens, not slashes): git cannot host a
+  nested `vX.Y.Z/<desc>` ref while a branch named exactly `vX.Y.Z` exists, and
+  the epic branches below are named exactly that.
+- **Integration branches are the exception, not the rule.** Cut one — named
+  exactly `vX.Y.Z` — only for a **multi-PR epic** whose parts are not
+  individually shippable. Sub-branches hang off it, it merges into `main` when
+  the epic completes, and it is then deleted. A single-PR change never needs
+  one.
+
+> **Why this changed (v0.9.14).** The old model cut one long-lived integration
+> branch per version, off `main`. In practice `v0.9.0` absorbed the v0.9.11,
+> v0.9.12, v0.9.13 *and* v0.9.14 cycles — a branch named `v0.9.0` carrying
+> version `0.9.14` — while `main` sat untouched for three months. Two concrete
+> costs: the "staging buffer before `main`" was never once flushed, so it
+> bought nothing; and GitHub only fires `Closes #N` when a PR merges into the
+> **default** branch, so every closing keyword written against the integration
+> branch was silently inert and its issues stayed open after shipping.
 
 ## Development workflow
 
@@ -30,10 +36,9 @@ Every roadmap item ships through the same loop. The `/workstream` skill
 1. **Plan first.** Enter plan mode (`Shift+Tab` ×2; there is no auto-default
    plan-mode setting), read the target GitHub issue, explore, design, and get
    the plan approved before editing.
-2. **Branch.** Cut one integration branch per version (`vX.Y.Z`, off `main`),
-   then a **flat-named sub-branch per workstream** off it
-   (`vX.Y.Z-<desc>` — see the "Branching" caveat above). One workstream per
-   branch, one issue per branch.
+2. **Branch** off `main`, flat-named `X.Y.Z-<desc>` (see "Branching" above).
+   One workstream per branch, one issue per branch. Only a multi-PR epic gets
+   an integration branch to stack on.
 3. **Implement** only that workstream; respect the issue's non-goals; add/adjust
    `tests/`.
 4. **Quality gates** — `ruff check src tests`, `black --check src tests`,
@@ -41,9 +46,10 @@ Every roadmap item ships through the same loop. The `/workstream` skill
    re-runs these on every `git commit` and **blocks** the commit on failure.
 5. **Commit & push** `-u origin <branch>`. Never push to `main`/`master` —
    `.claude/hooks/block-main-push.sh` blocks it; land changes via PR.
-6. **PR into the integration branch** (`vX.Y.Z`, not `main`); close the issue
-   with a `Closes #N` keyword. Defer `.meta/VERSION` + release-note edits to
-   end-of-cycle.
+6. **PR into `main`** (or into the epic's integration branch, which itself
+   PRs into `main`); close the issue with a `Closes #N` keyword — which only
+   actually fires on the merge into `main`. Defer `.meta/VERSION` +
+   release-note edits to end-of-cycle.
 
 ## Conventions
 

@@ -1,6 +1,6 @@
 ---
 name: workstream
-description: The bbg_quant_dashboard development workflow — take one workstream from plan to merged PR. Plan-first, then a flat-named sub-branch off the version integration branch, ruff/black/pytest quality gates, commit, push, and a PR into the integration branch. Use when starting or implementing a tracked issue, a roadmap workstream, or any v0.6.x/v0.7.0/etc. feature; or when asked to "do a workstream", "start the next item", or "ship this change the usual way".
+description: The bbg_quant_dashboard development workflow — take one workstream from plan to merged PR. Plan-first, then a flat-named branch off `main`, ruff/black/pytest quality gates, commit, push, and a PR into `main`. Use when starting or implementing a tracked issue, a roadmap workstream, or any v0.6.x/v0.7.0/etc. feature; or when asked to "do a workstream", "start the next item", or "ship this change the usual way".
 argument-hint: [workstream / issue number to implement]
 ---
 
@@ -27,15 +27,18 @@ fix, and the acceptance criteria that define the workstream.
 - Read the target issue; explore the code paths it names; design the change;
   surface open questions; get the plan approved before editing.
 
-### 2. Branch off the integration branch
-- Each version has one integration branch named exactly `vX.Y.Z` (e.g.
-  `v0.6.5`), cut from `main`.
-- Each workstream gets its **own flat-named sub-branch** off that integration
-  branch: `vX.Y.Z-<short-description>` (e.g.
-  `v0.6.5-dark-design-tokens-and-global-css`).
+### 2. Branch off `main`
+- `main` is the trunk: branch from it, and land back in it by PR.
+- Flat-named, prefixed with the version the work ships in:
+  `X.Y.Z-<short-description>` (e.g. `0.9.14-benchmark-registry`).
 - **Flat naming is required:** git cannot host nested refs like
-  `v0.6.5/<type>/<desc>` while a branch literally named `v0.6.5` exists. Use
+  `v0.9.0/<type>/<desc>` while a branch literally named `v0.9.0` exists. Use
   the hyphenated form. (See CLAUDE.md "Branching".)
+- **Integration branches are the exception.** Cut one — named exactly `vX.Y.Z`
+  — only for a multi-PR epic whose parts are not individually shippable; it
+  merges into `main` and is deleted when the epic completes. Note that a PR
+  based on such a branch **runs no CI** until it is retargeted at `main` (see
+  issue #202), so verify those locally before merging.
 - One workstream per branch, one issue per branch — keep PRs small and
   reviewable.
 
@@ -62,11 +65,13 @@ to avoid a blocked commit. (`black src tests` to auto-fix formatting.)
 - `git push -u origin <branch>`. **Never push to `main`/`master`** — the
   `block-main-push.sh` hook blocks it; open a PR instead.
 
-### 6. PR into the integration branch
-- Open the PR with **base = the version integration branch** (`vX.Y.Z`), not
-  `main`.
+### 6. PR into `main`
+- Open the PR with **base = `main`** — or, for one part of a multi-PR epic,
+  the epic's integration branch, which itself PRs into `main`.
 - In the PR body, summarize the change and close the issue with a closing
-  keyword (`Closes #N`), so merging the PR retires the workstream.
+  keyword (`Closes #N`). It fires only on the merge into `main` — GitHub
+  honours closing keywords against the **default** branch only — so an epic's
+  sub-PRs retire their issues when the integration branch lands, not before.
 - Defer `.meta/VERSION` bumps and CLAUDE.md release notes to the **end** of the
   version cycle, not per-PR.
 
