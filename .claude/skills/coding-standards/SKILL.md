@@ -28,23 +28,10 @@ For stack-specific depth, use the dedicated skills instead:
 - **`python-maintenance`** — debugging, refactoring, modernizing existing Python.
 - **`VSTO-development`** — C#/VB.NET Office add-in patterns and the Office object model.
 
-## When to Activate
-
-- Starting a new project or module
-- Reviewing code for quality and maintainability
-- Refactoring existing code to follow conventions
-- Enforcing naming, formatting, or structural consistency
-- Setting up linting, formatting, or type-checking rules
-- Onboarding new contributors to coding conventions
-
 ## Scope Boundaries
 
-Activate this skill for:
-
-- descriptive naming
-- immutability defaults
-- readability, KISS, DRY, and YAGNI enforcement
-- error-handling expectations and code-smell review
+When to reach for this skill is the frontmatter `description`'s job; it is not
+restated here. What that field cannot carry is the negative half:
 
 Do **not** use this skill as the primary source for:
 
@@ -305,14 +292,25 @@ Validate at the boundary with a schema/attributes; don't trust raw input.
 ```csharp
 using System.ComponentModel.DataAnnotations;
 
+// NOTE the `property:` targets — they are load-bearing, not decoration.
+// An un-targeted attribute on a positional record parameter does not reliably land on the
+// compiler-generated PROPERTY, and Validator.ValidateObject evaluates the attributes
+// attached to the object's *properties*. Without the target you can get validation that
+// silently passes everything. (ASP.NET Core model binding special-cases record parameters,
+// which is why this often "works" there and not in plain console/library code.)
+// Checked 2026-08-15; if you'd rather not think about it, declare a non-positional record.
 public record CreateMarket(
-    [Required, StringLength(200, MinimumLength = 1)] string Name,
-    [Required] DateTime EndDate,
-    [MinLength(1)] IReadOnlyList<string> Categories);
+    [property: Required, StringLength(200, MinimumLength = 1)] string Name,
+    [property: Required] DateTime EndDate,
+    [property: MinLength(1)] IReadOnlyList<string> Categories);
 
 // throws ValidationException on invalid input
 Validator.ValidateObject(model, new ValidationContext(model), validateAllProperties: true);
 ```
+On **.NET Framework** (this project's add-in stack) `MinLengthAttribute` historically only
+handled arrays and strings; the reflection-based `Count` path for other collections is
+modern-.NET behaviour. Verify `[MinLength]` on an `IReadOnlyList<T>` against your actual
+target framework rather than assuming it validates.
 
 ```python
 from datetime import datetime
@@ -412,14 +410,47 @@ count += 1  # increment counter
 
 Document public APIs (XML doc comments / docstrings); skip comments that restate code.
 
+### How much, by scope
+
+That rule is a floor — it says a docstring must exist. This is the ceiling, and it is
+deliberately scope-dependent, because the length that is right for a class is wrong for
+a function:
+
+| Scope | Rule |
+|---|---|
+| **File top** | The file's *purpose* — what it is for, not how it came to be |
+| **Class** | May be verbose. This is where a design decision belongs |
+| **Function** | Limited but descriptive: what it does, its contract, its surprises |
+| **Inline** | The non-obvious only — a notice, a trap, a *why* the code cannot say |
+| **A documented constant** | Its own scope, not inline prose. A language that has a form for documenting a public constant (Python's `#:`, a doc comment) is asking for a docstring, and it is budgeted like one |
+| **Emitted output** | An HTML template, a CSS bundle, a generated header: its comments reach the consumer and cost bytes there. A higher bar, not the same one. What the build *compiles away* is free; what it *emits* is not |
+
+The test is **contract, not history**. The Python example above runs twelve lines and
+every one is contract — what it takes, what it returns, what it raises. A six-line
+docstring recounting which change introduced a parameter is the longer of the two,
+because none of it tells a caller anything.
+
+**No line counts here, on purpose.** A cap that fits one codebase is wrong for the
+next, so numbers belong in a project's own check rather than in a cross-project
+standard. What travels is the shape.
+
+Prose that overruns its scope is usually misplaced rather than unwanted, and the
+reasoning in a mature codebase is load-bearing — it is why a bad idea does not come
+back. Route it with **`knowledge-router`** rather than discarding it or letting it
+bloat the nearest docstring: cutting a docstring by *moving* its content is the goal,
+cutting it by losing the content is a regression that looks like progress.
+
 ## Performance
 
 Optimize where it's measured, not speculatively.
 
 ```csharp
 // PASS — compute an expensive result once; Lazy<T> defers and caches single init
-private readonly Lazy<IReadOnlyList<Market>> _sortedMarkets =
-    new(() => markets.OrderByDescending(m => m.Volume).ToList());
+private readonly Lazy<IReadOnlyList<Market>> _sortedMarkets;
+
+public MarketCache(IReadOnlyList<Market> markets) =>
+    // the factory closes over the ctor parameter — a field initializer can't see it
+    _sortedMarkets = new(() => markets.OrderByDescending(m => m.Volume).ToList());
 
 // PASS — stream large data with yield instead of building a huge list
 IEnumerable<Row> ReadRows(string path)

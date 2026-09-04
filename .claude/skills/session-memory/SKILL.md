@@ -30,7 +30,7 @@ rewritten.
 
 ```
 .claude/memory/
-├── INDEX.md                              # auto-loaded every session — keep ≤ ~80 lines (~600 tokens)
+├── INDEX.md                              # auto-loaded every session — budgets below, enforced by `memory.py check`
 └── sessions/
     └── YYYY-MM-DD-HHMM-slug.md           # append-only, full detail, read on demand
 ```
@@ -59,7 +59,7 @@ section; the high-value content is append-only and fully traceable.
 Seed `INDEX.md` with exactly this:
 
 ```markdown
-# MEMORY INDEX  ·  keep ≤ ~80 lines
+# MEMORY INDEX  ·  keep ≤ ~80 lines, ≤ ~200 chars per line
 
 ## State            (rewrite in place — current truth only, ≤ ~10 lines)
 -
@@ -114,6 +114,32 @@ sections only grow; only State is rewritten, so decay is bounded to ≤ ~10 line
 When `INDEX.md` approaches its budget, don't compress in place — move the oldest
 **Decisions** and **Log** lines into `sessions/ARCHIVE-YYYY.md` and leave a single
 pointer. All compaction happens in the index; **never rewrite a log file.**
+
+### The budget, and why it is four numbers
+
+`memory.py` enforces these (`BUDGETS`); `memory.py check` reports, and the
+SessionStart hook appends the same advisory when the index it just loaded is over.
+Advisory only — an over-budget index is still a working index, and a memory tool
+that refused to load one would lose the session the state it exists to preserve.
+
+| Cap | Value |
+|---|---|
+| `index_lines` | 80 |
+| `index_chars` | 8,000 (~2,000 tokens) |
+| `state_lines` | 10 |
+| `max_line_chars` | 200 |
+
+**The width cap is the one that was missing, and its absence is why the others
+failed.** This index reached 256 lines and ~22,900 tokens while its own first line
+read "keep ≤ ~80 lines" — a line has no width limit, so obeying a line count while
+writing 1,412-character paragraphs is the path of least resistance rather than an
+act of bad faith. A count means something only when the thing counted is bounded.
+
+**`index_chars` replaces an aspirational "~600 tokens"**, which was never reachable
+for a mature project: Decisions is append-only by design, so the file grows even when
+every entry is disciplined. 8,000 is twice what a compacted index measures in
+practice, which is the number a cap should be set at — above a good example, below
+the tail.
 
 ## Setup (one-time)
 

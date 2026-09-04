@@ -303,13 +303,35 @@ CSS, style tokens — live in `style.md`.)
   dashboard). Forward scope is tracked in **GitHub issues**, labelled per
   version cycle (e.g. `v0.9.13-perf`) rather than in an in-repo roadmap —
   in-repo stubs drifted out of date against the shipped branches, so the
-  issue tracker is the single source of truth. The PreToolUse enforcement
+  issue tracker is the single source of truth. The enforcement and advisory hook
   scripts live in `.claude/hooks/` (documented in `.claude/hooks/README.md`),
   and `.claude/templates/` holds portable, repo-agnostic copies of the hooks +
   `workstream` skill for lifting into other repos (not auto-loaded — the active
   ones stay under `.claude/hooks/` and `.claude/skills/`). The canonical
   shipped version is `.meta/VERSION` — bump it together with the
   "Branching" section above.
+- **Shared `.claude/` assets are synced from `RorySullivan1/claudebrain`**
+  (`example-project/.claude/` is the canonical copy; last synced 2026-09-04).
+  The Python / quant / docs / GitHub / operational skills and the objective
+  agents are pulled verbatim; `finance-quantitative-developer`,
+  `python-developer`, `goal-auditor`, `workstream`, the two bash gates, and
+  `settings.json` are **specialised to this repo** and are not overwritten on
+  a sync (they read `src/stats/`, GitHub issues, `quality-gates.sh`, …).
+  Upstream's roadmap/version flow (`.meta/roadmap/`, `/version-set`,
+  `roadmap_guard`) is deliberately **not** adopted — forward scope lives in
+  GitHub issues here. Upstream's *skill-wins* rule applies: a brief that
+  restates a skill is dead weight, which is why the echoed
+  `python-project-instructions` skill was retired. Three assets from the
+  sync matter beyond the skill text: **`claim-grounding` +
+  `.claude/workflows/verify-claims.md`** are the truth gate to run over the
+  project-authored `bquant-dashboard-spec` / `ipywidgets` / `plotly` skills
+  (they assert facts about BQL, ipywidgets and plotly that have never been
+  grounded); the advisory **`prose_budget.py`** hook + `prose-auditor` agent
+  + `/prose-review` command audit comment/docstring length per scope against
+  `.claude/prose-budget.json` (pre-existing overruns grandfathered in
+  `.claude/prose-baseline.json`); and **`post_bash_filter.py`** trims long
+  command output before it reaches the context. Details in
+  `.claude/hooks/README.md`.
 - **Session state lives on `DashboardState`** (`src/layout/state.py`), built
   once in `build_app` and shared by the orchestration closures. They mutate
   attributes (`state.universe_prices = …`, `state.active_filter = …`), which

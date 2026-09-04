@@ -40,7 +40,7 @@ def index_path() -> Path:
 # --- templates -------------------------------------------------------------
 
 INDEX_TEMPLATE = """\
-# MEMORY INDEX  ·  keep ≤ ~80 lines
+# MEMORY INDEX  ·  keep ≤ ~80 lines, ≤ ~200 chars per line
 
 ## State            (rewrite in place — current truth only, ≤ ~10 lines)
 -
@@ -150,10 +150,109 @@ def cmd_list(args) -> int:
         print(path.relative_to(project_root()).as_posix())
     return 0
 
+#: The index loads into every session, so its size is a per-session tax. Caps are
+#: enforced, not merely documented — this file went to 256 lines and ~22,900 tokens
+#: while its own header said "keep <= ~80 lines", which is what these exist to stop.
+#:
+#: MAX_LINE_CHARS is the one that was missing, and the reason the line cap failed: a
+#: line has no width limit, so obeying "80 lines" while writing 1,412-character
+#: paragraphs is the path of least resistance. A count only means something when the
+#: thing counted is bounded.
+BUDGETS = {
+    "index_lines": 80,
+    "index_chars": 8000,
+    "state_lines": 10,
+    "max_line_chars": 200,
+}
+
+
+def index_findings() -> list[str]:
+    """Ways the index exceeds BUDGETS, worst first. Empty when it is within them."""
+    text = index_path().read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    findings = []
+
+    if len(lines) > BUDGETS["index_lines"]:
+        findings.append(f"{len(lines)} lines, budget {BUDGETS['index_lines']}")
+    if len(text) > BUDGETS["index_chars"]:
+        findings.append(
+            f"{len(text):,} chars (~{len(text) // 4:,} tokens), "
+            f"budget {BUDGETS['index_chars']:,}"
+        )
+
+    state, seen = 0, False
+    for line in lines:
+        if line.startswith("## "):
+            if seen:
+                break
+            # Slice, not index: a bare "## " header must not crash the SessionStart hook.
+            seen = line.split()[1:2] == ["State"]
+        elif seen and line.strip():
+            state += 1
+    if state > BUDGETS["state_lines"]:
+        findings.append(f"State is {state} lines, budget {BUDGETS['state_lines']}")
+
+    wide = [i + 1 for i, line in enumerate(lines) if len(line) > BUDGETS["max_line_chars"]]
+    if wide:
+        shown = ", ".join(str(n) for n in wide[:6])
+        more = f" and {len(wide) - 6} more" if len(wide) > 6 else ""
+        findings.append(
+            f"{len(wide)} line(s) over {BUDGETS['max_line_chars']} chars: {shown}{more}"
+        )
+    return findings
+
+
+def index_warning() -> str:
+    """The advisory text for an over-budget index, or "" when there is nothing to say.
+
+    Advisory by contract: this never edits the index and never fails a command. An
+    over-budget index is still a working index, and a memory tool that refused to load
+    one would lose the session the state it was written to preserve.
+    """
+    try:
+        if not index_path().exists():
+            return ""
+        findings = index_findings()
+    except Exception:
+        # Broad on purpose: this wraps the SessionStart hook, and no measurement
+        # surprise (odd markdown, encoding, anything) may take the session down.
+        return ""
+    if not findings:
+        return ""
+    return (
+        "\n\nsession-memory: INDEX.md is over budget — "
+        + "; ".join(findings)
+        + ". Rewrite State in place, and fold older Decisions/Log entries into "
+        "sessions/ARCHIVE-YYYY.md leaving a pointer. It loads into every session, "
+        "so the cost is paid every time."
+    )
+
+
+def cmd_check(_args) -> int:
+    """Report an over-budget index. Exit 0 regardless — advisory, never a gate."""
+    if not memory_dir().is_dir():
+        return 0
+    try:
+        findings = index_findings() if index_path().exists() else []
+    except Exception as exc:
+        print(f"INDEX.md could not be measured ({type(exc).__name__}); not a verdict.")
+        return 0
+    if findings:
+        print("INDEX.md over budget: " + "; ".join(findings))
+    else:
+        print("INDEX.md is within budget.")
+    return 0
+
+
 def cmd_index(_args) -> int:
-    """SessionStart: print INDEX so it loads into context. Silent if absent."""
-    if index_path().exists():
-        sys.stdout.write(index_path().read_text(encoding="utf-8", errors="replace"))
+    """SessionStart: print INDEX so it loads into context. Silent if absent or unreadable."""
+    try:
+        text = index_path().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        # A SessionStart hook that raises takes the session's first turn with it.
+        return 0
+    sys.stdout.write(text)
+    sys.stdout.write(index_warning())
     return 0
 
 def cmd_precompact_hook(_args) -> int:
@@ -251,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=10)
     sp.set_defaults(func=cmd_list)
 
+    sub.add_parser("check", help="report an over-budget INDEX.md").set_defaults(func=cmd_check)
     sub.add_parser("index", help="print INDEX.md (SessionStart hook)").set_defaults(func=cmd_index)
     sub.add_parser("precompact-hook", help="PreCompact reminder").set_defaults(func=cmd_precompact_hook)
     sub.add_parser("stop-hook", help="Stop write reminder").set_defaults(func=cmd_stop_hook)

@@ -101,6 +101,9 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
+# --require-hashes needs EVERY requirement — transitive ones included — pinned with ==
+# and carrying a hash, so it only works against a fully-compiled lockfile (see uv pip
+# compile --generate-hashes above). A partially-pinned file fails the install outright.
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 COPY . .
@@ -127,7 +130,11 @@ CMD ["python", "-m", "myapp"]
 
 ### Container rules of thumb
 
-- **Pin base image tags.** `python:3.12-slim` is OK; `python:3.12.4-slim-bookworm` is better. Never `python:latest`.
+- **Pin base image tags.** `python:3.12-slim` is OK; a fully-pinned
+  `python:3.12.14-slim-trixie` is better. Never `python:latest`. Note the distro moves under
+  you: `python:3.12-slim` resolved to bookworm and now resolves to **trixie**, so pin the
+  distro too if a base-OS change would break you. *(Tags current as of 2026-08-15 — check
+  before copying; patch numbers go stale fast.)*
 - **Run as non-root.** Always. Many compliance regimes require it; even when they don't, it's free defense in depth.
 - **Don't write the app code into `/`.** Use `/app` or similar.
 - **Set `PYTHONDONTWRITEBYTECODE=1`** to skip `.pyc` generation, and `PYTHONUNBUFFERED=1` so logs flush.
@@ -203,13 +210,17 @@ Stdlib approach (no extra deps):
 ```python
 import logging
 import sys
-from pythonjsonlogger import jsonlogger  # python-json-logger
+from pythonjsonlogger.json import JsonFormatter  # python-json-logger >= 3.1.0
+# (the old `from pythonjsonlogger import jsonlogger` path is a deprecated stub
+#  that emits a DeprecationWarning — checked 2026-08-15)
 
 handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(jsonlogger.JsonFormatter(
+handler.setFormatter(JsonFormatter(
     "%(asctime)s %(name)s %(levelname)s %(message)s"
 ))
-logging.basicConfig(level=logging.INFO, handlers=[handler])
+# force=True matters in containers: basicConfig is a NO-OP if the root logger
+# already has handlers, which it will if a framework configured logging first.
+logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 ```
 
 Or `structlog` for richer structured logging.
@@ -297,7 +308,9 @@ jobs:
 
 - Cold starts matter. Minimize import time; lazy-import heavy libs inside the handler if possible.
 - Package size limits: 250 MB unzipped (layers + function). Use container image deployments (10 GB) if you exceed this.
-- The runtime is read-only except `/tmp` (512 MB by default, up to 10 GB).
+- Treat the runtime filesystem as read-only except `/tmp` (512 MB by default, configurable
+  to 10 GB — both doc-stated). The read-only framing itself is *conventional wisdom*: the
+  docs prescribe `/tmp` for writes without stating the rest is immutable. Write to `/tmp`.
 - Use Powertools for AWS Lambda (Python) for logging, tracing, and metrics if you're going deep on Lambda.
 
 ### Cloud Run / container PaaS

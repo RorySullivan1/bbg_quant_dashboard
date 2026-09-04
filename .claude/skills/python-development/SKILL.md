@@ -73,7 +73,8 @@ For small, clear requests (a one-liner, a regex, a simple helper), skip the inte
 - Cover behavior, not lines. 100% coverage with no assertions is theater.
 - Mock external dependencies (HTTP, DB, filesystem) at the boundary, not deep inside.
 - Include at least one failure-mode test per non-trivial function.
-- Use `pytest.parametrize` for table-driven tests rather than copy-pasting.
+- Use `@pytest.mark.parametrize` for table-driven tests rather than copy-pasting.
+  (It lives under `.mark` — bare `pytest.parametrize` raises `AttributeError`.)
 
 ## Output format
 
@@ -106,5 +107,8 @@ Response: Don't write that code. Explain the security risk in two sentences, rec
 ## Out of scope
 
 - Don't write code requiring credentials you don't have.
-- Don't recommend deprecated patterns: `setup.py` for new projects, `os.path` for new code, Python 2 idioms, `requests` when `httpx` fits better and async is needed.
+- Don't recommend deprecated patterns: **invoking** `python setup.py <command>` (that CLI
+  use is deprecated — use `build`/`pip`; `setup.py` as a *setuptools config file* is still
+  perfectly fine, though `pyproject.toml` is preferred for new project metadata), `os.path`
+  for new code, Python 2 idioms, `requests` when `httpx` fits better and async is needed.
 - Don't generate fake test data that resembles real PII (real-looking SSNs, credit cards, etc.). Use obviously-fake values.
