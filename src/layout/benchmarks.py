@@ -1,15 +1,12 @@
-"""The live benchmark set, and the selectors that display it (#190).
+"""The live benchmark set, and the selectors that display it.
 
-Every benchmark selector in the app is built from one factory
-(``panes._make_benchmark_dropdown``) with ``options=BENCHMARK_TICKERS`` — a
-module constant read **at widget-construction time**. That makes the benchmark
-list effectively frozen once ``build_app`` returns: appending to the constant
-afterwards changes nothing already on screen, because each widget holds its own
-snapshot of the options.
+Built against a module constant, each selector would hold its own snapshot of
+the options taken at construction, freezing the list once ``build_app``
+returns.
 
-``BenchmarkRegistry`` is the one mutable owner of that list. Selectors
-*register* with it instead of snapshotting a constant, so adding a benchmark
-updates every one of them at once. The selectors it feeds:
+``BenchmarkRegistry`` is the one mutable owner of that list instead. Selectors
+*register* with it, so adding a benchmark updates every one of them at once.
+The selectors it feeds:
 
 - both Multi-Strategy analysis panes and both Single-Strategy analysis panes,
 - the Single-Strategy shared benchmark selector,
@@ -18,9 +15,8 @@ updates every one of them at once. The selectors it feeds:
   indicator-source dropdown, which is shared with the Rate-level regime and so
   only shows benchmarks while Trend is the active regime.
 
-This module owns the registry only. Entry UX, fetching an added ticker, and
-persistence are separate concerns (#192 / #193 / #194); with nothing added, a
-registry-backed app renders exactly as a constant-backed one did.
+This module owns the registry only; entry UX, fetching an added ticker, and
+persistence are separate concerns.
 """
 
 from __future__ import annotations
@@ -99,21 +95,21 @@ class BenchmarkRegistry:
         base = BENCHMARK_TICKERS if tickers is None else tickers
         self._tickers: list[str] = list(dict.fromkeys(base))
         # The curated set, frozen at construction. Everything added later is a
-        # *user* benchmark: only those are persisted (#194) and only those can
+        # *user* benchmark: only those are persisted and only those can
         # be removed — a curated benchmark is part of the shipped app.
         self._curated: frozenset[str] = frozenset(self._tickers)
-        # Catalog indices offered as a *second* source (#191): (label, ticker)
+        # Catalog indices offered as a *second* source: (label, ticker)
         # pairs, already fetched at startup, so selecting one costs no BQL.
         self._catalog: list[tuple[str, str]] = []
         # (widget, labeled, include_catalog) triples. The two flags select the
         # option shape and whether the catalog source is offered.
         self._selectors: list[tuple[Any, bool, bool]] = []
         self._callbacks: list[Callable[[], None]] = []
-        # Decides whether a ticker nobody has heard of is usable (#193). None
+        # Decides whether a ticker nobody has heard of is usable. None
         # until `build_app` installs one — without it an unknown ticker is
         # refused, which is the right default for any caller that cannot fetch.
         self._resolver: Callable[[str], bool] | None = None
-        # Called with the user-added tickers whenever they change (#194).
+        # Called with the user-added tickers whenever they change.
         # Deliberately not fired by `set_catalog`: the catalog is derived from
         # the shipped metadata, not user state, and saving it would be noise.
         self._persister: Callable[[list[str]], None] | None = None
@@ -281,7 +277,7 @@ class BenchmarkRegistry:
         self._selectors.append((widget, labeled, include_catalog))
         self._apply(widget, labeled, include_catalog)
         # A selector that can accept typed input routes its unknown-ticker
-        # decision back through the registry (#193). Duck-typed so the registry
+        # decision back through the registry. Duck-typed so the registry
         # stays usable with a plain Dropdown.
         set_handler = getattr(widget, "set_commit_handler", None)
         if set_handler is not None:
@@ -321,7 +317,7 @@ class BenchmarkRegistry:
 
 
 class BenchmarkSelect(W.HBox):
-    """A benchmark selector that also accepts a ticker the user types (#192).
+    """A benchmark selector that also accepts a ticker the user types.
 
     Wraps a ``W.Combobox`` but exposes the surface the app already reads — an
     ``options`` trait of ``(label, value)`` pairs and a ``value`` trait holding
@@ -333,7 +329,7 @@ class BenchmarkSelect(W.HBox):
     A raw ``Combobox`` could not be dropped in directly:
 
     - its ``options`` trait is a tuple of **plain strings**, so it cannot carry
-      the ``(label, ticker)`` pairs the catalog source needs (#191); and
+      the ``(label, ticker)`` pairs the catalog source needs; and
     - its ``value`` is the raw text, which would put half-typed input straight
       into the compute layer.
 
@@ -348,8 +344,8 @@ class BenchmarkSelect(W.HBox):
     ``on_commit`` decides whether a ticker that is not currently an option is
     acceptable. It receives the normalized ticker and returns ``True`` to
     accept. The default rejects, reverting the box: without it an unknown
-    ticker would select something with no data behind it. #193 replaces it with
-    the delta-fetch, which is the piece that makes arbitrary tickers real.
+    ticker would select something with no data behind it; the app replaces it
+    with the delta-fetch, which is what makes arbitrary tickers real.
     """
 
     options = traitlets.Any(())  # list[(label, value)] | list[value]
@@ -382,7 +378,7 @@ class BenchmarkSelect(W.HBox):
         self._box.add_class("bbg-benchmark-select")
         # Removal is contextual: the button shows only while the selection is a
         # ticker the user added, so a curated benchmark carries no UI at all and
-        # the affordance appears exactly where it applies (#194).
+        # the affordance appears exactly where it applies.
         self._remove_btn = W.Button(
             description="\u00d7",
             tooltip="Remove this benchmark",
@@ -500,7 +496,7 @@ class BenchmarkSelect(W.HBox):
             accepted = self._on_commit(ticker) if self._on_commit else False
             if not accepted:
                 # Revert: selecting a ticker with no data behind it is worse
-                # than refusing it. #193 makes these acceptable by fetching.
+                # than refusing it; the delta-fetch makes these acceptable.
                 self._guard = True
                 try:
                     self._show(self.value)

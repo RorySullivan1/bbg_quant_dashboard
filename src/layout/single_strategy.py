@@ -1,32 +1,21 @@
-"""The Single Strategy tab (v0.9.0): a per-strategy deep-dive.
+"""The Single Strategy tab: a per-strategy deep-dive.
 
-Workstream C delivered the tab **shell** — a single-select strategy picker plus
-a shared benchmark selector + overlay toggle — and **Section 1**: a two-column
-profile (metadata card on the left; a cumulative chart + compact standard-perf
-table on the right). Workstream D adds **Section 2**: a 3-pill monthly-return
-calendar (Absolute / Outperformance / Vol-adjusted) over one DataGrid.
-Workstream E adds **Section 3**: a two-pane analysis section mirroring the
-Multi-Strategy tab — two side-by-side panes, each with the same analysis picker
-and a per-pane benchmark dropdown, so users can compare two views of the picked
-strategy. Options: weekly-returns β scatter, strategy-vs-benchmark return
-distribution, monthly factor-correlation scatter, drawdown, factor scoring
-(β to the macro factors), plus performance-ranking / PCA / defensive-scoring
-stubs.
+Four parts, top to bottom:
 
-v0.9.12 adds a **"Filters"** accordion (``make_filter_panel``) — the same pill
-bar / checkbox groups / Characteristics / Quantitative views as the
-Multi-Strategy tab — reorganized into a two-column panel: the single-select
-strategy picker + benchmark selector + "Show benchmark" toggle on the left, the
-filter criteria on the right (equal height), so the criteria narrow the picker
-in the same pane. The builder wires it to re-render the tab **live** whenever a
-filter input changes (no Refresh-prices button); when the picked strategy is
-filtered out, the first still-matching strategy is auto-selected.
+- a **Filters** accordion (``make_filter_panel``) in a two-column panel: the
+  strategy picker, benchmark selector, and "Show benchmark" toggle on the left,
+  the criteria on the right, so they narrow the picker in the same pane;
+- **Section 1**, a metadata card beside a cumulative chart and perf table;
+- **Section 2**, a 3-pill monthly-return calendar (Absolute / Outperformance /
+  Vol-adjusted) over one DataGrid;
+- **Section 3**, two analysis panes mirroring the Multi-Strategy tab, each with
+  its own picker and benchmark dropdown. Weekly-returns β scatter, return
+  distribution, factor-correlation scatter, drawdown, and factor scoring are
+  functional; performance-ranking, PCA, and defensive scoring are stubs.
 
-Everything reuses the existing layout toolkit — no new runtime deps:
-``_line_chart`` / ``_make_benchmark_dropdown`` (panes), ``_perf_grid`` /
-``_update_perf_grid`` (grids), ``_update_line`` (charts), ``_ticker_options``
-(filters), ``_render_profile_card`` (html), and the stats perf tables. No BQL:
-prices come from the cached ``state.universe_prices``.
+The builder re-renders live on any filter change — there is no Refresh button —
+and auto-selects the first still-matching strategy when the picked one is
+filtered out. Prices come from the cached ``state.universe_prices``.
 """
 
 from __future__ import annotations
@@ -105,15 +94,8 @@ def make_single_strategy_panel(
     ``cal_kind``), and the Section 3 two-pane analysis section (``pane_left`` /
     ``pane_right``, each a ``_make_single_analysis_pane`` namespace).
     """
-    # The "Filters" accordion (v0.9.12, reorganized) is a two-column panel inside
-    # one accordion: on the **left**, the single-select strategy picker with a
-    # benchmark selector + "Show benchmark" toggle stacked below it; on the
-    # **right**, the filter criteria (the same pill bar / checkbox groups /
-    # Characteristics / Quantitative views as the Multi-Strategy tab) that narrow
-    # the picker's options live. The two columns stretch to equal height. The
-    # criteria live in `make_filter_panel`'s right panel (build_root=False so we
-    # compose it here); the builder wires its inputs so the tab re-renders on
-    # every filter change (no Refresh-prices button).
+    # `build_root=False` so the two columns are composed here into one
+    # equal-height accordion; the builder wires the inputs for live re-render.
     filters = make_filter_panel(
         meta,
         build_root=False,
@@ -194,7 +176,7 @@ def make_single_strategy_panel(
         layout=W.Layout(width="100%"),
     )
 
-    # Section 2 (Workstream D): a 3-pill monthly-return calendar over one grid.
+    # Section 2: a 3-pill monthly-return calendar over one grid.
     cal_pills = [
         _make_tab_button(label, active=i == 0)
         for i, (label, _k) in enumerate(_CALENDAR_TABS)
@@ -211,7 +193,7 @@ def make_single_strategy_panel(
         [W.VBox([cal_header, cal_pill_bar, cal_grid], layout=W.Layout(width="100%"))],
         layout=W.Layout(width="100%", padding="8px 0 0 0"),
     )
-    # Section 3 (Workstream E): a two-pane analysis section mirroring the
+    # Section 3: a two-pane analysis section mirroring the
     # Multi-Strategy tab. The shared `picker` above feeds both panes; each pane
     # picks which analysis + benchmark to draw, for side-by-side comparison.
     pane_left = _make_single_analysis_pane("left", registry=registry)

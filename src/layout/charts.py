@@ -1,3 +1,16 @@
+"""In-place updaters for the analysis-pane figures.
+
+The companion to `panes.py`: where that module *builds* each `FigureWidget`
+once, this one mutates an existing figure to show new data. Every updater takes
+the figure plus the already-computed frame and rewrites its traces inside a
+`fig.batch_update()` block, so the frontend sees one atomic update instead of a
+burst per trace.
+
+Keeping construction and update apart is what lets a benchmark or date change
+re-render a single chart without rebuilding the widget tree. Updaters therefore
+never create or remove a figure, and never fetch — they are handed data.
+"""
+
 from __future__ import annotations
 
 import numpy as np

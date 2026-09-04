@@ -1,3 +1,24 @@
+"""The dashboard orchestrator: `build_app()` assembles and wires the whole UI.
+
+The notebook is a one-liner that calls `build_app()`; everything the app does
+at runtime is set up here. The other `layout/` modules are pure factories —
+they build widgets and figures but hold no session state and never fetch. This
+module owns the parts they cannot: the data, the wiring, and the lifecycle.
+
+**One fetch, many views.** A single startup BQL call pulls the universe plus
+benchmarks, factor proxies, and regime indicators into `DashboardState`. Every
+control after that recomputes from that cache; the only refetches are Refresh,
+a lookback change, and the delta-fetch for a hand-added benchmark.
+
+**State on an object, not in closures.** The nested handlers mutate
+`DashboardState` attributes rather than rebinding names, so they need no
+`nonlocal` and the data flow stays inspectable.
+
+**Render lazily, update in place.** A recompute renders only each pane's
+mounted view, mutating figures inside `batch_update()` rather than rebuilding.
+Whether the overlay paints meanwhile follows `_OVERLAY_PAINT_DELAY_S`.
+"""
+
 from __future__ import annotations
 
 import threading
@@ -112,13 +133,15 @@ from .single_strategy import (
 )
 from .state import DashboardState
 
-# Minimum time the Refresh overlay is held visible before the worker thread
-# runs the (possibly instant) refetch and flips it hidden. The click handler
-# shows the overlay and returns; without this beat, an instant refetch — the
-# off-terminal mock path, or a warm cache — hides it again inside the same
-# animation frame, so the frontend coalesces show→hide and the overlay never
-# paints. A background-thread sleep doesn't block the kernel, so the frontend
-# is free to paint the visible overlay during it. (v0.9.0 refresh-overlay fix.)
+# The overlay's paint rule, which three sites below depend on: the frontend
+# repaints only when the kernel yields. `display()` mounts a *new* view that is
+# born visible and painted at once, but an existing hidden view flipped
+# visible→hidden inside one synchronous handler never paints — those comm
+# updates coalesce into the final hidden state.
+#
+# Hence the initial load may stay synchronous (it display()s a fresh overlay),
+# while Refresh must thread its blocking work and hold the overlay visible for
+# at least this long, or an instant refetch hides it in the same frame.
 _OVERLAY_PAINT_DELAY_S = 0.35
 
 
@@ -129,14 +152,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         if verbose:
             print(f"[{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
 
-    # Loading overlay (v0.6.5 Workstream C). `build_app` is synchronous, so we
-    # display() the overlay first and push staged progress as each load step
-    # completes, then mount the dashboard (which also contains `overlay_w`) and
-    # dismiss it. On the initial load this shows because display() mounts a
-    # *new* overlay view that is born visible and painted before the long
-    # synchronous build runs. Refresh has no such fresh mount, so it offloads
-    # its blocking work to a worker thread instead (see `_refresh_prices`) — the
-    # background-thread load the original caveat here flagged as the real fix.
+    # `build_app` is synchronous, so display() the overlay first, push staged
+    # progress as each load step completes, then mount the dashboard (which also
+    # contains `overlay_w`) and dismiss it. The fresh mount is what makes this
+    # paint — see `_OVERLAY_PAINT_DELAY_S`.
     overlay_w = _loading_overlay()
 
     def _set_progress(
@@ -181,7 +200,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
     clear_sel_btn.add_class("bbg-btn-secondary")
     search_row = W.HBox([search_w, clear_sel_btn], layout=W.Layout(width="100%"))
-    # Selection cap (v0.9.13 #181): the picker is hard-capped at
+    # Selection cap: the picker is hard-capped at
     # MAX_SELECTED_STRATEGIES (correlation/analysis over the selected set is
     # O(n²)); a pick over the cap is rejected with a fixed auto-fading error
     # popup, and a live "Selected Strategies: n/cap" count sits above the list.
@@ -221,12 +240,9 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     ticker_w.observe(_update_strat_count, names="value")
 
-    # Analysis date range — a slider flanked by two date boxes, two-way
-    # linked. Its bounds are rebuilt at recompute time to the overlap window
-    # of the selected strategies; the selected sub-range scopes the
-    # selected-set charts and perf grid (re-slice only, no BQL).
-    # `state.sync_guard` suppresses the bidirectional observers during
-    # programmatic updates.
+    # Analysis date range — a slider flanked by two two-way-linked date boxes.
+    # Bounds are rebuilt at recompute time to the selection's overlap window;
+    # the chosen sub-range re-slices the charts and perf grid, never refetches.
     range_min_box = W.DatePicker(layout=W.Layout(width="160px"))
     range_max_box = W.DatePicker(layout=W.Layout(width="160px"))
     # `state.sync_guard` suppresses the bidirectional observers during
@@ -243,34 +259,29 @@ def build_app(verbose: bool = False) -> W.VBox:
     # states — styled via CSS class, not inline `.style`, so `:hover` works.
     apply_btn.add_class("bbg-btn")
 
-    # The live benchmark set (#190). Created before any selector, because every
+    # The live benchmark set. Created before any selector, because every
     # benchmark dropdown registers with it at construction instead of
     # snapshotting `BENCHMARK_TICKERS` — that is what lets a benchmark added at
     # runtime reach all of them at once. Seeded from the curated constant, so
     # with nothing added the app renders exactly as it did before.
     benchmarks = BenchmarkRegistry()
-    # Re-add anything the user persisted (#194) *after* construction, not as a
-    # constructor seed: the constructor's list becomes the curated set, and a
-    # user benchmark must stay removable. Added before the persister is
-    # installed so loading does not immediately re-save what it just read, and
-    # before the first `_fetch_tickers()`, so persisted benchmarks ride the
-    # startup fetch exactly like curated ones.
+    # Re-added *after* construction, not as a constructor seed — the
+    # constructor's list becomes the curated set, and a user benchmark must stay
+    # removable. Before the persister is installed, so loading does not re-save
+    # what it just read; before the first `_fetch_tickers()`, so these ride the
+    # startup fetch like curated ones.
     for _persisted in load_user_benchmarks():
         benchmarks.add(_persisted)
     # Catalog indices ride the same startup fetch as the benchmarks, so they can
-    # be offered as a second benchmark source at no BQL cost (#191). Seeded from
+    # be offered as a second benchmark source at no BQL cost. Seeded from
     # the full catalog here and re-set from the pruned `meta` once the load has
     # dropped stale/flat indices — a dead index makes a poor benchmark.
     benchmarks.set_catalog(_ticker_options(meta))
 
-    # The Multi-Strategy filter UI is the reusable `make_filter_panel` (shared
-    # with the Single Strategy tab, v0.9.12-review #155): the pill bar over the
-    # categorical / Characteristics / Quantitative views, the Clear buttons, and
-    # the `apply_categorical` / `quant_keep` / `matching` reducers. Multi-Strategy
-    # composes it with its own left Strategies picker + Refresh button + analysis
-    # date-range row, so it passes the Refresh button as a leading action, its own
-    # 60%/bordered right-panel layout, and `build_root=False` (it wraps the pieces
-    # in its own "Filters" accordion below).
+    # Multi-Strategy composes the shared `make_filter_panel` with its own
+    # Strategies picker, Refresh button, and date-range row — hence the leading
+    # action, the custom right-panel layout, and `build_root=False`, which lets
+    # it wrap the pieces in its own "Filters" accordion below.
     filter_panel = make_filter_panel(
         meta,
         leading_actions=(apply_btn,),
@@ -456,12 +467,10 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
     universe_grid = _universe_grid()
 
-    # Platform all-catalog grid z-score controls (v0.7.0 Workstream A). They
-    # narrow nothing and never fetch — changing one recomputes only the grid's
-    # dynamic z-score column from the cached prices and re-sorts the grid by it
-    # (see `platform.render_universe_grid`). Window / Lookback values are trading-day
-    # counts; the `.label` of each (e.g. "Sharpe" / "1M" / "1Y") builds the
-    # column header. Default: z(1M Sharpe, 1Y).
+    # Platform grid z-score controls. They narrow nothing and never fetch:
+    # changing one recomputes just the dynamic z-score column and re-sorts by it
+    # (see `platform.render_universe_grid`). Values are trading-day counts; each
+    # `.label` builds the column header. Default: z(1M Sharpe, 1Y).
     z_metric_dd = W.Dropdown(
         options=[
             ("Sharpe", "sharpe"),
@@ -543,11 +552,8 @@ def build_app(verbose: bool = False) -> W.VBox:
     )
 
     # --- Regime Analysis: the all-catalog risk/return scatter conditioned on a
-    # market-regime bucket. Volatility uses fixed VIX-level buckets; Trend /
-    # Rate-level / Risk regime split a live-computed indicator into low/mid/high
-    # terciles. Trend / Rate-level carry a conditional indicator-source dropdown
-    # (benchmark / region). All conditioning is a live re-slice of the cache. The
-    # controls stack in the Regime tab's left column (built below).
+    # regime bucket (see `REGIME_SPECS`). Conditioning is a live re-slice of the
+    # cache; the controls stack in the Regime tab's left column, built below.
     regime_scatter_fig = _regime_scatter()
 
     regime_type_dd = W.Dropdown(
@@ -621,13 +627,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
 
-    # --- Platform analytics card: the three charts (sunburst / regime / factor
-    # scatter) as inner pill-tabs sharing one lookback. The layout is a fixed
-    # left control column beside a flex-grow chart: the shared lookback sits on
-    # top of the column, then the active tab's own selection boxes swap in below
-    # it (`tab_controls_box`); the chart swaps in `chart_box`. Factor exposures
-    # has no extra controls, so its column is just the lookback. The card is a
-    # bordered box (`.bbg-card`) so the grouping reads at a glance.
+    # --- Platform analytics card: sunburst / regime / factor scatter as inner
+    # pill-tabs sharing one lookback. A fixed left control column (shared
+    # lookback on top, the active tab's own boxes swapped into
+    # `tab_controls_box` below) beside a flex-grow `chart_box`.
     sunburst_controls = W.VBox(
         [_section_label("Z-score"), sb_metric_dd, sb_window_dd],
         layout=W.Layout(width="100%"),
@@ -688,7 +691,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     analytics_card.add_class("bbg-card")
 
     # Bundle the Platform-analytics widget handles and hand the orchestration to
-    # `platform.py` (v0.9.12-review #156): `wire_platform_analytics` wires the
+    # `platform.py`: `wire_platform_analytics` wires the
     # z-score-column controls, the three tab pills, the regime dropdowns, the
     # shared lookback, and the sunburst controls; the `render_*` functions
     # (called on load / Refresh below) redraw each chart live from the cache.
@@ -732,7 +735,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
 
-    # The third top-level tab (v0.9.0): a per-strategy deep-dive. Built here so
+    # The third top-level tab: a per-strategy deep-dive. Built here so
     # the tab wiring below can swap it in; its picker options are rebuilt against
     # the pruned `meta` once the cache loads (alongside `ticker_w`).
     single_strategy = make_single_strategy_panel(meta, registry=benchmarks)
@@ -801,20 +804,9 @@ def build_app(verbose: bool = False) -> W.VBox:
     today = date.today()
     universe_start = (pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)).date()
 
-    # `state.universe_prices` / `state.init_errors` default to empty (see
-    # DashboardState); the startup fetch below populates them.
-    # Benchmarks and v0.7.0 Platform factor proxies ride along on the single
-    # startup fetch so the Rolling Correlation / Rolling Beta tabs and the
-    # Platform factor scatter/sunburst can slice them from the same cache. Both
-    # are excluded from the ARP-universe grid and the highlights cards via
-    # reindex(columns=meta["ticker"]). dict.fromkeys dedupes any overlap (the
-    # equity factor proxy is also a benchmark) while preserving order.
-    # Recomputed per fetch rather than captured once: a benchmark the user adds
-    # at runtime (#193) has to ride the Refresh and any lookback change too, or
-    # it would silently drop out of the cache the first time either happened.
-    # `benchmarks.tickers` is the curated list plus anything added, so this is a
-    # superset of the constant it replaces. Driven by `meta_all`, not the pruned
-    # `meta`, so a stale ticker that resumes can come back.
+    # Everything the startup fetch pulls (see `config.py` for the ride-along
+    # rule). Recomputed per call, so a benchmark added at runtime rides the next
+    # Refresh too; driven by `meta_all`, so a stale ticker that resumes returns.
     def _fetch_tickers() -> list[str]:
         return list(
             dict.fromkeys(
@@ -825,24 +817,12 @@ def build_app(verbose: bool = False) -> W.VBox:
             )
         )
 
-    # --- user-added benchmarks (#193) ----------------------------------------
-    # A ticker the user typed is not in the startup fetch, so it needs its own
-    # trip to BQL. #176's containment cache makes that a *delta* — only the
-    # missing rectangle — rather than a whole-universe refetch, which is what
-    # keeps this inside the one-call-per-session contract.
-    #
-    # Two failure modes have to stay apart. Both surface as an empty column, so
-    # the data alone cannot separate them:
-    #
-    #   unresolvable      the ticker is wrong. #187's per-ticker isolation
-    #                     degrades it to a NaN column and *warns* rather than
-    #                     failing the load — that warning is the signal.
-    #   no data in window a real security that launched after the lookback
-    #                     started, or a stale one. No warning; just an empty
-    #                     column.
-    #
-    # Reported identically, users read the second as a bug, so the warning is
-    # captured and used to tell them apart.
+    # --- user-added benchmarks ----------------------------------------
+    # A typed ticker needs its own trip to BQL — a delta, via the containment
+    # cache. Its two failure modes both surface as an empty column, so only the
+    # warning separates them: an *unresolvable* ticker warns as it degrades to
+    # NaN, one with *no data in the window* does not. Reported identically the
+    # second reads as a bug, so the warning is captured to tell them apart.
 
     def _unresolved_message(ticker: str) -> str:
         return (
@@ -878,7 +858,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         except TickersUnresolved:
             # A one-ticker request has no healthy peers to degrade against, so
             # an unresolvable ticker arrives as this rather than as the NaN
-            # column #187 produces in a larger batch.
+            # column a larger batch would produce.
             _set_status(_unresolved_message(ticker), tone=StatusTone.ERROR)
             return False
         except Exception:
@@ -935,7 +915,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # The blocking startup fetch + prune + compute + first render is deferred to
     # `_run_initial_load` (defined below) so it can run on a worker thread while
     # the loading overlay paints — see `_start_initial_load` at the end, which
-    # mirrors the Refresh threading pattern (v0.9.13 #179). Headless / pytest
+    # mirrors the Refresh threading pattern. Headless / pytest
     # runs it synchronously, so a built tree is fully populated on return.
 
     def _on_filter_change(_change=None):
@@ -971,12 +951,9 @@ def build_app(verbose: bool = False) -> W.VBox:
         w.observe(_on_filter_change, names="value")
     search_w.observe(_on_filter_change, names="value")
 
-    # Whole-catalog Key Highlights are independent of the selection and change
-    # only when prices are refetched, so memoize them: the superlatives per
-    # window (the toggle offers four) and the window-independent launch cards
-    # once. `_recompute` — the single data-load / Refresh point — clears this,
-    # so a re-toggle among the four windows is a cache hit rather than a full
-    # whole-catalog recompute.
+    # Key Highlights depend on the whole catalog, not the selection, so they
+    # change only on refetch. Memoized per window (the toggle offers four) and
+    # cleared by `_recompute`, so re-toggling a window is a cache hit.
     highlights_cache: dict = {}
 
     def _render_highlights_panel(window_days):
@@ -1227,21 +1204,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         render_single_strategy(single_strategy, state, meta, window_start)
 
     def _refresh_prices(_btn=None):
-        # Re-show the overlay (it's already in the tree — just re-render its
-        # value visible) and re-run the staged bar.
-        #
-        # The overlay only becomes visible once the frontend gets a paint
-        # cycle. On the initial load that happens naturally: `display(overlay_w)`
-        # mounts a *new* view that is born visible and painted before the long
-        # synchronous build runs. On Refresh the overlay view already exists
-        # (hidden), so flipping it visible→…→hidden all inside one synchronous
-        # click handler keeps the kernel busy the whole time; the frontend
-        # coalesces those comm updates and only ever paints the final hidden
-        # state, so the overlay never appears. This is the "background-thread
-        # load" the v0.6.5 Workstream C caveat flagged as the real fix: show the
-        # overlay, then hand the blocking fetch/recompute to a worker thread so
-        # the click handler returns and the frontend can paint the visible
-        # overlay before the kernel blocks on BQL.
+        # The overlay is already in the tree, so re-render its value visible and
+        # re-run the staged bar. Because there is no fresh mount here, the
+        # blocking fetch/recompute goes to a worker thread and the click handler
+        # returns — see `_OVERLAY_PAINT_DELAY_S`.
         _set_progress(0, "Refreshing…")
         _set_progress(60, f"Fetching prices for {len(_fetch_tickers())} indices…")
 
@@ -1258,12 +1224,8 @@ def build_app(verbose: bool = False) -> W.VBox:
 
         def _worker():
             try:
-                # Hold the just-shown overlay visible for a beat so the frontend
-                # actually paints it before an instant refetch (mock / warm
-                # cache) flips it hidden — otherwise show→hide coalesce into one
-                # frame and the overlay never appears. Harmless on a slow BQL
-                # fetch (it's already visible for far longer). Runs on this
-                # worker thread, so the kernel stays free to flush the paint.
+                # See `_OVERLAY_PAINT_DELAY_S`. On this worker thread the sleep
+                # leaves the kernel free to flush the paint.
                 time.sleep(_OVERLAY_PAINT_DELAY_S)
                 _run_refresh()
             finally:
@@ -1287,7 +1249,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     def _on_single_filter_change(_change=None) -> None:
         """Narrow the Single Strategy picker to the filter matches and re-render.
 
-        Live handler for the v0.9.12 "Filters" accordion: on any filter input
+        Live handler for the "Filters" accordion: on any filter input
         change, recompute the matching tickers from the cache, reset the picker
         options, keep the current pick when it still matches (else auto-select
         the first match, or clear when nothing matches), then render once.
@@ -1358,7 +1320,7 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     app = W.VBox(
         [
-            _app_css(),  # global stylesheet, injected once (v0.6.5 Workstream A)
+            _app_css(),  # global stylesheet, injected once
             _banner(),
             status_w,
             commentary_box,
@@ -1366,8 +1328,8 @@ def build_app(verbose: bool = False) -> W.VBox:
             top_tab_content,
             perf_disclaimer_w,
             legal_w,
-            overlay_w,  # fixed-position loading overlay (v0.6.5 Workstream C)
-            limit_popup_w,  # fixed-position selection-cap error popup (#181)
+            overlay_w,  # fixed-position loading overlay
+            limit_popup_w,  # fixed-position selection-cap error popup
         ],
         layout=W.Layout(width="100%"),
     )
@@ -1454,8 +1416,8 @@ def build_app(verbose: bool = False) -> W.VBox:
         once the dashboard is populated.
 
         This deliberately does *not* offload to a worker thread the way
-        ``_refresh_prices`` does (v0.9.13 #179 tried that and broke the deployed
-        app). Refresh is safe to thread because it fires from a user click, long
+        ``_refresh_prices`` does — threading it broke the deployed app.
+        Refresh is safe to thread because it fires from a user click, long
         after the page is live and the frontend is servicing comm updates. The
         **initial** load is different: under **Voila** the notebook is executed to
         completion and the page is then assembled from the resulting output, so a

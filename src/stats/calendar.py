@@ -1,4 +1,4 @@
-"""Calendar / resampled-return helpers for the Single-Strategy tab (v0.9.0).
+"""Calendar / resampled-return helpers for the Single-Strategy tab.
 
 Monthly & weekly return resampling, a year×month calendar return matrix
 (absolute / outperformance / vol-adjusted), an OLS fit for the weekly-vs-
@@ -46,15 +46,8 @@ _MONTH_COLS = [
 
 _CALENDAR_KINDS = ("absolute", "outperformance", "vol_adjusted", "beta", "correlation")
 
-# Per-kind trailing summary columns (rendered after Jan…Dec), in display order.
-# Each kind surfaces the calendar-year aggregates that make sense for its month
-# cells; see `calendar_return_table` for how each column is computed.
-#   absolute        — annual return / vol / Sharpe of the strategy.
-#   outperformance  — strategy & benchmark annual return, their difference, and
-#                     both annual Sharpes.
-#   vol_adjusted    — annual Sharpe only (the annual return/vol analogue of the
-#                     monthly return÷vol cells).
-#   beta / corr     — the single annual beta / correlation to the benchmark.
+#: Per-kind trailing summary columns (rendered after Jan…Dec), in display
+#: order. See `calendar_return_table` for how each is computed.
 _CALENDAR_SUMMARY_COLS_BY_KIND: dict[str, tuple[str, ...]] = {
     "absolute": ("Return", "Vol", "Sharpe"),
     "outperformance": ("Return", "Bench", "Excess", "Sharpe", "Bench Sharpe"),

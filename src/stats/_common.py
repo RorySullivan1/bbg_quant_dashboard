@@ -13,16 +13,19 @@ import pandas as pd
 
 
 def daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    """Simple daily percentage returns; rows that are entirely NaN are dropped."""
     return prices.pct_change().dropna(how="all")
 
 
 def drawdown_series(prices: pd.DataFrame) -> pd.DataFrame:
+    """Per-ticker drawdown from the running peak, as a non-positive fraction."""
     if prices.empty:
         return prices
     return prices.divide(prices.cummax()).subtract(1.0)
 
 
 def _slice_last_years(df: pd.DataFrame, years: float) -> pd.DataFrame:
+    """The trailing ``years`` of rows, measured back from the last index label."""
     if df.empty:
         return df
     end = df.index.max()
@@ -48,6 +51,7 @@ def _last_valid_index(prices: pd.DataFrame) -> pd.Series:
 
 
 def _has_enough_history(prices: pd.DataFrame, years: float) -> pd.Series:
+    """Per-ticker: does the column have data covering the whole trailing window?"""
     if prices.empty:
         return pd.Series(dtype=bool)
     end = prices.index.max()
@@ -57,6 +61,7 @@ def _has_enough_history(prices: pd.DataFrame, years: float) -> pd.Series:
 
 
 def max_drawdown(prices: pd.DataFrame, years: float) -> pd.Series:
+    """Largest peak-to-trough loss over the window, per ticker (non-positive)."""
     sliced = _slice_last_years(prices, years)
     if sliced.empty:
         return pd.Series(np.nan, index=prices.columns)
@@ -82,6 +87,7 @@ def max_drawup(prices: pd.DataFrame, years: float) -> pd.Series:
 
 
 def _benchmark_series(benchmark: pd.Series | pd.DataFrame | None) -> pd.Series | None:
+    """Coerce a benchmark Series/1-column DataFrame to a Series, or None if empty."""
     if benchmark is None:
         return None
     bench = benchmark.iloc[:, 0] if isinstance(benchmark, pd.DataFrame) else benchmark

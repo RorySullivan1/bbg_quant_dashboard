@@ -17,6 +17,7 @@ from ._common import (
 
 
 def cum_perf(prices: pd.DataFrame) -> pd.DataFrame:
+    """Prices rebased so each ticker starts at 100 on its first valid row."""
     if prices.empty:
         return prices
     first = prices.bfill().iloc[0]
@@ -24,6 +25,7 @@ def cum_perf(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def total_return(prices: pd.DataFrame) -> pd.Series:
+    """Per-ticker fractional return from the first to the last valid price."""
     if prices.empty:
         return pd.Series(dtype=float)
     first = prices.bfill().iloc[0]
@@ -32,6 +34,7 @@ def total_return(prices: pd.DataFrame) -> pd.Series:
 
 
 def weekly_change(prices: pd.DataFrame) -> pd.Series:
+    """Per-ticker return over the last 5 trading rows; empty if history is shorter."""
     if prices.empty or len(prices) < 6:
         return pd.Series(dtype=float)
     last = prices.ffill().iloc[-1]
@@ -173,12 +176,10 @@ def return_autocorr(
         return pd.Series(out, index=window.columns, dtype=float).rename(
             "return_autocorr"
         )
-    # Vectorized lag-``lag`` Pearson autocorrelation across all columns at once.
-    # This pipeline's series are gap-free once they start (prices are
-    # forward-filled, so a late-launching ticker only carries *leading* NaNs),
-    # so masking to pairs where both the value and its lagged copy are valid
-    # correlates exactly the same consecutive points a per-column
-    # ``dropna().autocorr(lag)`` would — no interior gaps to bridge.
+    # Series here are gap-free once they start (prices are forward-filled, so a
+    # late-launching ticker carries only *leading* NaNs), so masking to pairs
+    # where both the value and its lagged copy are valid correlates exactly the
+    # points a per-column ``dropna().autocorr(lag)`` would.
     cur = arr[lag:]
     lagged = arr[:-lag]
     both = ~np.isnan(cur) & ~np.isnan(lagged)
@@ -261,6 +262,7 @@ def excess_cum_return(prices: pd.DataFrame, benchmark: pd.Series) -> pd.DataFram
 
 
 def ann_return(prices: pd.DataFrame, years: float) -> pd.Series:
+    """Annualized (geometric) return over the trailing window, per ticker."""
     sliced = _slice_last_years(prices, years)
     if sliced.empty:
         return pd.Series(np.nan, index=prices.columns)
@@ -274,6 +276,7 @@ def ann_return(prices: pd.DataFrame, years: float) -> pd.Series:
 
 
 def ann_volatility(returns: pd.DataFrame, years: float) -> pd.Series:
+    """Annualized standard deviation of returns over the trailing window."""
     sliced = _slice_last_years(returns, years)
     if sliced.empty:
         return pd.Series(np.nan, index=returns.columns)
@@ -281,6 +284,7 @@ def ann_volatility(returns: pd.DataFrame, years: float) -> pd.Series:
 
 
 def ann_sharpe(returns: pd.DataFrame, prices: pd.DataFrame, years: float) -> pd.Series:
+    """Annualized return ÷ annualized volatility over the window (zero excess rate)."""
     vol = ann_volatility(returns, years)
     ret = ann_return(prices, years)
     return ret.divide(vol.replace(0, np.nan))
@@ -360,10 +364,9 @@ def universe_perf(
 ) -> pd.DataFrame:
     """1Y / 3Y / 5Y window stats, in one MultiIndex frame.
 
-    The Since-Inception block was dropped in v0.7.2 (it added width and its
-    full-history window is the least comparable across indices of differing
-    ages). ``since_inception_perf`` remains a tested pure util for potential
-    reuse, just no longer wired into the all-catalog grid.
+    Deliberately excludes Since-Inception: a full-history window is the least
+    comparable across indices of differing ages. ``since_inception_perf``
+    remains a tested util, just not wired into the all-catalog grid.
     """
     if prices.empty:
         return pd.DataFrame()

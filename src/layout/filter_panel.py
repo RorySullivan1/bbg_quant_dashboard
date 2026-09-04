@@ -1,27 +1,21 @@
-"""A reusable catalog-filter panel (v0.9.12).
+"""A reusable catalog-filter panel, shared by Multi-Strategy and Single Strategy.
 
-Lifts the Multi-Strategy tab's filter UI into a self-contained factory so the
-Single Strategy tab can reuse the same look and behaviour: a **"Filters"**
-accordion whose right panel is a pill bar (Asset Class / Category / Theme /
-Return Type / Characteristics / Quantitative) over a swappable value-list, plus
-**Clear section** / **Clear all** buttons. The four categorical dimensions are
-checkbox groups; **Characteristics** is a launch-date range + a Currency
-dropdown; **Quantitative** is the nine per-metric ``≥`` / ``≤`` threshold rows
-(Sharpe / Sortino / Calmar / Beta / Treynor / Jensen / VaR / RSI / Z-Score),
-mirroring the Multi-Strategy panel exactly (same widgets, same `_quant_keep`
-logic).
+A **Filters** accordion whose right panel is a pill bar (Asset Class /
+Category / Theme / Return Type / Characteristics / Quantitative) over a
+swappable value-list, plus **Clear section** and **Clear all** buttons. The
+four categorical dimensions are checkbox groups; **Characteristics** is a
+launch-date range and a currency dropdown; **Quantitative** is nine per-metric
+``≥``/``≤`` threshold rows (Sharpe / Sortino / Calmar / Beta / Treynor /
+Jensen / VaR / RSI / Z-Score).
 
-Unlike the Multi-Strategy panel this factory is **selection-agnostic**: it only
-answers "which tickers match the current filter state" via ``matching(meta,
-state)``; the caller decides what to do with the result (the Single Strategy tab
-narrows its single-select picker and re-renders **live** on every input change —
-there is no Refresh-prices button). Every user-adjustable input is exposed in
-``.inputs`` so the caller can ``observe(...)`` them; the Clear buttons are wired
-internally and simply reset those inputs, which fires the caller's observers.
+The factory is **selection-agnostic**: it only answers "which tickers match the
+current filter state" via ``matching(meta, state)`` and leaves the caller to
+act on the result. Every user-adjustable input is exposed in ``.inputs`` for
+the caller to ``observe(...)``; the Clear buttons are wired internally and
+simply reset those inputs, which fires the caller's observers in turn.
 
-No BQL and no new runtime deps: the quant threshold filter reads the already
-fetched ``state.arp_universe_prices`` / ``state.universe_prices`` caches, exactly
-like the Multi-Strategy ``_quant_keep``.
+The quant threshold filter reads the already-fetched price caches on
+``state``, so the panel issues no BQL call.
 """
 
 from __future__ import annotations
@@ -344,15 +338,12 @@ def make_filter_panel(
                 continue
         return out
 
-    # Memo for the whole-catalog quant metrics, so a threshold keystroke or a
-    # categorical toggle re-masks a cached table instead of recomputing the
-    # per-ticker metrics over the whole catalog. The per-ticker metrics are
-    # candidate-independent, so the table is computed once over the full ARP
-    # universe (keyed by period + the three benchmark dropdowns) and sliced per
-    # call; the Z column's raw metric is memoized separately by its own
-    # window/benchmark and cross-sectioned over the current candidates (so the
-    # z-score stays candidate-relative, as before). Invalidated when the cache
-    # frame identity changes — a Refresh replaces ``state.arp_universe_prices``.
+    # Quant metrics are candidate-independent, so the table is computed once
+    # over the full ARP universe (keyed by period + the benchmark dropdowns) and
+    # sliced per call — a threshold keystroke re-masks a cached table. The Z
+    # column is memoized separately and cross-sectioned over the current
+    # candidates, keeping its z-score candidate-relative. Invalidated when a
+    # Refresh replaces ``state.arp_universe_prices``.
     _quant_memo: dict = {}
     _quant_memo_arp: list = [None]
 

@@ -1,3 +1,14 @@
+"""HTML rendering: the template loader and the card/disclaimer renderers.
+
+Markup lives in `data/templates/*.html` rather than in Python strings, and
+`render_template` substitutes `{{placeholder}}` values into it. `STYLE_CTX`
+spreads the shared style tokens into every template context, so a color or font
+change in `src/style.py` propagates to the templates without editing them.
+
+Callers are responsible for escaping any user- or data-supplied text they pass
+in; the substitution itself does not escape.
+"""
+
 from __future__ import annotations
 
 import html
@@ -33,7 +44,7 @@ STYLE_CTX = {
     "label_size": FontSize.LABEL,
     "caption_size": FontSize.CAPTION,
     "micro_size": FontSize.MICRO,
-    # Dark technical chrome (v0.6.5). `border`/`text` are reserved by the
+    # Dark technical chrome. `border`/`text` are reserved by the
     # status/error templates' dynamic kwargs, so the chrome tokens use the
     # `_color` suffix to avoid duplicate-keyword collisions in render_template.
     "chrome_bg": Color.CHROME_BG,

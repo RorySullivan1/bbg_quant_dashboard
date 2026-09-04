@@ -12,6 +12,7 @@ from .performance import ann_return, ann_sharpe
 
 
 def corr_matrix(returns: pd.DataFrame) -> pd.DataFrame:
+    """Pairwise Pearson correlation of the return columns."""
     return returns.corr()
 
 
@@ -99,6 +100,7 @@ def heatmap_corr_matrix(
 
 
 def return_distribution_stats(returns: pd.DataFrame) -> pd.DataFrame:
+    """Per-ticker Mean / Std / Skew / Kurtosis / Min / Max of daily returns."""
     if returns.empty:
         return pd.DataFrame(columns=["Mean", "Std", "Skew", "Kurtosis", "Min", "Max"])
     stats = pd.DataFrame(
@@ -188,12 +190,10 @@ def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Se
     var = bench.var()
     if not var or np.isnan(var):
         return pd.Series(np.nan, index=returns.columns)
-    # Vectorized pairwise-complete covariance of every column vs the benchmark
-    # in one pass, replacing a per-column ``.apply(col.cov(bench))`` loop that
-    # scaled linearly with the ticker count. Each column's covariance uses only
-    # the rows where both it and the benchmark are non-NaN (matching
-    # ``Series.cov``); the benchmark's own ``var`` is the full-window scalar, as
-    # before.
+    # Pairwise-complete covariance of every column vs the benchmark in one
+    # pass. Each column uses only rows where both it and the benchmark are
+    # non-NaN (matching ``Series.cov``); the benchmark's own ``var`` is the
+    # full-window scalar.
     a = sliced.to_numpy(dtype=float)  # (n_days, n_tickers)
     b = bench.to_numpy(dtype=float)  # (n_days,)
     mask = ~np.isnan(a) & ~np.isnan(b)[:, None]

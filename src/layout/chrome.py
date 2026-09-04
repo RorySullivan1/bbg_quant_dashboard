@@ -1,3 +1,13 @@
+"""The app's furniture: masthead, status banner, loading overlay, tab pills.
+
+Everything here is chrome rather than content — the pieces that frame the tabs
+without knowing what is in them. Visuals come from `data/templates/*.html`
+rendered with the shared style tokens (see `html.py`), and stateful pieces
+(status, overlay, cap popup) follow the same shape: a factory returns the
+`W.HTML` widget, and a paired `_render_*` function produces its markup so the
+caller can re-render by assigning `.value`.
+"""
+
 from __future__ import annotations
 
 import html
@@ -58,7 +68,7 @@ def _render_status(text: str, *, tone: StatusTone) -> str:
 
 
 def _loading_overlay() -> W.HTML:
-    """The dimmed full-screen loading overlay (v0.6.5 Workstream C).
+    """The dimmed full-screen loading overlay.
 
     A single `W.HTML` whose value is re-rendered through `_render_overlay` at
     each load stage. The outer template div carries the `.bbg-overlay`
@@ -86,9 +96,11 @@ def _render_overlay(
 
 
 def _selection_limit_popup() -> W.HTML:
-    """Fixed top-centre, auto-fading error popup for the strategy-selection cap
-    (v0.9.13 #181). Starts hidden; ``_render_limit_popup`` re-renders it with a
-    changing nonce so the CSS fade animation restarts on each rejected pick."""
+    """Fixed top-centre, auto-fading error popup for the strategy-selection cap.
+
+    Starts hidden; ``_render_limit_popup`` re-renders it with a changing nonce
+    so the CSS fade animation restarts on each rejected pick.
+    """
     return W.HTML(_render_limit_popup("", nonce=0, hidden=True))
 
 

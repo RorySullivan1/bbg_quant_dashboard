@@ -1,3 +1,17 @@
+"""All-catalog commentary: the Market Superlatives and New Launches cards.
+
+Computes the two Key Highlights sections from the already-fetched price frame
+and the catalog metadata — no BQL call of its own. Superlatives rank the whole
+catalog over a trailing window (best/worst return, highest Sharpe, longest
+streaks, largest MACD extension, …); launch cards pick out indices that went
+live within `NEW_LAUNCH_DAYS`.
+
+Each superlative is declared as a spec — a metric function plus a label,
+formatter, sentiment, and description — so adding one means adding a spec
+rather than a branch. The renderers in `layout/html.py` turn the resulting
+dicts into cards.
+"""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
