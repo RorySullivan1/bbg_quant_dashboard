@@ -58,7 +58,11 @@ CONTRIBUTING.md   ← short pointer to docs/contributing.md
 README.md         ← unchanged; this skill does not own it
 ```
 
-The root `CONTRIBUTING.md` is a 5–10 line stub that points to `docs/contributing.md`. GitHub surfaces this file in PR templates and the "Contributing" sidebar — leaving it absent is a missed signal.
+The root `CONTRIBUTING.md` is a 5–10 line stub that points to `docs/contributing.md`. GitHub
+links it **when someone opens a pull request or creates an issue**, and shows a "Contributing"
+link in the repository sidebar — leaving it absent is a missed signal. (That is the
+PR-creation page, not the separate `.github/PULL_REQUEST_TEMPLATE.md` feature; the file may
+sit in the repo root, `docs/`, or `.github/`, with `.github/` taking precedence.)
 
 ---
 

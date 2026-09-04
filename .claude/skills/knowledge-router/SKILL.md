@@ -6,7 +6,8 @@ description: >-
   where to store it so it compounds across sessions. Use whenever the user says to
   remember/note/capture/learn something, or when you recognize something worth keeping
   past this session. Routes each item to the right home (skill, project memory, CLAUDE.md,
-  or a reference note) rather than dumping everything in one place, and defaults to
+  a reference note, or a docstring on the code itself) rather than dumping everything in
+  one place, names where knowledge must not go, and defaults to
   dropping low-value observations. Trigger even if no keyword is used: a reusable insight
   is the signal.
 ---
@@ -41,13 +42,85 @@ Identify what *kind* of knowledge it is and send it to the matching home:
   *note it for review*, don't auto-create an agent. Agents grant tools and run
   autonomously; their creation stays deliberate (use the `add-agent` command when a human
   decides to).
+- **A mistake worth never repeating** (a correction you were given, a trap you fell into)
+  → a **reference note of type `lesson`** (`context.py new --type lesson`, same tier and
+  catalog as the notes below). Write the *rule*, not the story: "don't X, because Y" in one
+  line. Lessons share the notes' plumbing but not their content rules — a lesson is a
+  standing instruction, not a fact — and they stay free of design decisions and
+  specifications, or the tier degenerates into a diary nobody reads.
+- **Reasoning about one piece of code** (why this function guards that case, why the
+  obvious implementation was rejected here, a trap the next editor will hit) → **the
+  code itself**, as a docstring or a comment on the thing it concerns. The only home
+  that is read at the moment it is needed, because the reader is already looking at
+  the file. Scope it as `coding-standards` does — a design decision belongs on a
+  class, a contract or a surprise on a function, a trap inline.
 - **None of the above / a one-off / already captured** → **drop it.** Most observations
   land here.
 
-If you're unsure between memory and a note: memory is for things that *change* (state,
-decisions); a note is for things that are *stable* (facts, concepts). If unsure between a
-note and `CLAUDE.md`: if it's short and consulted every session, it's `CLAUDE.md`; if it's
-larger and consulted occasionally, it's a note.
+## Choosing between homes
+
+- **Memory or a note?** Memory is for things that *change* (state, decisions); a note is
+  for things that are *stable* (facts, concepts).
+- **A note or `CLAUDE.md`?** Short and consulted every session → `CLAUDE.md`. Larger and
+  consulted occasionally → a note.
+- **The code or somewhere shared?** Ask how far it reads: *would someone editing this one
+  file need it, and would someone editing a sibling need it too?* One yes routes it to the
+  code. **Two yeses route it away** — see the anti-destination below.
+
+### Not the source, when it is cross-cutting
+
+The first anti-destination: a rule holding across many files belongs in **none** of them.
+Written into the file you had open, it is invisible from the other nineteen and the copies
+drift — a palette comment in one template of a set did exactly that, naming a colour the
+code had stopped using, and no reader of the other files could have caught it.
+
+The notes tier already gates on this from the other side ("not tied to one file path"); the
+anti-destination is that gate made two-way, so path-scoped knowledge has somewhere to go
+and cross-cutting knowledge has somewhere it may not.
+
+The trap is that it looks correct as you write it: the open file is always a plausible home
+for what you just learned. Reach is the test, not convenience.
+
+### When it belongs in two homes
+
+The common case, not the edge — a cross-cutting rule usually has a local consequence. The
+guardrail against storing one thing twice still holds, because you do not: **the rule goes
+to the shared home in full, and the code carries a different sentence** — the local
+consequence, or a one-line pointer naming where the rule lives. Never a second copy of the
+rule, which is the thing that drifts.
+
+## Separate the *why* from the *what*
+
+Two kinds of durable knowledge get merged constantly, and the merge is what makes both
+useless. Keep them apart even when they concern the same change:
+
+- **Why it was decided** — the alternatives considered, the trade-off accepted, the
+  constraint that forced it. Valuable to the next person facing the same fork, and it
+  stays true even after the code changes.
+- **What is now true** — the rule, the contract, the validated constraint, the interface.
+  Valuable to anyone working today, and it goes stale the moment the thing changes.
+
+Rationale filed as a spec reads as a rule nobody can safely change; a rule filed as
+rationale gets skimmed as history and ignored. When one item contains both, split it and
+route each half.
+
+## What's worth keeping at all
+
+Keep the bar concrete. Preserve knowledge that:
+
+- explains a decision someone will otherwise re-litigate,
+- names the alternative that was rejected and why,
+- states a permanent rule established by a review, an incident, or a failure,
+- documents a contract, validation requirement, or compatibility guarantee,
+- explains why a specific regression guard exists — the case where forgetting the
+  reason is how the bug comes back.
+
+Discard, without ceremony:
+
+- single-step task notes,
+- hypotheses you abandoned and intermediate reasoning,
+- progress logs that lost their value the moment the work finished,
+- bare procedure lists with no reasoning attached — those are either a skill or noise.
 
 ## The reference-notes tier (`.claude/context/`)
 

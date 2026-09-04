@@ -1,0 +1,13 @@
+{
+  "_comment": "Adoption marker + caps for .claude/hooks/prose_budget.py (advisory, PostToolUse on Edit/Write). Caps are the shipped defaults; existing overruns are grandfathered in the baseline. See .claude/hooks/README.md and the coding-standards skill.",
+  "module": 20,
+  "class": 30,
+  "function": 15,
+  "comment_run": 5,
+  "attribute": 30,
+  "include": [
+    "src",
+    "tests"
+  ],
+  "baseline": ".claude/prose-baseline.json"
+}

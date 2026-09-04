@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("--slug", default="")
     n.add_argument("--title", default="")
     n.add_argument("--type", default="reference",
-                   help="concept | domain-fact | system-map | schema | rationale | glossary")
+                   help="concept | domain-fact | system-map | schema | rationale | glossary | lesson")
     n.set_defaults(func=cmd_new)
 
     sub.add_parser("list", help="list notes").set_defaults(func=cmd_list)

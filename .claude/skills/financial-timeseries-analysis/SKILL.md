@@ -40,9 +40,15 @@ calendars, and resampling right so the series mean what you think they mean.
 
 ## Look-ahead: the failure mode to hunt
 
-- **Centered windows leak the future.** `rolling(w, center=True)` and
-  `ewm` without care use future points. Use trailing windows for anything that
-  feeds a decision.
+- **Centered windows leak the future.** `rolling(w, center=True)` labels a window at its
+  midpoint, so the value at *t* aggregates observations dated after *t*. Use trailing windows
+  for anything that feeds a decision.
+- **`ewm` does NOT leak — don't hunt it for that.** pandas' exponentially-weighted window has
+  no `center` parameter at all and its weights run strictly backward from *t*, so it cannot
+  see the future (verified 2026-08-15: perturbing the last observation leaves every earlier
+  `ewm(...).mean()` bit-identical). Its real hazards are different and worth checking instead:
+  forgetting to `shift(1)` the resulting feature before acting on it, and fitting its
+  span/halflife on the full sample.
 - **Normalize with trailing stats only.** A z-score using the full-sample mean/std
   leaks the future into every point. Use `expanding()` or trailing `rolling()`.
 - **Shift features, not just intuition.** A signal computed from data through `t`
@@ -64,8 +70,13 @@ calendars, and resampling right so the series mean what you think they mean.
   includes holidays.
 - **Rolling stats:** `ret.rolling(252).std() * np.sqrt(252)` for trailing annual
   vol; `min_periods` set so early values aren't computed on a partial window.
-- **EWMA volatility:** `ret.ewm(span=n).std()` (RiskMetrics-style); for clustering
-  beyond EWMA reach for a GARCH model via the `arch` package (justify + pin).
+- **EWMA volatility:** `ret.ewm(span=n).std()` is *EWMA-style but not RiskMetrics*.
+  pandas demeans by the exponentially-weighted mean and defaults to `bias=False`; RiskMetrics
+  takes the raw second moment about zero with `adjust=False` recursion at λ=0.94. The two are
+  close enough to be mistaken for each other and far enough apart to matter for a published
+  risk number (measured ~0.01042 vs ~0.01050 on the same series), so either say "EWMA" or
+  pass `bias=True, adjust=False` and set λ explicitly. For clustering beyond EWMA reach for a
+  GARCH model via the `arch` package (justify + pin). *(Checked 2026-08-15.)*
 
 ## Stationarity & dependence
 

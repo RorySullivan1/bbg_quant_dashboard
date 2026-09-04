@@ -48,6 +48,27 @@ The return contract is the catch with delegation: every agent's *summary* lands 
 main, so a wide parallel fan-out of detailed returns can cost more than it saved. Cap the
 fan-out and tell each worker what to return.
 
+## Search economy: narrow semantically, confirm exactly
+
+Search is where context quietly bleeds — a broad grep returns a large candidate set, and
+reading it *is* the cost. Two kinds of search answer two kinds of question, and using the
+wrong one is what makes a search expensive:
+
+- **You know the exact string** — a symbol name, a CLI flag, an error message, a config
+  key, a test name → **exact search** (`Grep`). Precise and cheap; go straight there.
+- **You're describing behavior** — "where does auth get refreshed", "how does this module
+  talk to the queue", unfamiliar territory spanning several packages → **semantic search
+  first** (delegate to `Explore`) to narrow the space, *then* confirm the handful of real
+  hits with exact search before reading anything.
+
+The discipline that keeps this honest: **semantic results are candidates, not ground
+truth.** Confirm before you edit. Anything derived from an index can be stale — after a
+branch switch especially, a hit may name a symbol that doesn't exist on the current
+worktree. Re-confirm with an exact search rather than trusting the recall.
+
+Then read only what survived confirmation. Skipping the confirm step is what turns a
+20-candidate search into 20 file reads, most of them wasted.
+
 ## When the session is getting heavy
 
 Before context fills (or before a compaction you can see coming):
@@ -72,4 +93,7 @@ rather than the main session, so its tool schemas don't sit in the main window.
 - Fanning out many agents that each return large summaries — the returns flood the
   context the fan-out was meant to protect.
 - Delegating a one-line task and paying agent startup for it.
+- Reading every hit a broad search returned instead of confirming which ones are real first.
+- Reaching for semantic search when you already know the exact symbol — or editing off a
+  semantic hit that exact search would have shown doesn't exist on this branch.
 - Bloating `CLAUDE.md` with things that change, or with context that belongs in memory.

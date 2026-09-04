@@ -14,7 +14,6 @@ description: >
   decisions to `development-mapping`; this agent only checks fulfillment of an existing
   contract.
 tools: Read, Grep, Glob, Bash
-permissionMode: plan
 model: opus
 ---
 

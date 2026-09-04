@@ -78,7 +78,12 @@ When the user is upgrading Python (e.g., 3.9 → 3.12):
 1. Check the [What's New](https://docs.python.org/3/whatsnew/) for each version between source and target. Note removed/deprecated APIs.
 2. Run the existing test suite under the new version first. Most issues surface there.
 3. Run with `-W error::DeprecationWarning` to catch deprecations as errors.
-4. Common breakages: `asyncio` API changes, `distutils` removal in 3.12, `imp` module removal, `typing.io` / `typing.re` removal, stricter datetime parsing.
+4. Common breakages, with the version that actually did it: `distutils` removal (**3.12**),
+   `imp` removal (**3.12**), `datetime.utcnow()`/`utcfromtimestamp()` deprecation (**3.12** —
+   see the modernization list above), `typing.io` / `typing.re` removal (**3.13**, so outside
+   a 3.9 → 3.12 hop), and assorted `asyncio` API churn across the range.
+   **Not** a breakage: datetime *parsing* got more lenient, not stricter — 3.11 widened
+   `fromisoformat` to most of ISO 8601, including the `Z` suffix. *(Checked 2026-08-15.)*
 5. Update CI matrix to test both old and new versions during transition.
 
 ### Dependency upgrades

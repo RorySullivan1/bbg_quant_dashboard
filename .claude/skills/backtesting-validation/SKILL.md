@@ -64,7 +64,15 @@ methodology rules out look-ahead, costs, and data-snooping.
 
 - **Sharpe** = `mean(excess_ret) / std(excess_ret) * sqrt(periods_per_year)` —
   annualize by `sqrt(periods)` (see `quantitative-finance`), and net of costs.
-- **Sortino** uses downside deviation; **Calmar** = annual return / max drawdown.
+  **The sqrt-of-time rule assumes serially uncorrelated returns** — state that assumption
+  rather than leaving it implicit, because it sits in tension with the fat-tails-and-
+  clustering warning elsewhere in this skill. With autocorrelated or overlapping returns the
+  annualized figure is biased (positive autocorrelation inflates it); if that's your regime,
+  say so alongside the number.
+- **Sortino** uses downside deviation; **Calmar** = annual return / max drawdown —
+  note that this is the *modern general* usage. Young's original (1991) definition pins a
+  trailing **36-month** window with a **compound (CAGR)** numerator, so state your window and
+  return convention whenever the number leaves the room. *(Checked 2026-08-15.)*
 - **Max drawdown** from the running peak of the equity curve; report its length,
   not just its depth.
 - **Hit rate, turnover, exposure, capacity** — a high Sharpe at 1000% turnover or

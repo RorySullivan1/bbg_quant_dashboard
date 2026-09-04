@@ -66,14 +66,19 @@ Organize the review with these levels; skip empty ones rather than padding.
   `log(1+x)` near zero (use `expm1`/`log1p`), differences of nearly equal prices.
 - **Float equality** on prices/P&L (`==`), or money modeled as `float` where exact
   cents matter (should be `Decimal`).
-- **Matrix conditioning:** `np.linalg.inv` on a near-singular covariance; inverting
-  instead of solving; non-PSD covariance fed to an optimizer.
+- **Matrix conditioning:** `np.linalg.inv` on a near-singular covariance (NumPy's own
+  docs: an ill-conditioned input "may or may not" raise, and you can lose ~k digits when
+  `cond(a) = 10**k`); inverting instead of solving (`solve` over `inv @ b` is settled
+  numerical-analysis practice but is *not* stated in the NumPy/SciPy docs — flag it as craft,
+  not as a citable rule); non-PSD covariance fed to an optimizer.
 - **Optimizer/root-finder** result used without checking `success`/convergence,
   unscaled variables, missing bounds.
 
 ### Conventions & units
 - **Annualization:** volatility scaled linearly instead of by `sqrt(periods)`;
-  mixing per-period and annual figures.
+  mixing per-period and annual figures. The sqrt rule itself assumes serially uncorrelated
+  returns — if the series is autocorrelated or the windows overlap, flag the *unstated
+  assumption* as well as the arithmetic.
 - **Day-count / compounding** mismatched to the instrument (`days/365` everywhere).
 - **Rates** as percent vs decimal mixed; **sign** of cash flows inconsistent in
   NPV/IRR.

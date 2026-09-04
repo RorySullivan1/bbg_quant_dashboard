@@ -1,9 +1,9 @@
 # `.claude/hooks/`
 
-PreToolUse(Bash) hooks that **enforce** this repo's development workflow. They are
-wired in [`.claude/settings.json`](../settings.json) and run on every `Bash`
-tool call; each receives the tool-call JSON on stdin and inspects
-`.tool_input.command`.
+Two kinds of hook, both wired in [`.claude/settings.json`](../settings.json):
+**PreToolUse(Bash) gates** that enforce this repo's development workflow (each
+receives the tool-call JSON on stdin and inspects `.tool_input.command`), and
+**PostToolUse advisories** that shape what the model sees without ever blocking.
 
 **Exit-code contract** (Claude Code): `0` = allow the command, `2` = block it
 (stderr is shown to the agent as the reason), any other non-zero = non-blocking
@@ -20,6 +20,25 @@ These two are intentionally **hardcoded** to this project's branches
 (`main`/`master`), tools (`ruff`/`black`/`pytest`), and layout (`src`/`tests`).
 The prose counterpart lives in `CLAUDE.md` → "Development workflow" + "Branching";
 the `workstream` skill is the playbook that ties them together.
+
+## Advisory hooks (this repo)
+
+Vendored from `RorySullivan1/claudebrain` (`example-project/.claude/hooks/`). Both are
+Python, non-mutating, and fail safe: on any unexpected payload they print nothing and
+the call proceeds. Neither can veto anything.
+
+| Hook | Fires on | What it does |
+| --- | --- | --- |
+| `post_bash_filter.py` | `PostToolUse` (Bash) | Strips ANSI codes and, when a command's output exceeds 200 lines / 12 000 chars, keeps the first 80 and last 40 lines with an elision marker — so a full `pytest` run or `git log` doesn't flood the context. The command already ran; only what the model sees changes. |
+| `prose_budget.py` | `PostToolUse` (Edit/Write/MultiEdit) | Measures the edited file's docstrings/comment runs against the per-scope caps in [`../prose-budget.json`](../prose-budget.json) (the shipped defaults: module 20, class 30, function 15, comment run 5, attribute 30 lines) and reports overruns as advice pointing at the `coding-standards` skill § *How much, by scope*. Python only (`ast` + `tokenize`). |
+
+`prose_budget.py` is opt-in by the presence of `.claude/prose-budget.json` — delete that
+file and it goes silent. The 54 overruns that existed when the check was adopted (v0.9.14)
+are grandfathered in [`../prose-baseline.json`](../prose-baseline.json), keyed by qualified
+name (comment runs by a content hash) so an unrelated edit above them doesn't churn the
+key. The baseline is meant to shrink, never grow: when you right-size a grandfathered
+docstring, remove its entry. The same measurer is importable (`scan_source`, `scan_tree`),
+which is what the `prose-auditor` agent and `/prose-review` run.
 
 ## Portable templates
 
