@@ -1,3 +1,29 @@
+"""Price fetching: BQL on a Bloomberg terminal, deterministic mock off it.
+
+`fetch_prices` is the only entry point the app uses. It returns a wide frame
+(dates × tickers of `px_last`) plus the source it came from, and is designed so
+the dashboard issues **one** fetch at startup and serves everything after that
+from cache.
+
+Three mechanisms make that hold:
+
+**A superset session cache.** One growing frame plus the interval it covers:
+a contained request is served by slicing, a miss fetches only the missing
+rectangle. Extending the lookback or adding a benchmark costs a delta, not a
+whole-universe refetch. The interval is tracked apart from the data index, so
+a weekend `end` with no trading row still counts as covered.
+
+**Batched requests with per-ticker fallback.** One request for hundreds of
+tickers risks BQL's row and wall-clock limits, so the universe is split into
+retried batches. A batch that still fails is re-fetched a ticker at a time, so
+only genuinely unresolvable tickers degrade to NaN instead of blanking the load.
+
+**A best-effort parquet tier** under `CACHE_DIR`, keyed by `end` date, skipped
+once a write fails so a read-only filesystem costs nothing.
+
+Off-terminal the mock stands in for all of this, deterministically per ticker.
+"""
+
 from __future__ import annotations
 
 import time
@@ -34,22 +60,14 @@ class TickersUnresolved(RuntimeError):
     Distinct from a transport or session failure, which is what every *other*
     exception out of a fetch means. Callers that add a single ticker need the
     difference: a one-ticker request has no healthy peers to degrade against,
-    so #187's per-ticker isolation cannot turn a bad ticker into a NaN column —
-    it comes back as this, and "your ticker is wrong" is a very different
-    message from "the BQL session dropped". Subclasses ``RuntimeError`` so
-    existing handlers and tests are unaffected.
+    so the per-ticker isolation cannot turn a bad ticker into a NaN column — it
+    comes back as this, and "your ticker is wrong" is a very different message
+    from "the BQL session dropped". Subclasses ``RuntimeError`` so existing
+    handlers and tests are unaffected.
     """
 
 
-# In-memory session cache. Rather than an exact-key map (which forced a full
-# refetch whenever the lookback shifted or one ticker was added), the session
-# holds a single growing **superset** frame plus the date interval it covers.
-# Any request whose tickers ⊆ the superset's columns and whose [start, end] ⊆
-# the covered interval is served by *slicing* — no BQL. A miss fetches only the
-# missing rectangle (new tickers, and/or the uncovered date extension) and
-# merges it in, so extending the lookback or adding an index costs a delta, not
-# a whole-universe refetch. The covered interval is tracked separately from the
-# data index so a weekend/holiday `end` (no trading row) still counts as covered.
+# The superset session cache and the interval it covers (see module docstring).
 _MEM_SUPERSET: pd.DataFrame | None = None
 _MEM_COVER: tuple[date, date] | None = None
 
@@ -58,26 +76,17 @@ _MEM_COVER: tuple[date, date] | None = None
 # attempting disk writes for the rest of the session.
 _disk_cache_writable: bool | None = None
 
-# --- off-terminal mock resolution seams (#195) -------------------------------
-# `_mock_prices` seeds a generator off `hash(ticker)`, so off-terminal it
-# resolves *any* string — which is right for its original purpose (the whole
-# dashboard renders without a terminal) and wrong for anything that has to cope
-# with a ticker the user typed. With no way to make the mock say "no", every
-# validation path is untestable off-terminal, and the test suite runs nowhere
-# else. That is the shape of failure #186 was: a caveat marked untestable in CI
-# that then broke in production.
-#
-# These two seams let a test drive the mock into the live path's two failure
-# modes, which are *different* and must not be conflated downstream:
-#
-#   _MOCK_UNRESOLVABLE  the ticker does not resolve at all — a wrong ticker.
-#   _MOCK_FIRST_TRADE   the ticker resolves but has no data before the given
-#                       date — a real security that launched mid-window, or a
-#                       stale one. Rows before it are NaN.
-#
-# Both are empty by default, so the mock's behaviour is unchanged for every
-# ticker the app actually uses. `_clear_caches` resets them.
+# --- off-terminal mock resolution seams ---------------------------------------
+# `_mock_prices` resolves *any* string, so these two seams let a test drive it
+# into the live path's two failure modes, which must not be conflated
+# downstream. Both are empty by default and `_clear_caches` resets them; see
+# `.claude/context/testing_notes.md` for why they exist.
+
+#: Tickers that do not resolve at all — a wrong ticker.
 _MOCK_UNRESOLVABLE: set[str] = set()
+#: Ticker -> first date with data. The ticker resolves but has no history
+#: before that date (a security that launched mid-window, or a stale one), so
+#: earlier rows are NaN.
 _MOCK_FIRST_TRADE: dict[str, date] = {}
 
 

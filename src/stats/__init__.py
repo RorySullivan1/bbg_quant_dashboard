@@ -1,11 +1,9 @@
 """Statistics package — performance, risk, and rolling metrics.
 
-Split out of the former single ``src/stats.py`` (v0.6.0 Workstream G stretch)
-into ``_common`` (price/return primitives) + ``performance`` / ``risk`` /
-``rolling``. The public surface is flat and unchanged: every name a caller used
-via ``from ..stats import X`` / ``stats.X`` is re-exported here, so consumers
-(``layout/builder.py``, ``layout/charts.py``, ``commentary.py``, the tests) need
-no edits.
+Organized as ``_common`` (price/return primitives) plus ``performance`` /
+``risk`` / ``rolling`` / ``calendar`` / ``factors`` / ``regime``. The public
+surface is deliberately flat: every name is re-exported here, so callers import
+from ``src.stats`` and never from a submodule.
 """
 
 from __future__ import annotations

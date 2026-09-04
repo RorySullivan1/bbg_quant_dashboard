@@ -1,26 +1,18 @@
-"""Persistence for benchmarks the user added at runtime (#194).
-
-Without this, every added benchmark dies with the session and the user re-types
-the same ticker every morning — which makes the feature feel like a toy rather
-than configuration.
+"""Persistence for benchmarks the user added at runtime.
 
 **Only the user's additions are stored.** The curated `BENCHMARK_TICKERS` list
-ships with the app and stays in `config.py`; mixing shipped defaults with user
-state in one file makes both harder to reason about, and would mean a user's
-sidecar could silently override a curated benchmark.
+stays in `config.py`; a sidecar mixing the two could silently override a
+curated benchmark.
 
-**Every operation is best-effort.** `bql_client` already carries a tri-state
-writability probe because locked-down BQuant environments frequently expose a
-read-only filesystem, and this reuses that contract exactly: probe once, warn
-once, then fall back to session-only. Two rules follow, and they are the whole
-reason this module is defensive rather than terse:
+**Every operation is best-effort**, because locked-down BQuant environments
+frequently expose a read-only filesystem. Two rules follow, and they are why
+this module is defensive rather than terse:
 
-- A **read** happens during `build_app`, before anything is on screen. Anything
-  that raises here takes the entire dashboard down — the precise failure this
-  epic exists to avoid. So a missing, empty, malformed, or unreadable file all
-  load as "no additions".
+- A **read** happens during `build_app`, before anything is on screen, so
+  anything that raises takes the whole dashboard down. A missing, empty,
+  malformed, or unreadable file all load as "no additions".
 - A **write** must never block an add. On a read-only filesystem the user still
-  gets their benchmark for the session; they are told it will not persist, and
+  gets their benchmark for the session, is told it will not persist, and
   nothing raises.
 """
 

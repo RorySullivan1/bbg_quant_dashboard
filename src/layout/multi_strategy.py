@@ -1,4 +1,4 @@
-"""The Multi-Strategy tab's analysis-pane render engine (v0.9.12-review #156).
+"""The Multi-Strategy tab's analysis-pane render engine.
 
 Extracted from the ``build_app`` monolith into free functions taking
 ``(state, meta, pane, …)`` — mirroring the ``single_strategy.py`` pattern — so
@@ -129,15 +129,11 @@ def _render_heatmap(
     win_end: pd.Timestamp,
     errors: list[str],
 ) -> None:
-    # Correlation heatmap, three cases (per-pane, so the panes stay
-    # independent): Regime on → conditioned on the benchmark-return tail with
-    # the benchmark in the matrix; Benchmark on / Regime off → full-sample
-    # correlation with the benchmark added (v0.8.9); neither → plain
-    # full-sample correlation of the selected strategies (`prep.cm`). The two
-    # benchmark cases differ only in (pct, direction, memo key, title); both
-    # build the matrix through the single `heatmap_corr_matrix` helper, which
-    # always pins the benchmark last, so the left and right panes can never
-    # disagree on the row/column order.
+    # Three per-pane cases: Regime on → conditioned on the benchmark-return
+    # tail; Benchmark only → full-sample with the benchmark added; neither →
+    # `prep.cm`. The benchmark cases differ only in (pct, direction, memo key,
+    # title) and both go through `heatmap_corr_matrix`, which pins the benchmark
+    # last so the two panes can never disagree on row/column order.
     if pane.heat_regime_chk.value:
         hm_bench_ticker = pane.heat_dd.value
         direction = pane.heat_dir.value  # ">" -> "up", "<" -> "down"
@@ -267,7 +263,7 @@ def render_one(
     errors: list[str],
 ) -> None:
     # Populate the single analysis view named `label` from `prep`. Lazy
-    # rendering (Workstream D) calls this for only the mounted view per
+    # rendering calls this for only the mounted view per
     # recompute and builds the others on first pick.
     if label == "Cumulative Performance":
         _update_line(pane.line_fig, prep.perf)
@@ -304,7 +300,7 @@ def render_pane(
     win_end: pd.Timestamp,
     errors: list[str],
 ) -> None:
-    # Lazy (Workstream D): render only the currently-mounted view; the other
+    # Lazy: render only the currently-mounted view; the other
     # eight are built on first pick (see bind_lazy_render) and stay fresh
     # until the next recompute resets `pane.fresh`.
     label = pane.picker.value

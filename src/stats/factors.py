@@ -1,4 +1,4 @@
-"""Factor / Platform-view stats (v0.7.0 Workstream B).
+"""Factor / Platform-view stats.
 
 Macro-factor return proxies built from the already-fetched price cache
 (equity risk premium, term premium), a thin factor-beta wrapper over

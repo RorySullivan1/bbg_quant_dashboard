@@ -1,12 +1,20 @@
 """Centralized style tokens for the dashboard.
 
-All hex colors, font stacks, and typography sizes used by `src/layout.py`
-live here. Inline literals in HTML/CSS strings should reference these
-enums so colors and fonts can be changed in one place.
+All hex colors, font stacks, and typography sizes used by `src/layout/` live
+here; inline literals in HTML/CSS strings should reference these enums so a
+color or font changes in one place.
 
-Members of the `StrEnum` token enums (e.g. `Color`, `Font`) are `str`
-subclasses whose `str()`/`format()` return the value, so they interpolate
-into f-strings without needing `.value`.
+Members of the `StrEnum` token enums (`Color`, `Font`, `FontSize`, `Sentiment`)
+are `str` subclasses whose `str()`/`format()` return the value, so they
+interpolate into f-strings without `.value`.
+
+The palette is layered. `Color` holds the raw hex scale; the semantic enums
+(`StatusTone`, `Sentiment`) and the module-level maps below group it by
+meaning. Two surfaces coexist: the **chrome** (masthead, overlay, buttons,
+grids, tab band) hangs off the `CHROME_*`/`SURFACE`/`ACCENT` navy tokens, while
+**charts** render on `TRANSPARENT` and therefore sit on that same navy
+through-color rather than on their own panel. The `CHART_*` tokens style what
+plotly draws on top of it.
 """
 
 from __future__ import annotations
@@ -46,59 +54,39 @@ class Color(StrEnum):
     # Sentiment accents — also the "Refresh prices" primary-action button color.
     GREEN_600 = "#16a34a"
 
-    # ---- Chart theme (Bloomberg / Barclays blend, dark) -------------------
-    # Near-black with a hint of blue (GitHub-dark vibe; reads better than
-    # pure #000 under typical browser displays).
+    # ---- Chart theme (dark) ----------------------------------------------
+    # Near-black with a hint of blue; reads better than pure #000 on typical
+    # browser displays.
     CHART_BG = "#0d1117"
-    # Fully transparent — lets the host page surface show through the chart
-    # (paper + plot area). Used when charts should read as part of the chrome
-    # rather than sitting on their own near-black panel.
+    # Lets the host page surface show through paper + plot area, so charts read
+    # as part of the chrome rather than sitting on their own near-black panel.
     TRANSPARENT = "rgba(0,0,0,0)"
-    # Subtle grid lines that don't compete with the data.
     CHART_GRID = "#1f2937"
-    # Axis line + tick color — medium slate for legibility on the dark bg.
     CHART_AXIS = "#475569"
-    # Primary chart text (axis labels, tick text).
     CHART_TEXT = "#cbd5e1"
-    # Chart title — bright near-white for contrast.
     CHART_TITLE = "#f9fafb"
-    # Hover tooltip background.
     CHART_HOVER_BG = "#1f2937"
 
     # ---- Dark technical chrome (navy blue theme) --------------------------
-    # Cohesive dark *navy* surface palette anchored by the cyan action accent
-    # below. Charts render on a transparent background (`TRANSPARENT`), so they
-    # sit on this navy through-color; only the chrome (masthead, loading
-    # overlay, buttons, grids, tab band) hangs off these tokens.
-    # Page background — deep navy.
     CHROME_BG = "#0a1322"
-    # Raised panel surface (filter box, cards, masthead) — one step up in navy.
-    SURFACE = "#101d33"
-    # Second raised surface (nested panels, hover rows, the tab band).
-    SURFACE_2 = "#1a2b45"
-    # Hairline borders / dividers / scrollbar thumb — navy-tinted.
+    SURFACE = "#101d33"  # raised panel (filter box, cards, masthead)
+    SURFACE_2 = "#1a2b45"  # nested panels, hover rows, the tab band
     BORDER = "#293c59"
-    # Primary chrome text — bright near-white for legibility on the navy bg.
     TEXT = "#e6edf3"
-    # Muted secondary text (captions, metadata, placeholders) — cool slate.
-    TEXT_MUTED = "#93a4c0"
-    # Accent — cyan; the primary action / highlight / rule color (was the
-    # Bloomberg orange). Drives the masthead rule, active tab fill, focus
-    # outlines, progress bar, and highlight emphasis.
+    TEXT_MUTED = "#93a4c0"  # captions, metadata, placeholders
+    # Primary action / highlight / rule color: masthead rule, active tab fill,
+    # focus outlines, progress bar, highlight emphasis.
     ACCENT = "#00AFE9"
-    # Secondary accent — a lighter azure that complements the cyan primary.
     ACCENT_2 = "#66c6f0"
-    # Dimmed loading-overlay backdrop — a translucent BLACK mask (8-digit hex,
-    # ~60% alpha) so it reads clearly darker than the navy chrome behind it,
-    # signalling "the app is loading". (A near-opaque CHROME_BG scrim blended
-    # into the navy dashboard and looked like no mask at all.)
+    # Translucent BLACK mask (~60% alpha), not a CHROME_BG scrim: blended into
+    # the navy dashboard, a near-opaque navy scrim looked like no mask at all.
     SCRIM = "#00000099"
 
-    # ---- Conditional-format heatmap (v0.7.0 Platform grid) ----------------
-    # Diverging red→neutral→green cell backgrounds for the all-catalog grid's
-    # Sharpe + Z-Score columns. Low-alpha tints (8-digit hex) over the dark
-    # body so the bright cell text stays legible; built from GREEN_600 /
-    # RED_600 so the heatmap shares the dashboard's sentiment palette.
+    # ---- Conditional-format heatmap (all-catalog grid) --------------------
+    # Diverging red→neutral→green cell backgrounds for the Sharpe and Z-Score
+    # columns. Low-alpha tints over the dark body keep the bright cell text
+    # legible; built from GREEN_600 / RED_600 so the heatmap shares the
+    # dashboard's sentiment palette.
     HEAT_POS_STRONG = "#16a34acc"  # GREEN_600 @ ~80%
     HEAT_POS_SOFT = "#16a34a55"  # GREEN_600 @ ~33%
     HEAT_NEG_SOFT = "#dc262655"  # RED_600 @ ~33%
@@ -115,7 +103,7 @@ class Font(StrEnum):
 class FontSize(StrEnum):
     """Typography scale. Pick the smallest semantic name that fits."""
 
-    TITLE = "32px"  # masthead title (v0.6.5) — largest in the scale
+    TITLE = "32px"  # masthead title — largest in the scale
     HERO = "22px"  # page-banner title (secondary)
     DISPLAY = "20px"  # highlight-card value
     H3 = "15px"  # section heading
@@ -156,10 +144,9 @@ class Sentiment(StrEnum):
     NEUTRAL = Color.BRAND_NAVY
 
 
-# Bloomberg / Barclays-blend palette — high-chroma colors tuned to pop
-# against the dark chart background. Bloomberg orange + Barclays cyan
-# anchor the first two slots (most-selected position). Order matters
-# (positional assignment in the marks loop), so keep this as a tuple.
+#: High-chroma line colors tuned to pop against the dark chart background,
+#: orange and cyan anchoring the first two (most-selected) slots. Order matters
+#: — the marks loop assigns positionally — so keep this a tuple.
 LINE_PALETTE: tuple[str, ...] = (
     "#FFA000",  # Bloomberg orange
     "#00B5E2",  # Barclays cyan
@@ -173,17 +160,13 @@ LINE_PALETTE: tuple[str, ...] = (
     "#FFAB40",  # Light orange
 )
 
-
-# Asset-class color map for the v0.7.0 Platform factor-scatter
-# (colored by asset class). The original `AssetClassColor`/`ASSET_CLASS_COLORS`
-# were deleted in v0.6.0 Workstream G as dead code; this is a small, focused
-# reintroduction drawn from `LINE_PALETTE` so the colors stay token-driven and
-# sit naturally in the dark chart theme. Keys match the `AssetClass` values in
-# `data/indexdb.json`; `ASSET_CLASS_FALLBACK_COLOR` covers anything unmapped.
+#: Asset-class colors for the Platform factor-scatter, drawn from
+#: `LINE_PALETTE` so they stay token-driven and sit naturally in the dark chart
+#: theme. Keys match the `AssetClass` values in `data/indexdb.json`.
 ASSET_CLASS_COLORS: dict[str, str] = {
     "Equity": LINE_PALETTE[1],  # cyan
     "Fixed Income": LINE_PALETTE[3],  # mint
     "Commodity": LINE_PALETTE[0],  # orange
     "FX": LINE_PALETTE[5],  # lavender
 }
-ASSET_CLASS_FALLBACK_COLOR: str = Color.SLATE_400
+ASSET_CLASS_FALLBACK_COLOR: str = Color.SLATE_400  # anything unmapped

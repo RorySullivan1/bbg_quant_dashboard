@@ -1,3 +1,19 @@
+"""Analysis-pane widgets: the figure factories and the pane assembly.
+
+An *analysis pane* is the repeated unit of the Multi-Strategy and Single
+Strategy tabs: an analysis picker, an optional per-pane benchmark selector and
+its dependent controls, and a stack of figures of which exactly one is mounted.
+
+Each `_*_chart()` factory builds an empty `FigureWidget` with its axes, title,
+and theme already set; `charts.py` fills it with data later. Building once and
+updating in place is what keeps a benchmark change from rebuilding the widget
+tree, so nothing here computes or fetches — the figures start empty by design.
+
+`ANALYSIS_OPTIONS` and `SINGLE_ANALYSIS_OPTIONS` declare which views each tab
+offers, and `_SINGLE_BENCHMARK_VIEWS` which of them reveal the benchmark
+selector.
+"""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -41,12 +57,12 @@ def _make_benchmark_dropdown(
     and the Quantitative-filter benchmark rows use this one factory. A blank
     `description` leaves no label gap.
 
-    With a `registry` (#190) the options track the live benchmark set, so a
+    With a `registry` the options track the live benchmark set, so a
     benchmark added at runtime reaches every selector, and the catalog indices
-    ride along as a second source (#191). Without one the selector starts on
+    ride along as a second source. Without one the selector starts on
     the curated `BENCHMARK_TICKERS` snapshot.
 
-    The control is a `BenchmarkSelect` (#192) — a combobox behind a
+    The control is a `BenchmarkSelect` — a combobox behind a
     Dropdown-shaped surface, so it type-filters the list *and* accepts a ticker
     that is not on it, while `.value` stays a resolved ticker for every
     existing caller."""
@@ -201,7 +217,7 @@ def _return_dist_stats_grid() -> DataGrid:
 
 
 def _weekly_scatter_chart() -> go.FigureWidget:
-    """Single Strategy Section 3 (v0.9.0): weekly returns vs the benchmark, with
+    """Single Strategy Section 3: weekly returns vs the benchmark, with
     a quadratic fit line (β + convexity) drawn by `_update_weekly_scatter`.
 
     The two traces (markers + fit line) and the β/convexity annotation are
@@ -259,7 +275,7 @@ def _weekly_scatter_chart() -> go.FigureWidget:
 
 
 def _factor_corr_chart() -> go.FigureWidget:
-    """Single Strategy Section 3 (v0.9.0): the strategy's monthly correlation to
+    """Single Strategy Section 3: the strategy's monthly correlation to
     the equity-risk-premium (x) and term-premium (y) factors, colored by each
     month's risk-adjusted return. Axes fixed to the correlation range."""
     return go.FigureWidget(
@@ -275,7 +291,7 @@ def _factor_corr_chart() -> go.FigureWidget:
 
 
 def _factor_scoring_chart() -> go.FigureWidget:
-    """Single Strategy analysis (v0.9.0): a bar chart of the strategy's β to the
+    """Single Strategy analysis: a bar chart of the strategy's β to the
     macro-factor proxies (equity risk premium / term premium / trend), filled by
     `_update_factor_scoring`."""
     return go.FigureWidget(
@@ -297,7 +313,7 @@ def _factor_scoring_chart() -> go.FigureWidget:
 
 
 def _perf_ranking_chart() -> go.FigureWidget:
-    """Single Strategy analysis (v0.9.0): a radar/spider chart ranking the
+    """Single Strategy analysis: a radar/spider chart ranking the
     strategy across performance metrics. Metrics are wired in a later pass;
     `_update_perf_ranking` shows a placeholder until then."""
     return go.FigureWidget(
@@ -310,7 +326,7 @@ def _perf_ranking_chart() -> go.FigureWidget:
 
 
 def _pca_chart() -> go.FigureWidget:
-    """Single Strategy analysis (v0.9.0, stub): a PCA scree chart — per-component
+    """Single Strategy analysis (stub): a PCA scree chart — per-component
     explained-variance bars with a cumulative line on a secondary axis."""
     return go.FigureWidget(
         data=[
@@ -333,7 +349,7 @@ def _pca_chart() -> go.FigureWidget:
 
 
 def _defensive_chart() -> go.FigureWidget:
-    """Single Strategy analysis (v0.9.0, stub): a defensive-scoring bar chart."""
+    """Single Strategy analysis (stub): a defensive-scoring bar chart."""
     return go.FigureWidget(
         data=[go.Bar(x=[], y=[])],
         layout=_chart_layout(
@@ -344,9 +360,8 @@ def _defensive_chart() -> go.FigureWidget:
     )
 
 
-# Single Strategy analysis-pane options (v0.9.0). The first three are the
-# original Section 3 analytics; the rest are added per the v0.9.0 deep-dive
-# (Drawdown + Factor scoring are functional, the others are stubs).
+# Single Strategy analysis-pane options. Drawdown and Factor scoring are
+# functional; the trailing four are stubs.
 SINGLE_ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Weekly Scatter",
     "Return Distribution",
@@ -489,15 +504,11 @@ def _make_analysis_pane(
     rbeta_benchmark_dd = _make_benchmark_dropdown(registry=registry)
     outperf_benchmark_dd = _make_benchmark_dropdown(registry=registry)
 
-    # Correlation-Heatmap regime controls. The checkbox reveals a benchmark
-    # selector, a Down/Up tail direction toggle, and a 0-100% (step 5) tail
-    # size. When on, the heatmap is conditioned on the benchmark-return tail
-    # and the benchmark is added to the matrix (see `_render_pane`). Read at
-    # Refresh-prices time only, like the other per-pane benchmark dropdowns.
-    # v0.7.5: a "Benchmark" checkbox reveals the benchmark dropdown + a nested
-    # "Regime" checkbox; ticking "Regime" reveals the >/< tail-direction
-    # dropdown + the tail size. `heat_dir` value is the direction string passed
-    # straight to `regime_corr_matrix` (`<` = worst/below-pct, `>` = best).
+    # Correlation-Heatmap controls, revealed progressively: "Benchmark" exposes
+    # the benchmark dropdown and a nested "Regime" checkbox, which in turn
+    # exposes the tail direction and a 0-100% (step 5) tail size. `heat_dir`
+    # passes straight to `regime_corr_matrix` (`<` = worst/below-pct,
+    # `>` = best). Read at Refresh time, like the other per-pane dropdowns.
     heat_benchmark_chk = W.Checkbox(
         value=False,
         description="Benchmark",
@@ -627,9 +638,9 @@ def _make_analysis_pane(
         picker=picker,
         stack=stack,
         views=views,
-        # Labels whose figure is populated for the current slice (Workstream D
-        # lazy rendering). The builder renders only the mounted view per
-        # recompute and adds others here on first pick.
+        # Labels whose figure is populated for the current slice. The builder
+        # renders only the mounted view per recompute, adding others on first
+        # pick.
         fresh=set(),
         line_fig=line_fig,
         outperf_fig=outperf_fig,

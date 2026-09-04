@@ -40,6 +40,12 @@ failure modes, which are different and must stay distinguishable:
 | `_MOCK_UNRESOLVABLE: set[str]` | a wrong ticker — nothing comes back, ever | all-NaN column, warned; raises only when *nothing* in the request resolves |
 | `_MOCK_FIRST_TRADE: dict[str, date]` | a real security with no history at the start of the window (launched mid-lookback, or stale) | NaN before that date, real data after; the frame keeps its full index |
 
+These seams exist because the alternative had already failed once: with no
+way to make the mock say "no", every validation path was untestable
+off-terminal, and the test suite runs nowhere else — so the behaviour was
+shipped behind a caveat marked "untestable in CI" and then broke in
+production. A caveat is not a test.
+
 Both are empty by default, so app behaviour is unchanged. `_clear_caches()`
 resets them — they are mutable module state, so a test that sets one without
 that reset would leak into every test after it. `tests/test_mock_resolution.py`

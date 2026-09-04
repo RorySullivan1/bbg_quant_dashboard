@@ -15,6 +15,7 @@ def rolling_correlation(
     benchmark: pd.Series,
     window: int = SHARPE_WINDOW,
 ) -> pd.DataFrame:
+    """Rolling correlation of each return column to the benchmark."""
     if returns.empty or benchmark.empty:
         return pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
     bench = benchmark.reindex(returns.index)
@@ -26,6 +27,7 @@ def rolling_beta(
     benchmark: pd.Series,
     window: int = SHARPE_WINDOW,
 ) -> pd.DataFrame:
+    """Rolling beta of each return column to the benchmark (cov ÷ benchmark var)."""
     if returns.empty or benchmark.empty:
         return pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
     bench = benchmark.reindex(returns.index)
@@ -47,6 +49,7 @@ def rolling_volatility(
 
 
 def rolling_sharpe(returns: pd.DataFrame, window: int = SHARPE_WINDOW) -> pd.DataFrame:
+    """Rolling annualized Sharpe: rolling annualized return ÷ rolling annualized vol."""
     mean = rolling_return(returns, window)
     std = rolling_volatility(returns, window)
     return mean.divide(std.replace(0, np.nan))
@@ -118,6 +121,7 @@ def sharpe_zscore(
     window: int = SHARPE_WINDOW,
     zscore_window: int = SHARPE_ZSCORE_WINDOW,
 ) -> pd.Series:
+    """Per-ticker z-score of the *latest* rolling Sharpe against its own recent tail."""
     sharpe = rolling_sharpe(returns, window=window)
     tail = sharpe.tail(zscore_window)
     mean = tail.mean()
@@ -131,6 +135,7 @@ def rolling_sharpe_zscore(
     window: int = SHARPE_WINDOW,
     zscore_window: int = SHARPE_ZSCORE_WINDOW,
 ) -> pd.DataFrame:
+    """Full history of the rolling-Sharpe z-score, as a series per ticker."""
     sharpe = rolling_sharpe(returns, window=window)
     rolling_mean = sharpe.rolling(zscore_window).mean()
     rolling_std = sharpe.rolling(zscore_window).std().replace(0, np.nan)

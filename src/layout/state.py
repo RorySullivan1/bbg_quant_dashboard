@@ -1,13 +1,9 @@
 """Explicit session state for the dashboard.
 
-Before v0.6.0 #6, ``build_app`` threaded its mutable session state through a
-``nonlocal`` declaration (``universe_prices`` / ``arp_universe_prices``) plus
-three list-as-mutable-cell hacks (``active_filter``, ``last_sel_key``,
-``_sync_guard``). ``DashboardState`` centralizes that — together with the key
-widget handles the orchestration closures read and write — into one explicit,
-documented object. Mutating an attribute (``state.universe_prices = ...``)
-needs no ``nonlocal``, so the closures stay nested in ``build_app`` while the
-data flow becomes legible. Behavior is unchanged.
+``DashboardState`` holds the mutable session data and the key widget handles
+that ``build_app``'s orchestration closures read and write. Because the
+closures mutate attributes rather than rebinding names, they stay nested in
+``build_app`` without ``nonlocal`` declarations.
 """
 
 from __future__ import annotations
@@ -28,72 +24,66 @@ class DashboardState:
     Construction takes the key widget handles (created once in ``build_app``);
     the remaining fields carry the mutable session data and default to empty so
     the object is valid before the initial price fetch populates it.
+
+    The cached frames are a deliberate hierarchy, each derived from the one
+    above it and stored so the live controls can re-render without refetching:
+    ``universe_prices`` is the single startup fetch, ``arp_universe_prices``
+    drops the benchmark/factor/regime columns, ``universe_rets`` is its daily
+    returns, and ``universe_up`` its whole-catalog perf table. Together they let
+    the Platform grid's Metric/Window/Lookback dropdowns re-rank by recomputing
+    only the z-score column — no perf rerun, no BQL call.
+
+    ``cur_prep`` and its window bounds play the same role one level down, for
+    the selected set: they persist the last recompute's slice so a benchmark or
+    regime change re-renders a single chart directly. ``memo`` caches those
+    per-benchmark chart results and is cleared whenever ``cur_prep`` is rebuilt,
+    so it only ever holds results for the current slice.
     """
 
     # --- widget handles (set once at construction in build_app) ---
     ticker_w: W.SelectMultiple
-    status_w: W.HTML  # post-load summary toast (v0.6.5: was the status banner)
-    overlay_w: W.HTML  # dimmed loading overlay + staged progress (v0.6.5)
+    status_w: W.HTML  # post-load summary toast
+    overlay_w: W.HTML  # dimmed loading overlay + staged progress
     universe_grid: object  # ipydatagrid.DataGrid
     selected_perf_grid: object  # ipydatagrid.DataGrid
     pane_left: object  # SimpleNamespace analysis pane
     pane_right: object  # SimpleNamespace analysis pane
     highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)
-    errors_w: W.HTML  # init/pane-error boxes, kept out of highlights_w so the
-    # live superlatives-window toggle never wipes them (v0.8.x)
+    #: Init/pane-error boxes. Kept out of ``highlights_w`` so the live
+    #: superlatives-window toggle never wipes them.
+    errors_w: W.HTML
 
     # --- mutable session state ---
-    # The Single Strategy tab namespace (picker + profile/chart/grid handles),
-    # set once in build_app; its observers re-render Section 1 (v0.9.0). Defaults
-    # to None so the dataclass stays valid before the panel is built.
+    #: Single Strategy tab namespace (picker + profile/chart/grid handles), set
+    #: once in build_app; its observers re-render Section 1.
     single_strategy: object | None = None
-    # The single startup BQL/mock fetch (benchmarks included) and its
-    # ARP-only view (benchmark columns reindexed out).
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     arp_universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
-    # daily_returns(arp_universe_prices) computed once per fetch and threaded
-    # into the Platform renders (factor scatter / regime / grid z-score /
-    # default selection) so they don't each re-derive it (v0.9.13 #166).
     universe_rets: pd.DataFrame = field(default_factory=pd.DataFrame)
-    # The all-catalog perf table (universe_perf of arp_universe_prices), cached
-    # at load/refresh so the Platform grid's Metric/Window/Lookback dropdowns
-    # re-rank by recomputing only the z-score column — no universe_perf rerun,
-    # no BQL (v0.7.0 Workstream A).
     universe_up: pd.DataFrame = field(default_factory=pd.DataFrame)
-    # Tracebacks from the initial fetch / perf compute, surfaced in commentary.
+    #: Tracebacks from the initial fetch / perf compute, surfaced in commentary.
     init_errors: list[str] = field(default_factory=list)
-    # Currently visible filter dimension — drives "Clear section".
+    #: Currently visible filter dimension — drives "Clear section".
     active_filter: str = "Asset Class"
-    # The ticker set rendered on the last recompute; when it changes the
-    # analysis date-range boxes reset to the new overlap window.
+    #: The ticker set rendered on the last recompute; when it changes the
+    #: analysis date-range boxes reset to the new overlap window.
     last_sel_key: tuple | None = None
-    # Suppresses the bidirectional date-range observers during programmatic
-    # box updates.
+    #: Suppresses the bidirectional date-range observers during programmatic
+    #: box updates.
     sync_guard: bool = False
-    # The selection's current overlap-window bounds (datetime.date), set when
-    # the date boxes are re-bounded on Refresh; `Clear all` snaps the boxes back
-    # to this full span (v0.7.5: the SelectionRangeSlider's option list used to
-    # carry this).
+    #: The selection's current overlap-window bounds (datetime.date), set when
+    #: the date boxes are re-bounded on Refresh; `Clear all` snaps the boxes
+    #: back to this full span.
     cur_bound_start: object | None = None
     cur_bound_end: object | None = None
-    # The selected-set data slice from the last recompute, plus its window
-    # bounds, persisted so the live benchmark/regime chart observers can
-    # re-render a single chart without a refetch or full recompute. ``None``
-    # means there is no valid selection, so the live observers no-op.
+    #: ``None`` means there is no valid selection, so the live observers no-op.
     cur_prep: object | None = None  # SimpleNamespace built in _recompute
     cur_win_start: pd.Timestamp | None = None
     cur_win_end: pd.Timestamp | None = None
-    # Bounded memo for benchmark-dependent chart results, keyed by
-    # (chart_kind, benchmark[, direction, pct]). Shared by both panes (the
-    # result depends only on `cur_prep` + benchmark, not the pane); cleared
-    # whenever _recompute rebuilds `cur_prep`, so it only ever holds
-    # current-slice results. Makes flipping back to a previously-viewed
-    # benchmark an instant cache hit (v0.6.9 Workstream B).
+    #: Keyed by (chart_kind, benchmark[, direction, pct]) and shared by both
+    #: panes, since the result depends on `cur_prep` and the benchmark only.
     memo: LRUCache = field(default_factory=LRUCache)
-
-    # The live benchmark set and the selectors bound to it (#190). Owns what
-    # used to be the frozen `BENCHMARK_TICKERS` snapshot each selector took at
-    # construction; `build_app` creates it before the widgets (they register on
-    # construction) and hands it here. Defaults to the curated list, so a state
-    # object built without one behaves exactly as before.
+    #: The live benchmark set and the selectors bound to it. ``build_app``
+    #: creates it before the widgets (they register on construction) and hands
+    #: it here; the default is the curated list.
     benchmarks: BenchmarkRegistry = field(default_factory=BenchmarkRegistry)

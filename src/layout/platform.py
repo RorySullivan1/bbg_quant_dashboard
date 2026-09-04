@@ -1,11 +1,13 @@
-"""Platform-tab chart factories + updaters (v0.7.0).
+"""Platform-tab chart factories + updaters.
 
-Standalone visuals for the Platform tab — distinct from the analysis panes
-(`panes.py` / `charts.py`), which are the Multi-Strategy tab. Workstream C+D
-adds the factor-beta scatter; the asset-class sunburst (Workstream E) joins
-it here. Every figure is built once (factory) and mutated in place inside a
-`fig.batch_update()` block (updater), computing live from the already-fetched
-price cache — no BQL.
+Standalone visuals for the Platform tab — the factor-beta scatter, the
+asset-class sunburst, and the regime views — as distinct from the analysis
+panes (`panes.py` / `charts.py`), which belong to the Multi-Strategy tab.
+
+Every figure follows the same two-part shape: a factory builds it once, and an
+updater mutates it in place inside a `fig.batch_update()` block. Updaters
+compute from the already-fetched price cache, so no chart here issues a BQL
+call.
 """
 
 from __future__ import annotations
@@ -166,9 +168,9 @@ def _factor_beta_scatter() -> go.FigureWidget:
     term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
     marker per strategy (colored by asset class). Built empty;
     `_update_factor_scatter` fills it — markers plus three translucent
-    zero-reference planes (x=0/y=0/z=0, v0.8.6) that mark the origin in every
+    zero-reference planes (x=0/y=0/z=0) that mark the origin in every
     dimension. No in-figure title — the "Factor exposures" section header stands
-    alone (v0.7.1). The legend is on (unlike the pane charts, this chart has no
+    alone. The legend is on (unlike the pane charts, this chart has no
     grid legend to key its asset-class colors); each scene axis also carries a
     zero line on the scene wall (paper shapes don't apply to a 3D scene)."""
     return go.FigureWidget(
@@ -256,7 +258,7 @@ def _sunburst() -> go.FigureWidget:
     """Asset class → theme → ticker sunburst (inside out), arcs sized by each
     ring's gross-|z| share and colored by the (level-averaged) metric z-score.
     Built empty; `_update_sunburst` fills it. No in-figure title — the
-    "Risk-adjusted strength map" section header stands alone (v0.7.3); the
+    "Risk-adjusted strength map" section header stands alone; the
     diverging colorbar is the color legend."""
     return go.FigureWidget(
         layout=_chart_layout(
@@ -461,12 +463,10 @@ def _update_regime_scatter(
         fig.add_traces(traces)
 
 
-# --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
-# Extracted from the ``build_app`` monolith. ``build_app`` builds the analytics
-# widgets, bundles their handles into a ``pa`` namespace, then calls
-# ``wire_platform_analytics(state, meta, pa)`` (observers + tab pills) and the
-# ``render_*`` functions on load / Refresh. Every render reads the already
-# fetched cache on ``state`` — no BQL.
+# --- Platform-analytics orchestration -----------------------------------------
+# ``build_app`` builds the analytics widgets, bundles their handles into a
+# ``pa`` namespace, then calls ``wire_platform_analytics(state, meta, pa)`` for
+# the observers and tab pills. Every render reads the cache on ``state``.
 
 
 @contextmanager
@@ -613,7 +613,7 @@ def render_regime_scatter(
 def _regime_selector_options(state: object, spec: dict) -> list[tuple[str, object]]:
     """The indicator-source options for a regime, as ``(label, ticker)`` pairs.
 
-    Trend sources its list from the **live** benchmark registry (#190) rather
+    Trend sources its list from the **live** benchmark registry rather
     than a list frozen into ``REGIME_SPECS`` at import, so a benchmark added at
     runtime is offered here too. Rate-level carries a literal ``selector`` and
     is returned unchanged; regimes with neither return ``[]`` (→ the dropdown
@@ -653,7 +653,7 @@ def _sync_regime_controls(state: object, pa: SimpleNamespace) -> None:
 
 # The three analytics tabs and their render functions. Only one is ever visible
 # at a time, so charts render **lazily** — the visible tab on load/Refresh, the
-# hidden two on their pill's first activation (v0.9.13 #168), rather than
+# hidden two on their pill's first activation, rather than
 # computing all three up front.
 _ANALYTICS_RENDERERS = {
     "sunburst": render_sunburst,

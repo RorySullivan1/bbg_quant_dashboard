@@ -1,3 +1,12 @@
+"""Loading and filtering the local index catalog.
+
+Reads `data/indexdb.json`, renames its camel-case columns to internal
+snake_case via `COLUMN_MAP`, and exposes the result as a tidy DataFrame keyed
+by ticker. `apply_filters` is the single place categorical metadata filtering
+happens; the quantitative (price-derived) filters live with the UI, since they
+need the fetched prices.
+"""
+
 from __future__ import annotations
 
 import json

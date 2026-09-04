@@ -1,3 +1,18 @@
+"""ipydatagrid table construction, theming, and formatting.
+
+Every DataGrid in the app is built here: the all-catalog and selected-strategy
+perf grids, the Single Strategy monthly-return calendar, and the return-
+distribution stats table.
+
+Three concerns recur. **Theming** — `_dark_grid_style` / `_dark_grid_kwargs`
+express the dark chrome purely in `style.py` tokens, and `_reassert_dark_theme`
+reapplies them after a data swap, which otherwise resets the frontend's style.
+**Sizing** — perf-grid column widths are computed in Python (see
+`_perf_column_widths`) rather than by the frontend's autofit. **Formatting** —
+renderers centre numeric cells, show missing values as a dash, and apply the
+diverging red→green background to the Sharpe and Z-Score columns.
+"""
+
 from __future__ import annotations
 
 import ipywidgets as W
@@ -9,7 +24,7 @@ from .theme import _palette_color
 
 
 def _dark_grid_style() -> dict:
-    """ipydatagrid `grid_style` for the dark chrome (v0.6.5 PR 5). All values
+    """ipydatagrid `grid_style` for the dark chrome. All values
     are `src/style.py` Color tokens, matching the dark charts/chrome. A subtle
     `SURFACE` zebra over the `CHROME_BG` body keeps wide rows readable; selection
     / cursor pick up the orange `ACCENT`."""
@@ -90,15 +105,10 @@ def _perf_grid() -> DataGrid:
 PERF_COLOR_COLUMN_NAME: str = " "
 
 
-# Column sizing for the flat single-index perf / catalog grids (v0.9.11 visual
-# edits). Columns are single-index strings ("1Y Return", "Asset Class", …). The
-# color-swatch column is a tiny legend block; the stat (period-metric) columns
-# share one uniform width so 1Y / 3Y / 5Y stay aligned; the descriptive text
-# columns (Name / Asset Class / … and the ticker row-header) are fit to their
-# actual content in Python. We fit in Python — not via ipydatagrid's
-# `auto_fit_columns` — because that frontend autofit fits *every* column and
-# writes the result back over `column_widths`, so it can't be scoped to the
-# descriptive columns while keeping the color / stat columns pinned.
+#: Column sizing for the flat perf / catalog grids. Descriptive columns are fit
+#: to their content in Python rather than by ipydatagrid's `auto_fit_columns`,
+#: which fits *every* column and writes the result back over `column_widths` —
+#: so it cannot be scoped to those columns while keeping the rest pinned.
 _COLOR_COL_WIDTH: int = 30  # narrow swatch chip — visible color, minimal space
 _STAT_COL_WIDTH: int = 82  # uniform width for every Return/Vol/Sharpe/Max DD col
 _CHAR_PX: float = 7.6  # ~avg glyph width at the 12px grid font
@@ -156,8 +166,8 @@ def _perf_column_widths(frame: pd.DataFrame) -> dict[str, int]:
     return widths
 
 
-# v0.7.0 Workstream A — the all-catalog grid's dynamic z-score column name
-# and the diverging-heatmap thresholds for its conditional-formatted columns.
+# The all-catalog grid's dynamic z-score column name, and the diverging-heatmap
+# thresholds for its conditional-formatted columns.
 ZSCORE_SUPERCOL: str = "Z-Score"
 # Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
 _SHARPE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-0.5, 0.0, 0.5, 1.0)
@@ -263,7 +273,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
     )
     # Flat single-index columns ("1Y Return", …) — single-row header, autofit
-    # of the descriptive columns, and clean per-column widths (v0.9.11).
+    # of the descriptive columns, and clean per-column widths.
     perf = pt.copy()
     perf.columns = _flatten_perf_columns(pt.columns)
     combined = pd.concat([info_block, perf], axis=1)
@@ -296,13 +306,11 @@ def _build_info_block(
 
 
 def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
-    # Columns are flat single-index strings ("1Y Sharpe", "Asset Class", the
-    # "Z-Score …" headline). Numeric cells are centered; descriptive text stays
-    # left. Bright text on the dark body; no background_color so the `grid_style`
-    # zebra shows through. `sharpe_heatmap` swaps the plain 2dp renderer for a
-    # diverging-background one on the Sharpe columns + the Z-Score column. Empty
-    # (NaN) numeric cells show "-" via a `text_value` expr; text columns + the
-    # color swatch keep plain text (`isNaN` is true for any non-numeric string).
+    # No background_color, so the `grid_style` zebra shows through.
+    # `sharpe_heatmap` swaps the plain 2dp renderer for a diverging-background
+    # one on the Sharpe and Z-Score columns. NaN numeric cells show "-" via a
+    # `text_value` expr; text columns keep plain text, since `isNaN` is true for
+    # any non-numeric string.
     dash = _dash_text_value(_MISSING_DASH)
     text = TextRenderer(text_color=Color.TEXT)  # descriptive — left aligned
     pct = TextRenderer(
@@ -368,7 +376,7 @@ def _apply_grid_styling(
     )
 
 
-# v0.9.0 Workstream D — the Single Strategy monthly-return calendar.
+# The Single Strategy monthly-return calendar.
 # Month / annual cells are returns: red below -5%, soft red to -1%, neutral
 # ±1%, soft green to +5%, strong green above. Vol-adjusted cells are
 # return/vol ratios on a wider unitless band. The Sharpe summary column reuses
@@ -524,8 +532,7 @@ def _build_universe_frame(
         blocks.append(pd.DataFrame({z_key: zcol.reindex(info.index)}))
 
     if not up.empty:
-        # Order: 1Y, 3Y, 5Y (Since-Inception dropped in v0.7.2), then flatten
-        # the (period, metric) columns to single-index "1Y Return" labels.
+        # Flatten the (period, metric) columns to single-index "1Y Return".
         period_order = ["1Y", "3Y", "5Y"]
         present = [p for p in period_order if p in up.columns.get_level_values(0)]
         up_norm = up.reindex(columns=present, level=0).reindex(info.index)

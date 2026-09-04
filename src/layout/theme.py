@@ -1,3 +1,15 @@
+"""Shared chart theming: layout defaults, reference lines, and color lookups.
+
+The single source of the dark plotly look. `_chart_layout` returns the base
+layout every figure starts from — transparent paper so charts sit on the app's
+navy through-color, tokenized grid/axis/text colors, and a uniform height — and
+accepts overrides for the per-chart bits.
+
+Also holds the small helpers that must agree across every figure: `_h_ref` /
+`_v_ref` for zero-reference lines, `_palette_color` for positional series
+colors, and `_short_ticker` for axis and legend labels.
+"""
+
 from __future__ import annotations
 
 from ..config import SHARPE_WINDOW, TRADING_DAYS_PER_YEAR

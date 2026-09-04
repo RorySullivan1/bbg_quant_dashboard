@@ -1,3 +1,15 @@
+"""Filter-panel input widgets.
+
+Small, reusable controls the filter panels are assembled from — most notably
+`CheckboxMultiSelect`, a drop-in replacement for `W.SelectMultiple` that
+renders as a scrollable checkbox list while exposing the same `options`/`value`
+traits, so it can carry a selection cap and per-row styling that
+`SelectMultiple` cannot.
+
+This module knows nothing about which dimensions exist or how they combine —
+that is `filter_panel.py`'s job.
+"""
+
 from __future__ import annotations
 
 import html
