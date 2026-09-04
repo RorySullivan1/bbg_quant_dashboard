@@ -12,8 +12,10 @@ pytest -q
 against small fixed frames (fixtures in `tests/conftest.py`); `tests/test_smoke.py`
 is the regression guard — it builds the whole dashboard on the mock-price
 fallback and asserts the top-level widget tree. `ruff` + `black` + `pytest`
-also run in CI (`.github/workflows/ci.yml`) on every push/PR to the version
-integration branches (`v*`) and `main`.
+also run in CI (`.github/workflows/ci.yml`) on **every** pull request
+regardless of its base branch, and on pushes to `main` and to epic integration
+branches (`v*`). The `pull_request` trigger is deliberately unfiltered — see
+the comment in that file and #202.
 
 ## User-benchmark isolation (#194)
 

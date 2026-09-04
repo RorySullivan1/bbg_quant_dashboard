@@ -36,9 +36,8 @@ fix, and the acceptance criteria that define the workstream.
   the hyphenated form. (See CLAUDE.md "Branching".)
 - **Integration branches are the exception.** Cut one — named exactly `vX.Y.Z`
   — only for a multi-PR epic whose parts are not individually shippable; it
-  merges into `main` and is deleted when the epic completes. Note that a PR
-  based on such a branch **runs no CI** until it is retargeted at `main` (see
-  issue #202), so verify those locally before merging.
+  merges into `main` and is deleted when the epic completes. A PR stacked on
+  such a branch does get CI (the `pull_request` trigger is unfiltered — #202).
 - One workstream per branch, one issue per branch — keep PRs small and
   reviewable.
 
