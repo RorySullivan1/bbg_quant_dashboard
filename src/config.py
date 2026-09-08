@@ -16,6 +16,7 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 "premium" is a total-return *spread*, not a true excess-of-risk-free premium.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 LOOKBACK_YEARS = 5
@@ -95,6 +96,79 @@ BQL_RETRY_BACKOFF_S = 1.0  # base backoff; attempt n waits BACKOFF * 2**n second
 #: usable for correlation and beta, but the user should know the comparison does
 #: not span the whole window rather than wondering why a chart starts late.
 BENCHMARK_SHORT_HISTORY_DAYS = 30
+
+
+@dataclass(frozen=True)
+class CatalogField:
+    """One column of the index catalog, as fed and as displayed.
+
+    `sources` is the accepted JSON keys in preference order — the first is
+    canonical and the rest are legacy aliases kept so a stale feed still loads
+    (`load_metadata` warns rather than raising). `role` drives behaviour:
+    `"tier"` fields form the classification hierarchy, `"attribute"` fields are
+    filterable flat dimensions, `"date"` fields are coerced to timestamps, and
+    `"text"` fields are free prose that is displayed but never filtered on.
+    """
+
+    key: str
+    sources: tuple[str, ...]
+    label: str
+    role: str
+
+
+#: The catalog contract in one place: every internal column, the JSON keys it
+#: accepts, and the label it is shown under. Adding a source alias or changing a
+#: display label is an edit here and nowhere else. Order fixes the metadata
+#: frame's column order (after the derived `ticker`).
+CATALOG_SCHEMA: tuple[CatalogField, ...] = (
+    CatalogField("name", ("Name",), "Name", "text"),
+    CatalogField("asset_class", ("AssetClass",), "Asset Class", "attribute"),
+    CatalogField("category", ("IndexFamilyName",), "Category", "tier"),
+    CatalogField("theme", ("Theme",), "Theme", "tier"),
+    CatalogField("solution", ("Solution",), "Solution", "tier"),
+    CatalogField("return_type", ("ReturnType",), "Return Type", "attribute"),
+    CatalogField("live_date", ("LiveDate",), "Live Date", "date"),
+    CatalogField("currency", ("Currency",), "Currency", "attribute"),
+    CatalogField("description", ("Description",), "Description", "text"),
+)
+
+#: The classification hierarchy, top tier → leaf. These are the *internal* keys,
+#: which do not yet match the framework's names: the framework's Family (leaf)
+#: is fed by `IndexFamilyName` and lands in `category`, and its Category
+#: (middle) is fed by `Theme` and lands in `theme`. #210 renames the internal
+#: fields to match, at which point this becomes ("solution", "category",
+#: "family") without the ordering changing.
+CLASSIFICATION_TIERS: tuple[str, ...] = ("solution", "theme", "category")
+
+_SCHEMA_BY_KEY: dict[str, CatalogField] = {f.key: f for f in CATALOG_SCHEMA}
+
+
+def catalog_field(key: str) -> CatalogField:
+    """The schema entry for an internal column key."""
+    try:
+        return _SCHEMA_BY_KEY[key]
+    except KeyError:
+        raise KeyError(f"No catalog field named {key!r}") from None
+
+
+def field_label(key: str) -> str:
+    """The display label for an internal column key."""
+    return catalog_field(key).label
+
+
+def tier_fields() -> tuple[CatalogField, ...]:
+    """The classification-tier fields, ordered top tier → leaf."""
+    return tuple(catalog_field(key) for key in CLASSIFICATION_TIERS)
+
+
+def filterable_fields() -> tuple[CatalogField, ...]:
+    """The fields `apply_filters` accepts a value list for, in schema order.
+
+    Tiers and attributes; dates take their own min/max arguments and free text
+    is not a filter dimension.
+    """
+    return tuple(f for f in CATALOG_SCHEMA if f.role in ("tier", "attribute"))
+
 
 #: Solution values making up the dashboard universe, compared case-insensitively
 #: against the metadata `solution` column. Both spellings of Alternative Risk
