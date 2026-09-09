@@ -3,6 +3,7 @@
   "src/bql_client.py::module:bql_client.py": "justified: the three caching/batching mechanisms the whole module rests on",
   "src/commentary.py::function:build_superlatives": "justified: states the cross-asset-neutral ranking rule and the card schema",
   "src/layout/benchmarks.py::comment_run:BenchmarkRegistry._apply#5e1d1154": "justified: why the selection is restored explicitly rather than trusted to the widget",
+  "src/layout/benchmarks.py::module:benchmarks.py": "justified: enumerates every selector the registry feeds, including the one that cannot register, and why a construction-time snapshot froze the list",
   "src/layout/builder.py::comment_run:build_app#a23df5aa": "justified: the two benchmark failure modes must stay distinguishable",
   "src/layout/builder.py::comment_run:build_app._set_progress#ce4e21ba": "justified: the CSS-stripped-overlay failure the display toggle guards against",
   "src/layout/builder.py::comment_run:module#e4d21d5c": "justified: the single canonical statement of the overlay paint rule, consolidated from four copies",
@@ -14,5 +15,6 @@
   "src/layout/platform.py::comment_run:module#0a937bdd": "justified: the doubled plotly placeholders are a trap for the next editor",
   "src/layout/platform.py::comment_run:wire_platform_analytics#3e5203c5": "justified: why this widget cannot register with the registry",
   "src/stats/calendar.py::function:calendar_return_table": "justified: defines the month-cell transform and summary columns for each of the five kinds",
-  "src/stats/risk.py::function:regime_corr_matrix": "justified: direction/pct semantics and the benchmark-last ordering guarantee"
+  "src/stats/risk.py::function:regime_corr_matrix": "justified: direction/pct semantics and the benchmark-last ordering guarantee",
+  "src/user_benchmarks.py::module:user_benchmarks.py": "justified: the read-never-raises and write-never-blocks contracts, and why a read-only BQuant filesystem makes both load-bearing"
 }
