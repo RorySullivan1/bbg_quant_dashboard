@@ -223,8 +223,8 @@ def _render_profile_card(row: pd.Series) -> str:
         asset_class=html.escape(_na(row.get("asset_class"))),
         currency=html.escape(_na(row.get("currency"))),
         return_type=html.escape(_na(row.get("return_type"))),
-        theme=html.escape(_na(row.get("theme"))),
         category=html.escape(_na(row.get("category"))),
+        family=html.escape(_na(row.get("family"))),
         launch_date=html.escape(_fmt_date(row.get("live_date"))),
         description=html.escape(_na(row.get("description"))),
     )

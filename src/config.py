@@ -123,8 +123,8 @@ class CatalogField:
 CATALOG_SCHEMA: tuple[CatalogField, ...] = (
     CatalogField("name", ("Name",), "Name", "text"),
     CatalogField("asset_class", ("AssetClass",), "Asset Class", "attribute"),
-    CatalogField("category", ("IndexFamilyName",), "Category", "tier"),
-    CatalogField("theme", ("Theme",), "Theme", "tier"),
+    CatalogField("family", ("Family", "IndexFamilyName"), "Family", "tier"),
+    CatalogField("category", ("Category", "Theme"), "Category", "tier"),
     CatalogField("solution", ("Solution",), "Solution", "tier"),
     CatalogField("return_type", ("ReturnType",), "Return Type", "attribute"),
     CatalogField("live_date", ("LiveDate",), "Live Date", "date"),
@@ -132,13 +132,12 @@ CATALOG_SCHEMA: tuple[CatalogField, ...] = (
     CatalogField("description", ("Description",), "Description", "text"),
 )
 
-#: The classification hierarchy, top tier → leaf. These are the *internal* keys,
-#: which do not yet match the framework's names: the framework's Family (leaf)
-#: is fed by `IndexFamilyName` and lands in `category`, and its Category
-#: (middle) is fed by `Theme` and lands in `theme`. #210 renames the internal
-#: fields to match, at which point this becomes ("solution", "category",
-#: "family") without the ordering changing.
-CLASSIFICATION_TIERS: tuple[str, ...] = ("solution", "theme", "category")
+#: The classification hierarchy, top tier → leaf. The framework names these
+#: Class | Category | Family; the top tier is fed by the `Solution` column,
+#: which is also what `UNIVERSE_SOLUTION_VALUES` filters on, so the internal key
+#: stays `solution`. A feed that arrives keyed `Class` instead is one extra
+#: alias on that field, not a rename.
+CLASSIFICATION_TIERS: tuple[str, ...] = ("solution", "category", "family")
 
 _SCHEMA_BY_KEY: dict[str, CatalogField] = {f.key: f for f in CATALOG_SCHEMA}
 

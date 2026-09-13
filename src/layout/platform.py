@@ -129,7 +129,7 @@ def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
     ]
 
 
-# Sunburst hierarchy separator (asset class → theme), diverging colorscale, and
+# Sunburst hierarchy separator (asset class → category), diverging colorscale, and
 # the per-node hover. The colorscale matches the all-catalog grid's
 # red<0 → neutral → green>0 sentiment and is token-driven (no inline hex). The
 # hover is a `.format()` template — `metric_label` is user-selected at render
@@ -154,7 +154,7 @@ def _sunburst_leaf_sizes(z: pd.Series) -> pd.Series:
     """Per-ticker arc value = |z| (gross magnitude), plus a small floor so a
     near-average (|z|≈0) ticker stays visible. With ``branchvalues="total"`` each
     ring's arc is then its gross-|z| share of its parent (asset class = Σ|z|
-    share, theme = Σ|z| within the class). All-zero (or empty) input falls back
+    share, category = Σ|z| within the class). All-zero (or empty) input falls back
     to uniform arcs."""
     mag = z.abs()
     hi = float(mag.max()) if len(mag) else 0.0
@@ -255,7 +255,7 @@ def _update_factor_scatter(
 
 
 def _sunburst() -> go.FigureWidget:
-    """Asset class → theme → ticker sunburst (inside out), arcs sized by each
+    """Asset class → category → ticker sunburst (inside out), arcs sized by each
     ring's gross-|z| share and colored by the (level-averaged) metric z-score.
     Built empty; `_update_sunburst` fills it. No in-figure title — the
     "Risk-adjusted strength map" section header stands alone; the
@@ -279,12 +279,12 @@ def _update_sunburst(
     label: str,
 ) -> None:
     """Populate the sunburst from `platform_sunburst_frame`: a 3-level
-    asset class → theme → ticker hierarchy. Each arc is sized by |z| (so with
+    asset class → category → ticker hierarchy. Each arc is sized by |z| (so with
     `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
     colored by the metric z-score, averaged up each level (parent color = mean of
-    its descendant tickers' z). `maxdepth=2` shows only the asset-class + theme
+    its descendant tickers' z). `maxdepth=2` shows only the asset-class + category
     rings up front; the ticker ring appears when the user clicks into an asset
-    class or theme (client-side drill-down). `label` (e.g. "1W Sharpe") titles
+    class or category (client-side drill-down). `label` (e.g. "1W Sharpe") titles
     the colorbar + hover. No BQL — pure compute over the already-fetched cache."""
     frame = platform_sunburst_frame(
         prices, meta, metric=metric, window=window, lookback=lookback
@@ -296,7 +296,7 @@ def _update_sunburst(
 
     frame = frame.copy()
     frame["asset_class"] = frame["asset_class"].fillna("Other").astype(str)
-    frame["theme"] = frame["theme"].fillna("Other").astype(str)
+    frame["category"] = frame["category"].fillna("Other").astype(str)
     # Arc value = |z| (gross magnitude) + floor; parents sum to the gross-|z|
     # share at each ring. Color is the signed z (below), averaged up each level.
     frame["size"] = _sunburst_leaf_sizes(frame["z"])
@@ -309,17 +309,17 @@ def _update_sunburst(
 
     for ac, ac_grp in frame.groupby("asset_class"):
         ac_total = 0.0
-        for theme, th_grp in ac_grp.groupby("theme"):
-            tid = f"{ac}{_SUNBURST_SEP}{theme}"
+        for category, th_grp in ac_grp.groupby("category"):
+            tid = f"{ac}{_SUNBURST_SEP}{category}"
             leaves = [
                 (t, float(row["size"]), float(row["z"])) for t, row in th_grp.iterrows()
             ]
             th_total = sum(v for _, v, _ in leaves)
             ac_total += th_total
-            # theme node, then its ticker leaves (parent value == Σ children,
+            # category node, then its ticker leaves (parent value == Σ children,
             # so branchvalues="total" is exact).
             ids.append(tid)
-            labels.append(str(theme))
+            labels.append(str(category))
             parents.append(str(ac))
             values.append(th_total)
             colors.append(float(th_grp["z"].mean()))
@@ -341,9 +341,9 @@ def _update_sunburst(
         parents=parents,
         values=values,
         branchvalues="total",
-        # Show only 2 rings from the current center (asset class + theme), so the
+        # Show only 2 rings from the current center (asset class + category), so the
         # ticker ring stays hidden until the user clicks into an asset class or
-        # theme to drill in (client-side zoom, no recompute).
+        # category to drill in (client-side zoom, no recompute).
         maxdepth=2,
         insidetextorientation="radial",
         marker=dict(
@@ -534,7 +534,7 @@ def render_factor_scatter(
 
 
 def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
-    """Render the asset class → theme → ticker sunburst from the Metric/Window
+    """Render the asset class → category → ticker sunburst from the Metric/Window
     Z-score controls + the shared lookback, live from the ARP-only cache."""
     if state.arp_universe_prices.empty:
         return

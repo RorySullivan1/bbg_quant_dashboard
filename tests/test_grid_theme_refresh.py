@@ -53,7 +53,7 @@ def _perf_frame():
             "ticker": ["A Index"],
             "name": ["Alpha"],
             "asset_class": ["Equity"],
-            "theme": ["Core"],
+            "category": ["Core"],
         }
     )
     return pt, meta
@@ -91,8 +91,8 @@ def test_universe_grid_keeps_dark_theme_after_update():
             "ticker": ["A Index"],
             "name": ["Alpha"],
             "asset_class": ["Equity"],
+            "family": ["Core"],
             "category": ["Core"],
-            "theme": ["Core"],
             "return_type": ["Total"],
             "live_date": pd.to_datetime(["2020-01-01"]),
         }

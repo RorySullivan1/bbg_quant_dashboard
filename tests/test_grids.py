@@ -87,8 +87,8 @@ def _meta() -> pd.DataFrame:
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "name": ["Alpha", "Bravo", "Charlie"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
-            "category": ["X", "Y", "Z"],
-            "theme": ["T1", "T2", "T3"],
+            "family": ["X", "Y", "Z"],
+            "category": ["T1", "T2", "T3"],
             "return_type": ["Total", "Total", "Excess"],
             "live_date": pd.to_datetime(["2010-01-01", "2015-06-01", "2020-03-15"]),
         }
@@ -119,7 +119,16 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     # block and immediately before the first stat column.
     cols = list(frame.columns)
     z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
-    info_cols = ["Name", "Asset Class", "Category", "Theme", "Return Type", "Live Date"]
+    # Family then Category: the info block follows META_COLUMNS, and the re-key
+    # put the leaf tier where "Category" used to sit.
+    info_cols = [
+        "Name",
+        "Asset Class",
+        "Family",
+        "Category",
+        "Return Type",
+        "Live Date",
+    ]
     assert cols[: len(info_cols)] == info_cols
     assert cols[len(info_cols)] == z_name
     assert cols[len(info_cols) + 1] == "1Y Return"

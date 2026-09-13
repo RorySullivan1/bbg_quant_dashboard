@@ -191,12 +191,12 @@ def test_update_factor_scatter_empty_clears_traces():
 
 
 def _treemap_meta() -> pd.DataFrame:
-    # Two themes under one asset class → a 3-level Equity → theme → ticker tree.
+    # Two categories under one asset class → a 3-level Equity → category → ticker tree.
     return pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index"],
             "asset_class": ["Equity", "Equity"],
-            "theme": ["Growth", "Value"],
+            "category": ["Growth", "Value"],
         }
     )
 
@@ -239,7 +239,7 @@ def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
     # maxdepth=2 hides the ticker ring until the user drills into a class/theme.
     assert sb.maxdepth == 2
     nodes = dict(zip(sb.ids, sb.parents, strict=True))
-    # asset-class node is a root; theme nodes hang off it; leaves off the themes.
+    # asset-class node is a root; category nodes hang off it; leaves off the categories.
     assert nodes["Equity"] == ""
     assert nodes["Equity / Growth"] == "Equity"
     assert nodes["Equity / Value"] == "Equity"
@@ -295,7 +295,7 @@ def _regime_meta() -> pd.DataFrame:
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Equity", "Fixed Income"],
-            "theme": ["Growth", "Growth", "Carry"],
+            "category": ["Growth", "Growth", "Carry"],
         }
     )
 

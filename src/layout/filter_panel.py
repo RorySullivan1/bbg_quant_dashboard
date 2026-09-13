@@ -48,8 +48,8 @@ from .panes import _make_benchmark_dropdown
 # column; Characteristics / Quantitative are special views built below.
 _CATEGORICAL: tuple[tuple[str, str], ...] = (
     ("Asset Class", "asset_class"),
+    ("Family", "family"),
     ("Category", "category"),
-    ("Theme", "theme"),
     ("Return Type", "return_type"),
 )
 
@@ -226,8 +226,8 @@ def make_filter_panel(
     # --- Pill bar + swap container --------------------------------------------
     filter_views: dict[str, W.Widget] = {
         "Asset Class": cat_widgets["asset_class"].content,
+        "Family": cat_widgets["family"].content,
         "Category": cat_widgets["category"].content,
-        "Theme": cat_widgets["theme"].content,
         "Return Type": cat_widgets["return_type"].content,
         "Characteristics": characteristics_view,
         "Quantitative": quant_view,
@@ -445,8 +445,8 @@ def make_filter_panel(
             meta,
             {
                 "asset_class": cat_widgets["asset_class"].get(),
+                "family": cat_widgets["family"].get(),
                 "category": cat_widgets["category"].get(),
-                "theme": cat_widgets["theme"].get(),
                 "return_type": cat_widgets["return_type"].get(),
                 "currency": currency_get(),
             },
@@ -485,8 +485,8 @@ def make_filter_panel(
         quant_keep=_quant_keep,
         # Handles for tests / callers.
         asset_checks=cat_widgets["asset_class"].checks,
-        cat_checks=cat_widgets["category"].checks,
-        theme_checks=cat_widgets["theme"].checks,
+        cat_checks=cat_widgets["family"].checks,
+        theme_checks=cat_widgets["category"].checks,
         ret_checks=cat_widgets["return_type"].checks,
         currency_dd=currency_dd,
         live_min=live_min,
