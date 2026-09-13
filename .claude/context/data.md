@@ -23,14 +23,20 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
 }
 ```
 
-`COLUMN_MAP` in `src/data.py` renames these to internal snake_case
-(`name`, `asset_class`, `category`, `theme`, `solution`, `return_type`,
-`live_date`, `currency`, `description`). `IndexFamilyName` maps to the
-internal `category` field — there is no separate "family" dimension. The
-metadata DataFrame also has a derived `ticker` column = `<key> + " Index"`.
-`Currency` and `Description` are metadata (BQL only supplies `px_last`, not
-reference fields); `load_metadata` pads any missing `COLUMN_MAP` column with
-`NA`, so records without a `Currency` or `Description` key still load.
+`CATALOG_SCHEMA` in `src/config.py` (v0.9.15) declares each column once — its
+internal snake_case key (`name`, `asset_class`, `category`, `theme`,
+`solution`, `return_type`, `live_date`, `currency`, `description`), the JSON
+keys it accepts, its display label, and its role (`tier` / `attribute` /
+`date` / `text`). `src/data.py` resolves the feed against that schema and knows
+no column name of its own; `field_label`, `tier_fields` and
+`filterable_fields` are the accessors consumers read. `IndexFamilyName` maps to
+the internal `category` field — there is no separate "family" dimension yet
+(#210 renames the tiers). The metadata DataFrame also has a derived `ticker`
+column = `<key> + " Index"`. `Currency` and `Description` are metadata (BQL
+only supplies `px_last`, not reference fields); `load_metadata` pads any
+missing schema column with `NA`, so records without a `Currency` or
+`Description` key still load. A feed using a legacy alias, or carrying a key
+the schema does not know, loads with a warning rather than failing.
 `Description` (added in v0.9.0) is a free-text per-index blurb surfaced in the
 Single Strategy profile card; it is NA-safe when absent.
 

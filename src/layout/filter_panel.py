@@ -443,11 +443,13 @@ def make_filter_panel(
         """
         return apply_filters(
             meta,
-            asset_classes=cat_widgets["asset_class"].get(),
-            categories=cat_widgets["category"].get(),
-            themes=cat_widgets["theme"].get(),
-            return_types=cat_widgets["return_type"].get(),
-            currencies=currency_get(),
+            {
+                "asset_class": cat_widgets["asset_class"].get(),
+                "category": cat_widgets["category"].get(),
+                "theme": cat_widgets["theme"].get(),
+                "return_type": cat_widgets["return_type"].get(),
+                "currency": currency_get(),
+            },
             live_date_min=live_min.value,
             live_date_max=live_max.value,
         )
