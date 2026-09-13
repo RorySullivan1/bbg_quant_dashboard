@@ -262,8 +262,8 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
     info_block = _build_info_block(
         meta,
         pt.index,
-        ["name", "asset_class", "theme"],
-        {"name": "Name", "asset_class": "Asset Class", "theme": "Theme"},
+        ["name", "asset_class", "category"],
+        {"name": "Name", "asset_class": "Asset Class", "category": "Category"},
     )
     # Per-row color swatch: each cell carries the hex string; the renderer
     # paints background + text the same color so it shows as a solid block —
@@ -513,12 +513,12 @@ def _build_universe_frame(
     info = _build_info_block(
         meta,
         None,
-        ["name", "asset_class", "category", "theme", "return_type", "live_date"],
+        ["name", "asset_class", "family", "category", "return_type", "live_date"],
         {
             "name": "Name",
             "asset_class": "Asset Class",
+            "family": "Family",
             "category": "Category",
-            "theme": "Theme",
             "return_type": "Return Type",
             "live_date": "Live Date",
         },

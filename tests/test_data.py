@@ -24,14 +24,17 @@ from src.config import (
 )
 from src.data import META_COLUMNS, _rename_from_schema, apply_filters, load_metadata
 
-#: The columns `load_metadata` produced under the pre-schema `COLUMN_MAP`, in
-#: order. Pinned here so the schema refactor is provably behaviour-preserving.
-_LEGACY_META_COLUMNS = [
+#: The columns `load_metadata` produces, in order. Pinned so a schema edit that
+#: adds, drops or reorders a field has to say so here. `family` and `category`
+#: are the re-keyed tiers: before the re-key this list read `category`, `theme`
+#: — the same two positions, which is exactly why a half-done rename would have
+#: gone unnoticed.
+_EXPECTED_META_COLUMNS = [
     "ticker",
     "name",
     "asset_class",
+    "family",
     "category",
-    "theme",
     "solution",
     "return_type",
     "live_date",
@@ -49,9 +52,8 @@ def _write(tmp_path, raw: dict) -> str:
 # --- schema ---------------------------------------------------------------
 
 
-def test_meta_columns_unchanged_by_the_schema_refactor():
-    """The schema reproduces `COLUMN_MAP`'s column set and order exactly."""
-    assert META_COLUMNS == _LEGACY_META_COLUMNS
+def test_meta_columns_match_the_expected_order():
+    assert META_COLUMNS == _EXPECTED_META_COLUMNS
 
 
 def test_description_field_is_registered():
@@ -78,7 +80,7 @@ def test_filterable_fields_exclude_dates_and_free_text():
     keys = {f.key for f in filterable_fields()}
     assert "live_date" not in keys  # role "date": has its own min/max arguments
     assert "description" not in keys and "name" not in keys  # role "text"
-    assert {"asset_class", "category", "theme", "solution"} <= keys
+    assert {"asset_class", "family", "category", "solution"} <= keys
 
 
 # --- alias resolution -----------------------------------------------------
@@ -120,6 +122,52 @@ def test_canonical_wins_when_both_aliases_are_present(monkeypatch):
     with pytest.warns(UserWarning, match="not in CATALOG_SCHEMA"):
         renamed = _rename_from_schema(both)
     assert renamed["family"].tolist() == ["new"]
+
+
+def test_an_old_shape_feed_lands_each_tier_in_the_right_column(tmp_path):
+    """The swap guard.
+
+    The re-key is the one change in this epic that can ship wrong while every
+    test still passes: the new external `Category` is the *old* `Theme`, and the
+    old internal `category` was the *family*. Renaming the feed keys without the
+    internal fields — or vice versa — silently transposes two dimensions, and
+    every assertion that merely pins a string keeps passing because all the
+    strings still exist. So assert the values, not the names: the family value
+    must land in `family` and the category value in `category`.
+    """
+    old_shape = {
+        "BSLXAC": {
+            "Name": "Cross-Asset Carry",
+            "AssetClass": "Multi-Asset",
+            "IndexFamilyName": "Cross-Sectional Carry",  # → family
+            "Theme": "Carry",  # → category
+            "Solution": "Alternative Risk Premia",
+            "ReturnType": "Excess",
+            "Currency": "USD",
+            "LiveDate": "2016-06-30",
+            "Description": "x",
+        }
+    }
+    with pytest.warns(UserWarning, match="legacy column names"):
+        meta = load_metadata(_write(tmp_path, old_shape))
+
+    row = meta.iloc[0]
+    assert row["family"] == "Cross-Sectional Carry"
+    assert row["category"] == "Carry"
+    assert row["solution"] == "Alternative Risk Premia"
+
+
+def test_the_shipped_catalog_is_new_shape_and_loads_silently():
+    """`data/indexdb.json` carries no legacy keys, so loading warns about nothing."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        meta = load_metadata()
+    assert {"family", "category", "solution"} <= set(meta.columns)
+    assert meta["family"].notna().any() and meta["category"].notna().any()
+
+
+def test_the_tier_order_is_class_category_family():
+    assert CLASSIFICATION_TIERS == ("solution", "category", "family")
 
 
 def test_unknown_feed_key_warns_and_is_dropped(tmp_path):
@@ -171,15 +219,15 @@ def _catalog() -> pd.DataFrame:
         {
             "ticker": ["A Index", "B Index", "C Index"],
             "asset_class": ["Equity", "Equity", "Rates"],
-            "category": ["Carry", "Value", "Carry"],
-            "theme": ["Alt", "Alt", "Core"],
+            "family": ["Carry", "Value", "Carry"],
+            "category": ["Alt", "Alt", "Core"],
             "live_date": pd.to_datetime(["2020-01-01", "2021-01-01", "2022-01-01"]),
         }
     )
 
 
 def test_filters_by_field_mapping():
-    got = apply_filters(_catalog(), {"asset_class": ["Equity"], "category": ["Carry"]})
+    got = apply_filters(_catalog(), {"asset_class": ["Equity"], "family": ["Carry"]})
     assert got["ticker"].tolist() == ["A Index"]
 
 

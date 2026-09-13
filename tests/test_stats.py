@@ -544,14 +544,14 @@ def test_platform_sunburst_frame_columns_and_join(multiyear_prices):
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
-            "theme": ["Growth", "Credit", "Energy"],
+            "category": ["Growth", "Credit", "Energy"],
         }
     )
     frame = stats.platform_sunburst_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["asset_class", "theme", "z"]
+    assert list(frame.columns) == ["asset_class", "category", "z"]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
-    assert frame.loc["BBB Index", "theme"] == "Credit"
+    assert frame.loc["BBB Index", "category"] == "Credit"
     assert frame["z"].notna().any()
     # Default: z(1W Sharpe, 1Y).
     expected = stats.rolling_metric_zscore(
@@ -568,7 +568,7 @@ def test_platform_sunburst_frame_honors_metric_params(multiyear_prices):
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
-            "theme": ["Growth", "Credit", "Energy"],
+            "category": ["Growth", "Credit", "Energy"],
         }
     )
     frame = stats.platform_sunburst_frame(
@@ -590,9 +590,9 @@ def test_platform_sunburst_frame_honors_metric_params(multiyear_prices):
 
 
 def test_platform_sunburst_frame_empty_safe():
-    meta = pd.DataFrame({"ticker": [], "asset_class": [], "theme": []})
+    meta = pd.DataFrame({"ticker": [], "asset_class": [], "category": []})
     out = stats.platform_sunburst_frame(pd.DataFrame(), meta)
-    assert list(out.columns) == ["asset_class", "theme", "z"]
+    assert list(out.columns) == ["asset_class", "category", "z"]
     assert out.empty
 
 
