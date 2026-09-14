@@ -81,12 +81,14 @@ def _isolate_user_benchmarks(monkeypatch, tmp_path):
     later tests *and* into the developer's repo, which is exactly the failure
     it caused when the persistence wiring first landed.
 
-    The module binds the path at import, so the patch has to target the module
-    attribute rather than ``config``.
+    Swaps in a fresh `UserBenchmarkStore` per test (#221), which carries both
+    the path and the writability probe — so isolation is one substitution
+    rather than a monkeypatched constant plus a global reset. The module
+    constant is patched too, for the tests that address the path directly.
     """
+    path = tmp_path / "user_benchmarks.json"
+    monkeypatch.setattr(user_benchmarks, "USER_BENCHMARKS_PATH", path)
     monkeypatch.setattr(
-        user_benchmarks, "USER_BENCHMARKS_PATH", tmp_path / "user_benchmarks.json"
+        user_benchmarks, "_DEFAULT_STORE", user_benchmarks.UserBenchmarkStore(path)
     )
-    user_benchmarks._reset()
     yield
-    user_benchmarks._reset()

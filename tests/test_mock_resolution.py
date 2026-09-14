@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import src.bql_client as bc
+from src.price_cache import PriceCache
 
 _TICKERS = ["A Index", "B Index", "C Index"]
 _START = date(2022, 1, 3)
@@ -39,9 +40,13 @@ _END = date(2022, 6, 30)
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    """Fresh caches, a throwaway CACHE_DIR, and cleared seams for every test."""
+    """A private `PriceCache` and cleared mock seams for every test.
+
+    The substituted cache needs no reset; `_clear_caches` is still called for
+    the mock seams, which stay module state until #222.
+    """
+    monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
     bc._clear_caches()
-    monkeypatch.setattr(bc, "CACHE_DIR", tmp_path / "cache")
     yield
     bc._clear_caches()
 

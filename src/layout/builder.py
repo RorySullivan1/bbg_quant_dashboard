@@ -33,7 +33,7 @@ import pandas as pd
 from IPython import get_ipython
 from IPython.display import display
 
-from ..bql_client import TickersUnresolved, _cache_path, fetch_prices
+from ..bql_client import _DEFAULT_CACHE, TickersUnresolved, fetch_prices
 from ..commentary import build_launch_cards, build_superlatives, superlative_returns
 from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
@@ -321,7 +321,7 @@ def build_app(verbose: bool = False) -> W.VBox:
             # An in-memory cache hit can report "cache" with no parquet on disk
             # (e.g. a read-only filesystem), so the mtime stamp is best-effort.
             try:
-                mtime = _cache_path(today).stat().st_mtime
+                mtime = _DEFAULT_CACHE.path_for(today).stat().st_mtime
                 stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
                 suffix = f" ({stamp})"
             except OSError:
