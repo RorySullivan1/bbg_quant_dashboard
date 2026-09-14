@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.15`.
+- **Current version**: `v0.9.16`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -65,8 +65,8 @@ CSS, style tokens — live in `style.md`.)
   hooks* into the actual code.
 - **One BQL call per session**. `build_app` issues a single
   `fetch_prices(arp_tickers + BENCHMARK_TICKERS + FACTOR_TICKERS + REGIME_TICKERS, ...)`
-  request at load time (deduped, order-preserving) and caches the result in a
-  `universe_prices` closure variable. Every visualization — including the
+  request at load time (deduped, order-preserving) and caches the result on
+  `DashboardState.universe_prices`. Every visualization — including the
   all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
   tabs, the v0.7.0 Platform factor scatter + the v0.8.x sunburst, and the v0.8.5
   Regime Analysis charts — slices from that cache. The `FACTOR_TICKERS` (v0.7.0: a
@@ -78,28 +78,32 @@ CSS, style tokens — live in `style.md`.)
   `NFCIRISK` with the Risk regime) ride this same fetch — *no second BQL call* — and, like the
   benchmarks, are excluded from the ARP-universe views via
   `reindex(columns=meta["ticker"])`.
-- **Two-tier price cache (v0.6.9; incremental in v0.9.13 #165)**.
-  `fetch_prices` is fronted by an **in-memory session superset** — one growing
-  frame `_MEM_SUPERSET` plus the date interval it covers `_MEM_COVER` — checked
-  **before** the **on-disk trading-day** parquet
+- **Two-tier price cache (v0.6.9; incremental in v0.9.13 #165; a `PriceCache`
+  object since v0.9.16 #221)**. `fetch_prices` is fronted by a `PriceCache`
+  (`src/price_cache.py`) holding an **in-memory session superset** — one
+  growing frame plus the date interval it covers — checked **before** the
+  **on-disk trading-day** parquet
   `data/.cache/prices_{YYYY-MM-DD}.parquet`. Any request whose tickers ⊆ the
   superset's columns **and** whose `[start, end]` ⊆ the covered interval is
-  served by *slicing* (`_covers` → `_serve`), no BQL. On a **miss**, only the
+  served by *slicing* (`covers` → `serve`), no BQL. On a **miss**, only the
   missing rectangle is fetched — new tickers over the needed span, and/or the
-  existing columns over the uncovered date extension (`_delta_specs`, non-
+  existing columns over the uncovered date extension (`delta_specs`, non-
   overlapping so cached values are never disturbed) — then merged in
-  (`_merge_superset`, fresh wins). So **extending the lookback or adding an
+  (`merge`, fresh wins). So **extending the lookback or adding an
   index costs a delta, not a whole-universe refetch** — the key v0.9.13
   scalability fix. The cover is tracked separately from the data index, so a
   weekend/holiday `end` (no trading row) still counts as covered.
   `use_cache=False` (Refresh) refetches the full request and overwrites the
   overlap. The disk write is **best-effort**: on a read-only filesystem (or any
-  write failure) `_cache_write` warns once, sets `_disk_cache_writable = False`,
+  write failure) `write_disk` warns once, sets `disk_writable = False`,
   and the in-memory superset carries the session — the app never crashes on a
-  read-only FS. `_cache_read` is containment-aware (column-pushdown
+  read-only FS. `read_disk` is containment-aware (column-pushdown
   `read_parquet(columns=…)`, left-date coverage) and swallows read errors as a
-  clean miss; `_cache_write` writes the superset and prunes past-TTL files
-  (`_prune_cache_files`). `_clear_caches()` resets both tiers for tests. The
+  clean miss; `write_disk` writes the superset and prunes past-TTL files
+  (`prune`). `clear()` resets both tiers for tests. `bql_client` holds one
+  `_DEFAULT_CACHE` instance and `fetch_prices(..., cache=...)` takes another,
+  so a test gets a hermetic cache by constructing one rather than by resetting
+  module globals. The
   directory is gitignored. *(Not yet done: a pyarrow dataset partitioned by
   ticker for per-ticker on-disk append — the disk tier still writes one whole-
   superset parquet per `end` day.)*
@@ -147,13 +151,13 @@ CSS, style tokens — live in `style.md`.)
   Workstream D)**: each `AnalysisPane` owns one fresh plotly `FigureWidget`
   per analysis type (unique instances, so the two panes never share). The
   `FigureWidget`s are pre-built but **not** all populated on recompute —
-  `_render_pane` renders only the **currently-mounted** view per pane and
+  `render_pane` renders only the **currently-mounted** view per pane and
   records it in `pane.fresh`; the other eight are populated on **first
-  pick** by `_bind_lazy_render`'s `pane.picker` observer (then added to
+  pick** by `bind_lazy_render`'s `pane.picker` observer (then added to
   `pane.fresh`), so a revisit is a free `pane.stack.children` swap. Picker
   changes still never fetch; the swap (in `panes.py` `_on_pick`) is
   unchanged. `pane.fresh` is reset on every recompute (only the mounted
-  view is re-rendered) and emptied by `_clear_pane`; the lazy observer
+  view is re-rendered) and emptied by `clear_pane`; the lazy observer
   no-ops while `state.cur_prep is None`.
 - **Chart updates go through `fig.batch_update()`**: every `_update_*`
   helper mutates the FigureWidget inside a `batch_update()` block so the
@@ -185,8 +189,9 @@ CSS, style tokens — live in `style.md`.)
   `cur_win_start` / `cur_win_end`) — no BQL fetch, no full recompute, the
   other pane untouched. The four benchmark-dependent chart blocks live in
   the shared `_render_heatmap` / `_render_rolling_corr` /
-  `_render_rolling_beta` / `_render_outperf` closures, called by both
-  `_render_pane` (full recompute) and `_bind_live_controls` (the live
+  `_render_rolling_beta` / `_render_outperf` module functions in
+  `multi_strategy.py` — each taking `(ctx, pane)` since v0.9.16 #217 — called by
+  both `render_pane` (full recompute) and `bind_live_controls` (the live
   `.observe` handlers). Live observers no-op when `state.cur_prep is None`
   (no valid selection) and swallow per-chart errors (the chart's own
   except-branch leaves it safe; a broken benchmark still surfaces on the
@@ -223,14 +228,14 @@ CSS, style tokens — live in `style.md`.)
   `[win_start, win_end]`. Editing a date box only enforces `min ≤ max`
   (v0.7.5: the `SelectionRangeSlider` was removed) — the re-slice happens
   on the next Refresh prices. Bounds re-derive from the selection on every
-  Refresh: a `last_sel_key` closure tracks the rendered ticker set, so a
+  Refresh: `DashboardState.last_sel_key` tracks the rendered ticker set, so a
   **changed** basket resets the boxes to the new full overlap, while an
   **unchanged** basket preserves the user's narrowed range (clamped to
   current bounds). The overlap window's ends are persisted on
   `DashboardState.cur_bound_start` / `cur_bound_end`; `Clear all` snaps the
   boxes back to that full span; `Clear section` leaves them untouched (it
-  is not a filter pill). All of this lives in `build_app`'s closures in
-  `src/layout/builder.py` (`_set_date_bounds`, `_on_range_box`).
+  is not a filter pill). All of this lives on `DashboardApp`
+  (`src/layout/app.py`: `_set_date_bounds`, `_on_range_box`).
 - **Inline HTML lives in `data/templates/`, not Python.** Every HTML
   snippet the UI builds (banner, status banner, section labels, quant-row
   labels, the two-section Key-Highlights cards/wrapper (`superlative_card`,

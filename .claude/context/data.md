@@ -88,15 +88,22 @@ resolution, and wide-form pivot are documented in
 **`.claude/skills/bquant-dashboard-spec/SKILL.md` §2** (the platform reference).
 Project-specific hooks:
 
-- `src/bql_client.py`'s case-insensitive column resolver is `_pick_column`.
-- The mock path is `_mock_prices`. If you change the BQL query, update
-  `_mock_prices` in lockstep so live and mock paths return the same shape.
+  Both paths live in `src/price_source.py` since v0.9.16 #222 — `BqlPriceSource`
+  and `MockPriceSource`, two implementations of the `PriceSource` protocol —
+  and `bql_client.fetch_prices` only orchestrates between one of them and a
+  `PriceCache`.
+
+- The case-insensitive column resolver is `_pick_column`.
+- The mock path is `MockPriceSource.fetch`. If you change the BQL query, update
+  it in lockstep so live and mock paths return the same shape.
 - **Batched fetch (v0.9.13, #164):** the startup fetch is not one whole-universe
-  request — `_fetch_via_bql` issues one BQL request per **batch** of
-  `BQL_BATCH_SIZE` tickers (default 100) via `_assemble_batches`, so hundreds of
+  request — `BqlPriceSource.fetch` issues one BQL request per **batch** of
+  `batch_size` tickers (default `BQL_BATCH_SIZE` = 100) via `assemble_batches`,
+  so hundreds of
   tickers over a multi-year window don't hit BQL's per-request row / wall-clock
   limits. Each batch is retried with exponential backoff
-  (`BQL_MAX_RETRIES` / `BQL_RETRY_BACKOFF_S`, see `_fetch_batch_with_retry`); a
+  (`max_retries` / `backoff_s`, defaulting to `BQL_MAX_RETRIES` /
+  `BQL_RETRY_BACKOFF_S`, see `fetch_batch_with_retry`); a
   batch that still fails **degrades to NaN columns** (warned, not fatal) so a few
   unresolvable tickers can't blank the load. Only when *every* batch fails does
   the fetch raise. `_reshape_bql_response` pivots each batch's long-form response
