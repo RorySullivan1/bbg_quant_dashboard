@@ -75,8 +75,8 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     ss.picker.value = "AAA Index"
     ss.state = state
     ss.render(meta, window_start)
-    assert len(ss.line_fig.data) == 1  # strategy only, no overlay
-    assert not ss.perf_grid.data.empty
+    assert len(ss.line.fig.data) == 1  # strategy only, no overlay
+    assert not ss.perf_grid.grid.data.empty
     assert "Alpha" in ss.profile_w.value
 
     # Toggling the overlay adds the benchmark trace.
@@ -84,7 +84,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     ss.bench_dd.value = "SPXFP Index"
     ss.state = state
     ss.render(meta, window_start)
-    assert len(ss.line_fig.data) == 2
+    assert len(ss.line.fig.data) == 2
 
 
 def test_render_single_strategy_reacts_to_picker(multiyear_prices, benchmark):
@@ -111,10 +111,10 @@ def test_render_single_strategy_empty_cache_no_raise():
     state = SimpleNamespace(universe_prices=pd.DataFrame())
     ss.state = state
     ss.render(meta, pd.Timestamp("2020-01-01"))
-    assert len(ss.line_fig.data) == 0
-    assert ss.perf_grid.data.empty
+    assert len(ss.line.fig.data) == 0
+    assert ss.perf_grid.grid.data.empty
     # Section 1 recompute also drives the calendar — it should clear too.
-    assert ss.cal_grid.data.empty
+    assert ss.cal_grid.grid.data.empty
 
 
 _CAL_MONTHS = [
@@ -147,7 +147,7 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
 
     ss.state = state
     ss.render_calendar()
-    data = ss.cal_grid.data
+    data = ss.cal_grid.grid.data
     # Default kind is absolute → Return / Vol / Sharpe summary columns.
     assert list(data.columns) == _cal_cols("absolute")
     # Oldest year on top (ascending), years rendered as string labels.
@@ -170,8 +170,8 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
         ss.state = state
         ss.render_calendar()
         # Each kind drives its own summary columns.
-        assert list(ss.cal_grid.data.columns) == _cal_cols(kind)
-        assert not ss.cal_grid.data.empty
+        assert list(ss.cal_grid.grid.data.columns) == _cal_cols(kind)
+        assert not ss.cal_grid.grid.data.empty
 
 
 def test_calendar_tabs_cover_every_kind():
@@ -220,8 +220,8 @@ def test_render_section3_renders_both_panes(multiyear_prices, benchmark):
 
     ss.state = state
     ss.render_section3(meta, universe.index.min())
-    assert len(ss.pane_left.weekly_fig.data) == 2  # markers + quadratic fit
-    assert len(ss.pane_right.factor_fig.data) == 1  # one monthly point cloud
+    assert len(ss.pane_left.weekly.fig.data) == 2  # markers + quadratic fit
+    assert len(ss.pane_right.factor.fig.data) == 1  # one monthly point cloud
 
 
 def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
@@ -235,8 +235,8 @@ def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
 
     ss.state = state
     ss.render_analysis_pane(pane, meta, universe.index.min())
-    assert len(pane.retdist_fig.data) >= 1
-    assert not pane.retdist_stats_grid.data.empty
+    assert len(pane.retdist.fig.data) >= 1
+    assert not pane.retdist.stats_grid.data.empty
 
 
 def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):
@@ -251,7 +251,7 @@ def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):
     ss.state = state
     ss.render_analysis_pane(pane, meta, universe.index.min())
     # Strategy + benchmark drawdown lines.
-    assert len(pane.dd_fig.data) == 2
+    assert len(pane.dd.fig.data) == 2
 
 
 def test_render_analysis_pane_factor_scoring(multiyear_prices, benchmark):
@@ -266,7 +266,7 @@ def test_render_analysis_pane_factor_scoring(multiyear_prices, benchmark):
 
     ss.state = state
     ss.render_analysis_pane(pane, meta, universe.index.min())
-    bar = pane.factor_score_fig.data[0]
+    bar = pane.factor_score.fig.data[0]
     # All three macro-factor betas resolve from the mock cache.
     assert list(bar.x) == ["Equity risk premium", "Term premium", "Trend"]
     assert len(bar.y) == 3
@@ -276,16 +276,16 @@ def test_render_analysis_pane_stubs_show_placeholder():
     meta = _meta()
     ss = SingleStrategyPanel(meta, None)
     state = SimpleNamespace(universe_prices=pd.DataFrame())
-    for label, fig_attr in (
-        ("Performance Ranking", "ranking_fig"),
-        ("PCA Analysis", "pca_fig"),
-        ("Defensive Scoring", "defensive_fig"),
+    for label, chart_attr in (
+        ("Performance Ranking", "ranking"),
+        ("PCA Analysis", "pca"),
+        ("Defensive Scoring", "defensive"),
     ):
         pane = ss.pane_left
         _set_pane(pane, label)
         ss.state = state
         ss.render_analysis_pane(pane, meta, pd.Timestamp("2020-01-01"))
-        fig = getattr(pane, fig_attr)
+        fig = getattr(pane, chart_attr).fig
         assert len(fig.data) == 0
         assert len(fig.layout.annotations) == 1
 
@@ -311,10 +311,10 @@ def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
     ss.render_section3(meta, multiyear_prices.index.min())
     # Weekly scatter traces are pre-allocated (in-place update), so "cleared"
     # means the marker trace has no points, not zero traces.
-    assert len(ss.pane_left.weekly_fig.data) == 2
-    assert not ss.pane_left.weekly_fig.data[0].x  # no benchmark → cleared
+    assert len(ss.pane_left.weekly.fig.data) == 2
+    assert not ss.pane_left.weekly.fig.data[0].x  # no benchmark → cleared
     # Strategy-only histogram still renders.
-    assert len(ss.pane_right.retdist_fig.data) >= 1
+    assert len(ss.pane_right.retdist.fig.data) >= 1
 
 
 def test_render_section3_empty_cache_no_raise():
@@ -326,9 +326,9 @@ def test_render_section3_empty_cache_no_raise():
     ss.state = state
     ss.render_section3(meta, pd.Timestamp("2020-01-01"))
     # Weekly scatter keeps its 2 pre-allocated traces but with no data points.
-    assert len(ss.pane_left.weekly_fig.data) == 2
-    assert not ss.pane_left.weekly_fig.data[0].x
-    assert len(ss.pane_right.factor_fig.data) == 0
+    assert len(ss.pane_left.weekly.fig.data) == 2
+    assert not ss.pane_left.weekly.fig.data[0].x
+    assert len(ss.pane_right.factor.fig.data) == 0
 
 
 # --- the panel object model (#244) -------------------------------------------
@@ -348,12 +348,12 @@ def test_panel_owns_its_widgets_and_opens_on_the_first_calendar_kind():
 
 
 def test_two_panels_share_no_widgets():
-    # Nothing builds two today, but a shared figure or picker would make one
+    # Nothing builds two today, but a shared chart or picker would make one
     # panel's render overwrite the other's — the same trap #216 guarded for.
     a, b = SingleStrategyPanel(_meta(), None), SingleStrategyPanel(_meta(), None)
-    assert a.line_fig is not b.line_fig
+    assert a.line.fig is not b.line.fig
     assert a.picker is not b.picker
-    assert a.pane_left.weekly_fig is not b.pane_left.weekly_fig
+    assert a.pane_left.weekly.fig is not b.pane_left.weekly.fig
     a.set_calendar_kind("outperformance")
     assert b.cal_kind == _CALENDAR_TABS[0][1]
 

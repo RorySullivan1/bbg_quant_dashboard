@@ -44,24 +44,15 @@ from ..stats import (
 from ..style import Color
 from .benchmarks import BenchmarkRegistry
 from .charts import (
-    _update_defensive,
-    _update_drawdown,
-    _update_factor_corr_scatter,
-    _update_factor_scoring,
-    _update_line,
-    _update_pca,
-    _update_perf_ranking,
-    _update_return_dist,
-    _update_weekly_scatter,
+    LineChart,
 )
 from .chrome import _make_tab_button, _style_tab_button
 from .filter_panel import make_filter_panel
 from .filters import _ticker_options
-from .grids import _calendar_grid, _perf_grid, _update_calendar_grid, _update_perf_grid
+from .grids import CalendarGrid, PerfGrid
 from .html import STYLE_CTX, _render_profile_card, render_template
 from .panes import (
     SingleAnalysisPane,
-    _line_chart,
     _make_benchmark_dropdown,
     _make_single_analysis_pane,
 )
@@ -86,7 +77,7 @@ class SingleStrategyPanel:
 
     Owns every widget the builder binds and re-renders — the strategy `picker`,
     the shared `bench_dd` + `bench_chk` overlay toggle, the `profile_w` card,
-    the `line_fig` cumulative chart, the compact `perf_grid`, the calendar
+    the `line` cumulative chart, the compact `perf_grid`, the calendar
     (`cal_grid` + `cal_pills`, with `cal_kind` the active mode), the filter
     panel, and the two `SingleAnalysisPane`s — and renders into them.
 
@@ -157,8 +148,8 @@ class SingleStrategyPanel:
         )
 
         profile_w = W.HTML()
-        line_fig = _line_chart()
-        perf_grid = _perf_grid()
+        line = LineChart()
+        perf_grid = PerfGrid()
 
         profile_header = W.HTML(
             render_template("grid_header", **STYLE_CTX, text="Strategy profile")
@@ -171,7 +162,7 @@ class SingleStrategyPanel:
             layout=W.Layout(width="38%", padding="0 8px 0 0"),
         )
         right_col = W.VBox(
-            [line_fig],
+            [line.fig],
             layout=W.Layout(width="62%"),
         )
         profile_chart_row = W.HBox(
@@ -181,7 +172,7 @@ class SingleStrategyPanel:
         # Standard-performance table spans the full section width, below the
         # profile-card + cumulative-chart row.
         perf_block = W.VBox(
-            [perf_header, perf_grid],
+            [perf_header, perf_grid.grid],
             layout=W.Layout(width="100%", padding="8px 0 0 0"),
         )
         section1 = W.VBox(
@@ -198,14 +189,15 @@ class SingleStrategyPanel:
             cal_pills,
             layout=W.Layout(width="100%", margin="0 0 4px 0"),
         )
-        cal_grid = _calendar_grid()
+        cal_grid = CalendarGrid()
         cal_header = W.HTML(
             render_template("grid_header", **STYLE_CTX, text="Monthly return calendar")
         )
         section2_slot = W.Box(
             [
                 W.VBox(
-                    [cal_header, cal_pill_bar, cal_grid], layout=W.Layout(width="100%")
+                    [cal_header, cal_pill_bar, cal_grid.grid],
+                    layout=W.Layout(width="100%"),
                 )
             ],
             layout=W.Layout(width="100%", padding="8px 0 0 0"),
@@ -238,7 +230,7 @@ class SingleStrategyPanel:
         self.bench_dd = bench_dd
         self.bench_chk = bench_chk
         self.profile_w = profile_w
-        self.line_fig = line_fig
+        self.line = line
         self.perf_grid = perf_grid
         self.cal_grid = cal_grid
         self.cal_pills = cal_pills
@@ -272,8 +264,8 @@ class SingleStrategyPanel:
             or prices.empty
             or ticker not in prices.columns
         ):
-            _update_line(self.line_fig, pd.DataFrame())
-            _update_perf_grid(self.perf_grid, pd.DataFrame(), meta)
+            self.line.clear()
+            self.perf_grid.clear()
             return
 
         cols = [ticker]
@@ -282,11 +274,11 @@ class SingleStrategyPanel:
             if bench in prices.columns and bench != ticker:
                 cols.append(bench)
         window = prices.loc[prices.index >= window_start, cols]
-        _update_line(self.line_fig, cum_perf(window))
+        self.line.update(cum_perf(window))
 
         full = prices[[ticker]]
         pt = pd.concat([perf_table(full), since_inception_perf(full)], axis=1)
-        _update_perf_grid(self.perf_grid, pt, meta)
+        self.perf_grid.update(pt, meta)
 
         self.render_calendar()
         self.render_section3(meta, window_start)
@@ -314,14 +306,14 @@ class SingleStrategyPanel:
             or prices.empty
             or ticker not in prices.columns
         ):
-            _update_calendar_grid(self.cal_grid, pd.DataFrame(), kind=kind)
+            self.cal_grid.clear()
             return
         benchmark = None
         if kind in _CALENDAR_BENCHMARK_KINDS:
             bench = self.bench_dd.value
             benchmark = prices[bench] if bench in prices.columns else None
         table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
-        _update_calendar_grid(self.cal_grid, table, kind=kind)
+        self.cal_grid.update(table, kind=kind)
 
     def render_section3(self, meta: pd.DataFrame, window_start: pd.Timestamp) -> None:
         """Render both Section 3 analysis panes' currently-mounted views for the
@@ -348,13 +340,13 @@ class SingleStrategyPanel:
 
         # Stubs don't depend on the price cache.
         if label == "Performance Ranking":
-            _update_perf_ranking(pane.ranking_fig, None)
+            pane.ranking.update(None)
             return
         if label == "PCA Analysis":
-            _update_pca(pane.pca_fig)
+            pane.pca.update()
             return
         if label == "Defensive Scoring":
-            _update_defensive(pane.defensive_fig)
+            pane.defensive.update()
             return
 
         valid = not (
@@ -377,26 +369,20 @@ class SingleStrategyPanel:
             if has_bench:
                 bench_w = weekly_returns(win[[bench]])[bench]
                 strat_w = weekly_returns(win[[ticker]])[ticker]
-                _update_weekly_scatter(pane.weekly_fig, bench_w, strat_w)
+                pane.weekly.update(bench_w, strat_w)
             else:
-                _update_weekly_scatter(pane.weekly_fig, None, None)
+                pane.weekly.clear()
         elif label == "Return Distribution":
             dist_cols = [ticker, bench] if has_bench else [ticker]
             rets = daily_returns(win[dist_cols])
-            _update_return_dist(
-                pane.retdist_fig,
-                pane.retdist_stats_grid,
-                rets,
-                return_distribution_stats(rets),
-                meta,
-            )
+            pane.retdist.update(rets, return_distribution_stats(rets), meta)
         elif label == "Drawdown":
             dd_cols = [ticker, bench] if has_bench else [ticker]
-            _update_drawdown(pane.dd_fig, drawdown_series(win[dd_cols]))
+            pane.dd.update(drawdown_series(win[dd_cols]))
         elif label == "Factor Scatter":
             _render_factor_scatter(pane, prices, win, ticker)
         elif label == "Factor Scoring":
-            _update_factor_scoring(pane.factor_score_fig, _factor_betas(prices, ticker))
+            pane.factor_score.update(_factor_betas(prices, ticker))
 
 
 def _clear_analysis_view(
@@ -404,21 +390,15 @@ def _clear_analysis_view(
 ) -> None:
     """Clear the figure backing one analysis `label` (no valid selection)."""
     if label == "Weekly Scatter":
-        _update_weekly_scatter(pane.weekly_fig, None, None)
+        pane.weekly.clear()
     elif label == "Return Distribution":
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            pd.DataFrame(),
-            pd.DataFrame(),
-            meta,
-        )
+        pane.retdist.update(pd.DataFrame(), pd.DataFrame(), meta)
     elif label == "Drawdown":
-        _update_drawdown(pane.dd_fig, pd.DataFrame())
+        pane.dd.clear()
     elif label == "Factor Scatter":
-        _update_factor_corr_scatter(pane.factor_fig, None, None, None)
+        pane.factor.clear()
     elif label == "Factor Scoring":
-        _update_factor_scoring(pane.factor_score_fig, None)
+        pane.factor_score.clear()
 
 
 def _render_factor_scatter(
@@ -439,8 +419,7 @@ def _render_factor_scatter(
     m_ret = monthly_returns(win[[ticker]])[ticker]
     m_vol = monthly_realized_vol(daily_returns(win[[ticker]]))[ticker]
     risk_adj = m_ret.divide(m_vol.replace(0, pd.NA))
-    _update_factor_corr_scatter(
-        pane.factor_fig,
+    pane.factor.update(
         erp_corr.reindex(idx),
         tp_corr.reindex(idx),
         risk_adj.reindex(idx),

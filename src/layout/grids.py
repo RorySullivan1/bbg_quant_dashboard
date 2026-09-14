@@ -15,6 +15,8 @@ diverging red→green background to the Sharpe and Z-Score columns.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import ipywidgets as W
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
@@ -86,18 +88,84 @@ def _reassert_dark_theme(grid: DataGrid) -> None:
     grid.send_state("grid_style")
 
 
-def _perf_grid() -> DataGrid:
-    grid = DataGrid(
-        pd.DataFrame(),
-        base_row_size=28,
-        base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
-        base_column_header_size=26,  # single-row header (flat, single-index)
-        base_row_header_size=110,  # re-fit to the ticker content per update
-        layout=W.Layout(width="100%", height="240px"),
-        **_dark_grid_kwargs(),
-    )
-    grid.add_class("bbg-grid")
-    return grid
+class _Grid:
+    """One `DataGrid` and the code that refills it.
+
+    The subclass's `update` is the **only** place `grid.data` is assigned, and
+    `_set_data` re-asserts the dark theme on every assignment. That is the whole
+    point of these classes: the v0.6.5 theme-refresh invariant used to live in
+    each caller's memory — every `_update_*_grid` had to remember a trailing
+    `_reassert_dark_theme(grid)`, and a new grid or a new update path silently
+    reverted to ipydatagrid's white background if its author forgot. Here it is
+    structural.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        self.grid = DataGrid(pd.DataFrame(), **_dark_grid_kwargs(), **kwargs)
+        self.grid.add_class("bbg-grid")
+
+    def _set_data(
+        self,
+        frame: pd.DataFrame,
+        renderers: dict | None = None,
+        style: Callable[[pd.DataFrame], None] | None = None,
+    ) -> None:
+        """Assign `frame`, apply any styling, then restore the dark theme.
+
+        Every write goes through here, and the theme is re-asserted **last** —
+        `style` rewrites `renderers` / `column_widths`, so re-asserting before it
+        would leave the frontend holding the pre-style model.
+        """
+        self.grid.data = frame
+        if renderers is not None:
+            self.grid.renderers = renderers
+        if style is not None:
+            style(frame)
+        _reassert_dark_theme(self.grid)
+
+
+class PerfGrid(_Grid):
+    """The per-strategy performance grid — an Info block (color swatch, name,
+    classification) beside the flat 1Y/3Y/5Y stat columns.
+
+    Backs both the Multi-Strategy selected-set grid and the Single Strategy
+    per-strategy grid.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            base_row_size=28,
+            base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
+            base_column_header_size=26,  # single-row header (flat, single-index)
+            base_row_header_size=110,  # re-fit to the ticker content per update
+            layout=W.Layout(width="100%", height="240px"),
+        )
+
+    def update(self, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
+        if pt.empty:
+            self.clear()
+            return
+        info_block = _build_info_block(meta, pt.index, UNIVERSE_GRID_FIELDS)
+        # Per-row color swatch: each cell carries the hex string; the renderer
+        # paints background + text the same color so it shows as a solid block —
+        # the universal legend for every chart in the panes. It leads the Info
+        # columns so the grid acts as the legend left-to-right.
+        info_block.insert(
+            0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
+        )
+        # Flat single-index columns ("1Y Return", …) — single-row header, autofit
+        # of the descriptive columns, and clean per-column widths.
+        perf = pt.copy()
+        perf.columns = _flatten_perf_columns(pt.columns)
+        combined = pd.concat([info_block, perf], axis=1)
+        combined.index.name = "Ticker"
+        self._set_data(combined, style=self._style)
+
+    def _style(self, frame: pd.DataFrame) -> None:
+        _apply_grid_styling(self.grid, frame, sharpe_heatmap=True)
+
+    def clear(self) -> None:
+        self._set_data(pd.DataFrame())
 
 
 # The per-strategy chart-color swatch column. Its header is intentionally blank
@@ -255,30 +323,6 @@ def _plain_num_renderer(fmt: str, *, missing: str = "") -> TextRenderer:
     return renderer
 
 
-def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> None:
-    if pt.empty:
-        grid.data = pd.DataFrame()
-        _reassert_dark_theme(grid)
-        return
-    info_block = _build_info_block(meta, pt.index, UNIVERSE_GRID_FIELDS)
-    # Per-row color swatch: each cell carries the hex string; the renderer
-    # paints background + text the same color so it shows as a solid block —
-    # the universal legend for every chart in the panes. It leads the Info
-    # columns so the grid acts as the legend left-to-right.
-    info_block.insert(
-        0, PERF_COLOR_COLUMN_NAME, [_palette_color(i) for i in range(len(pt))]
-    )
-    # Flat single-index columns ("1Y Return", …) — single-row header, autofit
-    # of the descriptive columns, and clean per-column widths.
-    perf = pt.copy()
-    perf.columns = _flatten_perf_columns(pt.columns)
-    combined = pd.concat([info_block, perf], axis=1)
-    combined.index.name = "Ticker"
-    grid.data = combined
-    _apply_grid_styling(grid, combined, sharpe_heatmap=True)
-    _reassert_dark_theme(grid)
-
-
 def _build_info_block(
     meta: pd.DataFrame,
     tickers: pd.Index | None,
@@ -412,17 +456,32 @@ _CALENDAR_SUMMARY_SPECS = {
 _CALENDAR_MISSING: str = _MISSING_DASH
 
 
-def _calendar_grid() -> DataGrid:
-    grid = DataGrid(
-        pd.DataFrame(),
-        base_row_size=26,
-        base_column_size=62,
-        base_row_header_size=54,
-        layout=W.Layout(width="100%", height="260px"),
-        **_dark_grid_kwargs(),
-    )
-    grid.add_class("bbg-grid")
-    return grid
+class CalendarGrid(_Grid):
+    """The Single Strategy monthly-return calendar — years x Jan…Dec plus the
+    summary columns for the active `kind`."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            base_row_size=26,
+            base_column_size=62,
+            base_row_header_size=54,
+            layout=W.Layout(width="100%", height="260px"),
+        )
+
+    def update(self, table: pd.DataFrame, *, kind: str) -> None:
+        """Render a `calendar_return_table` frame (years x Jan…Dec + the kind's
+        summary columns), oldest year on top, with diverging conditional
+        formatting keyed to `kind`."""
+        if table is None or table.empty:
+            self.clear()
+            return
+        display = table.sort_index(ascending=True)
+        display.index = display.index.astype(int).astype(str)
+        display.index.name = ""
+        self._set_data(display, _calendar_renderers(display.columns, kind=kind))
+
+    def clear(self) -> None:
+        self._set_data(pd.DataFrame())
 
 
 def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
@@ -459,34 +518,35 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
     return renderers
 
 
-def _update_calendar_grid(grid: DataGrid, table: pd.DataFrame, *, kind: str) -> None:
-    """Render a `calendar_return_table` frame (years × Jan…Dec + the kind's
-    summary columns) into the calendar DataGrid, oldest year on top, with
-    diverging conditional formatting keyed to `kind`."""
-    if table is None or table.empty:
-        grid.data = pd.DataFrame()
-        _reassert_dark_theme(grid)
-        return
-    display = table.sort_index(ascending=True)
-    display.index = display.index.astype(int).astype(str)
-    display.index.name = ""
-    grid.data = display
-    grid.renderers = _calendar_renderers(display.columns, kind=kind)
-    _reassert_dark_theme(grid)
+class UniverseGrid(_Grid):
+    """The all-catalog Platform grid — every in-universe index with its metadata,
+    1Y/3Y/5Y performance and the selectable Z-Score column."""
 
+    def __init__(self) -> None:
+        super().__init__(
+            base_row_size=28,
+            base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
+            base_column_header_size=26,  # single-row header (flat, single-index)
+            base_row_header_size=110,  # re-fit to the ticker content per update
+            layout=W.Layout(width="100%", height="360px"),
+        )
 
-def _universe_grid() -> DataGrid:
-    grid = DataGrid(
-        pd.DataFrame(),
-        base_row_size=28,
-        base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
-        base_column_header_size=26,  # single-row header (flat, single-index)
-        base_row_header_size=110,  # re-fit to the ticker content per update
-        layout=W.Layout(width="100%", height="360px"),
-        **_dark_grid_kwargs(),
-    )
-    grid.add_class("bbg-grid")
-    return grid
+    def update(
+        self,
+        meta: pd.DataFrame,
+        up: pd.DataFrame,
+        *,
+        zcol: pd.Series | None = None,
+        zlabel: str | None = None,
+    ) -> None:
+        combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
+        self._set_data(combined, style=self._style)
+
+    def _style(self, frame: pd.DataFrame) -> None:
+        _apply_grid_styling(self.grid, frame, sharpe_heatmap=True)
+
+    def clear(self) -> None:
+        self._set_data(pd.DataFrame())
 
 
 def _build_universe_frame(
@@ -527,17 +587,3 @@ def _build_universe_frame(
         combined = combined.sort_values(z_key, ascending=False, na_position="last")
     combined.index.name = "Ticker"
     return combined
-
-
-def _update_universe_grid(
-    grid: DataGrid,
-    meta: pd.DataFrame,
-    up: pd.DataFrame,
-    *,
-    zcol: pd.Series | None = None,
-    zlabel: str | None = None,
-) -> None:
-    combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
-    grid.data = combined
-    _apply_grid_styling(grid, combined, sharpe_heatmap=True)
-    _reassert_dark_theme(grid)

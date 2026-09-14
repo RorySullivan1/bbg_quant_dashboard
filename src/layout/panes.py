@@ -23,18 +23,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import ipywidgets as W
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-from ipydatagrid import DataGrid
 
 from ..config import (
     DEFAULT_BENCHMARK,
-    LOOKBACK_YEARS,
 )
-from ..style import Color
 from .benchmarks import BenchmarkRegistry, BenchmarkSelect
-from .theme import SHARPE_WINDOW_LABEL, _chart_layout, _h_ref, _palette_color
+from .charts import (
+    CorrHeatmap,
+    DefensiveChart,
+    DrawdownChart,
+    FactorCorrChart,
+    FactorScoringChart,
+    LineChart,
+    OutperformanceChart,
+    PcaChart,
+    PerfRankingChart,
+    ReturnDistChart,
+    RollingRefChart,
+    ScatterChart,
+    SharpeZChart,
+    WeeklyScatterChart,
+)
 
 ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Cumulative Performance",
@@ -80,290 +89,6 @@ def _make_benchmark_dropdown(
     return dd
 
 
-def _line_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
-            hovermode="x unified",
-            xaxis=dict(title="Date"),
-            yaxis=dict(title="Rebased = 100"),
-        )
-    )
-
-
-def _outperformance_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"Outperformance ({LOOKBACK_YEARS}Y)",
-            hovermode="x unified",
-            xaxis=dict(title="Date"),
-            yaxis=dict(title="Excess return (pp)"),
-            shapes=[_h_ref(0.0)],
-        )
-    )
-
-
-def _heatmap() -> go.FigureWidget:
-    return go.FigureWidget(
-        data=[
-            go.Heatmap(
-                z=np.zeros((2, 2)),
-                x=["", " "],
-                y=["", " "],
-                colorscale="RdBu",
-                reversescale=True,
-                zmin=-1,
-                zmax=1,
-                zmid=0,
-                colorbar=dict(title="ρ", tickformat=".1f", thickness=14),
-                hovertemplate="%{y} vs %{x}<br>ρ = %{z:.2f}<extra></extra>",
-            )
-        ],
-        layout=_chart_layout(
-            title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
-            margin=dict(t=40, b=70, l=120, r=20),
-            xaxis=dict(tickangle=-75, tickfont=dict(size=10)),
-            yaxis=dict(autorange="reversed", tickfont=dict(size=10)),
-        ),
-    )
-
-
-def _sharpe_line_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"{SHARPE_WINDOW_LABEL} Rolling Sharpe — z-score (last 1Y)",
-            hovermode="x unified",
-            xaxis=dict(title="Date"),
-            yaxis=dict(title="Sharpe z-score"),
-            shapes=[_h_ref(0.0)],
-        )
-    )
-
-
-def _scatter_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        data=[
-            go.Scatter(
-                mode="markers",
-                x=[],
-                y=[],
-                marker=dict(size=[], color=[], line=dict(width=0)),
-                text=[],
-                customdata=[],
-                hovertemplate=(
-                    "%{text}<br>Vol %{x:.2%}<br>Return %{y:.2%}"
-                    "<br>Sharpe %{customdata:.2f}<extra></extra>"
-                ),
-            )
-        ],
-        layout=_chart_layout(
-            title=f"Risk / Return — {LOOKBACK_YEARS}Y",
-            hovermode="closest",
-            xaxis=dict(
-                title=f"Annualized Volatility ({LOOKBACK_YEARS}Y)",
-                tickformat=".0%",
-                rangemode="tozero",
-            ),
-            yaxis=dict(
-                title=f"Annualized Return ({LOOKBACK_YEARS}Y)",
-                tickformat=".0%",
-            ),
-        ),
-    )
-
-
-def _drawdown_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"Drawdown — {LOOKBACK_YEARS}Y",
-            hovermode="x unified",
-            xaxis=dict(title="Date"),
-            yaxis=dict(title="Drawdown", tickformat=".0%"),
-            shapes=[_h_ref(0.0)],
-        )
-    )
-
-
-def _rolling_ref_chart(
-    *, title_prefix: str, y_label: str, ref_y: float
-) -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"{title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
-            hovermode="x unified",
-            xaxis=dict(title="Date"),
-            yaxis=dict(title=y_label),
-            shapes=[_h_ref(ref_y)],
-        )
-    )
-
-
-def _return_dist_chart() -> go.FigureWidget:
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
-            barmode="overlay",
-            xaxis=dict(title="Daily return", tickformat=".1%"),
-            yaxis=dict(title="Frequency"),
-        )
-    )
-
-
-def _return_dist_stats_grid() -> DataGrid:
-    grid = DataGrid(
-        pd.DataFrame(),
-        base_row_size=28,
-        base_column_size=92,
-        base_row_header_size=180,
-        layout=W.Layout(width="100%", height="180px"),
-    )
-    return grid
-
-
-def _weekly_scatter_chart() -> go.FigureWidget:
-    """Single Strategy Section 3: weekly returns vs the benchmark, with
-    a quadratic fit line (β + convexity) drawn by `_update_weekly_scatter`.
-
-    The two traces (markers + fit line) and the β/convexity annotation are
-    **pre-allocated here** so ``_update_weekly_scatter`` mutates them in place
-    (`.x` / `.y` / `.text`) rather than replacing the trace tuple. An in-place
-    restyle repaints reliably across ipywidgets/plotly widget-manager versions,
-    whereas a *same-count* delete-then-re-add (this chart always has exactly two
-    traces) can be dropped by older frontends — the repaint bug this chart hit
-    on BQuant."""
-    fig = go.FigureWidget(
-        layout=_chart_layout(
-            title="Weekly returns vs benchmark",
-            hovermode="closest",
-            xaxis=dict(
-                title="Benchmark weekly return", tickformat=".1%", zeroline=True
-            ),
-            yaxis=dict(title="Strategy weekly return", tickformat=".1%", zeroline=True),
-        )
-    )
-    # Trace 0 = weekly-return markers; trace 1 = the quadratic fit line. Both
-    # start empty and are filled in place on update.
-    fig.add_trace(
-        go.Scatter(
-            x=[],
-            y=[],
-            mode="markers",
-            marker=dict(size=6, color=_palette_color(0), line=dict(width=0)),
-            name="weekly",
-            hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=[],
-            y=[],
-            mode="lines",
-            line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1.5),
-            name="quadratic fit",
-            hoverinfo="skip",
-        )
-    )
-    # Pre-allocated β/convexity/R² annotation, toggled + retexted in place.
-    fig.add_annotation(
-        x=0.02,
-        y=0.98,
-        xref="paper",
-        yref="paper",
-        showarrow=False,
-        align="left",
-        text="",
-        font=dict(color=Color.CHART_TEXT.value, size=11),
-        visible=False,
-    )
-    return fig
-
-
-def _factor_corr_chart() -> go.FigureWidget:
-    """Single Strategy Section 3: the strategy's monthly correlation to
-    the equity-risk-premium (x) and term-premium (y) factors, colored by each
-    month's risk-adjusted return. Axes fixed to the correlation range."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="Monthly factor correlation",
-            hovermode="closest",
-            xaxis=dict(
-                title="Corr to equity risk premium", range=[-1, 1], zeroline=True
-            ),
-            yaxis=dict(title="Corr to term premium", range=[-1, 1], zeroline=True),
-        )
-    )
-
-
-def _factor_scoring_chart() -> go.FigureWidget:
-    """Single Strategy analysis: a bar chart of the strategy's β to the
-    macro-factor proxies (equity risk premium / term premium / trend), filled by
-    `_update_factor_scoring`."""
-    return go.FigureWidget(
-        data=[
-            go.Bar(
-                x=[],
-                y=[],
-                marker=dict(color=[]),
-                hovertemplate="%{x}<br>β %{y:.2f}<extra></extra>",
-            )
-        ],
-        layout=_chart_layout(
-            title=f"Factor scoring — β to macro factors ({LOOKBACK_YEARS}Y)",
-            xaxis=dict(title="Factor"),
-            yaxis=dict(title="Beta", zeroline=True),
-            shapes=[_h_ref(0.0)],
-        ),
-    )
-
-
-def _perf_ranking_chart() -> go.FigureWidget:
-    """Single Strategy analysis: a radar/spider chart ranking the
-    strategy across performance metrics. Metrics are wired in a later pass;
-    `_update_perf_ranking` shows a placeholder until then."""
-    return go.FigureWidget(
-        data=[go.Scatterpolar(r=[], theta=[], fill="toself")],
-        layout=_chart_layout(
-            title="Performance ranking",
-            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-        ),
-    )
-
-
-def _pca_chart() -> go.FigureWidget:
-    """Single Strategy analysis (stub): a PCA scree chart — per-component
-    explained-variance bars with a cumulative line on a secondary axis."""
-    return go.FigureWidget(
-        data=[
-            go.Bar(x=[], y=[], name="Explained"),
-            go.Scatter(x=[], y=[], mode="lines+markers", name="Cumulative", yaxis="y2"),
-        ],
-        layout=_chart_layout(
-            title="PCA analysis",
-            xaxis=dict(title="Principal component"),
-            yaxis=dict(title="Explained variance", tickformat=".0%"),
-            yaxis2=dict(
-                title="Cumulative",
-                overlaying="y",
-                side="right",
-                tickformat=".0%",
-                range=[0, 1],
-            ),
-        ),
-    )
-
-
-def _defensive_chart() -> go.FigureWidget:
-    """Single Strategy analysis (stub): a defensive-scoring bar chart."""
-    return go.FigureWidget(
-        data=[go.Bar(x=[], y=[])],
-        layout=_chart_layout(
-            title="Defensive scoring",
-            xaxis=dict(title="Metric"),
-            yaxis=dict(title="Score"),
-        ),
-    )
-
-
 # Single Strategy analysis-pane options. Drawdown and Factor scoring are
 # functional; the trailing four are stubs.
 SINGLE_ANALYSIS_OPTIONS: tuple[str, ...] = (
@@ -388,8 +113,9 @@ class SingleAnalysisPane:
     """One Single-Strategy analysis pane: its widgets and every figure it owns.
 
     `views` maps a `SINGLE_ANALYSIS_OPTIONS` label to the box `stack` mounts;
-    the figures are also held individually because the `_update_*` helpers take
-    a figure, not a view.
+    the charts are also held individually because a renderer redraws one chart,
+    not a view. Each is a `Chart` (#223) owning its own figure, so a renderer
+    calls `pane.weekly.update(...)` and cannot reach the wrong figure.
     """
 
     root: W.VBox
@@ -397,48 +123,51 @@ class SingleAnalysisPane:
     bench_dd: BenchmarkSelect
     stack: W.Box
     views: dict[str, W.Widget]
-    weekly_fig: go.FigureWidget
-    retdist_fig: go.FigureWidget
-    retdist_stats_grid: DataGrid
-    factor_fig: go.FigureWidget
-    dd_fig: go.FigureWidget
-    ranking_fig: go.FigureWidget
-    factor_score_fig: go.FigureWidget
-    pca_fig: go.FigureWidget
-    defensive_fig: go.FigureWidget
+    weekly: WeeklyScatterChart
+    retdist: ReturnDistChart
+    factor: FactorCorrChart
+    dd: DrawdownChart
+    ranking: PerfRankingChart
+    factor_score: FactorScoringChart
+    pca: PcaChart
+    defensive: DefensiveChart
 
 
 @dataclass
 class AnalysisPane:
     """One Multi-Strategy analysis pane: its widgets and every figure it owns.
 
-    `fresh` is the set of labels whose figure holds the current slice. The
-    builder renders only the mounted view per recompute and adds others on first
-    pick, so this is what distinguishes "not drawn yet" from "drawn and stale".
+    `fresh` is the set of labels whose chart holds the current slice. The
+    controller renders only the mounted view per recompute and adds others on
+    first pick, so this is what distinguishes "not drawn yet" from "drawn and
+    stale".
+
+    Every chart field is a `Chart` (#223) owning its own figure, so a renderer
+    calls `pane.heat.update(cm, …)` rather than pairing a loose figure with a
+    loose updater.
     """
 
     root: W.VBox
     picker: W.Dropdown
     stack: W.Box
     views: dict[str, W.Widget]
-    line_fig: go.FigureWidget
-    outperf_fig: go.FigureWidget
+    line: LineChart
+    outperf: OutperformanceChart
     outperf_dd: BenchmarkSelect
-    sharpe_fig: go.FigureWidget
-    heat_fig: go.FigureWidget
+    sharpe: SharpeZChart
+    heat: CorrHeatmap
     heat_benchmark_chk: W.Checkbox
     heat_regime_chk: W.Checkbox
     heat_dd: BenchmarkSelect
     heat_dir: W.Dropdown
     heat_pct: W.Dropdown
-    scatter_fig: go.FigureWidget
-    dd_fig: go.FigureWidget
-    rcorr_fig: go.FigureWidget
+    scatter: ScatterChart
+    dd: DrawdownChart
+    rcorr: RollingRefChart
     rcorr_dd: BenchmarkSelect
-    rbeta_fig: go.FigureWidget
+    rbeta: RollingRefChart
     rbeta_dd: BenchmarkSelect
-    retdist_fig: go.FigureWidget
-    retdist_stats_grid: DataGrid
+    retdist: ReturnDistChart
     fresh: set[str] = field(default_factory=set)
 
 
@@ -455,30 +184,29 @@ def _make_single_analysis_pane(
     analysis and which benchmark to draw, so users can contrast two views of the
     same strategy.
     """
-    weekly_fig = _weekly_scatter_chart()
-    retdist_fig = _return_dist_chart()
-    retdist_stats_grid = _return_dist_stats_grid()
-    factor_fig = _factor_corr_chart()
-    dd_fig = _drawdown_chart()
-    ranking_fig = _perf_ranking_chart()
-    factor_score_fig = _factor_scoring_chart()
-    pca_fig = _pca_chart()
-    defensive_fig = _defensive_chart()
+    weekly = WeeklyScatterChart()
+    retdist = ReturnDistChart()
+    factor = FactorCorrChart()
+    dd = DrawdownChart()
+    ranking = PerfRankingChart()
+    factor_score = FactorScoringChart()
+    pca = PcaChart()
+    defensive = DefensiveChart()
 
     bench_dd = _make_benchmark_dropdown(registry=registry)
 
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
-        "Weekly Scatter": W.VBox([weekly_fig], layout=view_layout),
+        "Weekly Scatter": W.VBox([weekly.fig], layout=view_layout),
         "Return Distribution": W.VBox(
-            [retdist_fig, retdist_stats_grid], layout=view_layout
+            [retdist.fig, retdist.stats_grid], layout=view_layout
         ),
-        "Factor Scatter": W.VBox([factor_fig], layout=view_layout),
-        "Drawdown": W.VBox([dd_fig], layout=view_layout),
-        "Performance Ranking": W.VBox([ranking_fig], layout=view_layout),
-        "Factor Scoring": W.VBox([factor_score_fig], layout=view_layout),
-        "PCA Analysis": W.VBox([pca_fig], layout=view_layout),
-        "Defensive Scoring": W.VBox([defensive_fig], layout=view_layout),
+        "Factor Scatter": W.VBox([factor.fig], layout=view_layout),
+        "Drawdown": W.VBox([dd.fig], layout=view_layout),
+        "Performance Ranking": W.VBox([ranking.fig], layout=view_layout),
+        "Factor Scoring": W.VBox([factor_score.fig], layout=view_layout),
+        "PCA Analysis": W.VBox([pca.fig], layout=view_layout),
+        "Defensive Scoring": W.VBox([defensive.fig], layout=view_layout),
     }
 
     default_label = "Weekly Scatter" if side_label == "left" else "Factor Scatter"
@@ -517,15 +245,14 @@ def _make_single_analysis_pane(
         bench_dd=bench_dd,
         stack=stack,
         views=views,
-        weekly_fig=weekly_fig,
-        retdist_fig=retdist_fig,
-        retdist_stats_grid=retdist_stats_grid,
-        factor_fig=factor_fig,
-        dd_fig=dd_fig,
-        ranking_fig=ranking_fig,
-        factor_score_fig=factor_score_fig,
-        pca_fig=pca_fig,
-        defensive_fig=defensive_fig,
+        weekly=weekly,
+        retdist=retdist,
+        factor=factor,
+        dd=dd,
+        ranking=ranking,
+        factor_score=factor_score,
+        pca=pca,
+        defensive=defensive,
     )
 
 
@@ -544,24 +271,23 @@ def _make_analysis_pane(
     dropdowns live on the same row as the analysis picker and toggle
     visibility based on the active analysis.
     """
-    line_fig = _line_chart()
-    outperf_fig = _outperformance_chart()
-    sharpe_fig = _sharpe_line_chart()
-    heat_fig = _heatmap()
-    scatter_fig = _scatter_chart()
-    dd_fig = _drawdown_chart()
-    rcorr_fig = _rolling_ref_chart(
+    line = LineChart()
+    outperf = OutperformanceChart()
+    sharpe = SharpeZChart()
+    heat = CorrHeatmap()
+    scatter = ScatterChart()
+    dd = DrawdownChart()
+    rcorr = RollingRefChart(
         title_prefix="Rolling Correlation",
         y_label="Correlation",
         ref_y=0.0,
     )
-    rbeta_fig = _rolling_ref_chart(
+    rbeta = RollingRefChart(
         title_prefix="Rolling Beta",
         y_label="Beta",
         ref_y=1.0,
     )
-    retdist_fig = _return_dist_chart()
-    retdist_stats_grid = _return_dist_stats_grid()
+    retdist = ReturnDistChart()
 
     rcorr_benchmark_dd = _make_benchmark_dropdown(registry=registry)
     rbeta_benchmark_dd = _make_benchmark_dropdown(registry=registry)
@@ -600,17 +326,17 @@ def _make_analysis_pane(
 
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
-        "Cumulative Performance": W.VBox([line_fig], layout=view_layout),
-        "Outperformance": W.VBox([outperf_fig], layout=view_layout),
-        "1Y Sharpe-z Line": W.VBox([sharpe_fig], layout=view_layout),
-        "Correlation Heatmap": W.VBox([heat_fig], layout=view_layout),
-        "Risk / Return": W.VBox([scatter_fig], layout=view_layout),
-        "Drawdown": W.VBox([dd_fig], layout=view_layout),
-        "Rolling Correlation": W.VBox([rcorr_fig], layout=view_layout),
+        "Cumulative Performance": W.VBox([line.fig], layout=view_layout),
+        "Outperformance": W.VBox([outperf.fig], layout=view_layout),
+        "1Y Sharpe-z Line": W.VBox([sharpe.fig], layout=view_layout),
+        "Correlation Heatmap": W.VBox([heat.fig], layout=view_layout),
+        "Risk / Return": W.VBox([scatter.fig], layout=view_layout),
+        "Drawdown": W.VBox([dd.fig], layout=view_layout),
+        "Rolling Correlation": W.VBox([rcorr.fig], layout=view_layout),
         "Return Distribution": W.VBox(
-            [retdist_fig, retdist_stats_grid], layout=view_layout
+            [retdist.fig, retdist.stats_grid], layout=view_layout
         ),
-        "Rolling Beta": W.VBox([rbeta_fig], layout=view_layout),
+        "Rolling Beta": W.VBox([rbeta.fig], layout=view_layout),
     }
 
     default_label = (
@@ -701,22 +427,21 @@ def _make_analysis_pane(
         picker=picker,
         stack=stack,
         views=views,
-        line_fig=line_fig,
-        outperf_fig=outperf_fig,
+        line=line,
+        outperf=outperf,
         outperf_dd=outperf_benchmark_dd,
-        sharpe_fig=sharpe_fig,
-        heat_fig=heat_fig,
+        sharpe=sharpe,
+        heat=heat,
         heat_benchmark_chk=heat_benchmark_chk,
         heat_regime_chk=heat_regime_chk,
         heat_dd=heat_benchmark_dd,
         heat_dir=heat_dir,
         heat_pct=heat_pct,
-        scatter_fig=scatter_fig,
-        dd_fig=dd_fig,
-        rcorr_fig=rcorr_fig,
+        scatter=scatter,
+        dd=dd,
+        rcorr=rcorr,
         rcorr_dd=rcorr_benchmark_dd,
-        rbeta_fig=rbeta_fig,
+        rbeta=rbeta,
         rbeta_dd=rbeta_benchmark_dd,
-        retdist_fig=retdist_fig,
-        retdist_stats_grid=retdist_stats_grid,
+        retdist=retdist,
     )

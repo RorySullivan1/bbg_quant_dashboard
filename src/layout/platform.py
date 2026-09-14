@@ -52,7 +52,6 @@ from ..stats import (
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _section_label
-from .grids import _update_universe_grid
 from .html import STYLE_CTX, render_template
 from .theme import _chart_layout, _short_ticker
 
@@ -713,8 +712,8 @@ class PlatformAnalytics:
                 f"{self.z_metric_dd.label} "
                 f"{self.z_window_dd.label}/{self.z_lookback_dd.label}"
             )
-            _update_universe_grid(
-                state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
+            state.universe_grid.update(
+                meta, state.universe_up, zcol=zcol, zlabel=zlabel
             )
 
     def render_factor_scatter(self, meta: pd.DataFrame) -> None:

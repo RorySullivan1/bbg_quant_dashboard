@@ -16,7 +16,7 @@ from ..config import SHARPE_WINDOW, TRADING_DAYS_PER_YEAR
 from ..style import LINE_PALETTE, Color, Font, Sentiment
 
 # Uniform height for every chart that lives inside an analysis pane.
-# `_perf_grid` / `_return_dist_stats_grid` / `_universe_grid` keep their
+# `PerfGrid` / `UniverseGrid` / the return-distribution stats grid keep their
 # own heights — they're tables, not charts.
 CHART_HEIGHT = "520px"
 
