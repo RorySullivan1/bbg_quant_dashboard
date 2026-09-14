@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import ipywidgets as W
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -23,10 +24,10 @@ from src.config import (
 from src.data import load_metadata
 from src.layout.platform import (
     _SUNBURST_SIZE_FLOOR,
+    PlatformAnalytics,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_scatter,
-    _regime_selector_options,
     _sunburst,
     _sunburst_leaf_sizes,
     _update_factor_scatter,
@@ -389,26 +390,45 @@ def test_regime_bucket_options_by_spec_type():
     ]
 
 
+def _analytics() -> PlatformAnalytics:
+    """A `PlatformAnalytics` over a stub state — enough for the pure resolvers."""
+    dd = lambda: W.Dropdown(options=[("a", 1)], value=1)  # noqa: E731
+    state = SimpleNamespace(
+        benchmarks=SimpleNamespace(
+            options=lambda labeled=False: [("SPX", "SPX Index")],
+            on_change=lambda fn: None,
+        ),
+        universe_prices=pd.DataFrame(),
+    )
+    return PlatformAnalytics(
+        state, z_metric_dd=dd(), z_window_dd=dd(), z_lookback_dd=dd()
+    )
+
+
 def test_regime_selector_options_by_spec_type():
     # Rate-level carries a literal source list; Trend defers to the live
     # benchmark registry (#190) so a runtime addition shows up in its picker;
     # a fixed-level regime has one ticker and so offers no source at all.
-    state = SimpleNamespace(
-        benchmarks=SimpleNamespace(
-            options=lambda labeled=False: [("SPX", "SPX Index")],
-        )
-    )
-    assert _regime_selector_options(state, REGIME_SPECS["Volatility"]) == []
-    assert _regime_selector_options(state, REGIME_SPECS["Rate-level"]) == [
+    pa = _analytics()
+    pa.regime_type_dd.value = "Volatility"
+    assert pa.regime_selector_options() == []
+    pa.regime_type_dd.value = "Rate-level"
+    assert pa.regime_selector_options() == [
         ("US (FEDL01)", "FEDL01 Index"),
         ("EU (EONIA)", "EONIA Index"),
         ("JP (MUTKCALM)", "MUTKCALM Index"),
     ]
-    assert _regime_selector_options(state, REGIME_SPECS["Trend"]) == [
-        ("SPX", "SPX Index")
-    ]
-    # An unknown regime type resolves to None upstream; it must not raise here.
-    assert _regime_selector_options(state, None) == []
+    pa.regime_type_dd.value = "Trend"
+    assert pa.regime_selector_options() == [("SPX", "SPX Index")]
+
+
+def test_regime_selector_options_tolerates_an_unknown_regime():
+    # An unknown regime type resolves to None upstream; it must not raise.
+    pa = _analytics()
+    pa.regime_type_dd.options = [*pa.regime_type_dd.options, "Nope"]
+    pa.regime_type_dd.value = "Nope"
+    assert pa.regime_selector_options() == []
+    assert pa.regime_indicator() is None
 
 
 # --- Regime Analysis: regime-conditioned risk/return scatter ----------------
@@ -575,21 +595,27 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
     Regime / Factor render on their pill's first activation and not again while
     fresh."""
     import ipywidgets as W
-    import src.layout.platform as plat
     from src.layout import build_app
 
     calls = {"sunburst": 0, "regime": 0, "factor": 0}
+    # #219: the renderers are methods now, so spy on the class rather than on a
+    # module-level dispatch dict.
+    methods = {
+        "sunburst": "render_sunburst",
+        "regime": "render_regime_scatter",
+        "factor": "render_factor_scatter",
+    }
 
     def _spy(name, real):
-        def render(state, meta, pa):
+        def render(self, meta):
             calls[name] += 1
-            return real(state, meta, pa)
+            return real(self, meta)
 
         return render
 
-    for name in ("sunburst", "regime", "factor"):
-        monkeypatch.setitem(
-            plat._ANALYTICS_RENDERERS, name, _spy(name, plat._ANALYTICS_RENDERERS[name])
+    for name, attr in methods.items():
+        monkeypatch.setattr(
+            PlatformAnalytics, attr, _spy(name, getattr(PlatformAnalytics, attr))
         )
 
     app = build_app(verbose=False)
@@ -606,3 +632,57 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
     assert calls["factor"] == 1
     assert calls["sunburst"] == 1
     assert calls["regime"] == 0  # never activated → never rendered
+
+
+def test_platform_analytics_owns_its_card_and_lazy_state():
+    # #219: the twenty-field `pa` namespace is now an object that builds its own
+    # widgets, so `build_app` mounts `.card` instead of assembling them.
+    import ipywidgets as W
+
+    pa = _analytics()
+    assert isinstance(pa.card, W.VBox)
+    assert "bbg-card" in pa.card._dom_classes
+    assert set(pa.analytics_tabs) == {"sunburst", "regime", "factor"}
+    for key, (pill, controls, fig) in pa.analytics_tabs.items():
+        assert isinstance(pill, W.Button), key
+        assert isinstance(controls, W.Widget), key
+        assert isinstance(fig, go.FigureWidget), key
+    # Opens on Sunburst with nothing drawn yet — the lazy contract's start state.
+    assert pa.active_analytics == "sunburst"
+    assert pa.fresh == set()
+    assert pa.chart_box.children == (pa.sunburst_fig,)
+
+
+def test_platform_analytics_instances_do_not_share_state():
+    # `fresh` is a per-instance set, not a class attribute — the mutable-default
+    # trap on a field `activate` / `invalidate` mutate constantly.
+    a, b = _analytics(), _analytics()
+    a.fresh.add("regime")
+    a.active_analytics = "regime"
+    assert b.fresh == set()
+    assert b.active_analytics == "sunburst"
+    assert a.sunburst_fig is not b.sunburst_fig
+
+
+def test_activate_swaps_controls_and_chart():
+    # The pill click's visible effect, independent of any rendering: the left
+    # column and the chart box follow the active tab.
+    pa = _analytics()
+    pa.fresh.update({"sunburst", "regime", "factor"})  # skip the lazy render
+    pa.activate(pd.DataFrame(), "regime")
+    assert pa.active_analytics == "regime"
+    assert pa.chart_box.children == (pa.regime_scatter_fig,)
+    assert pa.tab_controls_box.children == (pa.analytics_tabs["regime"][1],)
+    pa.activate(pd.DataFrame(), "factor")
+    assert pa.chart_box.children == (pa.factor_scatter_fig,)
+
+
+def test_invalidate_marks_every_tab_stale():
+    # A data or lookback change stales all three; only the visible one redraws
+    # (the redraw itself no-ops here — the stub state has no prices).
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.fresh.update({"sunburst", "regime", "factor"})
+    pa.invalidate(pd.DataFrame())
+    # `render_active` re-adds only the visible tab; the hidden two stay stale.
+    assert pa.fresh == {"sunburst"}

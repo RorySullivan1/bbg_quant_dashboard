@@ -26,7 +26,6 @@ import time
 import traceback
 import warnings
 from datetime import date
-from types import SimpleNamespace
 
 import ipywidgets as W
 import pandas as pd
@@ -45,7 +44,6 @@ from ..config import (
     MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
-    REGIME_SPECS,
     REGIME_TICKERS,
     SHORT_WINDOW_OPTIONS,
     SUPERLATIVE_WINDOW_DAYS,
@@ -109,15 +107,7 @@ from .multi_strategy import (
     render_pane,
 )
 from .panes import SingleAnalysisPane, _make_analysis_pane
-from .platform import (
-    _factor_beta_scatter,
-    _regime_scatter,
-    _sunburst,
-    invalidate_analytics,
-    regime_bucket_options,
-    render_universe_grid,
-    wire_platform_analytics,
-)
+from .platform import PlatformAnalytics
 from .selection import SelectionSlice
 from .single_strategy import (
     _CALENDAR_TABS,
@@ -506,78 +496,6 @@ def build_app(verbose: bool = False) -> W.VBox:
         layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
     )
 
-    # Shared 6M/1Y/3Y/5Y lookback selector — drives all three Platform analytics
-    # tabs (factor scatter, regime scatter, and the sunburst). Value is a
-    # trading-day count, like z_lookback_dd; the factor scatter converts it to
-    # years. Re-slices the cache only (no BQL).
-    lookback_selector = W.ToggleButtons(
-        options=[
-            ("6M", HALF_YEAR_WINDOW),
-            ("1Y", TRADING_DAYS_PER_YEAR),
-            ("3Y", TRADING_DAYS_PER_YEAR * 3),
-            ("5Y", TRADING_DAYS_PER_YEAR * 5),
-        ],
-        value=TRADING_DAYS_PER_YEAR,
-        layout=W.Layout(width="auto"),
-    )
-    factor_scatter_fig = _factor_beta_scatter()
-    sunburst_fig = _sunburst()
-
-    # Sunburst Z-score controls (Metric · Window; the lookback is the shared
-    # toggle above). The chosen z colors the arcs (averaged up each level) and its
-    # |z| drives each ring's gross-% sizing. Re-slice the cache only (no BQL);
-    # `.value`s feed `rolling_metric_zscore`, the `.label`s the colorbar/hover.
-    sb_metric_dd = W.Dropdown(
-        options=[
-            ("Sharpe", "sharpe"),
-            ("Sortino", "sortino"),
-            ("Return", "return"),
-            ("Vol", "vol"),
-        ],
-        value="sharpe",
-        description="Metric",
-        style={"description_width": "60px"},
-        layout=W.Layout(width="230px"),
-    )
-    sb_window_dd = W.Dropdown(
-        options=SHORT_WINDOW_OPTIONS,
-        value=WEEK_WINDOW,
-        description="Window",
-        style={"description_width": "60px"},
-        layout=W.Layout(width="230px"),
-    )
-
-    # --- Regime Analysis: the all-catalog risk/return scatter conditioned on a
-    # regime bucket (see `REGIME_SPECS`). Conditioning is a live re-slice of the
-    # cache; the controls stack in the Regime tab's left column, built below.
-    regime_scatter_fig = _regime_scatter()
-
-    regime_type_dd = W.Dropdown(
-        options=list(REGIME_SPECS.keys()),
-        value="Volatility",
-        description="Type",
-        style={"description_width": "60px"},
-        layout=W.Layout(width="240px"),
-    )
-    # Conditional indicator-source dropdown — benchmark for Trend, region for
-    # Rate-level; hidden (via `platform._sync_regime_controls`) for regimes with no
-    # `selector` (Volatility / Risk regime).
-    regime_selector_dd = W.Dropdown(
-        options=[("—", "")],
-        value="",
-        description="Source",
-        style={"description_width": "60px"},
-        layout=W.Layout(width="240px"),
-    )
-    _init_buckets = regime_bucket_options("Volatility")
-    regime_bucket_dd = W.Dropdown(
-        options=_init_buckets,
-        value=_init_buckets[0][1],
-        description="Bucket",
-        style={"description_width": "60px"},
-        layout=W.Layout(width="240px"),
-    )
-
     pane_left = _make_analysis_pane("left", registry=benchmarks)
     pane_right = _make_analysis_pane("right", registry=benchmarks)
     analysis_pane_row = W.HBox(
@@ -623,106 +541,22 @@ def build_app(verbose: bool = False) -> W.VBox:
         render_template("grid_header", **STYLE_CTX, text="All-catalog performance")
     )
 
-    # --- Platform analytics card: sunburst / regime / factor scatter as inner
-    # pill-tabs sharing one lookback. A fixed left control column (shared
-    # lookback on top, the active tab's own boxes swapped into
-    # `tab_controls_box` below) beside a flex-grow `chart_box`.
-    sunburst_controls = W.VBox(
-        [_section_label("Z-score"), sb_metric_dd, sb_window_dd],
-        layout=W.Layout(width="100%"),
-    )
-    regime_controls = W.VBox(
-        [
-            _section_label("Regime"),
-            regime_type_dd,
-            regime_selector_dd,
-            regime_bucket_dd,
-        ],
-        layout=W.Layout(width="100%"),
-    )
-    factor_controls = W.VBox([], layout=W.Layout(width="100%"))
-
-    sunburst_pill = _make_tab_button(
-        "Sunburst", active=True, width="190px", height="34px"
-    )
-    regime_pill = _make_tab_button(
-        "Regime analysis", active=False, width="190px", height="34px"
-    )
-    factor_pill = _make_tab_button(
-        "Factor exposures", active=False, width="190px", height="34px"
-    )
-    analytics_tab_bar = W.HBox(
-        [sunburst_pill, regime_pill, factor_pill],
-        layout=W.Layout(width="100%", padding="2px 0 6px 0"),
-    )
-
-    # Shared lookback stacked on top of the active tab's controls (left column).
-    tab_controls_box = W.Box([sunburst_controls], layout=W.Layout(width="100%"))
-    analytics_left_col = W.VBox(
-        [_section_label("Lookback"), lookback_selector, tab_controls_box],
-        layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
-    )
-    chart_box = W.Box([sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%"))
-    analytics_body = W.HBox(
-        [analytics_left_col, chart_box],
-        layout=W.Layout(width="100%", align_items="stretch"),
-    )
-
-    _analytics_tabs = {
-        "sunburst": (sunburst_pill, sunburst_controls, sunburst_fig),
-        "regime": (regime_pill, regime_controls, regime_scatter_fig),
-        "factor": (factor_pill, factor_controls, factor_scatter_fig),
-    }
-
-    analytics_card = W.VBox(
-        [
-            W.HTML(
-                render_template("grid_header", **STYLE_CTX, text="Platform analytics")
-            ),
-            analytics_tab_bar,
-            analytics_body,
-        ],
-        layout=W.Layout(width="100%"),
-    )
-    analytics_card.add_class("bbg-card")
-
-    # Bundle the Platform-analytics widget handles and hand the orchestration to
-    # `platform.py`: `wire_platform_analytics` wires the
-    # z-score-column controls, the three tab pills, the regime dropdowns, the
-    # shared lookback, and the sunburst controls; the `render_*` functions
-    # (called on load / Refresh below) redraw each chart live from the cache.
-    pa = SimpleNamespace(
+    # The Platform analytics card owns its own widgets and lazy-render
+    # state (#219); `build_app` just constructs it and mounts `.card`.
+    analytics = PlatformAnalytics(
+        state,
         z_metric_dd=z_metric_dd,
         z_window_dd=z_window_dd,
         z_lookback_dd=z_lookback_dd,
-        lookback_selector=lookback_selector,
-        factor_scatter_fig=factor_scatter_fig,
-        sunburst_fig=sunburst_fig,
-        regime_scatter_fig=regime_scatter_fig,
-        sb_metric_dd=sb_metric_dd,
-        sb_window_dd=sb_window_dd,
-        regime_type_dd=regime_type_dd,
-        regime_selector_dd=regime_selector_dd,
-        regime_bucket_dd=regime_bucket_dd,
-        sunburst_pill=sunburst_pill,
-        regime_pill=regime_pill,
-        factor_pill=factor_pill,
-        analytics_tabs=_analytics_tabs,
-        tab_controls_box=tab_controls_box,
-        chart_box=chart_box,
-        # Lazy-render state: `active_analytics` is the visible tab (Sunburst is
-        # the default), `fresh` is the set of tabs rendered against current data.
-        active_analytics="sunburst",
-        fresh=set(),
     )
-    wire_platform_analytics(state, meta, pa)
+    analytics.wire(meta)
 
     platform_panel = W.VBox(
         [
             universe_header,
             z_controls_row,
             universe_grid,
-            analytics_card,
+            analytics.card,
         ],
         layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
     )
@@ -1143,10 +977,10 @@ def build_app(verbose: bool = False) -> W.VBox:
         state.universe_rets = daily_returns(state.arp_universe_prices)
         try:
             state.universe_up = universe_perf(state.arp_universe_prices)
-            render_universe_grid(state, meta, pa)
+            analytics.render_universe_grid(meta)
             # Fresh data → every analytics tab is stale; re-render the visible
             # one now, the hidden two lazily on next activation.
-            invalidate_analytics(state, meta, pa)
+            analytics.invalidate(meta)
         except Exception:
             state.init_errors.append(
                 f"universe_perf computation failed:\n{traceback.format_exc()}"
@@ -1361,10 +1195,10 @@ def build_app(verbose: bool = False) -> W.VBox:
             state.ticker_w.value = _default_selection()
             try:
                 state.universe_up = universe_perf(state.arp_universe_prices)
-                render_universe_grid(state, meta, pa)
+                analytics.render_universe_grid(meta)
                 # Only the visible analytics tab (Sunburst) computes on load; the
                 # hidden Regime / Factor tabs render on first pill click.
-                invalidate_analytics(state, meta, pa)
+                analytics.invalidate(meta)
             except Exception:
                 state.init_errors.append(
                     f"universe_perf computation failed:\n{traceback.format_exc()}"
