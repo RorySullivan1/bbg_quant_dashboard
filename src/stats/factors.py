@@ -17,12 +17,20 @@ from ..config import (
     SHORT_RATE_TICKER,
     TREND_TICKER,
     WEEK_WINDOW,
+    sunburst_levels,
 )
 from ._common import daily_returns
 from .risk import ann_beta
 from .rolling import rolling_metric_zscore
 
-_SUNBURST_COLUMNS = ["asset_class", "category", "z"]
+
+def _sunburst_columns() -> list[str]:
+    """The sunburst frame's columns: each configured level, then ``z``.
+
+    A function rather than a module constant so a reconfigured hierarchy is
+    picked up without re-importing.
+    """
+    return [*sunburst_levels(), "z"]
 
 
 def _factor_spread(prices: pd.DataFrame, long_leg: str, short_leg: str) -> pd.Series:
@@ -94,24 +102,28 @@ def platform_sunburst_frame(
     window: int = WEEK_WINDOW,
     lookback: int = SHARPE_ZSCORE_WINDOW,
 ) -> pd.DataFrame:
-    """Per-ticker ``asset_class`` + ``category`` + ``z`` for the Platform sunburst.
-    ``z`` = z(``metric`` over ``window``, ``lookback``) — the **raw** signed
+    """Per-ticker grouping levels + ``z`` for the Platform sunburst.
+
+    One column per `config.SUNBURST_LEVELS` entry (outermost grouping first)
+    plus ``z`` = z(``metric`` over ``window``, ``lookback``) — the **raw** signed
     z-score (can be negative; default z(1W Sharpe, 1Y)). The renderer derives the
     gross-|z| arc sizes and the level-averaged colors; this frame just supplies
-    the metric and the two grouping levels (asset class → category → ticker). The
-    ``window`` / ``lookback`` args are trading-day counts.
+    the metric and the grouping levels. A level the metadata does not carry
+    comes back all-NA, which the renderer buckets as "Other", so a partial feed
+    still draws. The ``window`` / ``lookback`` args are trading-day counts.
     """
+    columns = _sunburst_columns()
     if prices.empty:
-        return pd.DataFrame(columns=_SUNBURST_COLUMNS)
+        return pd.DataFrame(columns=columns)
     z = rolling_metric_zscore(
         prices, metric=metric, window=window, zscore_window=lookback
     )
     frame = pd.DataFrame({"z": z})
     has_ticker = "ticker" in meta.columns
-    for level in ("asset_class", "category"):
+    for level in sunburst_levels():
         if has_ticker and level in meta.columns:
             mapping = meta.set_index("ticker")[level]
             frame[level] = frame.index.map(mapping)
         else:
             frame[level] = pd.NA
-    return frame[_SUNBURST_COLUMNS]
+    return frame[columns]
