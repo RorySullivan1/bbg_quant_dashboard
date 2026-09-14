@@ -24,8 +24,9 @@ def _meta() -> pd.DataFrame:
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "name": ["Alpha", "Bravo", "Charlie"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
-            "family": ["X", "Y", "Z"],
+            "solution": ["ARP", "ARP", "Smart Beta"],
             "category": ["T1", "T2", "T3"],
+            "family": ["X", "Y", "Z"],
             "return_type": ["Total", "Total", "Excess"],
             "currency": ["USD", "EUR", "USD"],
             "live_date": pd.to_datetime(["2010-03-15", pd.NaT, "2015-07-01"]),
@@ -60,8 +61,9 @@ def test_make_filter_panel_structure():
     assert panel.root.titles == ("Filters",)
     assert callable(panel.matching)
     # Every categorical checkbox is an observable input.
-    for cb in (*panel.asset_checks, *panel.cat_checks, *panel.theme_checks):
-        assert cb in panel.inputs
+    for checks in panel.cat_checks.values():
+        for cb in checks:
+            assert cb in panel.inputs
     # The quant operator + value boxes and dropdowns are inputs too.
     assert panel.currency_dd in panel.inputs
     assert panel.quant.period_dd in panel.inputs
@@ -97,7 +99,7 @@ def test_matching_empty_returns_all():
 def test_matching_categorical_asset_class():
     meta = _meta()
     panel = make_filter_panel(meta)
-    _check(panel.asset_checks, "Equity")
+    _check(panel.cat_checks["asset_class"], "Equity")
     assert list(panel.matching(meta, _empty_state())) == ["AAA Index"]
 
 
@@ -119,7 +121,7 @@ def test_matching_launch_date_min():
 def test_matching_combines_dimensions_as_and():
     meta = _meta()
     panel = make_filter_panel(meta)
-    _check(panel.asset_checks, "Equity")  # AAA
+    _check(panel.cat_checks["asset_class"], "Equity")  # AAA
     panel.currency_dd.value = "EUR"  # BBB
     # No index is both Equity and EUR → empty.
     assert list(panel.matching(meta, _empty_state())) == []
@@ -131,12 +133,12 @@ def test_matching_combines_dimensions_as_and():
 def test_clear_all_resets_every_dimension():
     meta = _meta()
     panel = make_filter_panel(meta)
-    _check(panel.asset_checks, "Equity")
+    _check(panel.cat_checks["asset_class"], "Equity")
     panel.currency_dd.value = "EUR"
     panel.live_min.value = pd.Timestamp("2012-01-01").date()
     panel.quant.specs["Sharpe"][1].value = "0.5"
     panel.clear_all_btn.click()
-    assert all(not c.value for c in panel.asset_checks)
+    assert all(not c.value for c in panel.cat_checks["asset_class"])
     assert panel.currency_dd.value == "All"
     assert panel.live_min.value is None
     assert panel.quant.specs["Sharpe"][1].value == ""
@@ -146,13 +148,94 @@ def test_clear_all_resets_every_dimension():
 def test_clear_section_only_clears_active_dimension():
     meta = _meta()
     panel = make_filter_panel(meta)
-    _check(panel.asset_checks, "Equity")
+    _check(panel.cat_checks["asset_class"], "Equity")
     panel.currency_dd.value = "EUR"
-    panel.activate_filter("Asset Class")
+    panel.activate_filter("asset_class")
     panel.clear_section_btn.click()
     # Asset Class cleared, but the Characteristics currency is untouched.
-    assert all(not c.value for c in panel.asset_checks)
+    assert all(not c.value for c in panel.cat_checks["asset_class"])
     assert panel.currency_dd.value == "EUR"
+
+
+# --- schema-driven pill bar (#211) -------------------------------------------
+
+
+def test_pill_bar_is_the_schema_tiers_then_attributes():
+    panel = make_filter_panel(_meta())
+    # Tiers broadest-first, then the flat attributes; `currency` and `live_date`
+    # belong to Characteristics, so they get no pill of their own.
+    assert panel.pill_fields == (
+        "solution",
+        "category",
+        "family",
+        "asset_class",
+        "return_type",
+    )
+    captions = [b.description for b in panel.header_row.children]
+    assert captions == [
+        "Solution",
+        "Category",
+        "Family",
+        "Asset Class",
+        "Return Type",
+        "Characteristics",
+        "Quantitative",
+    ]
+
+
+def test_relabelling_a_field_relabels_its_pill_and_still_filters_its_column(
+    monkeypatch,
+):
+    # The point of #211: a label lives in the schema only. Relabel `family` and
+    # the pill caption follows, while the checkbox group still reads and filters
+    # the `family` *column* — caption and column can't drift apart.
+    import src.config as cfg
+
+    renamed = tuple(
+        (
+            cfg.CatalogField(f.key, f.sources, "Sub-Family", f.role)
+            if f.key == "family"
+            else f
+        )
+        for f in cfg.CATALOG_SCHEMA
+    )
+    monkeypatch.setattr(cfg, "CATALOG_SCHEMA", renamed)
+
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    assert "Sub-Family" in [b.description for b in panel.header_row.children]
+    assert "Family" not in [b.description for b in panel.header_row.children]
+    _check(panel.cat_checks["family"], "Y")  # BBB's family value, unchanged
+    assert list(panel.matching(meta, _empty_state())) == ["BBB Index"]
+
+
+def test_solution_tier_filters_the_universe():
+    # Solution was not filterable in the UI at all before #211 even though
+    # `apply_filters` already accepted it.
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    _check(panel.cat_checks["solution"], "Smart Beta")
+    assert list(panel.matching(meta, _empty_state())) == ["CCC Index"]
+
+
+def test_clear_section_clears_the_solution_pill_not_its_neighbours():
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    _check(panel.cat_checks["solution"], "ARP")
+    _check(panel.cat_checks["asset_class"], "Equity")
+    panel.activate_filter("solution")
+    panel.clear_section_btn.click()
+    assert all(not c.value for c in panel.cat_checks["solution"])
+    assert any(c.value for c in panel.cat_checks["asset_class"])
+
+
+def test_clear_all_clears_every_pill_including_the_new_tiers():
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    for key in panel.pill_fields:
+        panel.cat_checks[key][0].value = True
+    panel.clear_all_btn.click()
+    assert not any(c.value for key in panel.pill_fields for c in panel.cat_checks[key])
 
 
 # --- quantitative threshold filter (plumbing via extreme thresholds) ---------
@@ -230,7 +313,9 @@ def test_quant_table_is_memoized_across_repeats_and_toggles(
     assert calls["n"] == after_first
     assert list(r1) == list(r2)
 
-    _check(panel.asset_checks, "Equity")  # narrows candidates, same metric params
+    _check(
+        panel.cat_checks["asset_class"], "Equity"
+    )  # narrows candidates, same metric params
     panel.matching(meta, state)
     assert calls["n"] == after_first  # candidate-independent table → still cached
 

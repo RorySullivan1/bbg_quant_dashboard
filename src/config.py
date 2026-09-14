@@ -163,15 +163,18 @@ PROFILE_CARD_FIELDS: tuple[str, ...] = (
 LAUNCH_CARD_META_FIELDS: tuple[str, ...] = ("asset_class", "category", "currency")
 
 
-_SCHEMA_BY_KEY: dict[str, CatalogField] = {f.key: f for f in CATALOG_SCHEMA}
-
-
 def catalog_field(key: str) -> CatalogField:
-    """The schema entry for an internal column key."""
-    try:
-        return _SCHEMA_BY_KEY[key]
-    except KeyError:
-        raise KeyError(f"No catalog field named {key!r}") from None
+    """The schema entry for an internal column key.
+
+    Scans `CATALOG_SCHEMA` on each call rather than a dict built at import, so
+    a test that swaps the schema to check relabelling is seen by every consumer.
+    Nine fields, read at render time — caching would buy nothing but a stale
+    lookup.
+    """
+    for field in CATALOG_SCHEMA:
+        if field.key == key:
+            return field
+    raise KeyError(f"No catalog field named {key!r}")
 
 
 def field_label(key: str) -> str:
@@ -191,6 +194,19 @@ def filterable_fields() -> tuple[CatalogField, ...]:
     is not a filter dimension.
     """
     return tuple(f for f in CATALOG_SCHEMA if f.role in ("tier", "attribute"))
+
+
+def filter_dimensions() -> tuple[CatalogField, ...]:
+    """The filterable fields in filter-panel order: tiers broadest-first, then
+    the flat attributes in schema order.
+
+    `filterable_fields` reports schema order, which interleaves the tiers with
+    the attributes because the frame's column order is not the order a user
+    drills down in. The panel wants the hierarchy read top → leaf first, so the
+    resequencing lives here rather than as a sort key at the call site.
+    """
+    tiers = tier_fields()
+    return (*tiers, *(f for f in filterable_fields() if f.role != "tier"))
 
 
 #: Solution values making up the dashboard universe, compared case-insensitively

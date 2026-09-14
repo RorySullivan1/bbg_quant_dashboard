@@ -1,12 +1,12 @@
 """A reusable catalog-filter panel, shared by Multi-Strategy and Single Strategy.
 
-A **Filters** accordion whose right panel is a pill bar (Asset Class /
-Category / Theme / Return Type / Characteristics / Quantitative) over a
-swappable value-list, plus **Clear section** and **Clear all** buttons. The
-four categorical dimensions are checkbox groups; **Characteristics** is a
-launch-date range and a currency dropdown; **Quantitative** is nine per-metric
-``≥``/``≤`` threshold rows (Sharpe / Sortino / Calmar / Beta / Treynor /
-Jensen / VaR / RSI / Z-Score).
+A **Filters** accordion whose right panel is a pill bar over a swappable
+value-list, plus **Clear section** and **Clear all** buttons. The pills come
+from the catalog schema (`filter_dimensions`): every filterable field that is
+not claimed by Characteristics gets a checkbox group, captioned with its schema
+label, tiers first. **Characteristics** is a launch-date range and a currency
+dropdown; **Quantitative** is nine per-metric ``≥``/``≤`` threshold rows
+(Sharpe / Sortino / Calmar / Beta / Treynor / Jensen / VaR / RSI / Z-Score).
 
 The factory is **selection-agnostic**: it only answers "which tickers match the
 current filter state" via ``matching(meta, state)`` and leaves the caller to
@@ -29,6 +29,8 @@ from ..config import (
     MONTH_WINDOW,
     SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
+    field_label,
+    filter_dimensions,
 )
 from ..data import apply_filters, unique_values
 from ..stats import (
@@ -44,14 +46,37 @@ from .chrome import _make_tab_button, _style_tab_button
 from .filters import _checkbox_group, _q_row, _section_label
 from .panes import _make_benchmark_dropdown
 
-# Pill labels, in bar order. The four categorical dimensions map to a metadata
-# column; Characteristics / Quantitative are special views built below.
-_CATEGORICAL: tuple[tuple[str, str], ...] = (
-    ("Asset Class", "asset_class"),
-    ("Family", "family"),
-    ("Category", "category"),
-    ("Return Type", "return_type"),
-)
+#: Filterable fields the **Characteristics** view owns instead of the pill bar:
+#: `live_date` is a min/max range and `currency` a single dropdown, neither of
+#: which is a checkbox group. Every other filterable field becomes a pill, so
+#: adding a filterable column to `CATALOG_SCHEMA` lights one up on its own.
+_CHARACTERISTICS_FIELDS: tuple[str, ...] = ("live_date", "currency")
+
+#: The two views that are not a metadata column at all. Their keys are chosen so
+#: they cannot collide with a schema field key, which lets one dict hold both
+#: kinds of view and one `active` slot address either.
+_CHARACTERISTICS = "@characteristics"
+_QUANTITATIVE = "@quantitative"
+_SPECIAL_VIEW_LABELS = {
+    _CHARACTERISTICS: "Characteristics",
+    _QUANTITATIVE: "Quantitative",
+}
+
+
+def _pill_fields() -> tuple[str, ...]:
+    """Field keys getting a checkbox-group pill, in bar order.
+
+    Read at call time, not at import, so a relabelled or re-ordered schema
+    reaches a panel built afterwards.
+    """
+    return tuple(
+        f.key for f in filter_dimensions() if f.key not in _CHARACTERISTICS_FIELDS
+    )
+
+
+def _view_label(key: str) -> str:
+    """The pill caption for a view key — schema label, or the special view's."""
+    return _SPECIAL_VIEW_LABELS.get(key) or field_label(key)
 
 
 def make_filter_panel(
@@ -89,10 +114,11 @@ def make_filter_panel(
       tests and callers that need them.
     """
     # --- Categorical checkbox groups ------------------------------------------
+    pill_fields = _pill_fields()
     cat_widgets: dict[str, SimpleNamespace] = {}
-    for _label, col in _CATEGORICAL:
-        content, getter, checks = _checkbox_group(unique_values(meta, col))
-        cat_widgets[col] = SimpleNamespace(content=content, get=getter, checks=checks)
+    for key in pill_fields:
+        content, getter, checks = _checkbox_group(unique_values(meta, key))
+        cat_widgets[key] = SimpleNamespace(content=content, get=getter, checks=checks)
 
     # --- Characteristics view (launch-date range + currency) ------------------
     live_min = W.DatePicker(layout=W.Layout(width="160px"))
@@ -225,36 +251,37 @@ def make_filter_panel(
 
     # --- Pill bar + swap container --------------------------------------------
     filter_views: dict[str, W.Widget] = {
-        "Asset Class": cat_widgets["asset_class"].content,
-        "Family": cat_widgets["family"].content,
-        "Category": cat_widgets["category"].content,
-        "Return Type": cat_widgets["return_type"].content,
-        "Characteristics": characteristics_view,
-        "Quantitative": quant_view,
+        **{key: cat_widgets[key].content for key in pill_fields},
+        _CHARACTERISTICS: characteristics_view,
+        _QUANTITATIVE: quant_view,
     }
     filter_btns = {
-        label: _make_tab_button(label, active=(i == 0), width="auto", height="32px")
-        for i, label in enumerate(filter_views)
+        key: _make_tab_button(
+            _view_label(key), active=(i == 0), width="auto", height="32px"
+        )
+        for i, key in enumerate(filter_views)
     }
     filter_header_row = W.HBox(
         list(filter_btns.values()),
         layout=W.Layout(width="100%", flex_flow="row wrap", margin="2px 0 6px 0"),
     )
+    first_view = next(iter(filter_views))
     filter_content = W.Box(
-        [filter_views["Asset Class"]],
+        [filter_views[first_view]],
         layout=W.Layout(width="100%", min_height="250px"),
     )
-    # The currently visible dimension drives "Clear section".
-    active = SimpleNamespace(label="Asset Class")
+    # The currently visible view drives "Clear section". Held as a view key, not
+    # a caption, so relabelling a dimension can't desync it from the buttons.
+    active = SimpleNamespace(field=first_view)
 
-    def _activate_filter(label: str) -> None:
-        active.label = label
-        for lbl, btn in filter_btns.items():
-            _style_tab_button(btn, active=(lbl == label))
-        filter_content.children = (filter_views[label],)
+    def _activate_filter(key: str) -> None:
+        active.field = key
+        for other, btn in filter_btns.items():
+            _style_tab_button(btn, active=(other == key))
+        filter_content.children = (filter_views[key],)
 
-    for label, btn in filter_btns.items():
-        btn.on_click(lambda _b, lbl=label: _activate_filter(lbl))
+    for key, btn in filter_btns.items():
+        btn.on_click(lambda _b, k=key: _activate_filter(k))
 
     # --- Clear section / Clear all --------------------------------------------
     def _clear_quant() -> None:
@@ -270,22 +297,21 @@ def make_filter_panel(
         live_max.value = None
         currency_dd.value = "All"
 
+    def _clear_categorical(key: str) -> None:
+        for cb in cat_widgets[key].checks:
+            cb.value = False
+
     def _clear_section(_b=None) -> None:
-        label = active.label
-        for lbl, col in _CATEGORICAL:
-            if lbl == label:
-                for cb in cat_widgets[col].checks:
-                    cb.value = False
-                return
-        if label == "Characteristics":
+        if active.field in cat_widgets:
+            _clear_categorical(active.field)
+        elif active.field == _CHARACTERISTICS:
             _clear_characteristics()
-        elif label == "Quantitative":
+        elif active.field == _QUANTITATIVE:
             _clear_quant()
 
     def _clear_all(_b=None) -> None:
-        for _label, col in _CATEGORICAL:
-            for cb in cat_widgets[col].checks:
-                cb.value = False
+        for key in pill_fields:
+            _clear_categorical(key)
         _clear_characteristics()
         _clear_quant()
 
@@ -444,10 +470,7 @@ def make_filter_panel(
         return apply_filters(
             meta,
             {
-                "asset_class": cat_widgets["asset_class"].get(),
-                "family": cat_widgets["family"].get(),
-                "category": cat_widgets["category"].get(),
-                "return_type": cat_widgets["return_type"].get(),
+                **{key: w.get() for key, w in cat_widgets.items()},
                 "currency": currency_get(),
             },
             live_date_min=live_min.value,
@@ -467,8 +490,8 @@ def make_filter_panel(
 
     # Every user-adjustable input the caller observes for live narrowing.
     inputs: list[W.Widget] = []
-    for _label, col in _CATEGORICAL:
-        inputs.extend(cat_widgets[col].checks)
+    for key in pill_fields:
+        inputs.extend(cat_widgets[key].checks)
     inputs += [live_min, live_max, currency_dd, q_period, q_z_metric, q_z_window]
     inputs += [q_beta_bench, q_treynor_bench, q_jensen_bench]
     for _op, box in quant.specs.values():
@@ -483,11 +506,12 @@ def make_filter_panel(
         matching=matching,
         apply_categorical=apply_categorical,
         quant_keep=_quant_keep,
-        # Handles for tests / callers.
-        asset_checks=cat_widgets["asset_class"].checks,
-        cat_checks=cat_widgets["family"].checks,
-        theme_checks=cat_widgets["category"].checks,
-        ret_checks=cat_widgets["return_type"].checks,
+        # Handles for tests / callers. `cat_checks` is keyed by field so a
+        # renamed dimension renames the key rather than orphaning an alias —
+        # the four per-dimension attributes it replaces had already drifted from
+        # what they held after the tier re-key.
+        pill_fields=pill_fields,
+        cat_checks={key: w.checks for key, w in cat_widgets.items()},
         currency_dd=currency_dd,
         live_min=live_min,
         live_max=live_max,

@@ -60,8 +60,10 @@ build_app()
 ```
 
 renders the full dashboard without a Bloomberg session. Verify by:
-- Clicking a filter-type pill (Asset Class / Category / Theme / Return
-  Type / Characteristics / Quantitative) in the right panel swaps the
+- Clicking a filter-type pill (Solution / Category / Family / Asset
+  Class / Return Type / Characteristics / Quantitative — the first five
+  are derived from `CATALOG_SCHEMA`, so this list follows the schema)
+  in the right panel swaps the
   value list shown below; the active pill gets the `.is-active` style
   (accent-bordered raised surface). Ticking a value
   checkbox narrows the ticker dropdown to the intersection.
@@ -137,7 +139,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   from the cached prices, no BQL.
 - The Single Strategy **"Filters" accordion** (v0.9.12): a two-column panel —
   the strategy picker + benchmark selector + "Show benchmark" toggle on the
-  **left**, the filter criteria (Asset Class / Category / Theme / Return Type /
+  **left**, the filter criteria (the schema-derived pills, then
   Characteristics / Quantitative) on the **right**, stretched to equal height.
   Toggling any criteria box narrows the strategy picker **live** — no
   Refresh-prices button. When the currently-picked strategy is filtered out, the
