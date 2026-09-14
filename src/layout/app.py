@@ -1259,7 +1259,7 @@ class DashboardApp:
         """The blocking startup work — fetch, prune, compute, first render —
         formerly inline. Runnable on a worker thread (see `_start_initial_load`)
         so the overlay paints while the kernel fetches, mirroring `_run_refresh`.
-        `nonlocal meta` is re-pointed to the recent-performance-pruned catalog."""
+        `self.meta` is re-pointed to the recent-performance-pruned catalog."""
         self._set_progress(
             60, f"Fetching prices for {len(self._fetch_tickers())} indices…"
         )

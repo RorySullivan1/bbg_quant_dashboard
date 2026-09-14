@@ -42,9 +42,25 @@ unresolvable ticker separately from one with no history in the window, and
 persisting additions to a gitignored `data/user_benchmarks.json` that
 degrades to session-only on a read-only filesystem.
 
+The code is organized **around objects, not bags** (v0.9.16, epic #215). What
+used to be `SimpleNamespace` bundles, module globals and closures over
+`build_app`'s locals are now typed classes, each owning its own widgets and
+state: `DashboardApp` (`src/layout/app.py`) is the controller the notebook's
+`build_app()` one-liner constructs, and `PlatformAnalytics`, `FilterPanel` /
+`CategoricalFilter` / `QuantFilter`, `SingleStrategyPanel`, `PriceCache` and
+the `PriceSource` protocol (`BqlPriceSource` / `MockPriceSource`) each own one
+area. Data that moves between them is a **frozen dataclass** — `AnalysisPane`,
+`SingleAnalysisPane`, `SelectionSlice`, `RenderContext`, `SuperlativeCard`,
+`LaunchCard`, `LevelRegime` / `TercileRegime`. Two rules hold across all of
+them: **`state` is held on the object** (one mutable object, always current)
+while **`meta` stays a per-call argument or a callable provider** — the app
+re-points `meta` to the pruned catalog after every load, so an attribute
+holding it goes stale silently (#242). Prefer injecting a collaborator over
+reaching for a module global.
+
 ## Current version
 
-`v0.9.15` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.16` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

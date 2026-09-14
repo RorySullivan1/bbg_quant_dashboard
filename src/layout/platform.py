@@ -489,9 +489,9 @@ def _update_regime_scatter(
 
 
 # --- Platform-analytics orchestration -----------------------------------------
-# ``build_app`` builds the analytics widgets, bundles their handles into a
-# ``pa`` namespace, then calls ``wire_platform_analytics(state, meta, pa)`` for
-# the observers and tab pills. Every render reads the cache on ``state``.
+# ``DashboardApp`` constructs one ``PlatformAnalytics``, calls ``wire`` with a
+# catalog provider, and mounts ``.card``. Every render reads the cache on
+# ``state``.
 
 
 @contextmanager

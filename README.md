@@ -87,13 +87,17 @@ bbg_quant_dashboard/
 ├── src/
 │   ├── config.py              # constants and paths
 │   ├── data.py                # metadata loading + filtering
-│   ├── bql_client.py          # BQL fetch + off-terminal mock + parquet cache
+│   ├── bql_client.py          # orchestrates a PriceCache and a PriceSource
+│   ├── price_cache.py         # two-tier cache: session superset + parquet
+│   ├── price_source.py        # PriceSource protocol: BQL + off-terminal mock
 │   ├── style.py               # centralized style tokens (Color/Font/…)
 │   ├── commentary.py          # rule-based highlight cards
 │   ├── stats/                 # metrics package: _common / performance / risk /
 │   │                          #   rolling / factors / regime / calendar
-│   └── layout/                # UI package: builder + theme/chrome/filters/panes/
-│                              #   platform/filter_panel/single_strategy/charts/grids/html/state
+│   └── layout/                # UI package: builder (entry point) + app (the
+│                              #   DashboardApp controller) + theme/chrome/filters/
+│                              #   panes/selection/platform/filter_panel/
+│                              #   single_strategy/multi_strategy/charts/grids/html/state
 │                              #   (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
                                #   cache/commentary/grids/platform/single_strategy/

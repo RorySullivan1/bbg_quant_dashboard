@@ -29,16 +29,17 @@ the patch targets the module attribute, not `config`.
 
 ## Making the mock reject a ticker (#195)
 
-The mock seeds its generator off `hash(ticker)`, so by default it resolves
-**any** string — right for rendering the dashboard without a terminal, wrong
-for anything that must cope with a ticker a user typed. Two module-level seams
-in `src/bql_client.py` let a test drive the mock into the live path's two
-failure modes, which are different and must stay distinguishable:
+The mock seeds its generator off a digest of the ticker (v0.9.16 #235), so by
+default it resolves **any** string — right for rendering the dashboard without
+a terminal, wrong for anything that must cope with a ticker a user typed. Two
+seams on `MockPriceSource` (`src/price_source.py`) let a test drive the mock
+into the live path's two failure modes, which are different and must stay
+distinguishable:
 
 | Seam | Meaning | Result |
 | --- | --- | --- |
-| `_MOCK_UNRESOLVABLE: set[str]` | a wrong ticker — nothing comes back, ever | all-NaN column, warned; raises only when *nothing* in the request resolves |
-| `_MOCK_FIRST_TRADE: dict[str, date]` | a real security with no history at the start of the window (launched mid-lookback, or stale) | NaN before that date, real data after; the frame keeps its full index |
+| `unresolvable: set[str]` | a wrong ticker — nothing comes back, ever | all-NaN column, warned; raises only when *nothing* in the request resolves |
+| `first_trade: dict[str, date]` | a real security with no history at the start of the window (launched mid-lookback, or stale) | NaN before that date, real data after; the frame keeps its full index |
 
 These seams exist because the alternative had already failed once: with no
 way to make the mock say "no", every validation path was untestable
@@ -46,11 +47,21 @@ off-terminal, and the test suite runs nowhere else — so the behaviour was
 shipped behind a caveat marked "untestable in CI" and then broke in
 production. A caveat is not a test.
 
-Both are empty by default, so app behaviour is unchanged. `_clear_caches()`
-resets them — they are mutable module state, so a test that sets one without
-that reset would leak into every test after it. `tests/test_mock_resolution.py`
-covers both, and pins them apart: reported as one generic error, a
-valid-but-no-data ticker reads to the user as a bug.
+They are **constructor arguments**, not module state (v0.9.16 #222, was
+`_MOCK_UNRESOLVABLE` / `_MOCK_FIRST_TRADE` in `bql_client`). A test that needs
+one builds its own source and either calls `.fetch` on it directly or installs
+it as the default:
+
+```python
+monkeypatch.setattr(bc, "_DEFAULT_SOURCE", MockPriceSource(unresolvable={bad}))
+```
+
+`fetch_prices(..., source=...)` takes one per call for the same purpose. Both
+default to empty, so app behaviour is unchanged — and because the seams live on
+an instance rather than on the module, a test that sets one **cannot leak into
+the next**, which under the old module globals depended on remembering a reset.
+`tests/test_mock_resolution.py` covers both and pins them apart: reported as
+one generic error, a valid-but-no-data ticker reads to the user as a bug.
 
 Off-terminal, the mock-price fallback is deterministic per ticker **and
 stable across processes** (v0.9.16 #235), so two runs render identical
@@ -208,3 +219,28 @@ renders the full dashboard without a Bloomberg session. Verify by:
   1Y/3Y/5Y performance.
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
+
+## Terminal verification (v0.9.16)
+
+The whole app has been **loaded and driven on a real BQuant terminal** — the
+v0.9.16 object rework landed there successfully, retiring the standing "never
+run against live BQL" caveat that every prior version carried. Treat the
+terminal as reachable, not hypothetical: when a change touches the live path,
+it can be confirmed rather than reasoned about.
+
+That matters because the suite runs **only** off-terminal, and two classes of
+behaviour are invisible there:
+
+- **The stale-index prune is a no-op on mock prices.** Every mock ticker moves
+  over the trailing window, so `active_columns` drops nothing and the pruned
+  and unpruned catalogs are identical frames. #242 — Platform-analytics
+  observers redrawing from the *pre-prune* catalog — survived precisely because
+  of this, and its regression test has to build the divergence by hand. **On a
+  terminal the check is real:** load the app, change the **Z-Score Metric**
+  dropdown, and the all-catalog grid's row count must not jump.
+- **BQL's own contract** — batching behaviour, which tickers resolve, what a
+  delisted security returns. `MockPriceSource` encodes our *belief* about it;
+  only a terminal tests the belief.
+
+When a fix is only observable on a terminal, say so in the PR and name the
+click-path that confirms it, the way #242 did.

@@ -281,7 +281,7 @@ RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
 #: Mock shapes for indicator tickers whose off-terminal series must be an
 #: absolute *level* rather than a compounding price, so the regime buckets
 #: actually partition the mock. Maps ticker -> (mean, vol, lo, hi) for a clipped
-#: mean-reverting level; see `_mock_prices` in `src/bql_client.py`.
+#: mean-reverting level; see `MockPriceSource` in `src/price_source.py`.
 LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
     VIX_TICKER: (18.0, 1.5, 9.0, 60.0),  # VIX-like, hovers ~18
     **{t: (2.0, 0.10, 0.0, 8.0) for _, t in RATE_LEVEL_TICKERS},  # short rates
