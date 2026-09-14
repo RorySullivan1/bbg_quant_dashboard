@@ -12,8 +12,11 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
 from src import commentary
+from src.commentary import LaunchCard, SuperlativeCard
 from src.stats import daily_returns
+from src.style import Sentiment
 
 
 def _meta(rows: list[dict]) -> pd.DataFrame:
@@ -67,29 +70,69 @@ def test_build_superlatives_all_cards_and_extremes(bdays):
     )
     cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
 
-    assert {c["label"] for c in cards} == SUPERLATIVE_LABELS
+    assert {c.label for c in cards} == SUPERLATIVE_LABELS
     for c in cards:
-        assert set(c) >= {
-            "label",
-            "value",
-            "name",
-            "ticker",
-            "sentiment",
-            "description",
-        }
-        assert c["description"]  # every card carries a hover description
+        # The field set is the dataclass's now, so there is nothing to assert
+        # about which keys are present — only that the values are right.
+        assert isinstance(c, SuperlativeCard)
+        assert c.description  # every card carries a hover description
 
-    by_label = {c["label"]: c for c in cards}
+    by_label = {c.label: c for c in cards}
     # No asset_class column → all tickers share one cohort, so the demeaned
     # z-rank is monotonic in the raw metric and the extremes match the raw ones.
-    assert by_label["Best performer"]["ticker"] == "AAA Index"
-    assert by_label["Best performer"]["name"] == "Alpha"
-    assert by_label["Worst performer"]["ticker"] == "BBB Index"
+    assert by_label["Best performer"].ticker == "AAA Index"
+    assert by_label["Best performer"].name == "Alpha"
+    assert by_label["Worst performer"].ticker == "BBB Index"
     # Opposite-extreme pairs pick opposite tickers.
     assert (
-        by_label["Best risk-adjusted"]["ticker"]
-        != by_label["Worst risk-adjusted"]["ticker"]
+        by_label["Best risk-adjusted"].ticker != by_label["Worst risk-adjusted"].ticker
     )
+
+
+def test_every_card_sentiment_is_a_sentiment_member(bdays):
+    # #224: sentiment used to be a bare string handed to a colour lookup, so a
+    # typo ("postive") fell through to neutral instead of failing. Typing the
+    # field makes the card's own construction the check.
+    prices = _superlative_prices(bdays)
+    returns = daily_returns(prices)
+    meta = _meta(
+        [
+            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
+            {"ticker": "BBB Index", "name": "Beta", "live_date": "2010-01-01"},
+            {"ticker": "CCC Index", "name": "Gamma", "live_date": "2010-01-01"},
+        ]
+    )
+    cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
+    assert cards
+    for c in cards:
+        assert isinstance(c.sentiment, Sentiment), c.label
+
+
+def test_launch_cards_are_typed_with_a_real_date_and_a_numeric_return(bdays):
+    # The builder returns a `date` and a `float | None`; turning those into an
+    # ISO string and an em dash is the renderer's job (#224).
+    prices = _superlative_prices(bdays).rename(columns={"AAA Index": "NEW1 Index"})
+    as_of = prices.index.max().date()
+    meta = _meta(
+        [
+            {
+                "ticker": "NEW1 Index",
+                "name": "Newbie",
+                "live_date": (as_of - timedelta(days=10)).isoformat(),
+            }
+        ]
+    )
+    cards = commentary.build_launch_cards(meta, prices, as_of=as_of)
+    assert len(cards) == 1
+    card = cards[0]
+    assert isinstance(card, LaunchCard)
+    assert isinstance(card.live_date, date)
+    assert isinstance(card.since_return, float)
+
+    # No price history for the ticker → no return to show, expressed as None
+    # rather than a placeholder string.
+    bare = commentary.build_launch_cards(meta, pd.DataFrame(), as_of=as_of)
+    assert bare[0].since_return is None
 
 
 def test_build_superlatives_returns_slice_is_equivalent(bdays):
@@ -180,9 +223,9 @@ def test_build_superlatives_z_ranked_value_is_raw_metric(bdays):
     cards = commentary.build_superlatives(
         meta, prices, daily_returns(prices), window_days=len(idx)
     )
-    best = next(c for c in cards if c["label"] == "Best performer")
-    assert best["ticker"] == "BD2 Index"  # cohort-relative winner, not the raw max
-    assert best["value"] == "+6.0%"  # but the displayed value is BD2's raw return
+    best = next(c for c in cards if c.label == "Best performer")
+    assert best.ticker == "BD2 Index"  # cohort-relative winner, not the raw max
+    assert best.value == "+6.0%"  # but the displayed value is BD2's raw return
 
 
 def test_build_superlatives_empty_inputs():
@@ -204,7 +247,7 @@ def test_build_superlatives_single_ticker_renders(bdays):
     )
     meta = _meta([{"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"}])
     cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
-    labels = {c["label"] for c in cards}
+    labels = {c.label for c in cards}
     # The lone ticker is its own extreme on every defined metric (z-ranked cards
     # fall back to the raw value).
     assert "Best performer" in labels
@@ -227,9 +270,9 @@ def test_build_superlatives_tie_break_by_ticker(bdays):
         ]
     )
     cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
-    top = next(c for c in cards if c["label"] == "Best performer")
+    top = next(c for c in cards if c.label == "Best performer")
     # Identical paths → tie broken deterministically by sorted ticker.
-    assert top["ticker"] == "AAA Index"
+    assert top.ticker == "AAA Index"
 
 
 def test_build_superlatives_window_sensitivity(bdays):
@@ -255,8 +298,8 @@ def test_build_superlatives_window_sensitivity(bdays):
     returns = daily_returns(prices)
     short = commentary.build_superlatives(meta, prices, returns, window_days=5)
     long = commentary.build_superlatives(meta, prices, returns, window_days=n)
-    short_top = next(c for c in short if c["label"] == "Best performer")["ticker"]
-    long_top = next(c for c in long if c["label"] == "Best performer")["ticker"]
+    short_top = next(c for c in short if c.label == "Best performer").ticker
+    long_top = next(c for c in long if c.label == "Best performer").ticker
     assert short_top == "REBOUND Index"  # the late rally dominates a 1W window
     assert long_top == "STEADY Index"  # the full-window drawdown sinks REBOUND
 
@@ -300,14 +343,14 @@ def test_build_launch_cards_metadata_and_order(bdays):
         ]
     )
     cards = commentary.build_launch_cards(meta, prices, as_of=as_of, new_launch_days=30)
-    assert [c["ticker"] for c in cards] == ["NEW2 Index", "NEW1 Index"]  # newest first
-    new1 = next(c for c in cards if c["ticker"] == "NEW1 Index")
-    assert new1["days_ago"] == 10
-    assert new1["meta"] == "Equity · Trend · USD"
+    assert [c.ticker for c in cards] == ["NEW2 Index", "NEW1 Index"]  # newest first
+    new1 = next(c for c in cards if c.ticker == "NEW1 Index")
+    assert new1.days_ago == 10
+    assert new1.meta == "Equity · Trend · USD"
     # Anchored at the live date (first business day >= 2026-05-30, i.e.
     # 2026-06-01), not the 2026-05-20 window start: the post-launch slice runs
     # 102.857 -> 105 over the linspace, a +2.1% move.
-    assert new1["since_return"] == "+2.1%"
+    assert new1.since_return == pytest.approx(0.021, abs=5e-4)
 
 
 def test_build_launch_cards_since_return_anchors_at_live_date(bdays):
@@ -333,7 +376,7 @@ def test_build_launch_cards_since_return_anchors_at_live_date(bdays):
     cards = commentary.build_launch_cards(meta, prices, as_of=as_of, new_launch_days=30)
     assert len(cards) == 1
     # 110 / 100 - 1 = +10.0% (anchored at launch), NOT 110 / 50 - 1 = +120.0%.
-    assert cards[0]["since_return"] == "+10.0%"
+    assert cards[0].since_return == pytest.approx(0.10, abs=5e-4)
 
 
 def test_build_launch_cards_empty_when_none_recent():

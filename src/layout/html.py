@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..commentary import LaunchCard, SuperlativeCard
 from ..config import (
     PROFILE_CARD_FIELDS,
     TEMPLATES_DIR,
@@ -25,8 +26,7 @@ from ..config import (
     catalog_field,
     field_label,
 )
-from ..style import Color, Font, FontSize, StatusTone
-from .theme import _sentiment_color
+from ..style import Color, Font, FontSize, Sentiment, StatusTone
 
 # Shared style-token vocabulary spread into every template's context, so the
 # `data/templates/*.html` files carry placeholders ({{navy}}, {{label_size}},
@@ -116,34 +116,49 @@ def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     )
 
 
-def _superlative_value_color(sentiment: str) -> str:
+def _superlative_value_color(sentiment: Sentiment) -> str:
     """Sentiment → value color for the dark superlative cards.
 
-    Reuses the shared green/red sentiment palette but maps ``neutral`` to the
+    Reuses the shared green/red sentiment palette but maps ``NEUTRAL`` to the
     bright chrome text token (the shared ``Sentiment.NEUTRAL`` is brand navy,
-    which is illegible on the dark surface)."""
-    if sentiment == "neutral":
+    which is illegible on the dark surface).
+
+    Takes the enum member, not its name: `Sentiment` is a `StrEnum` over *color*
+    values, so a member's string form is a hex code — feeding one to
+    `_sentiment_color`, which looks up by member *name*, would miss and silently
+    return neutral for every card.
+    """
+    if sentiment is Sentiment.NEUTRAL:
         return str(Color.TEXT)
-    return _sentiment_color(sentiment)
+    return str(sentiment.value)
 
 
-def _render_superlative_cards(cards: list[dict]) -> str:
+def _render_superlative_cards(cards: list[SuperlativeCard]) -> str:
     return "".join(
         render_template(
             "superlative_card",
             **STYLE_CTX,
-            color=_superlative_value_color(c.get("sentiment", "neutral")),
-            label=html.escape(c["label"]),
-            value=html.escape(c["value"]),
-            name=html.escape(c.get("name", "")),
-            ticker=html.escape(c["ticker"]),
-            description=html.escape(c.get("description", "")),
+            color=_superlative_value_color(c.sentiment),
+            label=html.escape(c.label),
+            value=html.escape(c.value),
+            name=html.escape(c.name),
+            ticker=html.escape(c.ticker),
+            description=html.escape(c.description),
         )
         for c in cards
     )
 
 
-def _render_launch_cards(cards: list[dict]) -> str:
+def _fmt_since_return(value: float | None) -> str:
+    """A launch card's since-launch return, or an em dash when there isn't one.
+
+    The builder returns None rather than a placeholder string, so the choice of
+    what "no return yet" looks like stays here with the rest of the presentation.
+    """
+    return "—" if value is None else f"{value:+.1%}"
+
+
+def _render_launch_cards(cards: list[LaunchCard]) -> str:
     if not cards:
         return render_template(
             "launch_empty",
@@ -154,20 +169,20 @@ def _render_launch_cards(cards: list[dict]) -> str:
         render_template(
             "launch_card",
             **STYLE_CTX,
-            name=html.escape(c.get("name", "")),
-            ticker=html.escape(c["ticker"]),
-            meta=html.escape(c.get("meta", "")),
-            live_date=html.escape(c["live_date"]),
-            days_ago=html.escape(str(c["days_ago"])),
-            since_return=html.escape(c["since_return"]),
+            name=html.escape(c.name),
+            ticker=html.escape(c.ticker),
+            meta=html.escape(c.meta),
+            live_date=html.escape(c.live_date.isoformat()),
+            days_ago=html.escape(str(c.days_ago)),
+            since_return=html.escape(_fmt_since_return(c.since_return)),
         )
         for c in cards
     )
 
 
 def _render_highlights(
-    superlatives: list[dict],
-    launches: list[dict],
+    superlatives: list[SuperlativeCard],
+    launches: list[LaunchCard],
     *,
     window_label: str = "Past Month",
 ) -> str:
