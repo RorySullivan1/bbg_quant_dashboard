@@ -196,6 +196,27 @@ def filterable_fields() -> tuple[CatalogField, ...]:
     return tuple(f for f in CATALOG_SCHEMA if f.role in ("tier", "attribute"))
 
 
+#: The Platform sunburst's rings above the ticker leaves, outermost grouping
+#: first. This is today's picture — asset class → category → ticker — and the
+#: renderer walks it rather than naming the levels, so switching to the full
+#: framework hierarchy (`CLASSIFICATION_TIERS`) is a config flip with no code
+#: edit. Any number of levels works; the leaf ring is always the ticker.
+SUNBURST_LEVELS: tuple[str, ...] = ("asset_class", "category")
+
+
+def sunburst_levels() -> tuple[str, ...]:
+    """`SUNBURST_LEVELS`, validated against the schema.
+
+    Read through a call so a reconfigured hierarchy reaches both the frame
+    builder and the renderer. The validation earns its keep because the
+    renderer fills a missing level with "Other": a mistyped level would
+    otherwise render as one undifferentiated ring rather than fail.
+    """
+    for key in SUNBURST_LEVELS:
+        catalog_field(key)  # raises KeyError naming the offending level
+    return SUNBURST_LEVELS
+
+
 def filter_dimensions() -> tuple[CatalogField, ...]:
     """The filterable fields in filter-panel order: tiers broadest-first, then
     the flat attributes in schema order.

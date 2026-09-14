@@ -191,12 +191,16 @@ def test_update_factor_scatter_empty_clears_traces():
 
 
 def _treemap_meta() -> pd.DataFrame:
-    # Two categories under one asset class → a 3-level Equity → category → ticker tree.
+    # Two categories under one asset class → a 3-ring Equity → category → ticker
+    # tree under the default levels. The tier columns let the same fixture drive
+    # the reconfigured-hierarchy tests (#213) without a second one.
     return pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index"],
             "asset_class": ["Equity", "Equity"],
+            "solution": ["ARP", "ARP"],
             "category": ["Growth", "Value"],
+            "family": ["Momentum", "Carry"],
         }
     )
 
@@ -224,7 +228,7 @@ def test_sunburst_leaf_sizes_all_zero_uniform():
     assert (sizes == 1.0).all()
 
 
-def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
+def test_update_sunburst_builds_the_default_two_level_hierarchy():
     fig = _sunburst()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
@@ -236,7 +240,8 @@ def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
     sb = fig.data[0]
     assert isinstance(sb, go.Sunburst)
     assert sb.branchvalues == "total"
-    # maxdepth=2 hides the ticker ring until the user drills into a class/theme.
+    # maxdepth == the number of configured levels, so the ticker ring stays
+    # hidden until the user drills into a grouping node.
     assert sb.maxdepth == 2
     nodes = dict(zip(sb.ids, sb.parents, strict=True))
     # asset-class node is a root; category nodes hang off it; leaves off the categories.
@@ -253,6 +258,50 @@ def test_update_sunburst_builds_asset_theme_ticker_hierarchy():
     assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
     # Colorbar title reflects the selected metric label.
     assert sb.marker.colorbar.title.text == "z(1W Sharpe)"
+
+
+def test_update_sunburst_follows_a_three_level_config(monkeypatch):
+    # #213's acceptance: switching `SUNBURST_LEVELS` to the framework tiers
+    # renders correctly with no code edit — three rings above the leaves, ids
+    # spelling the path, and parent value == Σ children at *every* level (what
+    # `branchvalues="total"` requires).
+    import src.config as cfg
+
+    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("solution", "category", "family"))
+    fig = _sunburst()
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+
+    sb = fig.data[0]
+    assert sb.maxdepth == 3
+    nodes = dict(zip(sb.ids, sb.parents, strict=True))
+    assert nodes["ARP"] == ""
+    assert nodes["ARP / Growth"] == "ARP"
+    assert nodes["ARP / Growth / Momentum"] == "ARP / Growth"
+    assert nodes["AAA Index"] == "ARP / Growth / Momentum"
+    assert nodes["BBB Index"] == "ARP / Value / Carry"
+
+    val = dict(zip(sb.ids, sb.values, strict=True))
+    children: dict[str, list[str]] = {}
+    for node, parent in nodes.items():
+        children.setdefault(parent, []).append(node)
+    for node, kids in children.items():
+        if node:  # "" is Plotly's root, not a node with a value
+            assert val[node] == pytest.approx(sum(val[k] for k in kids))
+
+
+def test_update_sunburst_buckets_a_missing_level_as_other(monkeypatch):
+    # A level absent from the metadata must not break the render.
+    import src.config as cfg
+
+    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "return_type"))
+    fig = _sunburst()
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+
+    nodes = dict(zip(fig.data[0].ids, fig.data[0].parents, strict=True))
+    assert nodes["Equity / Other"] == "Equity"
+    assert nodes["AAA Index"] == "Equity / Other"
 
 
 def test_update_sunburst_label_drives_colorbar_title():

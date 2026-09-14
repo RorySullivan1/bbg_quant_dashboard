@@ -596,6 +596,54 @@ def test_platform_sunburst_frame_empty_safe():
     assert out.empty
 
 
+def test_platform_sunburst_frame_follows_configured_levels(
+    multiyear_prices, monkeypatch
+):
+    # #213: the frame's grouping columns are whatever `SUNBURST_LEVELS` says,
+    # in that order — three framework tiers here instead of the default two.
+    import src.config as cfg
+
+    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("solution", "category", "family"))
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "solution": ["ARP", "ARP", "Smart Beta"],
+            "category": ["Carry", "Carry", "Energy"],
+            "family": ["X", "Y", "Z"],
+        }
+    )
+    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["solution", "category", "family", "z"]
+    assert frame.loc["CCC Index", "solution"] == "Smart Beta"
+    assert frame.loc["CCC Index", "family"] == "Z"
+
+
+def test_platform_sunburst_frame_missing_level_is_all_na(multiyear_prices, monkeypatch):
+    # A level the metadata doesn't carry comes back NA rather than raising; the
+    # renderer buckets it as "Other", so a partial feed still draws.
+    import src.config as cfg
+
+    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "solution"))
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "asset_class": ["Equity", "Fixed Income", "Commodity"],
+        }
+    )
+    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["asset_class", "solution", "z"]
+    assert frame["solution"].isna().all()
+
+
+def test_sunburst_levels_rejects_a_level_that_is_not_a_schema_field(monkeypatch):
+    # Without this the typo would render as one undifferentiated "Other" ring.
+    import src.config as cfg
+
+    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "theme"))
+    with pytest.raises(KeyError, match="theme"):
+        cfg.sunburst_levels()
+
+
 # --- v0.8.0 superlative helpers: period_return / streak / trend -------------
 
 

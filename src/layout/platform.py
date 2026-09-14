@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pandas as pd
 import plotly.graph_objects as go
 
-from ..config import REGIME_SPECS, TRADING_DAYS_PER_YEAR
+from ..config import REGIME_SPECS, TRADING_DAYS_PER_YEAR, sunburst_levels
 from ..stats import (
     daily_returns,
     equity_risk_premium,
@@ -129,7 +129,7 @@ def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
     ]
 
 
-# Sunburst hierarchy separator (asset class → category), diverging colorscale, and
+# Sunburst node-id separator (one segment per configured level), diverging
 # the per-node hover. The colorscale matches the all-catalog grid's
 # red<0 → neutral → green>0 sentiment and is token-driven (no inline hex). The
 # hover is a `.format()` template — `metric_label` is user-selected at render
@@ -153,9 +153,8 @@ _SUNBURST_SIZE_FLOOR = 0.02
 def _sunburst_leaf_sizes(z: pd.Series) -> pd.Series:
     """Per-ticker arc value = |z| (gross magnitude), plus a small floor so a
     near-average (|z|≈0) ticker stays visible. With ``branchvalues="total"`` each
-    ring's arc is then its gross-|z| share of its parent (asset class = Σ|z|
-    share, category = Σ|z| within the class). All-zero (or empty) input falls back
-    to uniform arcs."""
+    ring's arc is then its gross-|z| share of its parent, at every level.
+    All-zero (or empty) input falls back to uniform arcs."""
     mag = z.abs()
     hi = float(mag.max()) if len(mag) else 0.0
     if hi <= 0:
@@ -255,8 +254,9 @@ def _update_factor_scatter(
 
 
 def _sunburst() -> go.FigureWidget:
-    """Asset class → category → ticker sunburst (inside out), arcs sized by each
-    ring's gross-|z| share and colored by the (level-averaged) metric z-score.
+    """The `config.SUNBURST_LEVELS` hierarchy down to ticker leaves (inside
+    out), arcs sized by each ring's gross-|z| share and colored by the
+    (level-averaged) metric z-score.
     Built empty; `_update_sunburst` fills it. No in-figure title — the
     "Risk-adjusted strength map" section header stands alone; the
     diverging colorbar is the color legend."""
@@ -278,14 +278,16 @@ def _update_sunburst(
     lookback: int,
     label: str,
 ) -> None:
-    """Populate the sunburst from `platform_sunburst_frame`: a 3-level
-    asset class → category → ticker hierarchy. Each arc is sized by |z| (so with
+    """Populate the sunburst from `platform_sunburst_frame`: one ring per
+    `config.SUNBURST_LEVELS` entry over the ticker leaves, so reconfiguring the
+    hierarchy — two levels today, the three framework tiers if that is what the
+    catalog should show — needs no edit here. Each arc is sized by |z| (so with
     `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
     colored by the metric z-score, averaged up each level (parent color = mean of
-    its descendant tickers' z). `maxdepth=2` shows only the asset-class + category
-    rings up front; the ticker ring appears when the user clicks into an asset
-    class or category (client-side drill-down). `label` (e.g. "1W Sharpe") titles
-    the colorbar + hover. No BQL — pure compute over the already-fetched cache."""
+    its descendant tickers' z). `maxdepth` shows the grouping rings up front; the
+    ticker ring appears when the user clicks into one (client-side drill-down).
+    `label` (e.g. "1W Sharpe") titles the colorbar + hover. No BQL — pure compute
+    over the already-fetched cache."""
     frame = platform_sunburst_frame(
         prices, meta, metric=metric, window=window, lookback=lookback
     ).dropna(subset=["z"])
@@ -294,9 +296,10 @@ def _update_sunburst(
             fig.data = ()
         return
 
+    levels = list(sunburst_levels())
     frame = frame.copy()
-    frame["asset_class"] = frame["asset_class"].fillna("Other").astype(str)
-    frame["category"] = frame["category"].fillna("Other").astype(str)
+    for level in levels:
+        frame[level] = frame[level].fillna("Other").astype(str)
     # Arc value = |z| (gross magnitude) + floor; parents sum to the gross-|z|
     # share at each ring. Color is the signed z (below), averaged up each level.
     frame["size"] = _sunburst_leaf_sizes(frame["z"])
@@ -307,33 +310,38 @@ def _update_sunburst(
     values: list[float] = []
     colors: list[float] = []
 
-    for ac, ac_grp in frame.groupby("asset_class"):
-        ac_total = 0.0
-        for category, th_grp in ac_grp.groupby("category"):
-            tid = f"{ac}{_SUNBURST_SEP}{category}"
-            leaves = [
-                (t, float(row["size"]), float(row["z"])) for t, row in th_grp.iterrows()
-            ]
-            th_total = sum(v for _, v, _ in leaves)
-            ac_total += th_total
-            # category node, then its ticker leaves (parent value == Σ children,
-            # so branchvalues="total" is exact).
-            ids.append(tid)
-            labels.append(str(category))
-            parents.append(str(ac))
-            values.append(th_total)
-            colors.append(float(th_grp["z"].mean()))
-            for t, size, z in leaves:
-                ids.append(t)
-                labels.append(_short_ticker(t))
-                parents.append(tid)
-                values.append(size)
-                colors.append(z)
-        ids.append(str(ac))
-        labels.append(str(ac))
-        parents.append("")
-        values.append(ac_total)
-        colors.append(float(ac_grp["z"].mean()))
+    def _emit(group: pd.DataFrame, depth: int, parent_id: str) -> float:
+        """Emit one subtree's nodes, returning its total arc value.
+
+        Depth-first and bottom-up: a node's value is the sum its children
+        actually reported, not a second aggregation of the same rows, so
+        ``branchvalues="total"`` holds exactly at every ring however many there
+        are. ``parent_id`` is "" at the top, which is Plotly's root.
+        """
+        if depth == len(levels):
+            for ticker, row in group.iterrows():
+                ids.append(ticker)
+                labels.append(_short_ticker(ticker))
+                parents.append(parent_id)
+                values.append(float(row["size"]))
+                colors.append(float(row["z"]))
+            return float(group["size"].sum())
+
+        total = 0.0
+        for value, sub in group.groupby(levels[depth]):
+            # Ids are the path, so the same leaf label under two different
+            # parents stays two nodes.
+            node_id = f"{parent_id}{_SUNBURST_SEP}{value}" if parent_id else str(value)
+            subtotal = _emit(sub, depth + 1, node_id)
+            ids.append(node_id)
+            labels.append(str(value))
+            parents.append(parent_id)
+            values.append(subtotal)
+            colors.append(float(sub["z"].mean()))
+            total += subtotal
+        return total
+
+    _emit(frame, 0, "")
 
     sunburst = go.Sunburst(
         ids=ids,
@@ -341,10 +349,10 @@ def _update_sunburst(
         parents=parents,
         values=values,
         branchvalues="total",
-        # Show only 2 rings from the current center (asset class + category), so the
-        # ticker ring stays hidden until the user clicks into an asset class or
-        # category to drill in (client-side zoom, no recompute).
-        maxdepth=2,
+        # Show one ring per configured level from the current center, so the
+        # ticker ring stays hidden until the user clicks into a grouping node to
+        # drill in (client-side zoom, no recompute).
+        maxdepth=len(levels),
         insidetextorientation="radial",
         marker=dict(
             colors=colors,
@@ -534,7 +542,7 @@ def render_factor_scatter(
 
 
 def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
-    """Render the asset class → category → ticker sunburst from the Metric/Window
+    """Render the `SUNBURST_LEVELS` → ticker sunburst from the Metric/Window
     Z-score controls + the shared lookback, live from the ARP-only cache."""
     if state.arp_universe_prices.empty:
         return
