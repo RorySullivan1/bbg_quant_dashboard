@@ -31,6 +31,7 @@ import src.layout.builder as builder_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect
+from src.price_cache import PriceCache
 
 NEW = "NEWBM Index"
 
@@ -38,7 +39,7 @@ NEW = "NEWBM Index"
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
     bc._clear_caches()
-    monkeypatch.setattr(bc, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
     yield
     bc._clear_caches()
 

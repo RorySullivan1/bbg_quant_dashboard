@@ -7,8 +7,8 @@ crash the load (the in-memory cache carries the session), and the caches must
 actually spare a refetch — while ``use_cache=False`` (Refresh prices) still
 refetches.
 
-Each test clears the module caches and points ``CACHE_DIR`` at a tmp dir so it
-never touches the real ``data/.cache``. The unwritable-FS cases raise from a
+Each test gets its own ``PriceCache`` under a tmp dir, so nothing touches the
+real ``data/.cache`` and no state leaks between cases. The unwritable-FS cases raise from a
 patched ``Path.mkdir`` rather than ``chmod`` (the suite runs as root, which
 bypasses permission bits).
 """
@@ -18,11 +18,13 @@ from __future__ import annotations
 import os
 import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
 import src.bql_client as bc
 from src.config import RATE_LEVEL_TICKERS, VIX_TICKER
+from src.price_cache import PriceCache
 
 
 @pytest.fixture(autouse=True)
@@ -39,11 +41,14 @@ def _no_retry_backoff(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _hermetic_cache(monkeypatch, tmp_path):
-    """Fresh caches + a throwaway CACHE_DIR for every test."""
-    bc._clear_caches()
-    monkeypatch.setattr(bc, "CACHE_DIR", tmp_path / "cache")
+    """A private `PriceCache` under a throwaway dir for every test.
+
+    #221: isolation is now one substitution — the cache object carries the
+    superset, the cover and the writability probe — rather than patching a
+    module constant and resetting three globals.
+    """
+    monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
     yield
-    bc._clear_caches()
 
 
 def _raise_oserror(*_args, **_kwargs):
@@ -57,27 +62,29 @@ _END = date(2020, 3, 1)
 
 def test_cache_write_survives_unwritable_fs(monkeypatch):
     # mkdir raising stands in for a read-only filesystem.
-    monkeypatch.setattr(bc.Path, "mkdir", _raise_oserror)
+    monkeypatch.setattr(Path, "mkdir", _raise_oserror)
     df = pd.DataFrame({"A Index": [1.0, 2.0], "B Index": [3.0, 4.0]})
 
     with pytest.warns(UserWarning, match="unwritable"):
-        bc._cache_write(_END, df)  # must not raise
+        bc._DEFAULT_CACHE.write_disk(_END, df)  # must not raise
 
-    assert bc._disk_cache_writable is False
+    assert bc._DEFAULT_CACHE.disk_writable is False
     # Once known-unwritable we stop probing — a second call is a silent no-op.
-    bc._cache_write(_END, df)
-    assert bc._disk_cache_writable is False
+    bc._DEFAULT_CACHE.write_disk(_END, df)
+    assert bc._DEFAULT_CACHE.disk_writable is False
 
 
 def test_fetch_prices_degrades_to_inmemory_on_unwritable_fs(monkeypatch):
-    monkeypatch.setattr(bc.Path, "mkdir", _raise_oserror)
+    monkeypatch.setattr(Path, "mkdir", _raise_oserror)
 
     with pytest.warns(UserWarning, match="unwritable"):
         df, source = bc.fetch_prices(_TICKERS, _START, _END)
     assert not df.empty
     assert source == "mock"  # bql isn't importable in tests
     # No parquet was written...
-    assert not (bc.CACHE_DIR / f"prices_{_END.isoformat()}.parquet").exists()
+    assert not (
+        bc._DEFAULT_CACHE.cache_dir / f"prices_{_END.isoformat()}.parquet"
+    ).exists()
 
     # ...but the identical request is served from the in-memory cache.
     df2, source2 = bc.fetch_prices(_TICKERS, _START, _END)
@@ -180,17 +187,19 @@ def test_extended_lookback_fetches_only_the_new_range(monkeypatch):
     assert calls[1][0] == _TICKERS
     assert calls[1][1] == _START
     assert calls[1][2] == mid - timedelta(days=1)
-    assert bc._covers(_TICKERS, _START, _END)  # now fully covered in memory
+    assert bc._DEFAULT_CACHE.covers(
+        _TICKERS, _START, _END
+    )  # now fully covered in memory
 
 
 def test_disk_superset_serves_a_ticker_subset(monkeypatch):
     calls = _spy_live(monkeypatch)
     full, _ = bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
-    assert (bc.CACHE_DIR / f"prices_{_END.isoformat()}.parquet").exists()
+    assert (bc._DEFAULT_CACHE.cache_dir / f"prices_{_END.isoformat()}.parquet").exists()
 
     # New session (in-memory dropped) but the disk parquet is warm.
-    bc._MEM_SUPERSET = None
-    bc._MEM_COVER = None
+    bc._DEFAULT_CACHE.superset = None
+    bc._DEFAULT_CACHE.cover = None
     calls.clear()
 
     sub, src = bc.fetch_prices(["A Index", "C Index"], _START, _END)
@@ -202,17 +211,53 @@ def test_disk_superset_serves_a_ticker_subset(monkeypatch):
 
 
 def test_prune_removes_stale_cache_files():
-    bc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    stale = bc.CACHE_DIR / "prices_2000-01-01.parquet"
+    bc._DEFAULT_CACHE.cache_dir.mkdir(parents=True, exist_ok=True)
+    stale = bc._DEFAULT_CACHE.cache_dir / "prices_2000-01-01.parquet"
     stale.write_bytes(b"stale")  # prune only inspects mtime, not contents
-    old = time.time() - (bc.CACHE_TTL_HOURS + 1) * 3600
+    old = time.time() - (bc._DEFAULT_CACHE.ttl_hours + 1) * 3600
     os.utime(stale, (old, old))
 
     df = pd.DataFrame({"A Index": [1.0, 2.0], "B Index": [3.0, 4.0]})
-    bc._cache_write(_END, df)  # writes today's file and prunes stale ones
+    bc._DEFAULT_CACHE.write_disk(_END, df)  # writes today's file and prunes stale ones
 
     assert not stale.exists()  # older-than-TTL file pruned
-    assert (bc.CACHE_DIR / f"prices_{_END.isoformat()}.parquet").exists()  # fresh kept
+    assert (
+        bc._DEFAULT_CACHE.cache_dir / f"prices_{_END.isoformat()}.parquet"
+    ).exists()  # fresh kept
+
+
+def test_two_caches_are_independent(monkeypatch, tmp_path):
+    # Impossible before #221: the cache was module globals, so there was exactly
+    # one. Two instances must not see each other's superset or disk tier.
+    calls = _spy_live(monkeypatch)
+    a = PriceCache(tmp_path / "a")
+    b = PriceCache(tmp_path / "b")
+
+    bc.fetch_prices(_TICKERS, _START, _END, cache=a)
+    assert len(calls) == 1
+    assert a.covers(_TICKERS, _START, _END)
+    assert not b.covers(_TICKERS, _START, _END)  # b learned nothing from a
+
+    # The same request against b is a full miss and refetches.
+    bc.fetch_prices(_TICKERS, _START, _END, cache=b)
+    assert len(calls) == 2
+    # ...while a still serves from memory, no third fetch.
+    bc.fetch_prices(_TICKERS, _START, _END, cache=a)
+    assert len(calls) == 2
+    # Separate disk tiers, so neither can serve the other from parquet either.
+    assert a.path_for(_END).exists()
+    assert b.path_for(_END).exists()
+    assert a.path_for(_END) != b.path_for(_END)
+
+
+def test_an_explicit_cache_leaves_the_default_untouched(monkeypatch, tmp_path):
+    # `fetch_prices` still defaults to the module cache, so every existing
+    # caller is unchanged; passing one opts out entirely.
+    _spy_live(monkeypatch)
+    own = PriceCache(tmp_path / "own")
+    bc.fetch_prices(_TICKERS, _START, _END, cache=own)
+    assert own.superset is not None
+    assert bc._DEFAULT_CACHE.superset is None
 
 
 def test_mock_vix_is_a_bounded_level_spanning_buckets():
