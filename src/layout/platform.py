@@ -8,6 +8,12 @@ Every figure follows the same two-part shape: a factory builds it once, and an
 updater mutates it in place inside a `fig.batch_update()` block. Updaters
 compute from the already-fetched price cache, so no chart here issues a BQL
 call.
+
+`PlatformAnalytics` (#219) owns the analytics card: the three figures, the tab
+pills, their control columns, and the lazy-render state. It used to be a
+twenty-field `SimpleNamespace` assembled in `build_app` and handed back to
+twelve free functions declared `(state, meta, pa)` — a class with its `self`
+passed by hand.
 """
 
 from __future__ import annotations
@@ -15,16 +21,18 @@ from __future__ import annotations
 import traceback
 from collections.abc import Iterable
 from contextlib import contextmanager
-from types import SimpleNamespace
 
+import ipywidgets as W
 import pandas as pd
 import plotly.graph_objects as go
 
 from ..config import (
+    HALF_YEAR_WINDOW,
     REGIME_SPECS,
+    SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
+    WEEK_WINDOW,
     LevelRegime,
-    RegimeSpec,
     TercileRegime,
     sunburst_levels,
 )
@@ -42,8 +50,10 @@ from ..stats import (
     trend_returns,
 )
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
-from .chrome import _style_tab_button
+from .chrome import _make_tab_button, _style_tab_button
+from .filters import _section_label
 from .grids import _update_universe_grid
+from .html import STYLE_CTX, render_template
 from .theme import _chart_layout, _short_ticker
 
 
@@ -505,268 +515,422 @@ def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
     return [(label, key) for label, key in spec.bucket_labels]
 
 
-def render_universe_grid(
-    state: object, meta: pd.DataFrame, pa: SimpleNamespace
-) -> None:
-    """Render the all-catalog grid with the dynamic z-score column from the
-    current Metric/Window/Lookback dropdowns. Reads the cached perf table
-    (``state.universe_up``) and computes only the z-score column live from the
-    already-fetched ``arp_universe_prices`` — no BQL, no full recompute."""
-    if state.arp_universe_prices.empty:
-        return
-    with _guard_render(state, "all-catalog grid z-score render"):
-        zcol = rolling_metric_zscore(
-            state.arp_universe_prices,
-            metric=pa.z_metric_dd.value,
-            window=pa.z_window_dd.value,
-            zscore_window=pa.z_lookback_dd.value,
-            returns=state.universe_rets,
-        )
-        zlabel = (
-            f"{pa.z_metric_dd.label} {pa.z_window_dd.label}/{pa.z_lookback_dd.label}"
-        )
-        _update_universe_grid(
-            state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
-        )
+class PlatformAnalytics:
+    """The Platform tab's analytics card: three charts behind three pill-tabs.
 
+    Owns its widgets (figures, pills, per-tab control columns, the shared
+    lookback) and its **lazy-render state** — `active_analytics` is the visible
+    tab, `fresh` the set already drawn against current data. Only the visible
+    chart is computed on load or Refresh; the hidden two draw on first
+    activation, and a data or lookback change marks all three stale and
+    re-draws only the visible one (v0.9.13 #168).
 
-def render_factor_scatter(
-    state: object, meta: pd.DataFrame, pa: SimpleNamespace
-) -> None:
-    """Render the Platform 3D factor-beta scatter at the selected lookback,
-    live from the fetched cache (no BQL)."""
-    if state.arp_universe_prices.empty or state.universe_prices.empty:
-        return
-    with _guard_render(state, "factor-beta scatter render"):
-        _update_factor_scatter(
-            pa.factor_scatter_fig,
-            state.arp_universe_prices,
-            state.universe_prices,
-            meta,
-            years=pa.lookback_selector.value / TRADING_DAYS_PER_YEAR,
-            returns=state.universe_rets,
-        )
+    **`meta` stays a per-call argument rather than an attribute.** `build_app`
+    re-points its `meta` to the recent-performance-pruned catalog after each
+    load, so an attribute set at construction would go stale — silently, since
+    a stale catalog still renders, just with the pruned indices back. Passing it
+    makes that impossible. (The observers wired in `wire` do capture the `meta`
+    they were given, which is the pre-existing behaviour tracked in #242.)
 
+    `state` *is* held: it is one mutable object whose contents change in place,
+    so a reference is always current.
+    """
 
-def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
-    """Render the `SUNBURST_LEVELS` → ticker sunburst from the Metric/Window
-    Z-score controls + the shared lookback, live from the ARP-only cache."""
-    if state.arp_universe_prices.empty:
-        return
-    with _guard_render(state, "sunburst render"):
-        _update_sunburst(
-            pa.sunburst_fig,
-            state.arp_universe_prices,
-            meta,
-            metric=pa.sb_metric_dd.value,
-            window=pa.sb_window_dd.value,
-            lookback=pa.lookback_selector.value,
-            label=f"{pa.sb_window_dd.label} {pa.sb_metric_dd.label}",
+    def __init__(
+        self,
+        state: object,
+        *,
+        z_metric_dd: W.Dropdown,
+        z_window_dd: W.Dropdown,
+        z_lookback_dd: W.Dropdown,
+    ) -> None:
+        self.state = state
+        # The all-catalog grid's Z-Score ranking row sits above the card, not in
+        # it, but drives `render_universe_grid` — so it is passed in, not built.
+        self.z_metric_dd = z_metric_dd
+        self.z_window_dd = z_window_dd
+        self.z_lookback_dd = z_lookback_dd
+
+        # Shared 6M/1Y/3Y/5Y lookback — drives all three tabs. Value is a
+        # trading-day count, like z_lookback_dd; the factor scatter converts it
+        # to years. Re-slices the cache only (no BQL).
+        self.lookback_selector = W.ToggleButtons(
+            options=[
+                ("6M", HALF_YEAR_WINDOW),
+                ("1Y", TRADING_DAYS_PER_YEAR),
+                ("3Y", TRADING_DAYS_PER_YEAR * 3),
+                ("5Y", TRADING_DAYS_PER_YEAR * 5),
+            ],
+            value=TRADING_DAYS_PER_YEAR,
+            layout=W.Layout(width="auto"),
         )
 
+        self.sunburst_fig = _sunburst()
+        self.regime_scatter_fig = _regime_scatter()
+        self.factor_scatter_fig = _factor_beta_scatter()
 
-def _regime_indicator(state: object, pa: SimpleNamespace) -> pd.Series | None:
-    """The regime indicator series from the cache, per the active regime's mode,
-    or None when its ticker(s) are absent (→ unconditioned all-days view)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
-    if spec is None:
-        return None
-    prices = state.universe_prices
-    if isinstance(spec, TercileRegime) and spec.kind == "autocorr":
-        ticker = pa.regime_selector_dd.value
+        # Sunburst Z-score controls (Metric · Window; the lookback is the shared
+        # toggle). The chosen z colors the arcs (averaged up each level) and its
+        # |z| drives each ring's gross-% sizing. `.value`s feed
+        # `rolling_metric_zscore`, the `.label`s the colorbar/hover.
+        self.sb_metric_dd = W.Dropdown(
+            options=[
+                ("Sharpe", "sharpe"),
+                ("Sortino", "sortino"),
+                ("Return", "return"),
+                ("Vol", "vol"),
+            ],
+            value="sharpe",
+            description="Metric",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="230px"),
+        )
+        self.sb_window_dd = W.Dropdown(
+            options=SHORT_WINDOW_OPTIONS,
+            value=WEEK_WINDOW,
+            description="Window",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="230px"),
+        )
+
+        self.regime_type_dd = W.Dropdown(
+            options=list(REGIME_SPECS.keys()),
+            value=next(iter(REGIME_SPECS)),
+            description="Type",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="240px"),
+        )
+        # Conditional indicator-source dropdown — benchmark for Trend, region
+        # for Rate-level; hidden (via `_sync_regime_controls`) for regimes with
+        # no selector.
+        self.regime_selector_dd = W.Dropdown(
+            options=[("\u2014", "")],
+            value="",
+            description="Source",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="240px"),
+        )
+        _init_buckets = regime_bucket_options(self.regime_type_dd.value)
+        self.regime_bucket_dd = W.Dropdown(
+            options=_init_buckets,
+            value=_init_buckets[0][1],
+            description="Bucket",
+            style={"description_width": "60px"},
+            layout=W.Layout(width="240px"),
+        )
+
+        sunburst_controls = W.VBox(
+            [_section_label("Z-score"), self.sb_metric_dd, self.sb_window_dd],
+            layout=W.Layout(width="100%"),
+        )
+        regime_controls = W.VBox(
+            [
+                _section_label("Regime"),
+                self.regime_type_dd,
+                self.regime_selector_dd,
+                self.regime_bucket_dd,
+            ],
+            layout=W.Layout(width="100%"),
+        )
+        factor_controls = W.VBox([], layout=W.Layout(width="100%"))
+
+        self.sunburst_pill = _make_tab_button(
+            "Sunburst", active=True, width="190px", height="34px"
+        )
+        self.regime_pill = _make_tab_button(
+            "Regime analysis", active=False, width="190px", height="34px"
+        )
+        self.factor_pill = _make_tab_button(
+            "Factor exposures", active=False, width="190px", height="34px"
+        )
+        analytics_tab_bar = W.HBox(
+            [self.sunburst_pill, self.regime_pill, self.factor_pill],
+            layout=W.Layout(width="100%", padding="2px 0 6px 0"),
+        )
+
+        #: Tab key -> (pill, its control column, its figure).
+        self.analytics_tabs = {
+            "sunburst": (self.sunburst_pill, sunburst_controls, self.sunburst_fig),
+            "regime": (self.regime_pill, regime_controls, self.regime_scatter_fig),
+            "factor": (self.factor_pill, factor_controls, self.factor_scatter_fig),
+        }
+
+        # Shared lookback stacked on the active tab's controls (left column),
+        # beside a flex-grow chart box holding exactly one figure.
+        self.tab_controls_box = W.Box(
+            [sunburst_controls], layout=W.Layout(width="100%")
+        )
+        analytics_left_col = W.VBox(
+            [_section_label("Lookback"), self.lookback_selector, self.tab_controls_box],
+            layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
+        )
+        self.chart_box = W.Box(
+            [self.sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%")
+        )
+        analytics_body = W.HBox(
+            [analytics_left_col, self.chart_box],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+
+        self.card = W.VBox(
+            [
+                W.HTML(
+                    render_template(
+                        "grid_header", **STYLE_CTX, text="Platform analytics"
+                    )
+                ),
+                analytics_tab_bar,
+                analytics_body,
+            ],
+            layout=W.Layout(width="100%"),
+        )
+        self.card.add_class("bbg-card")
+
+        #: Lazy-render state: the visible tab, and the tabs drawn against the
+        #: current data.
+        self.active_analytics: str = "sunburst"
+        self.fresh: set[str] = set()
+
+    # --- per-chart renders ----------------------------------------------------
+
+    def render_universe_grid(self, meta: pd.DataFrame) -> None:
+        """Render the all-catalog grid with the dynamic z-score column from the
+        current Metric/Window/Lookback dropdowns. Reads the cached perf table
+        (``state.universe_up``) and computes only the z-score column live from
+        the already-fetched ``arp_universe_prices`` — no BQL, no recompute."""
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "all-catalog grid z-score render"):
+            zcol = rolling_metric_zscore(
+                state.arp_universe_prices,
+                metric=self.z_metric_dd.value,
+                window=self.z_window_dd.value,
+                zscore_window=self.z_lookback_dd.value,
+                returns=state.universe_rets,
+            )
+            zlabel = (
+                f"{self.z_metric_dd.label} "
+                f"{self.z_window_dd.label}/{self.z_lookback_dd.label}"
+            )
+            _update_universe_grid(
+                state.universe_grid, meta, state.universe_up, zcol=zcol, zlabel=zlabel
+            )
+
+    def render_factor_scatter(self, meta: pd.DataFrame) -> None:
+        """Render the 3D factor-beta scatter at the selected lookback, live from
+        the fetched cache (no BQL)."""
+        state = self.state
+        if state.arp_universe_prices.empty or state.universe_prices.empty:
+            return
+        with _guard_render(state, "factor-beta scatter render"):
+            _update_factor_scatter(
+                self.factor_scatter_fig,
+                state.arp_universe_prices,
+                state.universe_prices,
+                meta,
+                years=self.lookback_selector.value / TRADING_DAYS_PER_YEAR,
+                returns=state.universe_rets,
+            )
+
+    def render_sunburst(self, meta: pd.DataFrame) -> None:
+        """Render the `SUNBURST_LEVELS` -> ticker sunburst from the Metric/Window
+        Z-score controls + the shared lookback, live from the ARP-only cache."""
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "sunburst render"):
+            _update_sunburst(
+                self.sunburst_fig,
+                state.arp_universe_prices,
+                meta,
+                metric=self.sb_metric_dd.value,
+                window=self.sb_window_dd.value,
+                lookback=self.lookback_selector.value,
+                label=f"{self.sb_window_dd.label} {self.sb_metric_dd.label}",
+            )
+
+    def render_regime_scatter(self, meta: pd.DataFrame) -> None:
+        """Render the regime risk/return scatter at the current regime / source /
+        bucket + lookback, live from the cache (no BQL)."""
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "regime scatter render"):
+            low, high = self.resolve_regime_bucket()
+            _update_regime_scatter(
+                self.regime_scatter_fig,
+                state.arp_universe_prices,
+                self.regime_indicator(),
+                meta,
+                low=low,
+                high=high,
+                lookback=self.lookback_selector.value,
+                returns=state.universe_rets,
+            )
+
+    # --- regime resolution ----------------------------------------------------
+
+    def regime_indicator(self) -> pd.Series | None:
+        """The regime indicator series from the cache, per the active regime's
+        shape, or None when its ticker(s) are absent (-> unconditioned view)."""
+        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        if spec is None:
+            return None
+        prices = self.state.universe_prices
+        if isinstance(spec, TercileRegime) and spec.kind == "autocorr":
+            ticker = self.regime_selector_dd.value
+            if not ticker or ticker not in prices.columns:
+                return None
+            rets = daily_returns(prices[[ticker]])[ticker]
+            return rolling_autocorr(rets, window=spec.autocorr_window)
+        # Both remaining shapes read a raw level; only the ticker's source
+        # differs — a tercile regime's comes from its dropdown, a level
+        # regime's is fixed.
+        ticker = (
+            spec.ticker
+            if isinstance(spec, LevelRegime)
+            else self.regime_selector_dd.value
+        )
         if not ticker or ticker not in prices.columns:
             return None
-        rets = daily_returns(prices[[ticker]])[ticker]
-        return rolling_autocorr(rets, window=spec.autocorr_window)
-    # Both remaining shapes read a raw level; only the ticker's source differs —
-    # a tercile regime's comes from its dropdown, a level regime's is fixed.
-    ticker = (
-        spec.ticker if isinstance(spec, LevelRegime) else pa.regime_selector_dd.value
-    )
-    if not ticker or ticker not in prices.columns:
-        return None
-    return prices[ticker]
+        return prices[ticker]
 
-
-def _resolve_regime_bucket(
-    state: object, pa: SimpleNamespace
-) -> tuple[float | None, float | None]:
-    """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes read
-    the tuple off the bucket dropdown; tercile regimes derive it from the live
-    indicator's 1/3 & 2/3 quantiles over the lookback window. ``(None, None)``
-    when no indicator is available (→ unconditioned all-days view)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
-    if isinstance(spec, LevelRegime):
-        low, high = pa.regime_bucket_dd.value
-        return (low, high)
-    indicator = _regime_indicator(state, pa)
-    if indicator is None:
-        return (None, None)
-    return tercile_bounds(
-        indicator.tail(pa.lookback_selector.value), pa.regime_bucket_dd.value
-    )
-
-
-def render_regime_scatter(
-    state: object, meta: pd.DataFrame, pa: SimpleNamespace
-) -> None:
-    """Render the regime risk/return scatter at the current regime / source /
-    bucket + lookback, live from the cache (no BQL)."""
-    if state.arp_universe_prices.empty:
-        return
-    with _guard_render(state, "regime scatter render"):
-        low, high = _resolve_regime_bucket(state, pa)
-        _update_regime_scatter(
-            pa.regime_scatter_fig,
-            state.arp_universe_prices,
-            _regime_indicator(state, pa),
-            meta,
-            low=low,
-            high=high,
-            lookback=pa.lookback_selector.value,
-            returns=state.universe_rets,
+    def resolve_regime_bucket(self) -> tuple[float | None, float | None]:
+        """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
+        read the tuple off the bucket dropdown; tercile regimes derive it from
+        the live indicator's 1/3 & 2/3 quantiles over the lookback.
+        ``(None, None)`` when no indicator is available."""
+        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        if isinstance(spec, LevelRegime):
+            low, high = self.regime_bucket_dd.value
+            return (low, high)
+        indicator = self.regime_indicator()
+        if indicator is None:
+            return (None, None)
+        return tercile_bounds(
+            indicator.tail(self.lookback_selector.value), self.regime_bucket_dd.value
         )
 
+    def regime_selector_options(self) -> list[tuple[str, object]]:
+        """The indicator-source options for the active regime, ``(label, ticker)``.
 
-def _regime_selector_options(
-    state: object, spec: RegimeSpec | None
-) -> list[tuple[str, object]]:
-    """The indicator-source options for a regime, as ``(label, ticker)`` pairs.
+        Trend sources its list from the **live** benchmark registry rather than
+        one frozen into `REGIME_SPECS` at import, so a benchmark added at
+        runtime is offered here too. Rate-level carries a literal `selector`;
+        a fixed-level regime has one ticker and so offers no source at all."""
+        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        if not isinstance(spec, TercileRegime):
+            return []
+        if spec.selector_source == "benchmarks":
+            return self.state.benchmarks.options(labeled=True)
+        return list(spec.selector)
 
-    Trend sources its list from the **live** benchmark registry rather
-    than a list frozen into ``REGIME_SPECS`` at import, so a benchmark added at
-    runtime is offered here too. Rate-level carries a literal ``selector`` and
-    is returned unchanged; regimes with neither return ``[]`` (→ the dropdown
-    hides)."""
-    if not isinstance(spec, TercileRegime):
-        return []  # a fixed-level regime has one ticker, so no source to pick
-    if spec.selector_source == "benchmarks":
-        return state.benchmarks.options(labeled=True)
-    return list(spec.selector)
+    def sync_regime_controls(self) -> None:
+        """Repopulate the bucket dropdown for the active regime and show / hide
+        the indicator-source dropdown.
 
-
-def _sync_regime_controls(state: object, pa: SimpleNamespace) -> None:
-    """Repopulate the bucket dropdown for the active regime's mode and show /
-    hide the indicator-source dropdown (only regimes carrying a selector).
-
-    Also re-run on a benchmark-registry change, so this keeps the current source
-    **selected** whenever it survives into the new option list. Switching regime
-    type still falls back to the first option, since the old value belongs to a
-    different domain (a benchmark ticker is not a rate region)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
-    selector = _regime_selector_options(state, spec)
-    if selector:
-        previous = pa.regime_selector_dd.value
-        values = [value for _, value in selector]
-        pa.regime_selector_dd.options = selector
-        pa.regime_selector_dd.value = previous if previous in values else selector[0][1]
-        pa.regime_selector_dd.layout.display = ""
-    else:
-        pa.regime_selector_dd.layout.display = "none"
-    options = regime_bucket_options(pa.regime_type_dd.value)
-    # Preserve the active bucket across a registry change for the same reason.
-    prev_bucket = pa.regime_bucket_dd.value
-    bucket_values = [value for _, value in options]
-    pa.regime_bucket_dd.options = options
-    pa.regime_bucket_dd.value = (
-        prev_bucket if prev_bucket in bucket_values else options[0][1]
-    )
-
-
-# The three analytics tabs and their render functions. Only one is ever visible
-# at a time, so charts render **lazily** — the visible tab on load/Refresh, the
-# hidden two on their pill's first activation, rather than
-# computing all three up front.
-_ANALYTICS_RENDERERS = {
-    "sunburst": render_sunburst,
-    "regime": render_regime_scatter,
-    "factor": render_factor_scatter,
-}
-
-
-def _render_analytics(
-    state, meta: pd.DataFrame, pa: SimpleNamespace, which: str
-) -> None:
-    """Render one analytics tab and mark it fresh (rendered against current data)."""
-    _ANALYTICS_RENDERERS[which](state, meta, pa)
-    pa.fresh.add(which)
-
-
-def render_active_analytics(state, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
-    """Render whichever analytics tab is currently shown — called on load and
-    Refresh so only the visible chart is computed, not all three."""
-    _render_analytics(state, meta, pa, pa.active_analytics)
-
-
-def invalidate_analytics(state, meta: pd.DataFrame, pa: SimpleNamespace) -> None:
-    """Mark every analytics tab stale (the data or shared lookback changed) and
-    re-render only the visible one; the hidden two re-render lazily when next
-    activated."""
-    pa.fresh.clear()
-    render_active_analytics(state, meta, pa)
-
-
-def activate_platform_tab(
-    state, meta: pd.DataFrame, pa: SimpleNamespace, which: str
-) -> None:
-    """Switch the analytics card to tab ``which``: render it first if it isn't
-    fresh (lazy first-view), restyle the pills, and swap the left-column controls
-    (``tab_controls_box``) and the chart (``chart_box``)."""
-    pa.active_analytics = which
-    if which not in pa.fresh:
-        _render_analytics(state, meta, pa, which)
-    for key, (pill, _controls, _fig) in pa.analytics_tabs.items():
-        _style_tab_button(pill, active=(key == which))
-    _pill, controls, fig = pa.analytics_tabs[which]
-    pa.tab_controls_box.children = (controls,)
-    pa.chart_box.children = (fig,)
-
-
-def wire_platform_analytics(
-    state: object, meta: pd.DataFrame, pa: SimpleNamespace
-) -> None:
-    """Wire every Platform-analytics observer: the z-score-column controls, the
-    three tab pills, the regime dropdowns, the shared lookback, and the
-    sunburst's own controls. Each re-renders live from the cache, no BQL."""
-    for _dd in (pa.z_metric_dd, pa.z_window_dd, pa.z_lookback_dd):
-        _dd.observe(lambda _c: render_universe_grid(state, meta, pa), names="value")
-
-    pa.sunburst_pill.on_click(
-        lambda _b: activate_platform_tab(state, meta, pa, "sunburst")
-    )
-    pa.regime_pill.on_click(lambda _b: activate_platform_tab(state, meta, pa, "regime"))
-    pa.factor_pill.on_click(lambda _b: activate_platform_tab(state, meta, pa, "factor"))
-
-    def _on_regime_type(_change=None):
-        _sync_regime_controls(state, pa)
-        _render_analytics(state, meta, pa, "regime")
-
-    pa.regime_type_dd.observe(_on_regime_type, names="value")
-    pa.regime_selector_dd.observe(
-        lambda _c: _render_analytics(state, meta, pa, "regime"), names="value"
-    )
-    pa.regime_bucket_dd.observe(
-        lambda _c: _render_analytics(state, meta, pa, "regime"), names="value"
-    )
-
-    # The shared lookback drives all three analytics tabs — mark them stale and
-    # re-render only the visible one; the hidden two refresh on next activation.
-    pa.lookback_selector.observe(
-        lambda _c: invalidate_analytics(state, meta, pa), names="value"
-    )
-
-    # The sunburst's own Metric/Window controls re-render only the sunburst.
-    for _dd in (pa.sb_metric_dd, pa.sb_window_dd):
-        _dd.observe(
-            lambda _c: _render_analytics(state, meta, pa, "sunburst"), names="value"
+        Also re-run on a benchmark-registry change, so this keeps the current
+        source **selected** whenever it survives into the new option list.
+        Switching regime type still falls back to the first option, since the
+        old value belongs to a different domain (a benchmark ticker is not a
+        rate region)."""
+        selector = self.regime_selector_options()
+        if selector:
+            previous = self.regime_selector_dd.value
+            values = [value for _, value in selector]
+            self.regime_selector_dd.options = selector
+            self.regime_selector_dd.value = (
+                previous if previous in values else selector[0][1]
+            )
+            self.regime_selector_dd.layout.display = ""
+        else:
+            self.regime_selector_dd.layout.display = "none"
+        options = regime_bucket_options(self.regime_type_dd.value)
+        # Preserve the active bucket across a registry change for the same reason.
+        prev_bucket = self.regime_bucket_dd.value
+        bucket_values = [value for _, value in options]
+        self.regime_bucket_dd.options = options
+        self.regime_bucket_dd.value = (
+            prev_bucket if prev_bucket in bucket_values else options[0][1]
         )
 
-    _sync_regime_controls(state, pa)
+    # --- lazy tab rendering ---------------------------------------------------
 
-    # A benchmark added at runtime has to reach the Trend regime's source
-    # dropdown too. That widget can't `register` with the registry: it is shared
-    # with the Rate-level regime, whose options are regions, so the registry
-    # would overwrite them whenever Rate-level was the active regime. Re-syncing
-    # instead repopulates it only while Trend is active, and preserves the
-    # current selection.
-    state.benchmarks.on_change(lambda: _sync_regime_controls(state, pa))
+    def _render_tab(self, meta: pd.DataFrame, which: str) -> None:
+        """Render one analytics tab and mark it fresh."""
+        renderer = {
+            "sunburst": self.render_sunburst,
+            "regime": self.render_regime_scatter,
+            "factor": self.render_factor_scatter,
+        }[which]
+        renderer(meta)
+        self.fresh.add(which)
+
+    def render_active(self, meta: pd.DataFrame) -> None:
+        """Render whichever tab is shown — called on load and Refresh so only
+        the visible chart is computed, not all three."""
+        self._render_tab(meta, self.active_analytics)
+
+    def invalidate(self, meta: pd.DataFrame) -> None:
+        """Mark every tab stale (the data or shared lookback changed) and
+        re-render only the visible one; the hidden two re-render lazily when
+        next activated."""
+        self.fresh.clear()
+        self.render_active(meta)
+
+    def activate(self, meta: pd.DataFrame, which: str) -> None:
+        """Switch to tab ``which``: render it first if it isn't fresh (lazy
+        first-view), restyle the pills, and swap the left-column controls and
+        the chart."""
+        self.active_analytics = which
+        if which not in self.fresh:
+            self._render_tab(meta, which)
+        for key, (pill, _controls, _fig) in self.analytics_tabs.items():
+            _style_tab_button(pill, active=(key == which))
+        _pill, controls, fig = self.analytics_tabs[which]
+        self.tab_controls_box.children = (controls,)
+        self.chart_box.children = (fig,)
+
+    # --- wiring ---------------------------------------------------------------
+
+    def wire(self, meta: pd.DataFrame) -> None:
+        """Wire every observer: the z-score-column controls, the three tab
+        pills, the regime dropdowns, the shared lookback, and the sunburst's own
+        controls. Each re-renders live from the cache, no BQL."""
+        for _dd in (self.z_metric_dd, self.z_window_dd, self.z_lookback_dd):
+            _dd.observe(lambda _c: self.render_universe_grid(meta), names="value")
+
+        self.sunburst_pill.on_click(lambda _b: self.activate(meta, "sunburst"))
+        self.regime_pill.on_click(lambda _b: self.activate(meta, "regime"))
+        self.factor_pill.on_click(lambda _b: self.activate(meta, "factor"))
+
+        def _on_regime_type(_change=None):
+            self.sync_regime_controls()
+            self._render_tab(meta, "regime")
+
+        self.regime_type_dd.observe(_on_regime_type, names="value")
+        self.regime_selector_dd.observe(
+            lambda _c: self._render_tab(meta, "regime"), names="value"
+        )
+        self.regime_bucket_dd.observe(
+            lambda _c: self._render_tab(meta, "regime"), names="value"
+        )
+
+        # The shared lookback drives all three tabs — mark them stale and
+        # re-render only the visible one; the hidden two refresh on activation.
+        self.lookback_selector.observe(lambda _c: self.invalidate(meta), names="value")
+
+        # The sunburst's own Metric/Window controls re-render only the sunburst.
+        for _dd in (self.sb_metric_dd, self.sb_window_dd):
+            _dd.observe(lambda _c: self._render_tab(meta, "sunburst"), names="value")
+
+        self.sync_regime_controls()
+
+        # A benchmark added at runtime has to reach the Trend regime's source
+        # dropdown too. That widget can't `register` with the registry: it is
+        # shared with the Rate-level regime, whose options are regions, so the
+        # registry would overwrite them whenever Rate-level was the active
+        # regime. Re-syncing instead repopulates it only while Trend is active,
+        # and preserves the current selection.
+        self.state.benchmarks.on_change(self.sync_regime_controls)
