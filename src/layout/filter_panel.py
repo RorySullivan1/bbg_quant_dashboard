@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import ipywidgets as W
 import pandas as pd
@@ -52,6 +53,12 @@ from .benchmarks import BenchmarkRegistry
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _checkbox_group, _q_row, _section_label
 from .panes import _make_benchmark_dropdown
+
+if TYPE_CHECKING:
+    # `state.py` reaches this module through its own imports, so a runtime
+    # `from .state import DashboardState` raises ImportError on a partially
+    # initialized module. The annotation needs the name, not the object.
+    from .state import DashboardState
 
 #: Filterable fields the **Characteristics** view owns instead of the pill bar:
 #: `live_date` is a min/max range and `currency` a single dropdown, neither of
@@ -268,7 +275,7 @@ class QuantFilter:
         return out
 
     @staticmethod
-    def _universe_rets(state: object, arp: pd.DataFrame) -> pd.DataFrame:
+    def _universe_rets(state: DashboardState, arp: pd.DataFrame) -> pd.DataFrame:
         rets = getattr(state, "universe_rets", None)
         if rets is None or rets.empty:
             return daily_returns(arp)
@@ -302,7 +309,7 @@ class QuantFilter:
         self._memo[key] = zt[z_metric]
         return zt[z_metric]
 
-    def keep(self, candidates: pd.Index, state: object) -> pd.Index:
+    def keep(self, candidates: pd.Index, state: DashboardState) -> pd.Index:
         """Narrow ``candidates`` to tickers passing every active threshold.
 
         The metric table is computed from the cached ARP prices, with Beta /
@@ -551,7 +558,7 @@ class FilterPanel:
             live_date_max=self.live_max.value,
         )
 
-    def matching(self, meta: pd.DataFrame, state: object) -> pd.Index:
+    def matching(self, meta: pd.DataFrame, state: DashboardState) -> pd.Index:
         """Tickers passing the current filter state, as a ``pd.Index``.
 
         Composes `apply_categorical` (categorical + Characteristics) with the

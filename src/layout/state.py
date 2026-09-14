@@ -16,6 +16,7 @@ import pandas as pd
 from ..cache import LRUCache
 from ..config import filter_dimensions
 from .benchmarks import BenchmarkRegistry
+from .grids import PerfGrid, UniverseGrid
 from .panes import AnalysisPane
 from .selection import SelectionSlice
 from .single_strategy import SingleStrategyPanel
@@ -48,8 +49,8 @@ class DashboardState:
     ticker_w: W.SelectMultiple
     status_w: W.HTML  # post-load summary toast
     overlay_w: W.HTML  # dimmed loading overlay + staged progress
-    universe_grid: object  # grids.UniverseGrid
-    selected_perf_grid: object  # grids.PerfGrid
+    universe_grid: UniverseGrid
+    selected_perf_grid: PerfGrid
     pane_left: AnalysisPane
     pane_right: AnalysisPane
     highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)

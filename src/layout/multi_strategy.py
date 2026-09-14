@@ -24,6 +24,7 @@ from __future__ import annotations
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -38,6 +39,12 @@ from ..stats import (
 from .panes import AnalysisPane
 from .selection import SelectionSlice
 
+if TYPE_CHECKING:
+    # No cycle today, but `state.py` is one import away from reaching this
+    # module, and the annotation never needs the symbol at runtime. Guarded
+    # like `filter_panel` / `single_strategy`, where the cycle is real.
+    from .state import DashboardState
+
 
 @dataclass(frozen=True)
 class RenderContext:
@@ -49,13 +56,13 @@ class RenderContext:
     Refresh). ``state`` stays loosely typed until the `DashboardApp` sub-issue.
     """
 
-    state: object
+    state: DashboardState
     meta: pd.DataFrame
     sel: SelectionSlice
     errors: list[str] = field(default_factory=list)
 
     @classmethod
-    def live(cls, state: object, meta: pd.DataFrame) -> RenderContext | None:
+    def live(cls, state: DashboardState, meta: pd.DataFrame) -> RenderContext | None:
         """A context over the slice persisted at the last recompute.
 
         ``None`` when there is no valid selection — the live observers no-op
@@ -238,7 +245,9 @@ def render_pane(ctx: RenderContext, pane: AnalysisPane) -> None:
     pane.fresh = {label}
 
 
-def bind_lazy_render(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> None:
+def bind_lazy_render(
+    state: DashboardState, meta: pd.DataFrame, pane: AnalysisPane
+) -> None:
     # On a picker change, build the newly-shown view on demand if it hasn't
     # been rendered for the current slice yet (panes.py already swaps it into
     # view and syncs control visibility). No-op without a valid selection or
@@ -255,7 +264,9 @@ def bind_lazy_render(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> N
     pane.picker.observe(_on_pick_render, names="value")
 
 
-def bind_live_controls(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> None:
+def bind_live_controls(
+    state: DashboardState, meta: pd.DataFrame, pane: AnalysisPane
+) -> None:
     # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
     # controls so changing one re-renders only its own chart, immediately,
     # from the slice persisted on `state` at the last recompute — no BQL
