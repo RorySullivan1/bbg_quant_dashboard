@@ -32,16 +32,18 @@ from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect
 from src.price_cache import PriceCache
+from src.price_source import MockPriceSource
 
 NEW = "NEWBM Index"
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch, tmp_path):
-    bc._clear_caches()
+def mock_source(monkeypatch, tmp_path) -> MockPriceSource:
+    """A private cache + mock source per test; returned for the seams (#222)."""
     monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
-    yield
-    bc._clear_caches()
+    source = MockPriceSource()
+    monkeypatch.setattr(bc, "_DEFAULT_SOURCE", source)
+    return source
 
 
 def _walk(widget):
@@ -204,8 +206,8 @@ def test_an_added_benchmark_never_enters_the_universe_views(captured):
 # --------------------------------------------------------------------------
 
 
-def test_an_unresolvable_ticker_is_refused_and_reported(captured):
-    bc._MOCK_UNRESOLVABLE.add(NEW)
+def test_an_unresolvable_ticker_is_refused_and_reported(captured, mock_source):
+    mock_source.unresolvable.add(NEW)
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
     sel = _selectors(app)[0]
@@ -218,10 +220,12 @@ def test_an_unresolvable_ticker_is_refused_and_reported(captured):
     assert "did not resolve" in captured["state"].status_w.value
 
 
-def test_a_ticker_with_no_history_in_the_window_is_reported_differently(captured):
+def test_a_ticker_with_no_history_in_the_window_is_reported_differently(
+    captured, mock_source
+):
     # Resolves, but the window holds nothing. Told apart from "wrong ticker",
     # because the user should look at their lookback, not their spelling.
-    bc._MOCK_FIRST_TRADE[NEW] = pd.Timestamp.today().date() + pd.Timedelta(days=365)
+    mock_source.first_trade[NEW] = pd.Timestamp.today().date() + pd.Timedelta(days=365)
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
     sel = _selectors(app)[0]
@@ -235,11 +239,11 @@ def test_a_ticker_with_no_history_in_the_window_is_reported_differently(captured
     assert "did not resolve" not in status  # the distinction that matters
 
 
-def test_a_late_launching_ticker_is_accepted_with_a_caveat(captured):
+def test_a_late_launching_ticker_is_accepted_with_a_caveat(captured, mock_source):
     # Partial history is usable for correlation and beta — accept it, but say
     # so, or the chart just appears to start late for no reason.
     launch = pd.Timestamp.today().normalize() - pd.Timedelta(days=200)
-    bc._MOCK_FIRST_TRADE[NEW] = launch.date()
+    mock_source.first_trade[NEW] = launch.date()
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
 
