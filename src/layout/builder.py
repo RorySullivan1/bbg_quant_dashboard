@@ -58,14 +58,8 @@ from ..data import load_metadata
 from ..stats import (
     active_columns,
     common_window_bounds,
-    corr_matrix,
-    cum_perf,
     daily_returns,
-    drawdown_series,
-    perf_table,
-    return_distribution_stats,
     rolling_metric_zscore,
-    rolling_sharpe_zscore,
     universe_perf,
 )
 from ..style import (
@@ -108,6 +102,7 @@ from .html import (
     render_template,
 )
 from .multi_strategy import (
+    RenderContext,
     bind_lazy_render,
     bind_live_controls,
     clear_pane,
@@ -123,6 +118,7 @@ from .platform import (
     render_universe_grid,
     wire_platform_analytics,
 )
+from .selection import SelectionSlice
 from .single_strategy import (
     _CALENDAR_TABS,
     make_single_strategy_panel,
@@ -1080,43 +1076,19 @@ def build_app(verbose: bool = False) -> W.VBox:
                     # the dependents (perf_table, sz_series, cm, rd_stats) rather
                     # than letting each recompute daily_returns.
                     t_prep = time.perf_counter()
-                    sel_rets = daily_returns(sel_window)
-                    prep = SimpleNamespace(
-                        sel_window=sel_window,
-                        rets=sel_rets,
-                        perf=cum_perf(sel_window),
-                        pt=perf_table(sel_window, returns=sel_rets),
-                        dd=drawdown_series(sel_window),
-                    )
-                    prep.sz_series = rolling_sharpe_zscore(prep.rets)
-                    prep.cm = corr_matrix(prep.rets)
-                    prep.rd_stats = return_distribution_stats(prep.rets)
                     # Persist the slice so the live benchmark/regime observers
                     # can re-render a single chart without a refetch.
-                    state.cur_prep = prep
-                    state.cur_win_start = win_start
-                    state.cur_win_end = win_end
+                    state.cur_prep = SelectionSlice.build(
+                        sel_window, win_start, win_end
+                    )
                     _log(f"selected prep built in {time.perf_counter() - t_prep:.2f}s")
-                    _update_perf_grid(state.selected_perf_grid, prep.pt, meta)
+                    _update_perf_grid(state.selected_perf_grid, state.cur_prep.pt, meta)
+                    ctx = RenderContext(
+                        state=state, meta=meta, sel=state.cur_prep, errors=pane_errors
+                    )
                     t_panes = time.perf_counter()
-                    render_pane(
-                        state,
-                        meta,
-                        state.pane_left,
-                        prep,
-                        win_start,
-                        win_end,
-                        pane_errors,
-                    )
-                    render_pane(
-                        state,
-                        meta,
-                        state.pane_right,
-                        prep,
-                        win_start,
-                        win_end,
-                        pane_errors,
-                    )
+                    render_pane(ctx, state.pane_left)
+                    render_pane(ctx, state.pane_right)
                     _log(
                         "panes rendered (mounted views only) in "
                         f"{time.perf_counter() - t_panes:.2f}s"

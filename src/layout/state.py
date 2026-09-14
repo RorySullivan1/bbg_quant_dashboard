@@ -17,6 +17,7 @@ from ..cache import LRUCache
 from ..config import filter_dimensions
 from .benchmarks import BenchmarkRegistry
 from .panes import AnalysisPane
+from .selection import SelectionSlice
 
 
 @dataclass
@@ -35,7 +36,7 @@ class DashboardState:
     the Platform grid's Metric/Window/Lookback dropdowns re-rank by recomputing
     only the z-score column — no perf rerun, no BQL call.
 
-    ``cur_prep`` and its window bounds play the same role one level down, for
+    ``cur_prep`` plays the same role one level down, for
     the selected set: they persist the last recompute's slice so a benchmark or
     regime change re-renders a single chart directly. ``memo`` caches those
     per-benchmark chart results and is cleared whenever ``cur_prep`` is rebuilt,
@@ -80,9 +81,10 @@ class DashboardState:
     cur_bound_start: object | None = None
     cur_bound_end: object | None = None
     #: ``None`` means there is no valid selection, so the live observers no-op.
-    cur_prep: object | None = None  # SimpleNamespace built in _recompute
-    cur_win_start: pd.Timestamp | None = None
-    cur_win_end: pd.Timestamp | None = None
+    #: The selected set's slice from the last recompute, window bounds
+    #: included (#217 folded `cur_win_start` / `cur_win_end` into it). `None`
+    #: when there is no valid selection, which is what the live observers check.
+    cur_prep: SelectionSlice | None = None
     #: Keyed by (chart_kind, benchmark[, direction, pct]) and shared by both
     #: panes, since the result depends on `cur_prep` and the benchmark only.
     memo: LRUCache = field(default_factory=LRUCache)
