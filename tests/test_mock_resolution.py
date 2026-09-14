@@ -32,6 +32,7 @@ import pandas as pd
 import pytest
 import src.bql_client as bc
 from src.price_cache import PriceCache
+from src.price_source import MockPriceSource, TickersUnresolved
 
 _TICKERS = ["A Index", "B Index", "C Index"]
 _START = date(2022, 1, 3)
@@ -39,16 +40,22 @@ _END = date(2022, 6, 30)
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch, tmp_path):
-    """A private `PriceCache` and cleared mock seams for every test.
-
-    The substituted cache needs no reset; `_clear_caches` is still called for
-    the mock seams, which stay module state until #222.
-    """
+def _hermetic_cache(monkeypatch, tmp_path):
+    """A private `PriceCache` for every test."""
     monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
-    bc._clear_caches()
-    yield
-    bc._clear_caches()
+
+
+@pytest.fixture
+def mock_source(monkeypatch) -> MockPriceSource:
+    """A `MockPriceSource` installed as the default, for the seams to be set on.
+
+    #222: the seams are this instance's attributes, so there is nothing to
+    reset — the next test gets a new source. Tests that don't go through
+    `fetch_prices` construct their own inline instead.
+    """
+    source = MockPriceSource()
+    monkeypatch.setattr(bc, "_DEFAULT_SOURCE", source)
+    return source
 
 
 # --------------------------------------------------------------------------
@@ -59,7 +66,7 @@ def _hermetic(monkeypatch, tmp_path):
 def test_mock_resolves_everything_by_default():
     # The seams are opt-in: with neither set, the mock behaves exactly as it
     # always has, which is what the app and every other test rely on.
-    out = bc._mock_prices(_TICKERS, _START, _END)
+    out = MockPriceSource().fetch(_TICKERS, _START, _END)
 
     assert list(out.columns) == _TICKERS
     assert not out.isna().any().any()
@@ -68,8 +75,8 @@ def test_mock_resolves_everything_by_default():
 
 
 def test_mock_is_still_deterministic_per_ticker():
-    first = bc._mock_prices(["A Index"], _START, _END)
-    second = bc._mock_prices(["A Index"], _START, _END)
+    first = MockPriceSource().fetch(["A Index"], _START, _END)
+    second = MockPriceSource().fetch(["A Index"], _START, _END)
     pd.testing.assert_frame_equal(first, second)
 
 
@@ -79,10 +86,10 @@ def test_mock_is_still_deterministic_per_ticker():
 
 
 def test_unresolvable_ticker_degrades_to_a_nan_column():
-    bc._MOCK_UNRESOLVABLE.add("B Index")
+    source = MockPriceSource(unresolvable={"B Index"})
 
     with pytest.warns(UserWarning, match="did not resolve"):
-        out = bc._mock_prices(_TICKERS, _START, _END)
+        out = source.fetch(_TICKERS, _START, _END)
 
     # Column order follows the request, so callers can still reindex blindly.
     assert list(out.columns) == _TICKERS
@@ -93,30 +100,30 @@ def test_unresolvable_ticker_degrades_to_a_nan_column():
 def test_a_request_where_nothing_resolves_raises():
     # Mirrors `_assemble_batches`' terminal raise: a dead request stays loud
     # rather than serving a silently all-NaN dashboard.
-    bc._MOCK_UNRESOLVABLE.update(_TICKERS)
+    source = MockPriceSource(unresolvable=set(_TICKERS))
 
     with pytest.raises(RuntimeError, match="resolved none of"):
-        bc._mock_prices(_TICKERS, _START, _END)
+        source.fetch(_TICKERS, _START, _END)
 
 
 def test_nothing_resolving_raises_the_typed_error():
     # `TickersUnresolved` separates "your ticker is wrong" from "the session
     # dropped" — the two are indistinguishable in a one-ticker request, which
     # is exactly what adding a benchmark issues (#193).
-    bc._MOCK_UNRESOLVABLE.add("A Index")
+    source = MockPriceSource(unresolvable={"A Index"})
 
-    with pytest.raises(bc.TickersUnresolved):
-        bc._mock_prices(["A Index"], _START, _END)
+    with pytest.raises(TickersUnresolved):
+        source.fetch(["A Index"], _START, _END)
 
 
 def test_the_typed_error_is_still_a_runtime_error():
     # Subclassing keeps every existing handler and test working.
-    assert issubclass(bc.TickersUnresolved, RuntimeError)
+    assert issubclass(TickersUnresolved, RuntimeError)
 
 
 def test_an_empty_request_is_not_a_failure():
     # No tickers is a no-op, not a "nothing resolved" error.
-    out = bc._mock_prices([], _START, _END)
+    out = MockPriceSource().fetch([], _START, _END)
     assert out.empty or list(out.columns) == []
 
 
@@ -127,9 +134,9 @@ def test_an_empty_request_is_not_a_failure():
 
 def test_late_launching_ticker_is_nan_before_its_first_trade():
     launch = date(2022, 4, 1)
-    bc._MOCK_FIRST_TRADE["B Index"] = launch
+    source = MockPriceSource(first_trade={"B Index": launch})
 
-    out = bc._mock_prices(_TICKERS, _START, _END)
+    out = source.fetch(_TICKERS, _START, _END)
 
     before = out.loc[out.index < pd.Timestamp(launch), "B Index"]
     after = out.loc[out.index >= pd.Timestamp(launch), "B Index"]
@@ -145,11 +152,12 @@ def test_the_two_failure_modes_are_distinguishable():
     # This is the property #193's error reporting depends on. Told apart, the
     # user gets "that ticker is wrong" vs "that ticker has no history in this
     # window"; conflated, the second reads as a bug.
-    bc._MOCK_UNRESOLVABLE.add("A Index")
-    bc._MOCK_FIRST_TRADE["B Index"] = date(2022, 4, 1)
+    source = MockPriceSource(
+        unresolvable={"A Index"}, first_trade={"B Index": date(2022, 4, 1)}
+    )
 
     with pytest.warns(UserWarning):
-        out = bc._mock_prices(_TICKERS, _START, _END)
+        out = source.fetch(_TICKERS, _START, _END)
 
     assert out["A Index"].isna().all()  # unresolvable → nothing, ever
     assert out["B Index"].isna().any()  # late launch → gap at the start …
@@ -162,10 +170,10 @@ def test_the_two_failure_modes_are_distinguishable():
 # --------------------------------------------------------------------------
 
 
-def test_fetch_prices_surfaces_an_unresolvable_ticker_as_nan():
+def test_fetch_prices_surfaces_an_unresolvable_ticker_as_nan(mock_source):
     # The seam has to be reachable through the caller the app actually uses,
-    # not only via the private helper.
-    bc._MOCK_UNRESOLVABLE.add("C Index")
+    # not only via the source's own method.
+    mock_source.unresolvable.add("C Index")
 
     with pytest.warns(UserWarning, match="did not resolve"):
         out, source = bc.fetch_prices(_TICKERS, _START, _END)
@@ -175,8 +183,8 @@ def test_fetch_prices_surfaces_an_unresolvable_ticker_as_nan():
     assert not out["A Index"].isna().any()
 
 
-def test_fetch_prices_raises_when_nothing_resolves():
-    bc._MOCK_UNRESOLVABLE.update(_TICKERS)
+def test_fetch_prices_raises_when_nothing_resolves(mock_source):
+    mock_source.unresolvable.update(_TICKERS)
 
     with pytest.raises(RuntimeError, match="resolved none of"):
         bc.fetch_prices(_TICKERS, _START, _END)
@@ -187,9 +195,9 @@ def test_downstream_stats_tolerate_an_unresolved_column():
     # exceptions — that is what lets an unresolvable ticker fail softly.
     from src.stats import daily_returns
 
-    bc._MOCK_UNRESOLVABLE.add("B Index")
+    source = MockPriceSource(unresolvable={"B Index"})
     with pytest.warns(UserWarning):
-        out = bc._mock_prices(_TICKERS, _START, _END)
+        out = source.fetch(_TICKERS, _START, _END)
 
     rets = daily_returns(out)
     assert rets["B Index"].isna().all()
@@ -201,13 +209,19 @@ def test_downstream_stats_tolerate_an_unresolved_column():
 # --------------------------------------------------------------------------
 
 
-def test_clear_caches_resets_the_seams():
-    # The seams are module-level mutable state; without this a test that sets
-    # one would leak into every test after it.
-    bc._MOCK_UNRESOLVABLE.add("A Index")
-    bc._MOCK_FIRST_TRADE["B Index"] = date(2022, 4, 1)
+def test_seams_are_per_instance_so_they_cannot_leak():
+    # #222 replaced the module-level seam sets with instance attributes, so
+    # there is no reset to forget: a configured source cannot affect another.
+    configured = MockPriceSource(
+        unresolvable={"A Index"}, first_trade={"B Index": date(2022, 4, 1)}
+    )
+    fresh = MockPriceSource()
 
-    bc._clear_caches()
-
-    assert set() == bc._MOCK_UNRESOLVABLE
-    assert bc._MOCK_FIRST_TRADE == {}
+    assert fresh.unresolvable == set()
+    assert fresh.first_trade == {}
+    # The fresh source resolves everything, including what the other rejects.
+    out = fresh.fetch(_TICKERS, _START, _END)
+    assert not out.isna().any().any()
+    # ...and mutating one does not reach the other.
+    configured.unresolvable.add("C Index")
+    assert fresh.unresolvable == set()

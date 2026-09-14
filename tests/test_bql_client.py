@@ -23,20 +23,22 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import src.bql_client as bc
+import src.price_source as ps
 from src.config import RATE_LEVEL_TICKERS, VIX_TICKER
 from src.price_cache import PriceCache
+from src.price_source import BqlPriceSource, MockPriceSource
 
 
 @pytest.fixture(autouse=True)
 def _no_retry_backoff(monkeypatch):
     """Neutralize the retry backoff so the failure-path tests stay fast.
 
-    ``_fetch_batch_with_retry`` sleeps ``BACKOFF * 2**n`` between attempts, so
+    ``fetch_batch_with_retry`` sleeps ``BACKOFF * 2**n`` between attempts, so
     every test that exercises a failing batch would otherwise pay ~3s of real
     wall clock. The retry ladder itself still runs — only the waiting is
     removed, so attempt counts remain exactly as they are in production.
     """
-    monkeypatch.setattr(bc.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ps.time, "sleep", lambda _seconds: None)
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +56,10 @@ def _hermetic_cache(monkeypatch, tmp_path):
 def _raise_oserror(*_args, **_kwargs):
     raise OSError("read-only file system")
 
+
+#: Drives the batching tests directly; `fetch` is never called, so the
+#: absent `bql` service is never constructed.
+_BQL = BqlPriceSource()
 
 _TICKERS = ["A Index", "B Index"]
 _START = date(2020, 1, 1)
@@ -93,19 +99,12 @@ def test_fetch_prices_degrades_to_inmemory_on_unwritable_fs(monkeypatch):
 
 
 def test_cache_hit_avoids_refetch(monkeypatch):
-    calls = {"n": 0}
-    real = bc._mock_prices
-
-    def counting(*args, **kwargs):
-        calls["n"] += 1
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(bc, "_mock_prices", counting)
+    calls = _spy_source(monkeypatch)
 
     df1, src1 = bc.fetch_prices(_TICKERS, _START, _END)
     df2, src2 = bc.fetch_prices(_TICKERS, _START, _END)
 
-    assert calls["n"] == 1  # second call served from cache
+    assert len(calls) == 1  # second call served from cache
     assert src1 == "mock"
     assert src2 == "cache"
     # Column order follows the request even though the key is order-insensitive.
@@ -114,39 +113,44 @@ def test_cache_hit_avoids_refetch(monkeypatch):
 
 
 def test_use_cache_false_refetches(monkeypatch):
-    calls = {"n": 0}
-    real = bc._mock_prices
-
-    def counting(*args, **kwargs):
-        calls["n"] += 1
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(bc, "_mock_prices", counting)
+    calls = _spy_source(monkeypatch)
 
     bc.fetch_prices(_TICKERS, _START, _END)  # warm the cache
     bc.fetch_prices(_TICKERS, _START, _END, use_cache=False)  # Refresh prices
 
-    assert calls["n"] == 2  # use_cache=False bypasses the cache reads
+    assert len(calls) == 2  # use_cache=False bypasses the cache reads
 
 
 # --- v0.9.13: incremental / containment cache (#165) -------------------------
 
 
-def _spy_live(monkeypatch) -> list[tuple[list[str], date, date]]:
-    """Record every live fetch's (tickers, start, end); still run the real mock."""
-    calls: list[tuple[list[str], date, date]] = []
-    real = bc._live_fetch
+class _SpySource:
+    """A `PriceSource` that records each fetch and delegates to the real mock.
 
-    def spy(tickers, start, end):
-        calls.append((list(tickers), start, end))
-        return real(tickers, start, end)
+    #222: the spy is a source object substituted for the default, rather than a
+    monkeypatched module function — so it exercises the same seam the app uses.
+    """
 
-    monkeypatch.setattr(bc, "_live_fetch", spy)
-    return calls
+    name = "mock"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], date, date]] = []
+        self._inner = MockPriceSource()
+
+    def fetch(self, tickers, start, end):
+        self.calls.append((list(tickers), start, end))
+        return self._inner.fetch(tickers, start, end)
+
+
+def _spy_source(monkeypatch) -> list[tuple[list[str], date, date]]:
+    """Swap in a `_SpySource` as the default; return its call log."""
+    spy = _SpySource()
+    monkeypatch.setattr(bc, "_DEFAULT_SOURCE", spy)
+    return spy.calls
 
 
 def test_ticker_subset_is_served_without_refetch(monkeypatch):
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
     df, src = bc.fetch_prices(["A Index", "C Index"], _START, _END)
     assert src == "cache"  # subset of a cached superset → sliced, no fetch
@@ -155,7 +159,7 @@ def test_ticker_subset_is_served_without_refetch(monkeypatch):
 
 
 def test_narrower_date_range_is_served_without_refetch(monkeypatch):
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     bc.fetch_prices(_TICKERS, _START, _END)
     mid = date(2020, 2, 1)
     df, src = bc.fetch_prices(_TICKERS, _START, mid)  # sub-range of the cover
@@ -165,7 +169,7 @@ def test_narrower_date_range_is_served_without_refetch(monkeypatch):
 
 
 def test_added_ticker_fetches_only_the_new_ticker(monkeypatch):
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     df1, _ = bc.fetch_prices(["A Index", "B Index"], _START, _END)
     df2, src2 = bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
     assert src2 == "mock"  # a delta was fetched
@@ -177,7 +181,7 @@ def test_added_ticker_fetches_only_the_new_ticker(monkeypatch):
 
 
 def test_extended_lookback_fetches_only_the_new_range(monkeypatch):
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     mid = date(2020, 2, 1)
     bc.fetch_prices(_TICKERS, mid, _END)  # cover [mid, END]
     _, src2 = bc.fetch_prices(_TICKERS, _START, _END)  # extend back to START
@@ -193,7 +197,7 @@ def test_extended_lookback_fetches_only_the_new_range(monkeypatch):
 
 
 def test_disk_superset_serves_a_ticker_subset(monkeypatch):
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     full, _ = bc.fetch_prices(["A Index", "B Index", "C Index"], _START, _END)
     assert (bc._DEFAULT_CACHE.cache_dir / f"prices_{_END.isoformat()}.parquet").exists()
 
@@ -229,7 +233,7 @@ def test_prune_removes_stale_cache_files():
 def test_two_caches_are_independent(monkeypatch, tmp_path):
     # Impossible before #221: the cache was module globals, so there was exactly
     # one. Two instances must not see each other's superset or disk tier.
-    calls = _spy_live(monkeypatch)
+    calls = _spy_source(monkeypatch)
     a = PriceCache(tmp_path / "a")
     b = PriceCache(tmp_path / "b")
 
@@ -253,7 +257,7 @@ def test_two_caches_are_independent(monkeypatch, tmp_path):
 def test_an_explicit_cache_leaves_the_default_untouched(monkeypatch, tmp_path):
     # `fetch_prices` still defaults to the module cache, so every existing
     # caller is unchanged; passing one opts out entirely.
-    _spy_live(monkeypatch)
+    _spy_source(monkeypatch)
     own = PriceCache(tmp_path / "own")
     bc.fetch_prices(_TICKERS, _START, _END, cache=own)
     assert own.superset is not None
@@ -263,7 +267,9 @@ def test_an_explicit_cache_leaves_the_default_untouched(monkeypatch, tmp_path):
 def test_mock_vix_is_a_bounded_level_spanning_buckets():
     # The VIX regime indicator mocks as a bounded mean-reverting *level* (not a
     # compounding price), so the absolute VIX buckets partition it.
-    df = bc._mock_prices([VIX_TICKER, "AAA Index"], date(2020, 1, 1), date(2024, 1, 1))
+    df = MockPriceSource().fetch(
+        [VIX_TICKER, "AAA Index"], date(2020, 1, 1), date(2024, 1, 1)
+    )
     vix = df[VIX_TICKER]
     assert vix.min() >= 9.0 and vix.max() <= 60.0
     assert vix.mean() < 40.0  # hovers low, unlike the ~100+ GBM strategies
@@ -295,14 +301,14 @@ def _fake_raw(tickers: list[str]) -> pd.DataFrame:
 
 
 def test_chunked_splits_evenly_and_remainder():
-    assert bc._chunked(["a", "b", "c", "d", "e"], 2) == [["a", "b"], ["c", "d"], ["e"]]
-    assert bc._chunked(["a"], 100) == [["a"]]
-    assert bc._chunked([], 100) == []
+    assert ps._chunked(["a", "b", "c", "d", "e"], 2) == [["a", "b"], ["c", "d"], ["e"]]
+    assert ps._chunked(["a"], 100) == [["a"]]
+    assert ps._chunked([], 100) == []
 
 
 def test_reshape_bql_response_pivots_long_to_wide():
     tickers = ["A Index", "B Index"]
-    wide = bc._reshape_bql_response(_fake_raw(tickers), tickers, _START, _END)
+    wide = ps._reshape_bql_response(_fake_raw(tickers), tickers, _START, _END)
     assert list(wide.columns) == tickers
     assert isinstance(wide.index, pd.DatetimeIndex)
     assert wide.index.is_monotonic_increasing
@@ -311,9 +317,9 @@ def test_reshape_bql_response_pivots_long_to_wide():
 
 def test_reshape_bql_response_empty_raises():
     with pytest.raises(RuntimeError, match="no rows"):
-        bc._reshape_bql_response(pd.DataFrame(), ["A Index"], _START, _END)
+        ps._reshape_bql_response(pd.DataFrame(), ["A Index"], _START, _END)
     with pytest.raises(RuntimeError, match="no rows"):
-        bc._reshape_bql_response(None, ["A Index"], _START, _END)
+        ps._reshape_bql_response(None, ["A Index"], _START, _END)
 
 
 def test_assemble_batches_concatenates_and_orders_to_request():
@@ -324,7 +330,7 @@ def test_assemble_batches_concatenates_and_orders_to_request():
         calls.append(batch)
         return _wide(batch)
 
-    out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+    out = _BQL.assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
     # 5 tickers → batches of 2/2/1.
     assert [len(b) for b in calls] == [2, 2, 1]
     # Result carries every ticker, in the requested order.
@@ -343,7 +349,7 @@ def test_assemble_batches_isolates_a_failing_batch_to_the_bad_ticker():
         return _wide(batch)
 
     with pytest.warns(UserWarning, match="re-fetching its tickers individually"):
-        out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+        out = _BQL.assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
 
     assert list(out.columns) == tickers
     assert not out["A Index"].isna().any()  # good batch survives
@@ -364,7 +370,7 @@ def test_assemble_batches_single_bad_ticker_does_not_blank_a_one_batch_universe(
         return _wide(batch)
 
     with pytest.warns(UserWarning):
-        out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=100)
+        out = _BQL.assemble_batches(tickers, _START, _END, fetch_batch, batch_size=100)
 
     assert list(out.columns) == tickers
     assert out[bad].isna().all()
@@ -385,12 +391,12 @@ def test_assemble_batches_salvage_pass_costs_one_request_per_ticker():
         return _wide(batch)
 
     with pytest.warns(UserWarning):
-        bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=3)
+        _BQL.assemble_batches(tickers, _START, _END, fetch_batch, batch_size=3)
 
     # 1 batch attempt + BQL_MAX_RETRIES retries, then exactly one try per ticker.
     batch_attempts = [c for c in calls if len(c) == 3]
     per_ticker = [c for c in calls if len(c) == 1]
-    assert len(batch_attempts) == bc.BQL_MAX_RETRIES + 1
+    assert len(batch_attempts) == _BQL.max_retries + 1
     assert per_ticker == [["A Index"], ["B Index"], ["C Index"]]
 
 
@@ -402,7 +408,7 @@ def test_assemble_batches_healthy_path_issues_no_per_ticker_requests():
         calls.append(list(batch))
         return _wide(batch)
 
-    out = bc._assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
+    out = _BQL.assemble_batches(tickers, _START, _END, fetch_batch, batch_size=2)
 
     assert [len(c) for c in calls] == [2, 2]  # no single-ticker salvage requests
     assert not out.isna().any().any()
@@ -414,8 +420,8 @@ def test_assemble_batches_all_failing_raises():
 
     # A dead session must stay loud rather than degrade to an all-NaN dashboard,
     # and typed so a caller can tell it from a transport failure (#193).
-    with pytest.raises(bc.TickersUnresolved, match="Every BQL request failed"):
-        bc._assemble_batches(
+    with pytest.raises(ps.TickersUnresolved, match="Every BQL request failed"):
+        _BQL.assemble_batches(
             ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=1
         )
 
@@ -428,7 +434,7 @@ def test_assemble_batches_all_failing_raises_after_per_ticker_retry():
         pytest.warns(UserWarning),
         pytest.raises(RuntimeError, match="Every BQL request failed"),
     ):
-        bc._assemble_batches(
+        _BQL.assemble_batches(
             ["A Index", "B Index"], _START, _END, fetch_batch, batch_size=2
         )
 
@@ -442,7 +448,7 @@ def test_fetch_batch_with_retry_recovers_then_succeeds():
             raise RuntimeError("transient")
         return _wide(batch)
 
-    out = bc._fetch_batch_with_retry(
+    out = _BQL.fetch_batch_with_retry(
         ["A Index"], _START, _END, flaky, retries=2, backoff=0
     )
     assert attempts["n"] == 3  # failed twice, third try succeeded
@@ -457,7 +463,7 @@ def test_fetch_batch_with_retry_exhausts_and_reraises():
         raise RuntimeError("permanent")
 
     with pytest.raises(RuntimeError, match="permanent"):
-        bc._fetch_batch_with_retry(
+        _BQL.fetch_batch_with_retry(
             ["A Index"], _START, _END, always_fail, retries=2, backoff=0
         )
     assert attempts["n"] == 3  # first try + 2 retries
@@ -467,7 +473,9 @@ def test_mock_rate_indicators_are_levels():
     # Regional rates mock as positive mean-reverting levels (terciles of level →
     # Rate-level regime), unlike the ~100+ GBM strategies.
     rate_ticker = RATE_LEVEL_TICKERS[0][1]
-    df = bc._mock_prices([rate_ticker, "AAA Index"], date(2018, 1, 1), date(2024, 1, 1))
+    df = MockPriceSource().fetch(
+        [rate_ticker, "AAA Index"], date(2018, 1, 1), date(2024, 1, 1)
+    )
     rate = df[rate_ticker]
     assert (rate >= 0.0).all() and rate.max() <= 8.0
     assert rate.std() > 0  # actually moves, so its terciles partition the mock

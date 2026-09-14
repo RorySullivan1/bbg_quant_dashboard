@@ -2,9 +2,8 @@
 
 Both tiers used to be module globals in `bql_client`, mutated through `global`
 statements by nine free functions. That made the cache a singleton — tests
-reset it with `_clear_caches()` between cases, and nothing could hold a second
-one — while the containment logic was spread across functions that all read the
-same two names.
+reset it between cases, and nothing could hold a second one — while the
+containment logic was spread across functions that all read the same two names.
 
 The tiers themselves are unchanged:
 

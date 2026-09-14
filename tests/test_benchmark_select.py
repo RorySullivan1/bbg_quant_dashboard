@@ -28,6 +28,8 @@ import src.bql_client as bc
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect, normalize_ticker
+from src.price_cache import PriceCache
+from src.price_source import MockPriceSource
 
 # --------------------------------------------------------------------------
 # normalize_ticker
@@ -287,22 +289,25 @@ def test_picking_a_curated_benchmark_still_works_end_to_end():
     assert all(sel.value == other for sel in _selectors(app))
 
 
-def test_an_unresolvable_ticker_typed_into_the_live_app_is_refused():
+def test_an_unresolvable_ticker_typed_into_the_live_app_is_refused(
+    monkeypatch, tmp_path
+):
     # A ticker with no prices behind it must not become the selection. Since
     # #193 the app *fetches* an unknown ticker rather than refusing outright,
     # so this needs the mock to actually say no (#195) — off-terminal every
     # string otherwise resolves, which is exactly the gap #195 closed.
     bad = "DEFINITELYNOTATICKER Index"
-    bc._MOCK_UNRESOLVABLE.add(bad)
-    try:
-        app = build_app(verbose=False)
-        _click(app, "Multi-Strategy")
+    # #222: configure a source and install it, rather than mutating module
+    # state and unwinding it in a finally.
+    monkeypatch.setattr(bc, "_DEFAULT_SOURCE", MockPriceSource(unresolvable={bad}))
+    monkeypatch.setattr(bc, "_DEFAULT_CACHE", PriceCache(tmp_path / "cache"))
 
-        sel = _selectors(app)[0]
-        before = sel.value
+    app = build_app(verbose=False)
+    _click(app, "Multi-Strategy")
 
-        sel._box.value = bad
+    sel = _selectors(app)[0]
+    before = sel.value
 
-        assert sel.value == before
-    finally:
-        bc._clear_caches()
+    sel._box.value = bad
+
+    assert sel.value == before
