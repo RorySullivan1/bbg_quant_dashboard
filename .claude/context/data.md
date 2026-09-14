@@ -12,9 +12,9 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
   "SPX": {
     "Name": "S&P 500",
     "AssetClass": "Equity",
-    "IndexFamilyName": "S&P US Broad",
-    "Theme": "Core Beta",
     "Solution": "Beta",
+    "Category": "Core Beta",
+    "Family": "S&P US Broad",
     "ReturnType": "Total",
     "Currency": "USD",
     "LiveDate": "1957-03-04",
@@ -23,22 +23,55 @@ Orient-`index` JSON: a dict keyed by the **short ticker** (without the
 }
 ```
 
+### The schema is the contract
+
 `CATALOG_SCHEMA` in `src/config.py` (v0.9.15) declares each column once — its
-internal snake_case key (`name`, `asset_class`, `category`, `theme`,
+internal snake_case key (`name`, `asset_class`, `family`, `category`,
 `solution`, `return_type`, `live_date`, `currency`, `description`), the JSON
-keys it accepts, its display label, and its role (`tier` / `attribute` /
+keys it accepts, its **display label**, and its role (`tier` / `attribute` /
 `date` / `text`). `src/data.py` resolves the feed against that schema and knows
-no column name of its own; `field_label`, `tier_fields` and
-`filterable_fields` are the accessors consumers read. `IndexFamilyName` maps to
-the internal `category` field — there is no separate "family" dimension yet
-(#210 renames the tiers). The metadata DataFrame also has a derived `ticker`
-column = `<key> + " Index"`. `Currency` and `Description` are metadata (BQL
-only supplies `px_last`, not reference fields); `load_metadata` pads any
-missing schema column with `NA`, so records without a `Currency` or
-`Description` key still load. A feed using a legacy alias, or carrying a key
-the schema does not know, loads with a warning rather than failing.
-`Description` (added in v0.9.0) is a free-text per-index blurb surfaced in the
-Single Strategy profile card; it is NA-safe when absent.
+no column name of its own.
+
+Labels are configuration, not code: relabelling a column is a `CATALOG_SCHEMA`
+edit and nothing else. Every renderer reads `field_label`, and which fields it
+shows comes from a field-key tuple in `config.py` —
+`UNIVERSE_GRID_FIELDS` / `SELECTED_GRID_FIELDS` (the two grids),
+`PROFILE_CARD_FIELDS` (the Single Strategy profile card),
+`LAUNCH_CARD_META_FIELDS` (the New-Launch cards' meta line). The filter pills
+come from `filter_dimensions()` and the Platform sunburst's rings from
+`SUNBURST_LEVELS`. `catalog_field`, `field_label`, `tier_fields`,
+`filterable_fields`, `filter_dimensions` and `sunburst_levels` are the
+accessors consumers read — nobody indexes the schema tuple by hand, and nobody
+respells a label.
+
+### The classification tiers
+
+`CLASSIFICATION_TIERS` is `("solution", "category", "family")` — **top tier →
+leaf**, and that order is what every consumer displays. The framework names
+these tiers **Class | Category | Family**; the top tier is fed by the feed's
+`Solution` column, which is also what `UNIVERSE_SOLUTION_VALUES` filters on, so
+the internal key stays `solution`. **A feed that arrives keyed `Class` instead
+is one extra alias on that field, not a rename.**
+
+### Old-shape feeds
+
+Each field resolves to the first of its `sources` aliases actually present, so
+a stale feed still loads. Two aliases exist today, both for the v0.9.15 re-key:
+`IndexFamilyName` → `family` and `Theme` → `category`. Note these two are a
+**swap trap**, not a straight rename: the pre-v0.9.15 code called the *family*
+`category`, so re-keying the JSON without the internal rename (or either alone)
+would transpose two dimensions silently — which is why #210 landed both
+atomically. A feed using a legacy alias, or carrying a key the schema does not
+know, loads with a warning rather than failing.
+
+### Derived and optional columns
+
+The metadata DataFrame also has a derived `ticker` column = `<key> + " Index"`.
+`Currency` and `Description` are metadata (BQL only supplies `px_last`, not
+reference fields); `load_metadata` pads any missing schema column with `NA`, so
+records without a `Currency` or `Description` key still load. `Description`
+(added in v0.9.0) is a free-text per-index blurb surfaced in the Single
+Strategy profile card; it is NA-safe when absent.
 
 **Universe membership (v0.8.9):** `build_app` keeps only records whose
 `solution` is in `UNIVERSE_SOLUTION_VALUES` (`src/config.py`) — **ARP**,
