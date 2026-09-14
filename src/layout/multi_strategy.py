@@ -1,25 +1,29 @@
 """The Multi-Strategy tab's analysis-pane render engine.
 
-Extracted from the ``build_app`` monolith into free functions taking
-``(state, meta, pane, …)`` — mirroring the ``single_strategy.py`` pattern — so
-the two-pane render path is testable in isolation and ``build_app`` shrinks to
-orchestration. No widgets are built here (``panes.py`` owns the pane widgets);
-these functions only render into an existing pane from a prepared data slice.
+Extracted from the ``build_app`` monolith so the two-pane render path is
+testable in isolation and ``build_app`` shrinks to orchestration. No widgets are
+built here (``panes.py`` owns the pane widgets); these functions only render
+into an existing pane from a prepared data slice.
 
-Each pane swaps among nine analysis views. The four benchmark-dependent charts
-(Correlation Heatmap, Rolling Correlation, Rolling Beta, Outperformance) share a
-``(pane, prep, win_start, win_end, errors)`` signature so the same code serves
-both the full recompute (``render_pane``) and the live per-pane
-benchmark/regime observers (``bind_live_controls``). Every benchmark series is
-sliced from the already-fetched ``state.universe_prices`` and memoized on
-``state.memo`` — no BQL fetch.
+Every renderer takes a `RenderContext` (#217): the same four values —
+``state``, ``meta``, the `SelectionSlice`, and the error list — used to be
+threaded through as five to eight positional parameters, which is why
+``_render_heatmap`` carried a ``meta`` argument it never read, purely to keep
+the benchmark helpers' signatures uniform. Bundling them makes that uniformity
+structural, and the same code still serves both the full recompute
+(``render_pane``) and the live per-pane benchmark/regime observers
+(``bind_live_controls``).
+
+Each pane swaps among nine analysis views. Every benchmark series is sliced from
+the already-fetched ``state.universe_prices`` and memoized on ``state.memo`` —
+no BQL fetch.
 """
 
 from __future__ import annotations
 
 import traceback
 from collections.abc import Callable
-from types import SimpleNamespace
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -42,6 +46,34 @@ from .charts import (
     _update_sharpe_line,
 )
 from .panes import AnalysisPane
+from .selection import SelectionSlice
+
+
+@dataclass(frozen=True)
+class RenderContext:
+    """What every pane renderer needs, bundled once instead of threaded.
+
+    ``errors`` is a list the renderers append tracebacks to; the full recompute
+    surfaces them in the commentary block, while a live single-chart observer
+    passes a throwaway (a genuinely broken benchmark resurfaces on the next
+    Refresh). ``state`` stays loosely typed until the `DashboardApp` sub-issue.
+    """
+
+    state: object
+    meta: pd.DataFrame
+    sel: SelectionSlice
+    errors: list[str] = field(default_factory=list)
+
+    @classmethod
+    def live(cls, state: object, meta: pd.DataFrame) -> RenderContext | None:
+        """A context over the slice persisted at the last recompute.
+
+        ``None`` when there is no valid selection — the live observers no-op
+        rather than redraw, and never fetch.
+        """
+        if state.cur_prep is None:
+            return None
+        return cls(state=state, meta=meta, sel=state.cur_prep)
 
 
 def clear_pane(pane: AnalysisPane, meta: pd.DataFrame) -> None:
@@ -84,55 +116,41 @@ def clear_pane(pane: AnalysisPane, meta: pd.DataFrame) -> None:
 # compute + update.
 
 
-def _bench_window(
-    state: object, ticker: str, win_start: pd.Timestamp, win_end: pd.Timestamp
-) -> pd.Series:
-    """The benchmark's price series sliced to ``[win_start, win_end]``.
+def _bench_window(ctx: RenderContext, ticker: str) -> pd.Series:
+    """The benchmark's price series sliced to the slice's analysis window.
 
     Raises ``ValueError`` when the benchmark has no data in the cache — the
     callers swallow that into their error list / a cleared figure."""
-    prices = state.universe_prices.get(ticker)
+    prices = ctx.state.universe_prices.get(ticker)
     if prices is None or prices.dropna().empty:
         raise ValueError(f"No price data for benchmark {ticker!r}.")
-    return prices.loc[win_start:win_end]
+    return prices.loc[ctx.sel.win_start : ctx.sel.win_end]
 
 
-def _bench_returns(
-    state: object, ticker: str, win_start: pd.Timestamp, win_end: pd.Timestamp
-) -> pd.Series:
+def _bench_returns(ctx: RenderContext, ticker: str) -> pd.Series:
     """Daily returns of the benchmark's windowed price series."""
-    window = _bench_window(state, ticker, win_start, win_end)
-    return daily_returns(window.to_frame()).iloc[:, 0]
+    return daily_returns(_bench_window(ctx, ticker).to_frame()).iloc[:, 0]
 
 
 def _render_bench_chart(
-    state: object,
+    ctx: RenderContext,
     memo_key: tuple,
     compute: Callable[[], object],
     update: Callable[[object], None],
-    errors: list[str],
 ) -> None:
     """Memoize ``compute`` under ``memo_key`` and hand the result to ``update``,
-    swallowing a failed compute (missing benchmark data) into ``errors`` — the
-    shared driver for the per-pane benchmark charts."""
+    swallowing a failed compute (missing benchmark data) into ``ctx.errors`` —
+    the shared driver for the per-pane benchmark charts."""
     try:
-        update(state.memo.get_or_compute(memo_key, compute))
+        update(ctx.state.memo.get_or_compute(memo_key, compute))
     except Exception:
-        errors.append(traceback.format_exc())
+        ctx.errors.append(traceback.format_exc())
 
 
-def _render_heatmap(
-    state: object,
-    meta: pd.DataFrame,  # unused — kept for a uniform benchmark-helper signature
-    pane: AnalysisPane,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
+def _render_heatmap(ctx: RenderContext, pane: AnalysisPane) -> None:
     # Three per-pane cases: Regime on → conditioned on the benchmark-return
     # tail; Benchmark only → full-sample with the benchmark added; neither →
-    # `prep.cm`. The benchmark cases differ only in (pct, direction, memo key,
+    # `ctx.sel.cm`. The benchmark cases differ only in (pct, direction, memo key,
     # title) and both go through `heatmap_corr_matrix`, which pins the benchmark
     # last so the two panes can never disagree on row/column order.
     if pane.heat_regime_chk.value:
@@ -156,7 +174,7 @@ def _render_heatmap(
     else:
         _update_heatmap(
             pane.heat_fig,
-            prep.cm,
+            ctx.sel.cm,
             title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
         )
         return
@@ -165,147 +183,98 @@ def _render_heatmap(
 
         def _compute():
             return heatmap_corr_matrix(
-                prep.rets,
-                _bench_returns(state, hm_bench_ticker, win_start, win_end),
+                ctx.sel.rets,
+                _bench_returns(ctx, hm_bench_ticker),
                 pct=pct_int / 100.0,
                 direction=direction,
             )
 
-        cm = state.memo.get_or_compute(memo_key, _compute)
+        cm = ctx.state.memo.get_or_compute(memo_key, _compute)
         _update_heatmap(pane.heat_fig, cm, title=title)
     except Exception:
-        errors.append(traceback.format_exc())
+        ctx.errors.append(traceback.format_exc())
         _update_heatmap(pane.heat_fig, pd.DataFrame())
 
 
-def _render_rolling_corr(
-    state: object,
-    meta: pd.DataFrame,
-    pane: AnalysisPane,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
+def _render_rolling_corr(ctx: RenderContext, pane: AnalysisPane) -> None:
     ticker = pane.rcorr_dd.value
     _render_bench_chart(
-        state,
+        ctx,
         ("rcorr", ticker),
-        lambda: rolling_correlation(
-            prep.rets, _bench_returns(state, ticker, win_start, win_end)
-        ),
+        lambda: rolling_correlation(ctx.sel.rets, _bench_returns(ctx, ticker)),
         lambda rc: _update_rolling_ref(
             pane.rcorr_fig,
             rc,
             title_prefix="Rolling Correlation",
             benchmark_label=ticker,
         ),
-        errors,
     )
 
 
-def _render_rolling_beta(
-    state: object,
-    meta: pd.DataFrame,
-    pane: AnalysisPane,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
+def _render_rolling_beta(ctx: RenderContext, pane: AnalysisPane) -> None:
     ticker = pane.rbeta_dd.value
     _render_bench_chart(
-        state,
+        ctx,
         ("rbeta", ticker),
-        lambda: rolling_beta(
-            prep.rets, _bench_returns(state, ticker, win_start, win_end)
-        ),
+        lambda: rolling_beta(ctx.sel.rets, _bench_returns(ctx, ticker)),
         lambda rb: _update_rolling_ref(
             pane.rbeta_fig,
             rb,
             title_prefix="Rolling Beta",
             benchmark_label=ticker,
         ),
-        errors,
     )
 
 
-def _render_outperf(
-    state: object,
-    meta: pd.DataFrame,
-    pane: AnalysisPane,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
+def _render_outperf(ctx: RenderContext, pane: AnalysisPane) -> None:
     # Outperformance uses the benchmark's price window (not returns) — every
     # strategy series starts at 0 (cumulative excess return).
     ticker = pane.outperf_dd.value
     _render_bench_chart(
-        state,
+        ctx,
         ("outperf", ticker),
-        lambda: excess_cum_return(
-            prep.sel_window, _bench_window(state, ticker, win_start, win_end)
-        ),
+        lambda: excess_cum_return(ctx.sel.window, _bench_window(ctx, ticker)),
         lambda oc: _update_outperformance(pane.outperf_fig, oc, benchmark_label=ticker),
-        errors,
     )
 
 
-def render_one(
-    state: object,
-    meta: pd.DataFrame,
-    pane: AnalysisPane,
-    label: str,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
-    # Populate the single analysis view named `label` from `prep`. Lazy
+def render_one(ctx: RenderContext, pane: AnalysisPane, label: str) -> None:
+    # Populate the single analysis view named `label` from `ctx.sel`. Lazy
     # rendering calls this for only the mounted view per
     # recompute and builds the others on first pick.
+    sel = ctx.sel
     if label == "Cumulative Performance":
-        _update_line(pane.line_fig, prep.perf)
+        _update_line(pane.line_fig, sel.perf)
     elif label == "1Y Sharpe-z Line":
-        _update_sharpe_line(pane.sharpe_fig, prep.sz_series)
+        _update_sharpe_line(pane.sharpe_fig, sel.sz_series)
     elif label == "Risk / Return":
-        _update_scatter(pane.scatter_fig, prep.sel_window, prep.rets, meta)
+        _update_scatter(pane.scatter_fig, sel.window, sel.rets, ctx.meta)
     elif label == "Drawdown":
-        _update_drawdown(pane.dd_fig, prep.dd)
+        _update_drawdown(pane.dd_fig, sel.dd)
     elif label == "Return Distribution":
         _update_return_dist(
             pane.retdist_fig,
             pane.retdist_stats_grid,
-            prep.rets,
-            prep.rd_stats,
-            meta,
+            sel.rets,
+            sel.rd_stats,
+            ctx.meta,
         )
     elif label == "Correlation Heatmap":
-        _render_heatmap(state, meta, pane, prep, win_start, win_end, errors)
+        _render_heatmap(ctx, pane)
     elif label == "Rolling Correlation":
-        _render_rolling_corr(state, meta, pane, prep, win_start, win_end, errors)
+        _render_rolling_corr(ctx, pane)
     elif label == "Rolling Beta":
-        _render_rolling_beta(state, meta, pane, prep, win_start, win_end, errors)
+        _render_rolling_beta(ctx, pane)
     elif label == "Outperformance":
-        _render_outperf(state, meta, pane, prep, win_start, win_end, errors)
+        _render_outperf(ctx, pane)
 
 
-def render_pane(
-    state: object,
-    meta: pd.DataFrame,
-    pane: AnalysisPane,
-    prep: SimpleNamespace,
-    win_start: pd.Timestamp,
-    win_end: pd.Timestamp,
-    errors: list[str],
-) -> None:
+def render_pane(ctx: RenderContext, pane: AnalysisPane) -> None:
     # Lazy: render only the currently-mounted view; the other
     # eight are built on first pick (see bind_lazy_render) and stay fresh
     # until the next recompute resets `pane.fresh`.
     label = pane.picker.value
-    render_one(state, meta, pane, label, prep, win_start, win_end, errors)
+    render_one(ctx, pane, label)
     pane.fresh = {label}
 
 
@@ -317,18 +286,10 @@ def bind_lazy_render(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> N
     # benchmark observers (a real failure resurfaces on the next Refresh).
     def _on_pick_render(change):
         label = change["new"]
-        if state.cur_prep is None or label in pane.fresh:
+        ctx = RenderContext.live(state, meta)
+        if ctx is None or label in pane.fresh:
             return
-        render_one(
-            state,
-            meta,
-            pane,
-            label,
-            state.cur_prep,
-            state.cur_win_start,
-            state.cur_win_end,
-            [],
-        )
+        render_one(ctx, pane, label)
         pane.fresh.add(label)
 
     pane.picker.observe(_on_pick_render, names="value")
@@ -342,21 +303,14 @@ def bind_live_controls(state: object, meta: pd.DataFrame, pane: AnalysisPane) ->
     # stays the only path that refetches and re-runs filters/selection.)
     def _make(render_fn):
         def _handler(_change):
-            if state.cur_prep is None:
+            ctx = RenderContext.live(state, meta)
+            if ctx is None:
                 return  # no valid selection — nothing to redraw, no fetch
-            # A single live chart swallows its errors: the helper's own
-            # except-branch leaves the chart in a safe state, and a
-            # genuinely broken benchmark still surfaces on the next
-            # Refresh prices (where errors flow into the commentary block).
-            render_fn(
-                state,
-                meta,
-                pane,
-                state.cur_prep,
-                state.cur_win_start,
-                state.cur_win_end,
-                [],
-            )
+            # A single live chart swallows its errors: `ctx.errors` is a fresh
+            # list nobody reads, the helper's own except-branch leaves the chart
+            # in a safe state, and a genuinely broken benchmark still surfaces
+            # on the next Refresh prices (where errors reach the commentary).
+            render_fn(ctx, pane)
 
         return _handler
 
