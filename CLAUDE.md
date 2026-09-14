@@ -24,6 +24,17 @@ live-narrowing filter accordion, a profile card + cumulative chart, a
 monthly-return calendar, and two analysis panes) → disclaimers. All compute
 lives in `src/`; the notebook is a one-liner that calls `build_app()`.
 
+The catalog is described by a **declarative schema** (v0.9.15,
+`CATALOG_SCHEMA` in `src/config.py`): every metadata column is declared once —
+internal key, the JSON keys it accepts, its **display label**, and its role. So
+**labels and column order are configuration, not code**: relabelling a column,
+reordering the three classification tiers (`CLASSIFICATION_TIERS` =
+Solution → Category → Family), adding a filter pill, or changing which rings
+the Platform sunburst draws (`SUNBURST_LEVELS`) is a `config.py` edit, not a
+sweep across renderers. Never re-spell a label or a tier order at a call site —
+read it through `field_label` / the per-renderer field tuples. See
+`.claude/context/data.md`.
+
 Every benchmark selector is user-extensible (v0.9.14): it type-filters the
 curated `BENCHMARK_TICKERS` list *and* the catalog indices, and accepts a
 ticker that is on neither — fetching it as a delta, reporting an
@@ -33,7 +44,7 @@ degrades to session-only on a read-only filesystem.
 
 ## Current version
 
-`v0.9.14` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.15` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

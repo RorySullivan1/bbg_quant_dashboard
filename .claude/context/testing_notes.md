@@ -70,6 +70,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Characteristics shows the Launch-date range (two date boxes separated
   by a hyphen) and a **Currency** dropdown; setting either narrows the
   dropdown.
+- **The three classification tiers are visible everywhere (v0.9.15).** The
+  filter accordion carries a **Solution**, **Category** and **Family** pill in
+  that order (both tabs); the all-catalog grid shows Solution / Category /
+  Family after Asset Class, and the selected-strategy grid shows them plus
+  Return Type and **Launch Date** (relabelled from "Live Date" — the label now
+  comes from the schema); the Single Strategy **profile card** lists Asset
+  Class · Currency · Return Type · Solution · Category · Family · Launch Date,
+  rendering `—` for any the record lacks; the **New Launch** cards' meta line
+  reads `asset class · category · currency`. Ticking a value in any of the
+  three tier pills narrows the picker.
 - The **Quantitative** pill shows a global Period (1Y/3Y/5Y) dropdown and
   one row per metric (Sharpe / Sortino / Calmar / Beta / Treynor /
   Jensen α / VaR % / RSI / Z-Score), each a `[≥/≤ dropdown] [value box]`;
