@@ -18,6 +18,7 @@ from ..config import filter_dimensions
 from .benchmarks import BenchmarkRegistry
 from .panes import AnalysisPane
 from .selection import SelectionSlice
+from .single_strategy import SingleStrategyPanel
 
 
 @dataclass
@@ -59,7 +60,7 @@ class DashboardState:
     # --- mutable session state ---
     #: Single Strategy tab namespace (picker + profile/chart/grid handles), set
     #: once in build_app; its observers re-render Section 1.
-    single_strategy: object | None = None
+    single_strategy: SingleStrategyPanel | None = None
     universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     arp_universe_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     universe_rets: pd.DataFrame = field(default_factory=pd.DataFrame)

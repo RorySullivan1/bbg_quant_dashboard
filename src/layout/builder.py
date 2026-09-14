@@ -109,14 +109,7 @@ from .multi_strategy import (
 from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import PlatformAnalytics
 from .selection import SelectionSlice
-from .single_strategy import (
-    _CALENDAR_TABS,
-    make_single_strategy_panel,
-    render_analysis_pane,
-    render_calendar,
-    render_single_strategy,
-    set_calendar_kind,
-)
+from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
 from .state import DashboardState
 
 # The overlay's paint rule, which three sites below depend on: the frontend
@@ -568,7 +561,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # The third top-level tab: a per-strategy deep-dive. Built here so
     # the tab wiring below can swap it in; its picker options are rebuilt against
     # the pruned `meta` once the cache loads (alongside `ticker_w`).
-    single_strategy = make_single_strategy_panel(meta, registry=benchmarks)
+    single_strategy = SingleStrategyPanel(meta, state, registry=benchmarks)
     state.single_strategy = single_strategy
     single_panel = single_strategy.root
 
@@ -1007,7 +1000,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         if getattr(single_strategy, "_suspend", False):
             return
         window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
-        render_single_strategy(single_strategy, state, meta, window_start)
+        single_strategy.render(meta, window_start)
 
     def _refresh_prices(_btn=None):
         # The overlay is already in the tree, so re-render its value visible and
@@ -1084,8 +1077,8 @@ def build_app(verbose: bool = False) -> W.VBox:
 
     def _make_cal_kind_handler(which: str):
         def _handler(_b=None) -> None:
-            set_calendar_kind(single_strategy, which)
-            render_calendar(single_strategy, state)
+            single_strategy.set_calendar_kind(which)
+            single_strategy.render_calendar()
 
         return _handler
 
@@ -1102,7 +1095,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     def _make_pane_render_handler(pane: SingleAnalysisPane):
         def _handler(_change=None) -> None:
             window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
-            render_analysis_pane(single_strategy, pane, state, meta, window_start)
+            single_strategy.render_analysis_pane(pane, meta, window_start)
 
         return _handler
 

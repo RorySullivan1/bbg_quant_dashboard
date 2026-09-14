@@ -16,7 +16,7 @@ import pandas as pd
 from src.config import field_label
 from src.layout import build_app
 from src.layout.filter_panel import make_filter_panel
-from src.layout.single_strategy import make_single_strategy_panel
+from src.layout.single_strategy import SingleStrategyPanel
 
 
 def _meta() -> pd.DataFrame:
@@ -71,7 +71,7 @@ def test_make_filter_panel_structure():
 
 
 def test_single_strategy_panel_embeds_filters():
-    ss = make_single_strategy_panel(_meta())
+    ss = SingleStrategyPanel(_meta(), None)
     assert hasattr(ss, "filters")
     # The "Filters" accordion is the first child of the tab and is a two-column
     # panel: the strategy picker + benchmark controls on the left, the filter
