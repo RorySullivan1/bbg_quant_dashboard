@@ -12,11 +12,15 @@ tree, so nothing here computes or fetches — the figures start empty by design.
 `ANALYSIS_OPTIONS` and `SINGLE_ANALYSIS_OPTIONS` declare which views each tab
 offers, and `_SINGLE_BENCHMARK_VIEWS` which of them reveal the benchmark
 selector.
+
+Each factory returns a typed pane (`AnalysisPane` / `SingleAnalysisPane`, #216)
+rather than a bag of attributes, so a renderer reaching for a field it was never
+given fails at construction instead of at render time.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from dataclasses import dataclass, field
 
 import ipywidgets as W
 import numpy as np
@@ -379,9 +383,68 @@ _SINGLE_BENCHMARK_VIEWS: frozenset[str] = frozenset(
 )
 
 
+@dataclass
+class SingleAnalysisPane:
+    """One Single-Strategy analysis pane: its widgets and every figure it owns.
+
+    `views` maps a `SINGLE_ANALYSIS_OPTIONS` label to the box `stack` mounts;
+    the figures are also held individually because the `_update_*` helpers take
+    a figure, not a view.
+    """
+
+    root: W.VBox
+    picker: W.Dropdown
+    bench_dd: BenchmarkSelect
+    stack: W.Box
+    views: dict[str, W.Widget]
+    weekly_fig: go.FigureWidget
+    retdist_fig: go.FigureWidget
+    retdist_stats_grid: DataGrid
+    factor_fig: go.FigureWidget
+    dd_fig: go.FigureWidget
+    ranking_fig: go.FigureWidget
+    factor_score_fig: go.FigureWidget
+    pca_fig: go.FigureWidget
+    defensive_fig: go.FigureWidget
+
+
+@dataclass
+class AnalysisPane:
+    """One Multi-Strategy analysis pane: its widgets and every figure it owns.
+
+    `fresh` is the set of labels whose figure holds the current slice. The
+    builder renders only the mounted view per recompute and adds others on first
+    pick, so this is what distinguishes "not drawn yet" from "drawn and stale".
+    """
+
+    root: W.VBox
+    picker: W.Dropdown
+    stack: W.Box
+    views: dict[str, W.Widget]
+    line_fig: go.FigureWidget
+    outperf_fig: go.FigureWidget
+    outperf_dd: BenchmarkSelect
+    sharpe_fig: go.FigureWidget
+    heat_fig: go.FigureWidget
+    heat_benchmark_chk: W.Checkbox
+    heat_regime_chk: W.Checkbox
+    heat_dd: BenchmarkSelect
+    heat_dir: W.Dropdown
+    heat_pct: W.Dropdown
+    scatter_fig: go.FigureWidget
+    dd_fig: go.FigureWidget
+    rcorr_fig: go.FigureWidget
+    rcorr_dd: BenchmarkSelect
+    rbeta_fig: go.FigureWidget
+    rbeta_dd: BenchmarkSelect
+    retdist_fig: go.FigureWidget
+    retdist_stats_grid: DataGrid
+    fresh: set[str] = field(default_factory=set)
+
+
 def _make_single_analysis_pane(
     side_label: str, *, registry: BenchmarkRegistry | None = None
-) -> SimpleNamespace:
+) -> SingleAnalysisPane:
     """Build one Single-Strategy analysis pane — a self-contained 50%-width
     column with an analysis picker, a per-pane benchmark dropdown (shown only for
     the benchmark-dependent views), and every figure pre-allocated.
@@ -448,7 +511,7 @@ def _make_single_analysis_pane(
     root = W.VBox([header_row, stack], layout=W.Layout(width="50%"))
     root.add_class("bbg-card")
 
-    return SimpleNamespace(
+    return SingleAnalysisPane(
         root=root,
         picker=picker,
         bench_dd=bench_dd,
@@ -468,10 +531,10 @@ def _make_single_analysis_pane(
 
 def _make_analysis_pane(
     side_label: str, *, registry: BenchmarkRegistry | None = None
-) -> SimpleNamespace:
+) -> AnalysisPane:
     """Build a self-contained analysis pane with all 9 figures pre-allocated.
 
-    Returns a `SimpleNamespace` carrying every plotly `FigureWidget` the
+    Returns an `AnalysisPane` carrying every plotly `FigureWidget` the
     `_update_*` helpers need, plus the picker widget, the swap container,
     a `views` dict keyed by `ANALYSIS_OPTIONS` labels, and the root VBox.
 
@@ -633,15 +696,11 @@ def _make_analysis_pane(
     )
     root.add_class("bbg-card")
 
-    return SimpleNamespace(
+    return AnalysisPane(
         root=root,
         picker=picker,
         stack=stack,
         views=views,
-        # Labels whose figure is populated for the current slice. The builder
-        # renders only the mounted view per recompute, adding others on first
-        # pick.
-        fresh=set(),
         line_fig=line_fig,
         outperf_fig=outperf_fig,
         outperf_dd=outperf_benchmark_dd,

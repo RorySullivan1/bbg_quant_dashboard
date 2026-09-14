@@ -62,6 +62,7 @@ from .filters import _ticker_options
 from .grids import _calendar_grid, _perf_grid, _update_calendar_grid, _update_perf_grid
 from .html import STYLE_CTX, _render_profile_card, render_template
 from .panes import (
+    SingleAnalysisPane,
     _line_chart,
     _make_benchmark_dropdown,
     _make_single_analysis_pane,
@@ -92,7 +93,7 @@ def make_single_strategy_panel(
     overlay toggle, the ``profile_w`` card, the ``line_fig`` cumulative chart,
     the compact ``perf_grid``, the calendar ``cal_grid`` + ``cal_pills`` (active
     ``cal_kind``), and the Section 3 two-pane analysis section (``pane_left`` /
-    ``pane_right``, each a ``_make_single_analysis_pane`` namespace).
+    ``pane_right``, each a ``SingleAnalysisPane``).
     """
     # `build_root=False` so the two columns are composed here into one
     # equal-height accordion; the builder wires the inputs for live re-render.
@@ -314,7 +315,7 @@ def render_section3(
 
 def render_analysis_pane(
     ss: SimpleNamespace,
-    pane: SimpleNamespace,
+    pane: SingleAnalysisPane,
     state: object,
     meta: pd.DataFrame,
     window_start: pd.Timestamp,
@@ -380,7 +381,9 @@ def render_analysis_pane(
         _update_factor_scoring(pane.factor_score_fig, _factor_betas(prices, ticker))
 
 
-def _clear_analysis_view(pane: SimpleNamespace, label: str, meta: pd.DataFrame) -> None:
+def _clear_analysis_view(
+    pane: SingleAnalysisPane, label: str, meta: pd.DataFrame
+) -> None:
     """Clear the figure backing one analysis `label` (no valid selection)."""
     if label == "Weekly Scatter":
         _update_weekly_scatter(pane.weekly_fig, None, None)
@@ -401,7 +404,7 @@ def _clear_analysis_view(pane: SimpleNamespace, label: str, meta: pd.DataFrame) 
 
 
 def _render_factor_scatter(
-    pane: SimpleNamespace,
+    pane: SingleAnalysisPane,
     prices: pd.DataFrame,
     win: pd.DataFrame,
     ticker: str,

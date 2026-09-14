@@ -16,6 +16,7 @@ import pandas as pd
 from ..cache import LRUCache
 from ..config import filter_dimensions
 from .benchmarks import BenchmarkRegistry
+from .panes import AnalysisPane
 
 
 @dataclass
@@ -47,8 +48,8 @@ class DashboardState:
     overlay_w: W.HTML  # dimmed loading overlay + staged progress
     universe_grid: object  # ipydatagrid.DataGrid
     selected_perf_grid: object  # ipydatagrid.DataGrid
-    pane_left: object  # SimpleNamespace analysis pane
-    pane_right: object  # SimpleNamespace analysis pane
+    pane_left: AnalysisPane
+    pane_right: AnalysisPane
     highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)
     #: Init/pane-error boxes. Kept out of ``highlights_w`` so the live
     #: superlatives-window toggle never wipes them.

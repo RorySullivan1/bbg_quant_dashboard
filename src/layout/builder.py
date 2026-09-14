@@ -113,7 +113,7 @@ from .multi_strategy import (
     clear_pane,
     render_pane,
 )
-from .panes import _make_analysis_pane
+from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import (
     _factor_beta_scatter,
     _regime_scatter,
@@ -1293,7 +1293,7 @@ def build_app(verbose: bool = False) -> W.VBox:
     # stack + benchmark visibility on the pick). The shared strategy / window
     # come from `single_strategy.picker` and `today`; no BQL, the other pane
     # untouched.
-    def _make_pane_render_handler(pane: SimpleNamespace):
+    def _make_pane_render_handler(pane: SingleAnalysisPane):
         def _handler(_change=None) -> None:
             window_start = pd.Timestamp(today) - pd.DateOffset(years=LOOKBACK_YEARS)
             render_analysis_pane(single_strategy, pane, state, meta, window_start)
