@@ -24,6 +24,10 @@ voila dashboard.ipynb
 `bql` is injected by BQuant's own kernel on a terminal, so this conda env is
 for local/off-terminal work only.
 
-`src/bql_client.py` detects whether `bql` is importable. Off-terminal it falls
-back to a deterministic synthetic price series keyed by ticker, so the
-dashboard always renders end-to-end.
+`src/price_source.py` picks the source: `BqlPriceSource` when `bql` is
+importable, else `MockPriceSource`, so the dashboard always renders end-to-end.
+The mock's series are seeded from a **digest** of the ticker (v0.9.16 #235), so
+they are identical in every process — two runs of the same code render the same
+numbers, which is what makes an off-terminal before/after comparison meaningful.
+(Until #235 the seed was `hash(ticker)`, which Python randomizes per process:
+every restart showed different numbers.)
