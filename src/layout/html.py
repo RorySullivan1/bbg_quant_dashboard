@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..config import TEMPLATES_DIR, WEEKLY_COMMENTARY_PATH
+from ..config import (
+    PROFILE_CARD_FIELDS,
+    TEMPLATES_DIR,
+    WEEKLY_COMMENTARY_PATH,
+    catalog_field,
+    field_label,
+)
 from ..style import Color, Font, FontSize, StatusTone
 from .theme import _sentiment_color
 
@@ -209,6 +215,30 @@ def _fmt_date(value: object) -> str:
     return ts.strftime("%Y-%m-%d")
 
 
+def _profile_meta_rows(row: pd.Series) -> str:
+    """The profile card's label/value grid cells, one pair per configured field.
+
+    `render_template` substitutes `{{key}}` and nothing else — it has no loop —
+    so a schema-driven row list has to be assembled here and passed as one
+    pre-rendered block. Labels come from `field_label`; a `date`-role field is
+    formatted rather than str()'d, and every value stays NA-safe.
+    """
+    cells = []
+    for key in PROFILE_CARD_FIELDS:
+        value = (
+            _fmt_date(row.get(key))
+            if catalog_field(key).role == "date"
+            else _na(row.get(key))
+        )
+        cells.append(
+            f"<span style='color:{STYLE_CTX['text_muted']};'>"
+            f"{html.escape(field_label(key))}</span>"
+            f"<span style='color:{STYLE_CTX['text_color']};'>"
+            f"{html.escape(value)}</span>"
+        )
+    return "\n    ".join(cells)
+
+
 def _render_profile_card(row: pd.Series) -> str:
     """Render the Single Strategy metadata card from one ``meta`` row.
 
@@ -220,12 +250,7 @@ def _render_profile_card(row: pd.Series) -> str:
         **STYLE_CTX,
         name=html.escape(_na(row.get("name"))),
         ticker=html.escape(_na(row.get("ticker"))),
-        asset_class=html.escape(_na(row.get("asset_class"))),
-        currency=html.escape(_na(row.get("currency"))),
-        return_type=html.escape(_na(row.get("return_type"))),
-        category=html.escape(_na(row.get("category"))),
-        family=html.escape(_na(row.get("family"))),
-        launch_date=html.escape(_fmt_date(row.get("live_date"))),
+        meta_rows=_profile_meta_rows(row),
         description=html.escape(_na(row.get("description"))),
     )
 

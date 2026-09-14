@@ -19,6 +19,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 from .config import (
+    LAUNCH_CARD_META_FIELDS,
     NEW_LAUNCH_DAYS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
@@ -333,7 +334,7 @@ def build_launch_cards(
     """New-launch cards (newest-first) with metadata for the right panel.
 
     Each entry: ``{name, ticker, meta, live_date, days_ago, since_return}``
-    where ``meta`` is ``asset_class · category · currency`` and ``since_return``
+    where ``meta`` joins `LAUNCH_CARD_META_FIELDS` with " · " and ``since_return``
     is the simple cumulative return since the index's live date (not annualized
     — a 3-week-old index annualizes to nonsense, and anchoring at the first
     fetched observation would fold in any pre-launch backtest history). Returns
@@ -365,7 +366,7 @@ def build_launch_cards(
 
         meta_bits = " · ".join(
             str(row.get(k))
-            for k in ("asset_class", "category", "currency")
+            for k in LAUNCH_CARD_META_FIELDS
             if pd.notna(row.get(k)) and str(row.get(k))
         )
         cards.append(
