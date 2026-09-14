@@ -20,8 +20,6 @@ filtered out. Prices come from the cached ``state.universe_prices``.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import ipywidgets as W
 import pandas as pd
 
@@ -83,302 +81,322 @@ _CALENDAR_BENCHMARK_KINDS: frozenset[str] = frozenset(
 )
 
 
-def make_single_strategy_panel(
-    meta: pd.DataFrame, *, registry: BenchmarkRegistry | None = None
-) -> SimpleNamespace:
-    """Build the Single Strategy tab widgets and assemble ``.root``.
+class SingleStrategyPanel:
+    """The Single Strategy tab: a per-strategy deep-dive in three sections.
 
-    Returns a ``SimpleNamespace`` of the live handles the builder binds and
-    re-renders: the strategy ``picker``, the shared ``bench_dd`` + ``bench_chk``
-    overlay toggle, the ``profile_w`` card, the ``line_fig`` cumulative chart,
-    the compact ``perf_grid``, the calendar ``cal_grid`` + ``cal_pills`` (active
-    ``cal_kind``), and the Section 3 two-pane analysis section (``pane_left`` /
-    ``pane_right``, each a ``SingleAnalysisPane``).
+    Owns every widget the builder binds and re-renders — the strategy `picker`,
+    the shared `bench_dd` + `bench_chk` overlay toggle, the `profile_w` card,
+    the `line_fig` cumulative chart, the compact `perf_grid`, the calendar
+    (`cal_grid` + `cal_pills`, with `cal_kind` the active mode), the filter
+    panel, and the two `SingleAnalysisPane`s — and renders into them.
+
+    Like `PlatformAnalytics` (#219), **`state` is held and `meta` stays a
+    per-call argument**: `state` is one mutable object whose contents change in
+    place, while `build_app` re-points `meta` to the pruned catalog after each
+    load, so an attribute would go stale silently.
     """
-    # `build_root=False` so the two columns are composed here into one
-    # equal-height accordion; the builder wires the inputs for live re-render.
-    filters = make_filter_panel(
-        meta,
-        build_root=False,
-        registry=registry,
-        right_panel_layout=W.Layout(
-            width="62%", padding="8px", border=f"1px solid {Color.BORDER}"
-        ),
-    )
 
-    options = _ticker_options(meta)
-    picker = W.Dropdown(
-        options=options,
-        value=options[0][1] if options else None,
-        description="Strategy",
-        style={"description_width": "70px"},
-        layout=W.Layout(width="100%"),
-    )
-    bench_dd = _make_benchmark_dropdown(width="100%", registry=registry)
-    bench_chk = W.Checkbox(
-        value=False,
-        description="Show benchmark",
-        indent=False,
-        layout=W.Layout(width="100%"),
-    )
-    # Left column: the strategy selection + benchmark controls, bordered like the
-    # criteria panel and stretched to match its height.
-    strategy_panel = W.VBox(
-        [picker, bench_dd, bench_chk],
-        layout=W.Layout(
-            width="38%",
-            padding="8px",
-            border=f"1px solid {Color.BORDER}",
-            display="flex",
-            flex_flow="column",
-        ),
-    )
-    filter_box = W.HBox(
-        [strategy_panel, filters.right_panel],
-        layout=W.Layout(width="100%", align_items="stretch"),
-    )
-    filters_accordion = W.Accordion(
-        children=[filter_box],
-        titles=("Filters",),
-        selected_index=0,
-        layout=W.Layout(width="100%"),
-    )
+    def __init__(
+        self,
+        meta: pd.DataFrame,
+        state: object,
+        *,
+        registry: BenchmarkRegistry | None = None,
+    ) -> None:
+        self.state = state
+        self._build(meta, registry=registry)
 
-    profile_w = W.HTML()
-    line_fig = _line_chart()
-    perf_grid = _perf_grid()
-
-    profile_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Strategy profile")
-    )
-    perf_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Standard performance")
-    )
-    left_col = W.VBox(
-        [profile_header, profile_w],
-        layout=W.Layout(width="38%", padding="0 8px 0 0"),
-    )
-    right_col = W.VBox(
-        [line_fig],
-        layout=W.Layout(width="62%"),
-    )
-    profile_chart_row = W.HBox(
-        [left_col, right_col],
-        layout=W.Layout(width="100%", align_items="stretch"),
-    )
-    # Standard-performance table spans the full section width, below the
-    # profile-card + cumulative-chart row.
-    perf_block = W.VBox(
-        [perf_header, perf_grid],
-        layout=W.Layout(width="100%", padding="8px 0 0 0"),
-    )
-    section1 = W.VBox(
-        [profile_chart_row, perf_block],
-        layout=W.Layout(width="100%"),
-    )
-
-    # Section 2: a 3-pill monthly-return calendar over one grid.
-    cal_pills = [
-        _make_tab_button(label, active=i == 0)
-        for i, (label, _k) in enumerate(_CALENDAR_TABS)
-    ]
-    cal_pill_bar = W.HBox(
-        cal_pills,
-        layout=W.Layout(width="100%", margin="0 0 4px 0"),
-    )
-    cal_grid = _calendar_grid()
-    cal_header = W.HTML(
-        render_template("grid_header", **STYLE_CTX, text="Monthly return calendar")
-    )
-    section2_slot = W.Box(
-        [W.VBox([cal_header, cal_pill_bar, cal_grid], layout=W.Layout(width="100%"))],
-        layout=W.Layout(width="100%", padding="8px 0 0 0"),
-    )
-    # Section 3: a two-pane analysis section mirroring the
-    # Multi-Strategy tab. The shared `picker` above feeds both panes; each pane
-    # picks which analysis + benchmark to draw, for side-by-side comparison.
-    pane_left = _make_single_analysis_pane("left", registry=registry)
-    pane_right = _make_single_analysis_pane("right", registry=registry)
-    s3_header = W.HTML(render_template("grid_header", **STYLE_CTX, text="Analytics"))
-    analysis_row = W.HBox(
-        [pane_left.root, pane_right.root],
-        layout=W.Layout(width="100%", align_items="stretch"),
-    )
-    section3_slot = W.Box(
-        [W.VBox([s3_header, analysis_row], layout=W.Layout(width="100%"))],
-        layout=W.Layout(width="100%", padding="8px 0 0 0"),
-    )
-
-    root = W.VBox(
-        [filters_accordion, section1, section2_slot, section3_slot],
-        layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
-    )
-
-    return SimpleNamespace(
-        root=root,
-        filters=filters,
-        picker=picker,
-        bench_dd=bench_dd,
-        bench_chk=bench_chk,
-        profile_w=profile_w,
-        line_fig=line_fig,
-        perf_grid=perf_grid,
-        cal_grid=cal_grid,
-        cal_pills=cal_pills,
-        cal_kind=_CALENDAR_TABS[0][1],
-        pane_left=pane_left,
-        pane_right=pane_right,
-        section2_slot=section2_slot,
-        section3_slot=section3_slot,
-    )
-
-
-def render_single_strategy(
-    ss: SimpleNamespace,
-    state: object,
-    meta: pd.DataFrame,
-    window_start: pd.Timestamp,
-) -> None:
-    """Render Section 1 for the currently-picked strategy.
-
-    Reads the cached ``state.universe_prices`` (no BQL): renders the profile
-    card, the cumulative chart (rebased to 100, with the benchmark overlaid when
-    the toggle is on), and the compact 1/3/5Y + since-inception perf table. A
-    missing ticker / empty cache clears the chart and grid without raising.
-    """
-    ticker = ss.picker.value
-    prices = state.universe_prices
-    row = meta.loc[meta["ticker"] == ticker] if ticker is not None else meta.iloc[0:0]
-    ss.profile_w.value = _render_profile_card(row.iloc[0]) if not row.empty else ""
-
-    if ticker is None or prices is None or prices.empty or ticker not in prices.columns:
-        _update_line(ss.line_fig, pd.DataFrame())
-        _update_perf_grid(ss.perf_grid, pd.DataFrame(), meta)
-        return
-
-    cols = [ticker]
-    if ss.bench_chk.value:
-        bench = ss.bench_dd.value
-        if bench in prices.columns and bench != ticker:
-            cols.append(bench)
-    window = prices.loc[prices.index >= window_start, cols]
-    _update_line(ss.line_fig, cum_perf(window))
-
-    full = prices[[ticker]]
-    pt = pd.concat([perf_table(full), since_inception_perf(full)], axis=1)
-    _update_perf_grid(ss.perf_grid, pt, meta)
-
-    render_calendar(ss, state)
-    render_section3(ss, state, meta, window_start)
-
-
-def set_calendar_kind(ss: SimpleNamespace, which: str) -> None:
-    """Activate one calendar pill (`absolute` / `outperformance` /
-    `vol_adjusted`): restyle the pills and record the kind. The caller
-    re-renders via `render_calendar`."""
-    ss.cal_kind = which
-    for pill, (_label, kind) in zip(ss.cal_pills, _CALENDAR_TABS, strict=True):
-        _style_tab_button(pill, active=kind == which)
-
-
-def render_calendar(ss: SimpleNamespace, state: object) -> None:
-    """Render the monthly calendar for the picked strategy + active kind.
-
-    Reads the cached prices (no BQL). The benchmark-driven kinds (outperformance
-    / beta / correlation) use the shared benchmark Dropdown; a missing ticker /
-    benchmark clears the grid."""
-    prices = state.universe_prices
-    ticker = ss.picker.value
-    kind = ss.cal_kind
-    if ticker is None or prices is None or prices.empty or ticker not in prices.columns:
-        _update_calendar_grid(ss.cal_grid, pd.DataFrame(), kind=kind)
-        return
-    benchmark = None
-    if kind in _CALENDAR_BENCHMARK_KINDS:
-        bench = ss.bench_dd.value
-        benchmark = prices[bench] if bench in prices.columns else None
-    table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
-    _update_calendar_grid(ss.cal_grid, table, kind=kind)
-
-
-def render_section3(
-    ss: SimpleNamespace,
-    state: object,
-    meta: pd.DataFrame,
-    window_start: pd.Timestamp,
-) -> None:
-    """Render both Section 3 analysis panes' currently-mounted views for the
-    picked strategy over the 5Y window (no BQL)."""
-    render_analysis_pane(ss, ss.pane_left, state, meta, window_start)
-    render_analysis_pane(ss, ss.pane_right, state, meta, window_start)
-
-
-def render_analysis_pane(
-    ss: SimpleNamespace,
-    pane: SingleAnalysisPane,
-    state: object,
-    meta: pd.DataFrame,
-    window_start: pd.Timestamp,
-) -> None:
-    """Render one analysis pane's currently-mounted view for the shared picked
-    strategy (`ss.picker`) and the pane's own benchmark (no BQL).
-
-    Benchmark-dependent views (weekly scatter / distribution / drawdown) use
-    `pane.bench_dd`; the factor scatter / factor scoring use the cached factor
-    columns; the rest are stubs. A missing ticker / benchmark / factor columns
-    clear the affected figure without raising."""
-    label = pane.picker.value
-    prices = state.universe_prices
-    ticker = ss.picker.value
-
-    # Stubs don't depend on the price cache.
-    if label == "Performance Ranking":
-        _update_perf_ranking(pane.ranking_fig, None)
-        return
-    if label == "PCA Analysis":
-        _update_pca(pane.pca_fig)
-        return
-    if label == "Defensive Scoring":
-        _update_defensive(pane.defensive_fig)
-        return
-
-    valid = not (
-        ticker is None or prices is None or prices.empty or ticker not in prices.columns
-    )
-    if not valid:
-        _clear_analysis_view(pane, label, meta)
-        return
-
-    win = prices.loc[prices.index >= window_start]
-    bench = pane.bench_dd.value
-    has_bench = bench in win.columns and bench != ticker
-
-    if label == "Weekly Scatter":
-        # x = benchmark, y = strategy → quadratic fit shows the strategy's
-        # central β (linear term) plus convexity (curvature).
-        if has_bench:
-            bench_w = weekly_returns(win[[bench]])[bench]
-            strat_w = weekly_returns(win[[ticker]])[ticker]
-            _update_weekly_scatter(pane.weekly_fig, bench_w, strat_w)
-        else:
-            _update_weekly_scatter(pane.weekly_fig, None, None)
-    elif label == "Return Distribution":
-        dist_cols = [ticker, bench] if has_bench else [ticker]
-        rets = daily_returns(win[dist_cols])
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            rets,
-            return_distribution_stats(rets),
+    def _build(self, meta: pd.DataFrame, *, registry: BenchmarkRegistry | None) -> None:
+        # `build_root=False` so the two columns are composed here into one
+        # equal-height accordion; the builder wires the inputs for live re-render.
+        filters = make_filter_panel(
             meta,
+            build_root=False,
+            registry=registry,
+            right_panel_layout=W.Layout(
+                width="62%", padding="8px", border=f"1px solid {Color.BORDER}"
+            ),
         )
-    elif label == "Drawdown":
-        dd_cols = [ticker, bench] if has_bench else [ticker]
-        _update_drawdown(pane.dd_fig, drawdown_series(win[dd_cols]))
-    elif label == "Factor Scatter":
-        _render_factor_scatter(pane, prices, win, ticker)
-    elif label == "Factor Scoring":
-        _update_factor_scoring(pane.factor_score_fig, _factor_betas(prices, ticker))
+
+        options = _ticker_options(meta)
+        picker = W.Dropdown(
+            options=options,
+            value=options[0][1] if options else None,
+            description="Strategy",
+            style={"description_width": "70px"},
+            layout=W.Layout(width="100%"),
+        )
+        bench_dd = _make_benchmark_dropdown(width="100%", registry=registry)
+        bench_chk = W.Checkbox(
+            value=False,
+            description="Show benchmark",
+            indent=False,
+            layout=W.Layout(width="100%"),
+        )
+        # Left column: the strategy selection + benchmark controls, bordered like the
+        # criteria panel and stretched to match its height.
+        strategy_panel = W.VBox(
+            [picker, bench_dd, bench_chk],
+            layout=W.Layout(
+                width="38%",
+                padding="8px",
+                border=f"1px solid {Color.BORDER}",
+                display="flex",
+                flex_flow="column",
+            ),
+        )
+        filter_box = W.HBox(
+            [strategy_panel, filters.right_panel],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+        filters_accordion = W.Accordion(
+            children=[filter_box],
+            titles=("Filters",),
+            selected_index=0,
+            layout=W.Layout(width="100%"),
+        )
+
+        profile_w = W.HTML()
+        line_fig = _line_chart()
+        perf_grid = _perf_grid()
+
+        profile_header = W.HTML(
+            render_template("grid_header", **STYLE_CTX, text="Strategy profile")
+        )
+        perf_header = W.HTML(
+            render_template("grid_header", **STYLE_CTX, text="Standard performance")
+        )
+        left_col = W.VBox(
+            [profile_header, profile_w],
+            layout=W.Layout(width="38%", padding="0 8px 0 0"),
+        )
+        right_col = W.VBox(
+            [line_fig],
+            layout=W.Layout(width="62%"),
+        )
+        profile_chart_row = W.HBox(
+            [left_col, right_col],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+        # Standard-performance table spans the full section width, below the
+        # profile-card + cumulative-chart row.
+        perf_block = W.VBox(
+            [perf_header, perf_grid],
+            layout=W.Layout(width="100%", padding="8px 0 0 0"),
+        )
+        section1 = W.VBox(
+            [profile_chart_row, perf_block],
+            layout=W.Layout(width="100%"),
+        )
+
+        # Section 2: a 3-pill monthly-return calendar over one grid.
+        cal_pills = [
+            _make_tab_button(label, active=i == 0)
+            for i, (label, _k) in enumerate(_CALENDAR_TABS)
+        ]
+        cal_pill_bar = W.HBox(
+            cal_pills,
+            layout=W.Layout(width="100%", margin="0 0 4px 0"),
+        )
+        cal_grid = _calendar_grid()
+        cal_header = W.HTML(
+            render_template("grid_header", **STYLE_CTX, text="Monthly return calendar")
+        )
+        section2_slot = W.Box(
+            [
+                W.VBox(
+                    [cal_header, cal_pill_bar, cal_grid], layout=W.Layout(width="100%")
+                )
+            ],
+            layout=W.Layout(width="100%", padding="8px 0 0 0"),
+        )
+        # Section 3: a two-pane analysis section mirroring the
+        # Multi-Strategy tab. The shared `picker` above feeds both panes; each pane
+        # picks which analysis + benchmark to draw, for side-by-side comparison.
+        pane_left = _make_single_analysis_pane("left", registry=registry)
+        pane_right = _make_single_analysis_pane("right", registry=registry)
+        s3_header = W.HTML(
+            render_template("grid_header", **STYLE_CTX, text="Analytics")
+        )
+        analysis_row = W.HBox(
+            [pane_left.root, pane_right.root],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+        section3_slot = W.Box(
+            [W.VBox([s3_header, analysis_row], layout=W.Layout(width="100%"))],
+            layout=W.Layout(width="100%", padding="8px 0 0 0"),
+        )
+
+        root = W.VBox(
+            [filters_accordion, section1, section2_slot, section3_slot],
+            layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
+        )
+
+        self.root = root
+        self.filters = filters
+        self.picker = picker
+        self.bench_dd = bench_dd
+        self.bench_chk = bench_chk
+        self.profile_w = profile_w
+        self.line_fig = line_fig
+        self.perf_grid = perf_grid
+        self.cal_grid = cal_grid
+        self.cal_pills = cal_pills
+        #: The active calendar mode; `set_calendar_kind` moves it.
+        self.cal_kind = _CALENDAR_TABS[0][1]
+        self.pane_left = pane_left
+        self.pane_right = pane_right
+        self.section2_slot = section2_slot
+        self.section3_slot = section3_slot
+
+    def render(self, meta: pd.DataFrame, window_start: pd.Timestamp) -> None:
+        """Render Section 1 for the currently-picked strategy.
+
+        Reads the cached ``self.state.universe_prices`` (no BQL): renders the profile
+        card, the cumulative chart (rebased to 100, with the benchmark overlaid when
+        the toggle is on), and the compact 1/3/5Y + since-inception perf table. A
+        missing ticker / empty cache clears the chart and grid without raising.
+        """
+        ticker = self.picker.value
+        prices = self.state.universe_prices
+        row = (
+            meta.loc[meta["ticker"] == ticker] if ticker is not None else meta.iloc[0:0]
+        )
+        self.profile_w.value = (
+            _render_profile_card(row.iloc[0]) if not row.empty else ""
+        )
+
+        if (
+            ticker is None
+            or prices is None
+            or prices.empty
+            or ticker not in prices.columns
+        ):
+            _update_line(self.line_fig, pd.DataFrame())
+            _update_perf_grid(self.perf_grid, pd.DataFrame(), meta)
+            return
+
+        cols = [ticker]
+        if self.bench_chk.value:
+            bench = self.bench_dd.value
+            if bench in prices.columns and bench != ticker:
+                cols.append(bench)
+        window = prices.loc[prices.index >= window_start, cols]
+        _update_line(self.line_fig, cum_perf(window))
+
+        full = prices[[ticker]]
+        pt = pd.concat([perf_table(full), since_inception_perf(full)], axis=1)
+        _update_perf_grid(self.perf_grid, pt, meta)
+
+        self.render_calendar()
+        self.render_section3(meta, window_start)
+
+    def set_calendar_kind(self, which: str) -> None:
+        """Activate one calendar pill (`absolute` / `outperformance` /
+        `vol_adjusted`): restyle the pills and record the kind. The caller
+        re-renders via `render_calendar`."""
+        self.cal_kind = which
+        for pill, (_label, kind) in zip(self.cal_pills, _CALENDAR_TABS, strict=True):
+            _style_tab_button(pill, active=kind == which)
+
+    def render_calendar(self) -> None:
+        """Render the monthly calendar for the picked strategy + active kind.
+
+        Reads the cached prices (no BQL). The benchmark-driven kinds (outperformance
+        / beta / correlation) use the shared benchmark Dropdown; a missing ticker /
+        benchmark clears the grid."""
+        prices = self.state.universe_prices
+        ticker = self.picker.value
+        kind = self.cal_kind
+        if (
+            ticker is None
+            or prices is None
+            or prices.empty
+            or ticker not in prices.columns
+        ):
+            _update_calendar_grid(self.cal_grid, pd.DataFrame(), kind=kind)
+            return
+        benchmark = None
+        if kind in _CALENDAR_BENCHMARK_KINDS:
+            bench = self.bench_dd.value
+            benchmark = prices[bench] if bench in prices.columns else None
+        table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
+        _update_calendar_grid(self.cal_grid, table, kind=kind)
+
+    def render_section3(self, meta: pd.DataFrame, window_start: pd.Timestamp) -> None:
+        """Render both Section 3 analysis panes' currently-mounted views for the
+        picked strategy over the 5Y window (no BQL)."""
+        self.render_analysis_pane(self.pane_left, meta, window_start)
+        self.render_analysis_pane(self.pane_right, meta, window_start)
+
+    def render_analysis_pane(
+        self,
+        pane: SingleAnalysisPane,
+        meta: pd.DataFrame,
+        window_start: pd.Timestamp,
+    ) -> None:
+        """Render one analysis pane's currently-mounted view for the shared picked
+        strategy (`self.picker`) and the pane's own benchmark (no BQL).
+
+        Benchmark-dependent views (weekly scatter / distribution / drawdown) use
+        `pane.bench_dd`; the factor scatter / factor scoring use the cached factor
+        columns; the rest are stubs. A missing ticker / benchmark / factor columns
+        clear the affected figure without raising."""
+        label = pane.picker.value
+        prices = self.state.universe_prices
+        ticker = self.picker.value
+
+        # Stubs don't depend on the price cache.
+        if label == "Performance Ranking":
+            _update_perf_ranking(pane.ranking_fig, None)
+            return
+        if label == "PCA Analysis":
+            _update_pca(pane.pca_fig)
+            return
+        if label == "Defensive Scoring":
+            _update_defensive(pane.defensive_fig)
+            return
+
+        valid = not (
+            ticker is None
+            or prices is None
+            or prices.empty
+            or ticker not in prices.columns
+        )
+        if not valid:
+            _clear_analysis_view(pane, label, meta)
+            return
+
+        win = prices.loc[prices.index >= window_start]
+        bench = pane.bench_dd.value
+        has_bench = bench in win.columns and bench != ticker
+
+        if label == "Weekly Scatter":
+            # x = benchmark, y = strategy → quadratic fit shows the strategy's
+            # central β (linear term) plus convexity (curvature).
+            if has_bench:
+                bench_w = weekly_returns(win[[bench]])[bench]
+                strat_w = weekly_returns(win[[ticker]])[ticker]
+                _update_weekly_scatter(pane.weekly_fig, bench_w, strat_w)
+            else:
+                _update_weekly_scatter(pane.weekly_fig, None, None)
+        elif label == "Return Distribution":
+            dist_cols = [ticker, bench] if has_bench else [ticker]
+            rets = daily_returns(win[dist_cols])
+            _update_return_dist(
+                pane.retdist_fig,
+                pane.retdist_stats_grid,
+                rets,
+                return_distribution_stats(rets),
+                meta,
+            )
+        elif label == "Drawdown":
+            dd_cols = [ticker, bench] if has_bench else [ticker]
+            _update_drawdown(pane.dd_fig, drawdown_series(win[dd_cols]))
+        elif label == "Factor Scatter":
+            _render_factor_scatter(pane, prices, win, ticker)
+        elif label == "Factor Scoring":
+            _update_factor_scoring(pane.factor_score_fig, _factor_betas(prices, ticker))
 
 
 def _clear_analysis_view(
@@ -447,3 +465,10 @@ def _factor_betas(prices: pd.DataFrame, ticker: str) -> pd.Series | None:
         if val is not None and pd.notna(val):
             out[name] = float(val)
     return pd.Series(out, dtype=float) if out else None
+
+
+def make_single_strategy_panel(
+    meta: pd.DataFrame, state: object, *, registry: BenchmarkRegistry | None = None
+) -> SingleStrategyPanel:
+    """Build the Single Strategy tab — a thin constructor wrapper."""
+    return SingleStrategyPanel(meta, state, registry=registry)
