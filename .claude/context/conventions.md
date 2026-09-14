@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.16`.
+- **Current version**: `v0.9.17`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -159,7 +159,7 @@ CSS, style tokens — live in `style.md`.)
   unchanged. `pane.fresh` is reset on every recompute (only the mounted
   view is re-rendered) and emptied by `clear_pane`; the lazy observer
   no-ops while `state.cur_prep is None`.
-- **A chart is one object (v0.9.16 #223)**: `charts.py` holds a `Chart` class
+- **A chart is one object (v0.9.17 #223)**: `charts.py` holds a `Chart` class
   per chart family, each owning its `FigureWidget` and exposing
   `update(...)` / `clear()`. **New charts are a `Chart` subclass** — not a
   factory here and an updater there, which is what let a figure be paired with
@@ -178,7 +178,7 @@ CSS, style tokens — live in `style.md`.)
   `layout.shapes` at build time. The four analysis-pane benchmark
   dropdowns come from `_make_benchmark_dropdown`, and the grid classes
   share `_build_info_block` + `_apply_grid_styling`.
-- **Grids re-assert their theme by construction (v0.9.16 #223)**: `PerfGrid` /
+- **Grids re-assert their theme by construction (v0.9.17 #223)**: `PerfGrid` /
   `UniverseGrid` / `CalendarGrid` subclass `_Grid`, whose `_set_data` is the one
   place `grid.data` is assigned and which re-applies the dark theme on every
   write. Never assign `grid.data` from a caller — a raw assignment silently
