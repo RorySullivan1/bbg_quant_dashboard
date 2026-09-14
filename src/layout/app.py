@@ -472,7 +472,9 @@ class DashboardApp:
             z_window_dd=self.z_window_dd,
             z_lookback_dd=self.z_lookback_dd,
         )
-        self.analytics.wire(self.meta)
+        # A callable, so the observers always see the *current* catalog —
+        # `self.meta` is re-pointed to the pruned one after each load (#242).
+        self.analytics.wire(lambda: self.meta)
 
         platform_panel = W.VBox(
             [

@@ -392,7 +392,8 @@ def test_regime_bucket_options_by_spec_type():
 
 def _analytics() -> PlatformAnalytics:
     """A `PlatformAnalytics` over a stub state — enough for the pure resolvers."""
-    dd = lambda: W.Dropdown(options=[("a", 1)], value=1)  # noqa: E731
+    # Two options, so a test can actually change the value and fire observers.
+    dd = lambda: W.Dropdown(options=[("a", 1), ("b", 2)], value=1)  # noqa: E731
     state = SimpleNamespace(
         benchmarks=SimpleNamespace(
             options=lambda labeled=False: [("SPX", "SPX Index")],
@@ -686,3 +687,29 @@ def test_invalidate_marks_every_tab_stale():
     pa.invalidate(pd.DataFrame())
     # `render_active` re-adds only the visible tab; the hidden two stay stale.
     assert pa.fresh == {"sunburst"}
+
+
+def test_observers_render_against_the_current_catalog_not_the_wired_one():
+    """#242: `wire` takes a callable, so a re-pointed catalog reaches the
+    observers.
+
+    `build_app` rebinds its `meta` to the recent-performance-pruned catalog
+    after every load. An observer that captured the frame it was wired with
+    redrew from the *pre-prune* catalog, putting the stale indices the prune
+    removed back into the grid. Off-terminal the prune is a no-op (every mock
+    ticker moves), so nothing else in the suite can catch this — the two frames
+    have to be made to differ deliberately.
+    """
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()  # renders are no-ops
+    seen: list[pd.DataFrame] = []
+    pa.render_universe_grid = seen.append  # type: ignore[method-assign]
+
+    holder = {"meta": pd.DataFrame({"ticker": ["A", "B", "C"]})}  # pre-prune
+    pa.wire(lambda: holder["meta"])
+
+    holder["meta"] = pd.DataFrame({"ticker": ["A"]})  # what the prune leaves
+    pa.z_metric_dd.value = pa.z_metric_dd.options[-1][1]
+
+    assert seen, "the z-score dropdown should have driven a grid render"
+    assert list(seen[-1]["ticker"]) == ["A"]  # the pruned catalog, not the wired one

@@ -19,7 +19,7 @@ passed by hand.
 from __future__ import annotations
 
 import traceback
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 
 import ipywidgets as W
@@ -894,36 +894,52 @@ class PlatformAnalytics:
 
     # --- wiring ---------------------------------------------------------------
 
-    def wire(self, meta: pd.DataFrame) -> None:
+    def wire(self, current_meta: Callable[[], pd.DataFrame]) -> None:
         """Wire every observer: the z-score-column controls, the three tab
         pills, the regime dropdowns, the shared lookback, and the sunburst's own
-        controls. Each re-renders live from the cache, no BQL."""
-        for _dd in (self.z_metric_dd, self.z_window_dd, self.z_lookback_dd):
-            _dd.observe(lambda _c: self.render_universe_grid(meta), names="value")
+        controls. Each re-renders live from the cache, no BQL.
 
-        self.sunburst_pill.on_click(lambda _b: self.activate(meta, "sunburst"))
-        self.regime_pill.on_click(lambda _b: self.activate(meta, "regime"))
-        self.factor_pill.on_click(lambda _b: self.activate(meta, "factor"))
+        Takes a **callable**, not a frame (#242). `build_app` re-points its
+        `meta` to the recent-performance-pruned catalog after every load, so an
+        observer that captured the frame it was wired with would redraw from the
+        *pre-prune* catalog — putting the stale indices the prune removed back
+        into the grid. Resolving it at fire time makes that impossible, and
+        needs nothing remembered at the prune sites.
+        """
+        for _dd in (self.z_metric_dd, self.z_window_dd, self.z_lookback_dd):
+            _dd.observe(
+                lambda _c: self.render_universe_grid(current_meta()), names="value"
+            )
+
+        self.sunburst_pill.on_click(
+            lambda _b: self.activate(current_meta(), "sunburst")
+        )
+        self.regime_pill.on_click(lambda _b: self.activate(current_meta(), "regime"))
+        self.factor_pill.on_click(lambda _b: self.activate(current_meta(), "factor"))
 
         def _on_regime_type(_change=None):
             self.sync_regime_controls()
-            self._render_tab(meta, "regime")
+            self._render_tab(current_meta(), "regime")
 
         self.regime_type_dd.observe(_on_regime_type, names="value")
         self.regime_selector_dd.observe(
-            lambda _c: self._render_tab(meta, "regime"), names="value"
+            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
         )
         self.regime_bucket_dd.observe(
-            lambda _c: self._render_tab(meta, "regime"), names="value"
+            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
         )
 
         # The shared lookback drives all three tabs — mark them stale and
         # re-render only the visible one; the hidden two refresh on activation.
-        self.lookback_selector.observe(lambda _c: self.invalidate(meta), names="value")
+        self.lookback_selector.observe(
+            lambda _c: self.invalidate(current_meta()), names="value"
+        )
 
         # The sunburst's own Metric/Window controls re-render only the sunburst.
         for _dd in (self.sb_metric_dd, self.sb_window_dd):
-            _dd.observe(lambda _c: self._render_tab(meta, "sunburst"), names="value")
+            _dd.observe(
+                lambda _c: self._render_tab(current_meta(), "sunburst"), names="value"
+            )
 
         self.sync_regime_controls()
 
