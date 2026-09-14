@@ -333,10 +333,17 @@ CSS, style tokens — live in `style.md`.)
   command output before it reaches the context. Details in
   `.claude/hooks/README.md`.
 - **Session state lives on `DashboardState`** (`src/layout/state.py`), built
-  once in `build_app` and shared by the orchestration closures. They mutate
+  once by `DashboardApp` and shared by every orchestration method. They mutate
   attributes (`state.universe_prices = …`, `state.active_filter = …`), which
   never rebinds a name — so there is **no `nonlocal`** and no list-as-mutable-cell
-  hack. The closures stay nested in `build_app`; add new shared session state as
-  a `DashboardState` field, not a fresh closure variable.
+  hack.
+- **Behaviour lives on `DashboardApp`** (`src/layout/builder.py`, v0.9.16 #225).
+  The old rule here was "the closures stay nested in `build_app`" — right when
+  the alternative was `nonlocal`, wrong once the state became a dataclass. So:
+  **new shared session state is a `DashboardState` field; new behaviour is a
+  `DashboardApp` method** — not a fresh closure. `build_app()` stays the public
+  entry point the notebook calls, and returns `DashboardApp(...).root`.
+  **Startup stays synchronous** and runs from `__init__`, for the Voila reason
+  in `architecture.md` (#179); Refresh stays threaded.
 - **New top-level files require updating the architecture map** (in
   `architecture.md`).
