@@ -26,7 +26,7 @@ import json
 
 import ipywidgets as W
 import pytest
-import src.layout.builder as builder_mod
+import src.layout.app as app_mod
 import src.user_benchmarks as ub
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
@@ -282,26 +282,26 @@ def _selectors(app) -> list[BenchmarkSelect]:
 @pytest.fixture
 def captured_registry(monkeypatch):
     created: list[BenchmarkRegistry] = []
-    real = builder_mod.BenchmarkRegistry
+    real = app_mod.BenchmarkRegistry
 
     def factory(*a, **k):
         created.append(r := real(*a, **k))
         return r
 
-    monkeypatch.setattr(builder_mod, "BenchmarkRegistry", factory)
+    monkeypatch.setattr(app_mod, "BenchmarkRegistry", factory)
     return created
 
 
 @pytest.fixture
 def captured_state(monkeypatch):
     created = []
-    real = builder_mod.DashboardState
+    real = app_mod.DashboardState
 
     def factory(*a, **k):
         created.append(st := real(*a, **k))
         return st
 
-    monkeypatch.setattr(builder_mod, "DashboardState", factory)
+    monkeypatch.setattr(app_mod, "DashboardState", factory)
     return created
 
 
@@ -329,13 +329,13 @@ def test_a_persisted_benchmark_comes_back_on_the_next_build(captured_registry):
 def test_a_persisted_benchmark_rides_the_startup_fetch(monkeypatch):
     ub.save_user_benchmarks([NEW])
     requested: list[list[str]] = []
-    real = builder_mod.fetch_prices
+    real = app_mod.fetch_prices
 
     def spy(tickers, *a, **k):
         requested.append(list(tickers))
         return real(tickers, *a, **k)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", spy)
+    monkeypatch.setattr(app_mod, "fetch_prices", spy)
     build_app(verbose=False)
 
     # Restored before the first `_fetch_tickers()`, so it needs no extra call.
@@ -346,13 +346,13 @@ def test_a_persisted_benchmark_rides_the_startup_fetch(monkeypatch):
 def test_loading_persisted_benchmarks_does_not_immediately_resave(monkeypatch):
     ub.save_user_benchmarks([NEW])
     writes = {"n": 0}
-    real = builder_mod.save_user_benchmarks
+    real = app_mod.save_user_benchmarks
 
     def counting(tickers):
         writes["n"] += 1
         return real(tickers)
 
-    monkeypatch.setattr(builder_mod, "save_user_benchmarks", counting)
+    monkeypatch.setattr(app_mod, "save_user_benchmarks", counting)
     build_app(verbose=False)
 
     assert writes["n"] == 0

@@ -218,13 +218,13 @@ def test_multi_strategy_filter_narrows_picker_via_shared_panel():
     assert len(picker.options) == n_all
 
 
-def test_no_inline_filter_duplication_in_builder():
+def test_no_inline_filter_duplication_in_the_controller():
     """Regression guard for #155: the Multi-Strategy filter must stay on the
     shared `make_filter_panel` and not re-grow an inline copy of the widget
-    construction / quant reducer in builder.py."""
+    construction / quant reducer in the controller (`app.py` since #225)."""
     from pathlib import Path
 
-    src = Path("src/layout/builder.py").read_text()
+    src = Path("src/layout/app.py").read_text()
     assert "from .filter_panel import make_filter_panel" in src
     assert "make_filter_panel(" in src
     # The quant reducer + row factories now live only in filter_panel.py.

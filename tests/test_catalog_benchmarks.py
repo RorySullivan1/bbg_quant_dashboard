@@ -25,7 +25,7 @@ import ipywidgets as W
 import numpy as np
 import pytest
 import src.bql_client as bc
-import src.layout.builder as builder_mod
+import src.layout.app as app_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.data import load_metadata
 from src.layout import build_app
@@ -66,14 +66,14 @@ def _benchmark_selectors(app) -> list[BenchmarkSelect]:
 def captured_state(monkeypatch):
     """The `DashboardState` that `build_app` builds for itself."""
     created = []
-    real = builder_mod.DashboardState
+    real = app_mod.DashboardState
 
     def factory(*args, **kwargs):
         state = real(*args, **kwargs)
         created.append(state)
         return state
 
-    monkeypatch.setattr(builder_mod, "DashboardState", factory)
+    monkeypatch.setattr(app_mod, "DashboardState", factory)
     return created
 
 
@@ -160,14 +160,14 @@ def test_the_regime_source_does_not_offer_the_catalog():
 @pytest.fixture
 def captured_registry(monkeypatch):
     created: list[BenchmarkRegistry] = []
-    real = builder_mod.BenchmarkRegistry
+    real = app_mod.BenchmarkRegistry
 
     def factory(*args, **kwargs):
         registry = real(*args, **kwargs)
         created.append(registry)
         return registry
 
-    monkeypatch.setattr(builder_mod, "BenchmarkRegistry", factory)
+    monkeypatch.setattr(app_mod, "BenchmarkRegistry", factory)
     return created
 
 
@@ -216,7 +216,7 @@ def test_selecting_a_catalog_benchmark_issues_no_fetch(monkeypatch, captured_reg
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", counting)
+    monkeypatch.setattr(app_mod, "fetch_prices", counting)
 
     app = build_app(verbose=False)
     (registry,) = captured_registry

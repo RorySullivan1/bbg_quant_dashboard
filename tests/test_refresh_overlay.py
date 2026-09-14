@@ -68,16 +68,16 @@ def _toast(app) -> W.HTML:
 
 
 def _patch_fetch_counter(monkeypatch):
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
-    real_fetch = builder_mod.fetch_prices
+    real_fetch = app_mod.fetch_prices
     calls = {"n": 0}
 
     def counting_fetch(*args, **kwargs):
         calls["n"] += 1
         return real_fetch(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", counting_fetch)
+    monkeypatch.setattr(app_mod, "fetch_prices", counting_fetch)
     return calls
 
 
@@ -112,10 +112,10 @@ def test_initial_load_is_synchronous_under_a_live_frontend(monkeypatch):
     overlay. `get_ipython()` is not None under Voila either, so it can't
     distinguish a notebook (threading harmless) from a Voila render (fatal) —
     the initial load therefore never threads."""
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
-    monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
-    monkeypatch.setattr(builder_mod, "display", lambda *a, **k: None)
+    monkeypatch.setattr(app_mod, "get_ipython", lambda: object())
+    monkeypatch.setattr(app_mod, "display", lambda *a, **k: None)
     calls = _patch_fetch_counter(monkeypatch)
 
     app = build_app(verbose=False)
@@ -142,12 +142,12 @@ def test_dismissed_overlay_is_hidden_without_relying_on_css(monkeypatch):
 def test_failed_initial_load_renders_the_traceback(monkeypatch):
     """A startup failure must surface the traceback in the error box rather than
     only painting 'Load failed — see error below' with nothing below it."""
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
     def boom(*_a, **_k):
         raise RuntimeError("simulated BQL outage")
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", boom)
+    monkeypatch.setattr(app_mod, "fetch_prices", boom)
 
     app = build_app(verbose=False)
 
@@ -181,7 +181,7 @@ def test_frontend_refresh_uses_worker_thread(monkeypatch):
 
     This is the fix for the vanished loading screen: the click handler must
     return before the fetch so the frontend can paint the visible overlay."""
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
     calls = _patch_fetch_counter(monkeypatch)
     app = build_app(verbose=False)
@@ -190,7 +190,7 @@ def test_frontend_refresh_uses_worker_thread(monkeypatch):
 
     # Force the "live frontend" branch (build_app already ran, so faking this
     # now only affects the refresh handler).
-    monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
+    monkeypatch.setattr(app_mod, "get_ipython", lambda: object())
 
     btn = _refresh_button(app)
     btn.click()
@@ -206,32 +206,32 @@ def test_refresh_holds_overlay_visible_before_instant_refetch(monkeypatch):
     runs the refetch, so an instant (mock / warm-cache) refetch can't hide the
     overlay inside the same frame it was shown — the "loading dialog never
     appears" regression."""
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
     calls = _patch_fetch_counter(monkeypatch)
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
-    monkeypatch.setattr(builder_mod, "get_ipython", lambda: object())
+    monkeypatch.setattr(app_mod, "get_ipython", lambda: object())
     before = calls["n"]
 
     seen: dict = {}
-    real_sleep = builder_mod.time.sleep
+    real_sleep = app_mod.time.sleep
 
     def spy_sleep(secs):
         # At the paint-hold beat, capture the overlay state and whether the
         # refetch has run yet — don't actually block the test.
-        if abs(secs - builder_mod._OVERLAY_PAINT_DELAY_S) < 1e-9:
+        if abs(secs - app_mod._OVERLAY_PAINT_DELAY_S) < 1e-9:
             seen["overlay"] = _overlay(app).value
             seen["fetches_so_far"] = calls["n"]
             return real_sleep(0)
         return real_sleep(secs)
 
-    monkeypatch.setattr(builder_mod.time, "sleep", spy_sleep)
+    monkeypatch.setattr(app_mod.time, "sleep", spy_sleep)
 
     _refresh_button(app).click()
     _join_refresh_worker()
 
-    assert builder_mod._OVERLAY_PAINT_DELAY_S > 0
+    assert app_mod._OVERLAY_PAINT_DELAY_S > 0
     assert "overlay" in seen  # the paint-hold beat ran
     assert "is-hidden" not in seen["overlay"]  # overlay was VISIBLE during it
     assert seen["fetches_so_far"] == before  # ...and it ran BEFORE the refetch
