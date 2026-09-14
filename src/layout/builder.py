@@ -763,7 +763,7 @@ def build_app(verbose: bool = False) -> W.VBox:
         else:
             visible = filtered
 
-        quant_keep = filter_panel.quant_keep(pd.Index(visible["ticker"]), state)
+        quant_keep = filter_panel.quant.keep(pd.Index(visible["ticker"]), state)
         visible = visible.loc[visible["ticker"].isin(quant_keep)]
 
         selected = list(state.ticker_w.value)
