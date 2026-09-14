@@ -8,12 +8,18 @@ live within `NEW_LAUNCH_DAYS`.
 
 Each superlative is declared as a spec — a metric function plus a label,
 formatter, sentiment, and description — so adding one means adding a spec
-rather than a branch. The renderers in `layout/html.py` turn the resulting
-dicts into cards.
+rather than a branch. Both builders return frozen dataclasses
+(`SuperlativeCard` / `LaunchCard`), so the field set lives here and the
+renderers in `layout/html.py` read attributes rather than guessing at dict keys
+with `.get()` defaults. Values that are *presentation* — the launch date's
+format, the em dash for a return that cannot be computed — are left to those
+renderers; this module returns a `date` and a `float | None`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import pandas as pd
@@ -38,6 +44,95 @@ from .stats import (
     return_skew,
     win_rate,
 )
+from .style import Sentiment
+
+
+@dataclass(frozen=True)
+class SuperlativeCard:
+    """One Market Superlative: the single most extreme index for a metric.
+
+    `value` is the **already-formatted** raw metric (the formatter differs per
+    card — percent, 2dp, signed), while `description` states only how the metric
+    is calculated and becomes the card's hover tooltip.
+    """
+
+    label: str
+    value: str
+    name: str
+    ticker: str
+    sentiment: Sentiment
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class LaunchCard:
+    """One New Launch: an index that went live within `NEW_LAUNCH_DAYS`.
+
+    `since_return` is the simple cumulative return since `live_date`, or None
+    when the window holds too little history to compute one — the renderer
+    decides what that looks like on screen.
+    """
+
+    name: str
+    ticker: str
+    meta: str
+    live_date: date
+    days_ago: int
+    since_return: float | None
+
+
+@dataclass
+class _SuperlativeBoard:
+    """Accumulates the cards, owning the lookups every pick shares.
+
+    That shared context — the ticker→name lookup and the asset-class series
+    behind the cross-asset-neutral z-rank — used to be captured by a nested
+    closure, reachable only from inside `build_superlatives`.
+    """
+
+    name_lookup: dict[str, str]
+    asset_class: pd.Series
+    cards: list[SuperlativeCard] = field(default_factory=list)
+
+    def name_of(self, ticker: str) -> str:
+        return self.name_lookup.get(ticker, ticker)
+
+    def acz(self, metric: pd.Series) -> pd.Series:
+        """The metric's asset-class-demeaned z-score, for cross-asset-neutral ranking."""
+        return asset_class_demeaned_zscore(metric, self.asset_class)
+
+    def pick(
+        self,
+        label: str,
+        series: pd.Series,
+        *,
+        mode: str,
+        fmt: Callable[[float], str],
+        sentiment: Sentiment,
+        description: str = "",
+        rank_by: pd.Series | None = None,
+    ) -> None:
+        """Add the card for `series`' most extreme index, or nothing if it is all-NaN."""
+        s = series.dropna()
+        if s.empty:
+            return
+        s = s.sort_index()  # deterministic tie-break by ticker
+        ranking = s
+        if rank_by is not None:
+            r = rank_by.reindex(s.index).dropna()
+            if not r.empty:  # fall back to the raw metric if the z-rank is degenerate
+                ranking = r.sort_index()
+        ticker = ranking.idxmax() if mode == "max" else ranking.idxmin()
+        self.cards.append(
+            SuperlativeCard(
+                label=label,
+                value=fmt(s[ticker]),  # always the raw metric value
+                name=self.name_of(ticker),
+                ticker=ticker,
+                sentiment=sentiment,
+                description=description,
+            )
+        )
 
 
 def superlative_returns(
@@ -72,7 +167,7 @@ def build_superlatives(
     returns: pd.DataFrame,
     *,
     window_days: int = SUPERLATIVE_WINDOW_DAYS,
-) -> list[dict]:
+) -> list[SuperlativeCard]:
     """Whole-catalog "Market Superlatives" over the trailing window.
 
     A board of **symmetric best/worst** pairs plus a single (Lowest VaR), built
@@ -89,17 +184,11 @@ def build_superlatives(
     oscillators (14d / 12-26-9) evaluated at the window end, intentionally
     independent of ``window_days``; the rest re-scope on it. Names with
     insufficient history surface as NaN and are skipped (so short windows simply
-    drop a few cards); ties break deterministically by ticker. Each card is
-    ``{label, value, name, ticker, sentiment, description}`` where ``description``
-    states **only how the metric is calculated** (the card's hover tooltip).
+    drop a few cards); ties break deterministically by ticker. See
+    `SuperlativeCard` for the card's fields.
     """
     if prices.empty or returns.empty:
         return []
-
-    name_lookup = meta.set_index("ticker")["name"].to_dict()
-
-    def name_of(ticker: str) -> str:
-        return name_lookup.get(ticker, ticker)
 
     # Per-ticker asset class for the cross-asset-neutral z-ranking. Tickers with
     # no mapped class share one cohort so the demeaned z-rank stays defined.
@@ -107,7 +196,10 @@ def build_superlatives(
         asset_class = meta.set_index("ticker")["asset_class"]
     else:
         asset_class = pd.Series(dtype=object)
-    asset_class = asset_class.reindex(prices.columns).fillna("Unclassified")
+    board = _SuperlativeBoard(
+        name_lookup=meta.set_index("ticker")["name"].to_dict(),
+        asset_class=asset_class.reindex(prices.columns).fillna("Unclassified"),
+    )
 
     years = window_days / TRADING_DAYS_PER_YEAR
 
@@ -124,33 +216,6 @@ def build_superlatives(
     # Fixed-lookback oscillator (window-toggle-independent).
     macd = macd_histogram(prices)
 
-    def acz(metric: pd.Series) -> pd.Series:
-        return asset_class_demeaned_zscore(metric, asset_class)
-
-    cards: list[dict] = []
-
-    def add(label, series, *, mode, fmt, sentiment, description="", rank_by=None):
-        s = series.dropna()
-        if s.empty:
-            return
-        s = s.sort_index()  # deterministic tie-break by ticker
-        ranking = s
-        if rank_by is not None:
-            r = rank_by.reindex(s.index).dropna()
-            if not r.empty:  # fall back to the raw metric if the z-rank is degenerate
-                ranking = r.sort_index()
-        ticker = ranking.idxmax() if mode == "max" else ranking.idxmin()
-        cards.append(
-            {
-                "label": label,
-                "value": fmt(s[ticker]),  # always the raw metric value
-                "name": name_of(ticker),
-                "ticker": ticker,
-                "sentiment": sentiment,
-                "description": description,
-            }
-        )
-
     def pct(v: float) -> str:
         return f"{v:+.1%}"
 
@@ -165,57 +230,57 @@ def build_superlatives(
         "Window price return (last ÷ first − 1); ranked across the catalog by "
         "its asset-class-demeaned z-score."
     )
-    add(
+    board.pick(
         "Best performer",
         pr,
         mode="max",
         fmt=pct,
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description=perf_desc,
-        rank_by=acz(pr),
+        rank_by=board.acz(pr),
     )
-    add(
+    board.pick(
         "Worst performer",
         pr,
         mode="min",
         fmt=pct,
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description=perf_desc,
-        rank_by=acz(pr),
+        rank_by=board.acz(pr),
     )
     # --- trend persistence (raw) ---
     autocorr_desc = "Lag-1 Pearson autocorrelation of daily returns over the window."
-    add(
+    board.pick(
         "Most trending",
         autocorr,
         mode="max",
         fmt=signed2,
-        sentiment="neutral",
+        sentiment=Sentiment.NEUTRAL,
         description=autocorr_desc,
     )
-    add(
+    board.pick(
         "Most mean-reverting",
         autocorr,
         mode="min",
         fmt=signed2,
-        sentiment="neutral",
+        sentiment=Sentiment.NEUTRAL,
         description=autocorr_desc,
     )
     # --- run duration (raw) ---
-    add(
+    board.pick(
         "Longest bull run",
         up_streak,
         mode="max",
         fmt=lambda v: f"{int(v)}d",
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description="Most consecutive up days (positive daily returns) in the window.",
     )
-    add(
+    board.pick(
         "Longest bear run",
         down_streak,
         mode="max",
         fmt=lambda v: f"{int(v)}d",
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description="Most consecutive down days (negative daily returns) in the window.",
     )
     # --- MACD extension (asset-class-demeaned z-rank, fixed 12/26/9 lookback) ---
@@ -223,105 +288,105 @@ def build_superlatives(
         "MACD histogram (12/26/9 EMAs) divided by the last price; ranked across "
         "the catalog by its asset-class-demeaned z-score."
     )
-    add(
+    board.pick(
         "Most extended up",
         macd,
         mode="max",
         fmt=lambda v: f"{v:+.2%}",
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description=macd_desc,
-        rank_by=acz(macd),
+        rank_by=board.acz(macd),
     )
-    add(
+    board.pick(
         "Most extended down",
         macd,
         mode="min",
         fmt=lambda v: f"{v:+.2%}",
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description=macd_desc,
-        rank_by=acz(macd),
+        rank_by=board.acz(macd),
     )
     # --- drawup / drawdown (asset-class-demeaned z-rank) ---
-    add(
+    board.pick(
         "Largest drawup",
         drawup,
         mode="max",
         fmt=pct,
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description="Largest run-up from a running low in the window (price ÷ "
         "running-min − 1); ranked by asset-class-demeaned z-score.",
-        rank_by=acz(drawup),
+        rank_by=board.acz(drawup),
     )
-    add(
+    board.pick(
         "Deepest drawdown",
         mdd,
         mode="min",
         fmt=pct,
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description="Deepest peak-to-trough drawdown in the window (price ÷ "
         "running-max − 1); ranked by asset-class-demeaned z-score.",
-        rank_by=acz(mdd),
+        rank_by=board.acz(mdd),
     )
     # --- risk-adjusted (asset-class-demeaned z-rank) ---
     sharpe_desc = (
         "Annualized Sharpe ratio over the window (return ÷ volatility, "
         "risk-free 0); ranked by asset-class-demeaned z-score."
     )
-    add(
+    board.pick(
         "Best risk-adjusted",
         sharpe,
         mode="max",
         fmt=num2,
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description=sharpe_desc,
-        rank_by=acz(sharpe),
+        rank_by=board.acz(sharpe),
     )
-    add(
+    board.pick(
         "Worst risk-adjusted",
         sharpe,
         mode="min",
         fmt=num2,
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description=sharpe_desc,
-        rank_by=acz(sharpe),
+        rank_by=board.acz(sharpe),
     )
     # --- win rate (raw) ---
     winrate_desc = "Share of days with a positive daily return over the window."
-    add(
+    board.pick(
         "Highest win rate",
         wr,
         mode="max",
         fmt=lambda v: f"{v:.0%}",
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description=winrate_desc,
     )
-    add(
+    board.pick(
         "Lowest win rate",
         wr,
         mode="min",
         fmt=lambda v: f"{v:.0%}",
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description=winrate_desc,
     )
     # --- skewness (raw) ---
     skew_desc = "Skewness of daily returns over the window."
-    add(
+    board.pick(
         "Most positive skew",
         skew,
         mode="max",
         fmt=signed2,
-        sentiment="positive",
+        sentiment=Sentiment.POSITIVE,
         description=skew_desc,
     )
-    add(
+    board.pick(
         "Most negative skew",
         skew,
         mode="min",
         fmt=signed2,
-        sentiment="negative",
+        sentiment=Sentiment.NEGATIVE,
         description=skew_desc,
     )
-    return cards
+    return board.cards
 
 
 def build_launch_cards(
@@ -330,15 +395,15 @@ def build_launch_cards(
     *,
     as_of: date | None = None,
     new_launch_days: int = NEW_LAUNCH_DAYS,
-) -> list[dict]:
+) -> list[LaunchCard]:
     """New-launch cards (newest-first) with metadata for the right panel.
 
-    Each entry: ``{name, ticker, meta, live_date, days_ago, since_return}``
-    where ``meta`` joins `LAUNCH_CARD_META_FIELDS` with " · " and ``since_return``
-    is the simple cumulative return since the index's live date (not annualized
-    — a 3-week-old index annualizes to nonsense, and anchoring at the first
-    fetched observation would fold in any pre-launch backtest history). Returns
-    an empty list when no launches fall within ``new_launch_days``.
+    ``meta`` joins `LAUNCH_CARD_META_FIELDS` with " · "; ``since_return`` is the
+    simple cumulative return since the index's live date (not annualized — a
+    3-week-old index annualizes to nonsense, and anchoring at the first fetched
+    observation would fold in any pre-launch backtest history), or None when the
+    fetched window holds too little history to compute one. Returns an empty
+    list when no launches fall within ``new_launch_days``.
     """
     as_of = as_of or date.today()
     if meta.empty:
@@ -348,13 +413,13 @@ def build_launch_cards(
     if recent.empty:
         return []
 
-    cards: list[dict] = []
+    cards: list[LaunchCard] = []
     for _, row in recent.iterrows():
         ticker = row["ticker"]
         live = pd.Timestamp(row["live_date"])
         days_ago = (pd.Timestamp(as_of) - live).days
 
-        since_return = "—"
+        since_return: float | None = None
         if not prices.empty and ticker in prices.columns:
             # Anchor at the launch date: the fetched window predates the index
             # (mock fills the whole range; real BQL carries backtest history),
@@ -362,7 +427,7 @@ def build_launch_cards(
             col = prices[ticker].dropna()
             col = col[col.index >= live]
             if len(col) >= 2:
-                since_return = f"{col.iloc[-1] / col.iloc[0] - 1.0:+.1%}"
+                since_return = float(col.iloc[-1] / col.iloc[0] - 1.0)
 
         meta_bits = " · ".join(
             str(row.get(k))
@@ -370,13 +435,13 @@ def build_launch_cards(
             if pd.notna(row.get(k)) and str(row.get(k))
         )
         cards.append(
-            {
-                "name": row["name"],
-                "ticker": ticker,
-                "meta": meta_bits,
-                "live_date": live.date().isoformat(),
-                "days_ago": int(days_ago),
-                "since_return": since_return,
-            }
+            LaunchCard(
+                name=row["name"],
+                ticker=ticker,
+                meta=meta_bits,
+                live_date=live.date(),
+                days_ago=int(days_ago),
+                since_return=since_return,
+            )
         )
     return cards

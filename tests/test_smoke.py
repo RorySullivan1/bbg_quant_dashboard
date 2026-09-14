@@ -388,27 +388,31 @@ def test_highlights_sections_are_height_capped_and_scrollable():
     # v0.8.x: each highlights section's card area is bounded (~22.5vh, halved in
     # v0.8.11) and scrolls past it, so a tall board doesn't push the page down.
     # The headers stay outside the scroll regions.
+    from datetime import date
+
+    from src.commentary import LaunchCard, SuperlativeCard
     from src.layout.html import _render_highlights
+    from src.style import Sentiment
 
     sup = [
-        {
-            "label": "Top performer",
-            "value": "+5.0%",
-            "name": "Alpha",
-            "ticker": "AAA",
-            "sentiment": "positive",
-            "description": "Highest return.",
-        }
+        SuperlativeCard(
+            label="Top performer",
+            value="+5.0%",
+            name="Alpha",
+            ticker="AAA",
+            sentiment=Sentiment.POSITIVE,
+            description="Highest return.",
+        )
     ]
     launches = [
-        {
-            "name": "New One",
-            "ticker": "NEW",
-            "meta": "Equity · Trend · USD",
-            "live_date": "2026-05-30",
-            "days_ago": 10,
-            "since_return": "+2.0%",
-        }
+        LaunchCard(
+            name="New One",
+            ticker="NEW",
+            meta="Equity · Trend · USD",
+            live_date=date(2026, 5, 30),
+            days_ago=10,
+            since_return=0.02,
+        )
     ]
     html = _render_highlights(sup, launches)
     # Both panels' card areas are capped + scrollable (one per section).
