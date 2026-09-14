@@ -92,11 +92,12 @@ bbg_quant_dashboard/
 │   ├── price_source.py        # PriceSource protocol: BQL + off-terminal mock
 │   ├── style.py               # centralized style tokens (Color/Font/…)
 │   ├── commentary.py          # rule-based highlight cards
+│   ├── user_benchmarks.py     # persists user-added benchmark tickers
 │   ├── stats/                 # metrics package: _common / performance / risk /
 │   │                          #   rolling / factors / regime / calendar
 │   └── layout/                # UI package: builder (entry point) + app (the
 │                              #   DashboardApp controller) + theme/chrome/filters/
-│                              #   panes/selection/platform/filter_panel/
+│                              #   panes/selection/platform/filter_panel/benchmarks/
 │                              #   single_strategy/multi_strategy/charts/grids/html/state
 │                              #   (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
