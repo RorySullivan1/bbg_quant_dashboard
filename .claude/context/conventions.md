@@ -353,6 +353,18 @@ CSS, style tokens — live in `style.md`.)
   attributes (`state.universe_prices = …`, `state.active_filter = …`), which
   never rebinds a name — so there is **no `nonlocal`** and no list-as-mutable-cell
   hack.
+- **Annotate `state` as `DashboardState`, never `object`.** `state.py` imports
+  `panes` / `selection` / `single_strategy` (and through the last of those,
+  `filter_panel`), so those modules cannot import `DashboardState` back at
+  module level — a runtime `from .state import DashboardState` there raises
+  ImportError on a partially initialized module. Use a `TYPE_CHECKING` guard
+  instead; every layout module has `from __future__ import annotations`, so the
+  annotation is a string and the symbol is never needed at runtime. `platform`
+  and `multi_strategy` have no cycle today but are guarded the same way, so the
+  one annotation reads identically everywhere. This matters more than it looks:
+  with `state: object` a checker rejects *every* attribute access, so the
+  annotation bought nothing — typed, `state.universe_prices` resolves and a
+  misspelled field is an error.
 - **Behaviour lives on `DashboardApp`** (`src/layout/app.py`, v0.9.16 #225;
   `builder.py` is now just the `build_app` entry point).
   The old rule here was "the closures stay nested in `build_app`" — right when

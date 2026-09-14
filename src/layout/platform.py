@@ -21,6 +21,7 @@ from __future__ import annotations
 import traceback
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import ipywidgets as W
 import pandas as pd
@@ -54,6 +55,12 @@ from .chrome import _make_tab_button, _style_tab_button
 from .filters import _section_label
 from .html import STYLE_CTX, render_template
 from .theme import _chart_layout, _short_ticker
+
+if TYPE_CHECKING:
+    # No cycle today, but `state.py` is one import away from reaching this
+    # module, and the annotation never needs the symbol at runtime. Guarded
+    # like `filter_panel` / `single_strategy`, where the cycle is real.
+    from .state import DashboardState
 
 
 def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
@@ -494,7 +501,7 @@ def _update_regime_scatter(
 
 
 @contextmanager
-def _guard_render(state: object, label: str):
+def _guard_render(state: DashboardState, label: str):
     """Route any exception raised in the block into ``state.init_errors`` labeled
     with ``label`` — the shared error handling for the Platform render functions
     (a failed chart records its traceback in the commentary block rather than
@@ -537,7 +544,7 @@ class PlatformAnalytics:
 
     def __init__(
         self,
-        state: object,
+        state: DashboardState,
         *,
         z_metric_dd: W.Dropdown,
         z_window_dd: W.Dropdown,

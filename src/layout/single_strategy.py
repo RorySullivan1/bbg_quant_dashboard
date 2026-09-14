@@ -20,6 +20,8 @@ filtered out. Prices come from the cached ``state.universe_prices``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import ipywidgets as W
 import pandas as pd
 
@@ -57,6 +59,12 @@ from .panes import (
     _make_single_analysis_pane,
 )
 
+if TYPE_CHECKING:
+    # `state.py` reaches this module through its own imports, so a runtime
+    # `from .state import DashboardState` raises ImportError on a partially
+    # initialized module. The annotation needs the name, not the object.
+    from .state import DashboardState
+
 # Calendar tabs: (pill label, calendar_return_table `kind`).
 _CALENDAR_TABS: tuple[tuple[str, str], ...] = (
     ("Absolute", "absolute"),
@@ -90,7 +98,7 @@ class SingleStrategyPanel:
     def __init__(
         self,
         meta: pd.DataFrame,
-        state: object,
+        state: DashboardState,
         *,
         registry: BenchmarkRegistry | None = None,
     ) -> None:
@@ -447,7 +455,10 @@ def _factor_betas(prices: pd.DataFrame, ticker: str) -> pd.Series | None:
 
 
 def make_single_strategy_panel(
-    meta: pd.DataFrame, state: object, *, registry: BenchmarkRegistry | None = None
+    meta: pd.DataFrame,
+    state: DashboardState,
+    *,
+    registry: BenchmarkRegistry | None = None,
 ) -> SingleStrategyPanel:
     """Build the Single Strategy tab — a thin constructor wrapper."""
     return SingleStrategyPanel(meta, state, registry=registry)
