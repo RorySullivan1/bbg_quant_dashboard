@@ -20,7 +20,14 @@ from types import SimpleNamespace
 import pandas as pd
 import plotly.graph_objects as go
 
-from ..config import REGIME_SPECS, TRADING_DAYS_PER_YEAR, sunburst_levels
+from ..config import (
+    REGIME_SPECS,
+    TRADING_DAYS_PER_YEAR,
+    LevelRegime,
+    RegimeSpec,
+    TercileRegime,
+    sunburst_levels,
+)
 from ..stats import (
     daily_returns,
     equity_risk_premium,
@@ -493,9 +500,9 @@ def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
     """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
     fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
     spec = REGIME_SPECS[regime_type]
-    if spec.get("mode") == "level":
-        return [(label, (low, high)) for label, low, high in spec["buckets"]]
-    return [(label, key) for label, key in spec["bucket_labels"]]
+    if isinstance(spec, LevelRegime):
+        return [(label, (low, high)) for label, low, high in spec.buckets]
+    return [(label, key) for label, key in spec.bucket_labels]
 
 
 def render_universe_grid(
@@ -561,17 +568,20 @@ def render_sunburst(state: object, meta: pd.DataFrame, pa: SimpleNamespace) -> N
 def _regime_indicator(state: object, pa: SimpleNamespace) -> pd.Series | None:
     """The regime indicator series from the cache, per the active regime's mode,
     or None when its ticker(s) are absent (→ unconditioned all-days view)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
-    mode = spec.get("mode")
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
+    if spec is None:
+        return None
     prices = state.universe_prices
-    if mode == "autocorr_tercile":
+    if isinstance(spec, TercileRegime) and spec.kind == "autocorr":
         ticker = pa.regime_selector_dd.value
         if not ticker or ticker not in prices.columns:
             return None
         rets = daily_returns(prices[[ticker]])[ticker]
-        return rolling_autocorr(rets, window=spec.get("autocorr_window", 21))
+        return rolling_autocorr(rets, window=spec.autocorr_window)
+    # Both remaining shapes read a raw level; only the ticker's source differs —
+    # a tercile regime's comes from its dropdown, a level regime's is fixed.
     ticker = (
-        pa.regime_selector_dd.value if mode == "level_tercile" else spec.get("ticker")
+        spec.ticker if isinstance(spec, LevelRegime) else pa.regime_selector_dd.value
     )
     if not ticker or ticker not in prices.columns:
         return None
@@ -585,8 +595,8 @@ def _resolve_regime_bucket(
     the tuple off the bucket dropdown; tercile regimes derive it from the live
     indicator's 1/3 & 2/3 quantiles over the lookback window. ``(None, None)``
     when no indicator is available (→ unconditioned all-days view)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
-    if spec.get("mode") == "level":
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
+    if isinstance(spec, LevelRegime):
         low, high = pa.regime_bucket_dd.value
         return (low, high)
     indicator = _regime_indicator(state, pa)
@@ -618,7 +628,9 @@ def render_regime_scatter(
         )
 
 
-def _regime_selector_options(state: object, spec: dict) -> list[tuple[str, object]]:
+def _regime_selector_options(
+    state: object, spec: RegimeSpec | None
+) -> list[tuple[str, object]]:
     """The indicator-source options for a regime, as ``(label, ticker)`` pairs.
 
     Trend sources its list from the **live** benchmark registry rather
@@ -626,9 +638,11 @@ def _regime_selector_options(state: object, spec: dict) -> list[tuple[str, objec
     runtime is offered here too. Rate-level carries a literal ``selector`` and
     is returned unchanged; regimes with neither return ``[]`` (→ the dropdown
     hides)."""
-    if spec.get("selector_source") == "benchmarks":
+    if not isinstance(spec, TercileRegime):
+        return []  # a fixed-level regime has one ticker, so no source to pick
+    if spec.selector_source == "benchmarks":
         return state.benchmarks.options(labeled=True)
-    return list(spec.get("selector", []))
+    return list(spec.selector)
 
 
 def _sync_regime_controls(state: object, pa: SimpleNamespace) -> None:
@@ -639,7 +653,7 @@ def _sync_regime_controls(state: object, pa: SimpleNamespace) -> None:
     **selected** whenever it survives into the new option list. Switching regime
     type still falls back to the first option, since the old value belongs to a
     different domain (a benchmark ticker is not a rate region)."""
-    spec = REGIME_SPECS.get(pa.regime_type_dd.value, {})
+    spec = REGIME_SPECS.get(pa.regime_type_dd.value)
     selector = _regime_selector_options(state, spec)
     if selector:
         previous = pa.regime_selector_dd.value

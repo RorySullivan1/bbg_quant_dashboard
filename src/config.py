@@ -18,6 +18,7 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 LOOKBACK_YEARS = 5
 NEW_LAUNCH_DAYS = 30
@@ -277,11 +278,6 @@ RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
     ("EU (EONIA)", "EONIA Index"),  # euro overnight rate
     ("JP (MUTKCALM)", "MUTKCALM Index"),  # Japan call rate
 ]
-REGIME_TICKERS: list[str] = [
-    VIX_TICKER,
-    *(t for _, t in RATE_LEVEL_TICKERS),
-]
-
 #: Mock shapes for indicator tickers whose off-terminal series must be an
 #: absolute *level* rather than a compounding price, so the regime buckets
 #: actually partition the mock. Maps ticker -> (mean, vol, lo, hi) for a clipped
@@ -292,45 +288,101 @@ LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
 }
 
 _REGIME_INF = float("inf")
-#: Regime label -> spec, in one of two bucket modes. "level" applies fixed
-#: half-open [low, high) buckets to the indicator's raw daily level (±inf for
-#: the open ends). "*_tercile" computes the indicator series live (see builder)
-#: and splits it into thirds at its 1/3 and 2/3 quantiles, carrying
-#: `bucket_labels` as (display, key) pairs.
-#:
-#: A tercile regime's indicator source is chosen by a dropdown, populated either
-#: from a literal `selector` list of (label, ticker) or, via
-#: `selector_source`, from the live benchmark registry at render time — a
-#: benchmark added at runtime has to appear in the Trend picker too, so that
-#: list cannot be frozen here at import. See
-#: `platform._regime_selector_options`.
-REGIME_SPECS: dict[str, dict] = {
-    "Volatility": {
-        "mode": "level",
-        "ticker": VIX_TICKER,
-        "buckets": [
+
+
+@dataclass(frozen=True)
+class LevelRegime:
+    """A regime bucketed on the indicator's **raw daily level**.
+
+    `buckets` are half-open ``[low, high)`` ``(label, low, high)`` triples using
+    ±inf for the open ends, so they partition the whole real line — the bucket
+    dropdown offers them verbatim and no quantile is computed.
+    """
+
+    ticker: str
+    buckets: tuple[tuple[str, float, float], ...]
+
+    def tickers(self) -> tuple[str, ...]:
+        """Indicator tickers this regime needs fetched."""
+        return (self.ticker,)
+
+
+@dataclass(frozen=True)
+class TercileRegime:
+    """A regime bucketed on **live terciles** of a computed indicator series.
+
+    The series is split at its 1/3 and 2/3 quantiles over the lookback, so
+    `bucket_labels` are ``(display, key)`` pairs rather than bounds. `kind`
+    picks the series: ``"autocorr"`` takes the rolling return-autocorrelation of
+    the chosen ticker over `autocorr_window`; ``"level"`` takes the chosen
+    ticker's raw level.
+
+    The indicator source is a dropdown, populated either from a literal
+    `selector` of ``(label, ticker)`` pairs or, via `selector_source`, from the
+    live benchmark registry at render time — a benchmark added at runtime has to
+    appear in the Trend picker too, so that list cannot be frozen at import.
+    """
+
+    kind: Literal["autocorr", "level"]
+    bucket_labels: tuple[tuple[str, str], ...]
+    selector: tuple[tuple[str, str], ...] = ()
+    selector_source: str | None = None
+    autocorr_window: int | None = None
+
+    def __post_init__(self) -> None:
+        # An autocorr regime with no window has no series at all; catching it
+        # here beats a consumer-side fallback that silently invents one.
+        if self.kind == "autocorr" and self.autocorr_window is None:
+            raise ValueError("an autocorr regime needs an autocorr_window")
+
+    def tickers(self) -> tuple[str, ...]:
+        """Indicator tickers this regime needs fetched.
+
+        Empty for a registry-sourced regime: those tickers are benchmarks, which
+        ride the universe fetch already.
+        """
+        return tuple(ticker for _, ticker in self.selector)
+
+
+#: Either regime shape. Consumers switch on `isinstance`, not a mode string.
+RegimeSpec = LevelRegime | TercileRegime
+
+#: Regime label -> spec. See `platform.regime_bucket_options` /
+#: `_regime_indicator` / `_resolve_regime_bucket` / `_regime_selector_options`
+#: for the consumer set.
+REGIME_SPECS: dict[str, RegimeSpec] = {
+    "Volatility": LevelRegime(
+        ticker=VIX_TICKER,
+        buckets=(
             ("VIX < 15", -_REGIME_INF, 15.0),
             ("15 ≤ VIX < 25", 15.0, 25.0),
             ("VIX ≥ 25", 25.0, _REGIME_INF),
-        ],
-    },
-    "Trend": {
-        "mode": "autocorr_tercile",
-        "selector_source": "benchmarks",
-        "autocorr_window": 21,  # rolling window for benchmark-return autocorrelation
-        "bucket_labels": [
+        ),
+    ),
+    "Trend": TercileRegime(
+        kind="autocorr",
+        selector_source="benchmarks",
+        autocorr_window=21,  # rolling window for benchmark-return autocorrelation
+        bucket_labels=(
             ("Low (mean-reverting)", "low"),
             ("Middle", "mid"),
             ("High (trending)", "high"),
-        ],
-    },
-    "Rate-level": {
-        "mode": "level_tercile",
-        "selector": list(RATE_LEVEL_TICKERS),
-        "bucket_labels": [
+        ),
+    ),
+    "Rate-level": TercileRegime(
+        kind="level",
+        selector=tuple(RATE_LEVEL_TICKERS),
+        bucket_labels=(
             ("Low rates", "low"),
             ("Middle", "mid"),
             ("High rates", "high"),
-        ],
-    },
+        ),
+    ),
 }
+
+#: Every indicator ticker the regimes need, deduped and order-preserving —
+#: derived from the specs so a new regime cannot be added without its ticker
+#: joining the startup fetch.
+REGIME_TICKERS: list[str] = list(
+    dict.fromkeys(t for spec in REGIME_SPECS.values() for t in spec.tickers())
+)
