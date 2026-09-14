@@ -41,9 +41,10 @@ from .charts import (
     _update_scatter,
     _update_sharpe_line,
 )
+from .panes import AnalysisPane
 
 
-def clear_pane(pane: SimpleNamespace, meta: pd.DataFrame) -> None:
+def clear_pane(pane: AnalysisPane, meta: pd.DataFrame) -> None:
     """Reset every figure in ``pane`` to empty (no valid selection)."""
     _update_line(pane.line_fig, pd.DataFrame())
     _update_outperformance(pane.outperf_fig, pd.DataFrame(), benchmark_label="")
@@ -123,7 +124,7 @@ def _render_bench_chart(
 def _render_heatmap(
     state: object,
     meta: pd.DataFrame,  # unused — kept for a uniform benchmark-helper signature
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
     win_end: pd.Timestamp,
@@ -180,7 +181,7 @@ def _render_heatmap(
 def _render_rolling_corr(
     state: object,
     meta: pd.DataFrame,
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
     win_end: pd.Timestamp,
@@ -206,7 +207,7 @@ def _render_rolling_corr(
 def _render_rolling_beta(
     state: object,
     meta: pd.DataFrame,
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
     win_end: pd.Timestamp,
@@ -232,7 +233,7 @@ def _render_rolling_beta(
 def _render_outperf(
     state: object,
     meta: pd.DataFrame,
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
     win_end: pd.Timestamp,
@@ -255,7 +256,7 @@ def _render_outperf(
 def render_one(
     state: object,
     meta: pd.DataFrame,
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     label: str,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
@@ -294,7 +295,7 @@ def render_one(
 def render_pane(
     state: object,
     meta: pd.DataFrame,
-    pane: SimpleNamespace,
+    pane: AnalysisPane,
     prep: SimpleNamespace,
     win_start: pd.Timestamp,
     win_end: pd.Timestamp,
@@ -308,7 +309,7 @@ def render_pane(
     pane.fresh = {label}
 
 
-def bind_lazy_render(state: object, meta: pd.DataFrame, pane: SimpleNamespace) -> None:
+def bind_lazy_render(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> None:
     # On a picker change, build the newly-shown view on demand if it hasn't
     # been rendered for the current slice yet (panes.py already swaps it into
     # view and syncs control visibility). No-op without a valid selection or
@@ -333,9 +334,7 @@ def bind_lazy_render(state: object, meta: pd.DataFrame, pane: SimpleNamespace) -
     pane.picker.observe(_on_pick_render, names="value")
 
 
-def bind_live_controls(
-    state: object, meta: pd.DataFrame, pane: SimpleNamespace
-) -> None:
+def bind_live_controls(state: object, meta: pd.DataFrame, pane: AnalysisPane) -> None:
     # Wire the per-pane benchmark dropdowns and Correlation-Heatmap regime
     # controls so changing one re-renders only its own chart, immediately,
     # from the slice persisted on `state` at the last recompute — no BQL
