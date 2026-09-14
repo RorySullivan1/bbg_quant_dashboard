@@ -8,6 +8,7 @@ placeholder handles and assert its defaults and isolation.
 from __future__ import annotations
 
 import pandas as pd
+from src.config import filter_dimensions
 from src.layout.state import DashboardState
 
 
@@ -30,7 +31,8 @@ def _make(**overrides) -> DashboardState:
 
 def test_defaults():
     s = _make()
-    assert s.active_filter == "Asset Class"
+    # The panel opens on the first filter dimension, which is the top tier.
+    assert s.active_filter == filter_dimensions()[0].key == "solution"
     assert s.sync_guard is False
     assert s.last_sel_key is None
     assert s.init_errors == []
@@ -53,11 +55,11 @@ def test_mutable_defaults_are_per_instance():
 
 def test_fields_are_assignable():
     s = _make()
-    s.active_filter = "Quantitative"
+    s.active_filter = "return_type"
     s.sync_guard = True
     s.last_sel_key = ("AAA Index", "BBB Index")
     assert (s.active_filter, s.sync_guard, s.last_sel_key) == (
-        "Quantitative",
+        "return_type",
         True,
         ("AAA Index", "BBB Index"),
     )

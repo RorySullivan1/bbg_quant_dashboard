@@ -14,6 +14,7 @@ import ipywidgets as W
 import pandas as pd
 
 from ..cache import LRUCache
+from ..config import filter_dimensions
 from .benchmarks import BenchmarkRegistry
 
 
@@ -63,8 +64,9 @@ class DashboardState:
     universe_up: pd.DataFrame = field(default_factory=pd.DataFrame)
     #: Tracebacks from the initial fetch / perf compute, surfaced in commentary.
     init_errors: list[str] = field(default_factory=list)
-    #: Currently visible filter dimension — drives "Clear section".
-    active_filter: str = "Asset Class"
+    #: Currently visible filter dimension, as a schema field key — drives
+    #: "Clear section". Defaults to whichever dimension the panel opens on.
+    active_filter: str = field(default_factory=lambda: filter_dimensions()[0].key)
     #: The ticker set rendered on the last recompute; when it changes the
     #: analysis date-range boxes reset to the new overlap window.
     last_sel_key: tuple | None = None
