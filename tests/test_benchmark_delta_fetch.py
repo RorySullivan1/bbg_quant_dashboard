@@ -27,7 +27,7 @@ import ipywidgets as W
 import pandas as pd
 import pytest
 import src.bql_client as bc
-import src.layout.builder as builder_mod
+import src.layout.app as app_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkRegistry, BenchmarkSelect
@@ -68,8 +68,8 @@ def _selectors(app) -> list[BenchmarkSelect]:
 def captured(monkeypatch):
     """The registry and state `build_app` builds for itself."""
     made: dict = {}
-    real_reg = builder_mod.BenchmarkRegistry
-    real_state = builder_mod.DashboardState
+    real_reg = app_mod.BenchmarkRegistry
+    real_state = app_mod.DashboardState
 
     def reg_factory(*a, **k):
         made["registry"] = r = real_reg(*a, **k)
@@ -79,8 +79,8 @@ def captured(monkeypatch):
         made["state"] = s = real_state(*a, **k)
         return s
 
-    monkeypatch.setattr(builder_mod, "BenchmarkRegistry", reg_factory)
-    monkeypatch.setattr(builder_mod, "DashboardState", state_factory)
+    monkeypatch.setattr(app_mod, "BenchmarkRegistry", reg_factory)
+    monkeypatch.setattr(app_mod, "DashboardState", state_factory)
     return made
 
 
@@ -143,13 +143,13 @@ def test_registering_a_selector_wires_it_to_the_registry():
 
 def test_adding_a_ticker_fetches_only_that_ticker(monkeypatch, captured):
     requested: list[list[str]] = []
-    real = builder_mod.fetch_prices
+    real = app_mod.fetch_prices
 
     def spy(tickers, *a, **k):
         requested.append(list(tickers))
         return real(tickers, *a, **k)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", spy)
+    monkeypatch.setattr(app_mod, "fetch_prices", spy)
 
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
@@ -274,7 +274,7 @@ def test_a_failed_fetch_cannot_break_a_loaded_dashboard(monkeypatch, captured):
     def boom(*_a, **_k):
         raise RuntimeError("BQL session dropped")
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", boom)
+    monkeypatch.setattr(app_mod, "fetch_prices", boom)
 
     sel._box.value = "newbm"  # must not raise
 
@@ -290,13 +290,13 @@ def test_a_failed_fetch_cannot_break_a_loaded_dashboard(monkeypatch, captured):
 
 def test_an_added_benchmark_rides_the_refresh(monkeypatch, captured):
     requested: list[list[str]] = []
-    real = builder_mod.fetch_prices
+    real = app_mod.fetch_prices
 
     def spy(tickers, *a, **k):
         requested.append(list(tickers))
         return real(tickers, *a, **k)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", spy)
+    monkeypatch.setattr(app_mod, "fetch_prices", spy)
 
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
@@ -314,13 +314,13 @@ def test_an_added_benchmark_rides_the_refresh(monkeypatch, captured):
 def test_the_startup_request_still_covers_the_curated_benchmarks(monkeypatch):
     # The dynamic ticker list must stay a superset of the constant it replaced.
     requested: list[list[str]] = []
-    real = builder_mod.fetch_prices
+    real = app_mod.fetch_prices
 
     def spy(tickers, *a, **k):
         requested.append(list(tickers))
         return real(tickers, *a, **k)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", spy)
+    monkeypatch.setattr(app_mod, "fetch_prices", spy)
     build_app(verbose=False)
 
     assert set(BENCHMARK_TICKERS) <= set(requested[0])

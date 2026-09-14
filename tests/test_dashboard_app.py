@@ -14,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from src.config import FACTOR_TICKERS, REGIME_TICKERS
-from src.layout.builder import DashboardApp
+from src.layout.app import DashboardApp
 from src.price_source import MockPriceSource
 
 

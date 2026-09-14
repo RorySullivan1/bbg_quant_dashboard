@@ -10,7 +10,7 @@ often it actually runs as we drive the picker.
 from __future__ import annotations
 
 import ipywidgets as W
-import src.layout.builder as builder_mod
+import src.layout.app as app_mod
 import src.layout.multi_strategy as ms_mod
 from src.layout import build_app
 
@@ -53,14 +53,14 @@ def _spy(monkeypatch, name: str) -> dict:
 
 
 def _fetch_counter(monkeypatch) -> dict:
-    real = builder_mod.fetch_prices
+    real = app_mod.fetch_prices
     calls = {"n": 0}
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", counting)
+    monkeypatch.setattr(app_mod, "fetch_prices", counting)
     return calls
 
 

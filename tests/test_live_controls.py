@@ -70,16 +70,16 @@ def _figure_titles(app) -> list[str]:
 def _patch_fetch_counter(monkeypatch):
     """Wrap ``builder.fetch_prices`` so the real mock fetch still runs but
     every call is counted; returns the mutable counter dict."""
-    import src.layout.builder as builder_mod
+    import src.layout.app as app_mod
 
-    real_fetch = builder_mod.fetch_prices
+    real_fetch = app_mod.fetch_prices
     calls = {"n": 0}
 
     def counting_fetch(*args, **kwargs):
         calls["n"] += 1
         return real_fetch(*args, **kwargs)
 
-    monkeypatch.setattr(builder_mod, "fetch_prices", counting_fetch)
+    monkeypatch.setattr(app_mod, "fetch_prices", counting_fetch)
     return calls
 
 

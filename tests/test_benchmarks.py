@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import ipywidgets as W
 import pytest
-import src.layout.builder as builder_mod
+import src.layout.app as app_mod
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import (
@@ -178,14 +178,14 @@ def _all_benchmark_selectors(app) -> list[BenchmarkSelect]:
 def captured_registry(monkeypatch):
     """The `BenchmarkRegistry` that `build_app` creates for itself."""
     created: list[BenchmarkRegistry] = []
-    real = builder_mod.BenchmarkRegistry
+    real = app_mod.BenchmarkRegistry
 
     def factory(*args, **kwargs):
         registry = real(*args, **kwargs)
         created.append(registry)
         return registry
 
-    monkeypatch.setattr(builder_mod, "BenchmarkRegistry", factory)
+    monkeypatch.setattr(app_mod, "BenchmarkRegistry", factory)
     return created
 
 
