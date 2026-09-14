@@ -7,22 +7,32 @@ real `go.FigureWidget`, so we assert on its trace data directly.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
-from src.config import WEEK_WINDOW
+from src.config import (
+    REGIME_SPECS,
+    REGIME_TICKERS,
+    WEEK_WINDOW,
+    LevelRegime,
+    TercileRegime,
+)
 from src.data import load_metadata
 from src.layout.platform import (
     _SUNBURST_SIZE_FLOOR,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_scatter,
+    _regime_selector_options,
     _sunburst,
     _sunburst_leaf_sizes,
     _update_factor_scatter,
     _update_regime_scatter,
     _update_sunburst,
+    regime_bucket_options,
 )
 from src.layout.theme import _v_ref
 from src.stats import daily_returns, tercile_bounds
@@ -316,6 +326,89 @@ def test_update_sunburst_empty_clears_traces():
     fig = _sunburst()
     _update_sunburst(fig, pd.DataFrame(), _treemap_meta(), **_SUNBURST_KW)
     assert fig.data == ()
+
+
+# --- Regime specs (#220) -----------------------------------------------------
+
+
+def test_every_regime_spec_is_a_typed_spec():
+    # The whole point of #220: no entry is a bare dict any more, so a consumer
+    # can switch on the type instead of re-deriving the shape from a string.
+    assert REGIME_SPECS
+    for name, spec in REGIME_SPECS.items():
+        assert isinstance(spec, (LevelRegime, TercileRegime)), name
+
+
+def test_level_regime_buckets_partition_the_real_line():
+    # A previously implicit assumption: the fixed-level buckets are contiguous
+    # half-open [low, high) spans running -inf to +inf, so every indicator value
+    # lands in exactly one bucket and the dropdown can offer them verbatim.
+    for name, spec in REGIME_SPECS.items():
+        if not isinstance(spec, LevelRegime):
+            continue
+        bounds = [(low, high) for _, low, high in spec.buckets]
+        assert bounds[0][0] == float("-inf"), name
+        assert bounds[-1][1] == float("inf"), name
+        pairs = zip(bounds[:-1], bounds[1:], strict=True)
+        for (_, prev_high), (next_low, _) in pairs:
+            assert prev_high == next_low, name  # no gap, no overlap
+
+
+def test_an_autocorr_regime_without_a_window_is_rejected():
+    # It has no series to bucket at all; catching it at construction beats a
+    # consumer-side fallback quietly inventing a window.
+    with pytest.raises(ValueError, match="autocorr_window"):
+        TercileRegime(kind="autocorr", bucket_labels=(("Low", "low"),))
+
+
+def test_regime_tickers_are_derived_from_the_specs():
+    # #220 derives the fetch list from the specs, so a new regime cannot be
+    # added without its indicator joining the startup fetch.
+    derived = list(
+        dict.fromkeys(t for spec in REGIME_SPECS.values() for t in spec.tickers())
+    )
+    assert derived == REGIME_TICKERS
+    # The registry-sourced regime contributes nothing — its tickers are
+    # benchmarks, which ride the universe fetch already.
+    assert REGIME_SPECS["Trend"].tickers() == ()
+
+
+def test_regime_bucket_options_by_spec_type():
+    # Fixed-level buckets carry their (low, high) bounds as the option value;
+    # tercile buckets carry a string key resolved against live quantiles.
+    vol = regime_bucket_options("Volatility")
+    assert [value for _, value in vol] == [
+        (float("-inf"), 15.0),
+        (15.0, 25.0),
+        (25.0, float("inf")),
+    ]
+    assert [value for _, value in regime_bucket_options("Rate-level")] == [
+        "low",
+        "mid",
+        "high",
+    ]
+
+
+def test_regime_selector_options_by_spec_type():
+    # Rate-level carries a literal source list; Trend defers to the live
+    # benchmark registry (#190) so a runtime addition shows up in its picker;
+    # a fixed-level regime has one ticker and so offers no source at all.
+    state = SimpleNamespace(
+        benchmarks=SimpleNamespace(
+            options=lambda labeled=False: [("SPX", "SPX Index")],
+        )
+    )
+    assert _regime_selector_options(state, REGIME_SPECS["Volatility"]) == []
+    assert _regime_selector_options(state, REGIME_SPECS["Rate-level"]) == [
+        ("US (FEDL01)", "FEDL01 Index"),
+        ("EU (EONIA)", "EONIA Index"),
+        ("JP (MUTKCALM)", "MUTKCALM Index"),
+    ]
+    assert _regime_selector_options(state, REGIME_SPECS["Trend"]) == [
+        ("SPX", "SPX Index")
+    ]
+    # An unknown regime type resolves to None upstream; it must not raise here.
+    assert _regime_selector_options(state, None) == []
 
 
 # --- Regime Analysis: regime-conditioned risk/return scatter ----------------
