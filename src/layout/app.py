@@ -86,9 +86,8 @@ from .filters import (
     _ticker_options,
 )
 from .grids import (
-    _perf_grid,
-    _universe_grid,
-    _update_perf_grid,
+    PerfGrid,
+    UniverseGrid,
 )
 from .html import (
     STYLE_CTX,
@@ -368,7 +367,7 @@ class DashboardApp:
             [_section_label("Superlatives window"), self.superlative_window],
             layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
-        self.universe_grid = _universe_grid()
+        self.universe_grid = UniverseGrid()
 
     def _build_universe_section(self) -> None:
         """The all-catalog grid and its Z-Score ranking controls."""
@@ -423,7 +422,7 @@ class DashboardApp:
             layout=W.Layout(width="100%", align_items="stretch"),
         )
 
-        self.selected_perf_grid = _perf_grid()
+        self.selected_perf_grid = PerfGrid()
 
     def _build_state(self) -> None:
         """The `DashboardState` every orchestration method reads and writes."""
@@ -446,7 +445,7 @@ class DashboardApp:
             )
         )
         self.selected_perf_section = W.VBox(
-            [selected_perf_header, self.selected_perf_grid],
+            [selected_perf_header, self.selected_perf_grid.grid],
             layout=W.Layout(width="100%", padding="4px 0 8px 0"),
         )
 
@@ -480,7 +479,7 @@ class DashboardApp:
             [
                 self.universe_header,
                 self.z_controls_row,
-                self.universe_grid,
+                self.universe_grid.grid,
                 self.analytics.card,
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
@@ -1018,9 +1017,7 @@ class DashboardApp:
                 self.state.last_sel_key = None
                 self.state.cur_prep = None
                 self._set_date_bounds(None, reset=True)
-                _update_perf_grid(
-                    self.state.selected_perf_grid, pd.DataFrame(), self.meta
-                )
+                self.state.selected_perf_grid.clear()
                 clear_pane(self.state.pane_left, self.meta)
                 clear_pane(self.state.pane_right, self.meta)
             elif self.state.universe_prices.empty:
@@ -1030,9 +1027,7 @@ class DashboardApp:
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
-                _update_perf_grid(
-                    self.state.selected_perf_grid, pd.DataFrame(), self.meta
-                )
+                self.state.selected_perf_grid.clear()
                 clear_pane(self.state.pane_left, self.meta)
                 clear_pane(self.state.pane_right, self.meta)
             else:
@@ -1045,9 +1040,7 @@ class DashboardApp:
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
-                    _update_perf_grid(
-                        self.state.selected_perf_grid, pd.DataFrame(), self.meta
-                    )
+                    self.state.selected_perf_grid.clear()
                     clear_pane(self.state.pane_left, self.meta)
                     clear_pane(self.state.pane_right, self.meta)
                 else:
@@ -1087,9 +1080,7 @@ class DashboardApp:
         # can re-render a single chart without a refetch.
         self.state.cur_prep = SelectionSlice.build(sel_window, win_start, win_end)
         self._log(f"selected prep built in {time.perf_counter() - t_prep:.2f}s")
-        _update_perf_grid(
-            self.state.selected_perf_grid, self.state.cur_prep.pt, self.meta
-        )
+        self.state.selected_perf_grid.update(self.state.cur_prep.pt, self.meta)
         ctx = RenderContext(
             state=self.state,
             meta=self.meta,

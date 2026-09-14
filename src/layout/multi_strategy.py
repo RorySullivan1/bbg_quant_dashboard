@@ -35,16 +35,6 @@ from ..stats import (
     rolling_beta,
     rolling_correlation,
 )
-from .charts import (
-    _update_drawdown,
-    _update_heatmap,
-    _update_line,
-    _update_outperformance,
-    _update_return_dist,
-    _update_rolling_ref,
-    _update_scatter,
-    _update_sharpe_line,
-)
 from .panes import AnalysisPane
 from .selection import SelectionSlice
 
@@ -78,31 +68,18 @@ class RenderContext:
 
 def clear_pane(pane: AnalysisPane, meta: pd.DataFrame) -> None:
     """Reset every figure in ``pane`` to empty (no valid selection)."""
-    _update_line(pane.line_fig, pd.DataFrame())
-    _update_outperformance(pane.outperf_fig, pd.DataFrame(), benchmark_label="")
-    _update_sharpe_line(pane.sharpe_fig, pd.DataFrame())
-    _update_heatmap(pane.heat_fig, pd.DataFrame())
-    _update_scatter(pane.scatter_fig, pd.DataFrame(), pd.DataFrame(), meta)
-    _update_drawdown(pane.dd_fig, pd.DataFrame())
-    _update_rolling_ref(
-        pane.rcorr_fig,
-        pd.DataFrame(),
-        title_prefix="Rolling Correlation",
-        benchmark_label="",
-    )
-    _update_rolling_ref(
-        pane.rbeta_fig,
-        pd.DataFrame(),
-        title_prefix="Rolling Beta",
-        benchmark_label="",
-    )
-    _update_return_dist(
-        pane.retdist_fig,
-        pane.retdist_stats_grid,
-        pd.DataFrame(),
-        pd.DataFrame(),
-        meta,
-    )
+    for chart in (
+        pane.line,
+        pane.outperf,
+        pane.sharpe,
+        pane.heat,
+        pane.scatter,
+        pane.dd,
+        pane.rcorr,
+        pane.rbeta,
+        pane.retdist,
+    ):
+        chart.clear()
     # No selection -> no view holds current data; the lazy picker observer
     # no-ops while cur_prep is None, so picks just swap to cleared figures.
     pane.fresh = set()
@@ -172,8 +149,7 @@ def _render_heatmap(ctx: RenderContext, pane: AnalysisPane) -> None:
         memo_key = ("heatmap", hm_bench_ticker, "incl", 100)
         title = f"Correlation — incl {hm_bench_ticker} ({LOOKBACK_YEARS}Y)"
     else:
-        _update_heatmap(
-            pane.heat_fig,
+        pane.heat.update(
             ctx.sel.cm,
             title=f"Correlation — {LOOKBACK_YEARS}Y daily returns",
         )
@@ -190,10 +166,10 @@ def _render_heatmap(ctx: RenderContext, pane: AnalysisPane) -> None:
             )
 
         cm = ctx.state.memo.get_or_compute(memo_key, _compute)
-        _update_heatmap(pane.heat_fig, cm, title=title)
+        pane.heat.update(cm, title=title)
     except Exception:
         ctx.errors.append(traceback.format_exc())
-        _update_heatmap(pane.heat_fig, pd.DataFrame())
+        pane.heat.clear()
 
 
 def _render_rolling_corr(ctx: RenderContext, pane: AnalysisPane) -> None:
@@ -202,12 +178,7 @@ def _render_rolling_corr(ctx: RenderContext, pane: AnalysisPane) -> None:
         ctx,
         ("rcorr", ticker),
         lambda: rolling_correlation(ctx.sel.rets, _bench_returns(ctx, ticker)),
-        lambda rc: _update_rolling_ref(
-            pane.rcorr_fig,
-            rc,
-            title_prefix="Rolling Correlation",
-            benchmark_label=ticker,
-        ),
+        lambda rc: pane.rcorr.update(rc, benchmark_label=ticker),
     )
 
 
@@ -217,12 +188,7 @@ def _render_rolling_beta(ctx: RenderContext, pane: AnalysisPane) -> None:
         ctx,
         ("rbeta", ticker),
         lambda: rolling_beta(ctx.sel.rets, _bench_returns(ctx, ticker)),
-        lambda rb: _update_rolling_ref(
-            pane.rbeta_fig,
-            rb,
-            title_prefix="Rolling Beta",
-            benchmark_label=ticker,
-        ),
+        lambda rb: pane.rbeta.update(rb, benchmark_label=ticker),
     )
 
 
@@ -234,7 +200,7 @@ def _render_outperf(ctx: RenderContext, pane: AnalysisPane) -> None:
         ctx,
         ("outperf", ticker),
         lambda: excess_cum_return(ctx.sel.window, _bench_window(ctx, ticker)),
-        lambda oc: _update_outperformance(pane.outperf_fig, oc, benchmark_label=ticker),
+        lambda oc: pane.outperf.update(oc, benchmark_label=ticker),
     )
 
 
@@ -244,21 +210,15 @@ def render_one(ctx: RenderContext, pane: AnalysisPane, label: str) -> None:
     # recompute and builds the others on first pick.
     sel = ctx.sel
     if label == "Cumulative Performance":
-        _update_line(pane.line_fig, sel.perf)
+        pane.line.update(sel.perf)
     elif label == "1Y Sharpe-z Line":
-        _update_sharpe_line(pane.sharpe_fig, sel.sz_series)
+        pane.sharpe.update(sel.sz_series)
     elif label == "Risk / Return":
-        _update_scatter(pane.scatter_fig, sel.window, sel.rets, ctx.meta)
+        pane.scatter.update(sel.window, sel.rets, ctx.meta)
     elif label == "Drawdown":
-        _update_drawdown(pane.dd_fig, sel.dd)
+        pane.dd.update(sel.dd)
     elif label == "Return Distribution":
-        _update_return_dist(
-            pane.retdist_fig,
-            pane.retdist_stats_grid,
-            sel.rets,
-            sel.rd_stats,
-            ctx.meta,
-        )
+        pane.retdist.update(sel.rets, sel.rd_stats, ctx.meta)
     elif label == "Correlation Heatmap":
         _render_heatmap(ctx, pane)
     elif label == "Rolling Correlation":

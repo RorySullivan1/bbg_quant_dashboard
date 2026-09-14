@@ -4,25 +4,27 @@ The dark ``grid_style`` (background / zebra / header colors) is applied once at
 construction via ``_dark_grid_kwargs``. Reassigning ``grid.data`` on a Refresh
 rebuilds the frontend grid model and drops the styling back to ipydatagrid's
 default (white) background. ``_reassert_dark_theme`` re-applies the dark theme
-on every ``_update_*_grid`` and force-syncs ``grid_style`` to the frontend.
+and force-syncs ``grid_style`` to the frontend.
 
-These tests assert that, after a data update, each themed grid still carries the
-dark ``grid_style`` *and* that ``grid_style`` is force-sent to the frontend (an
-equal dict would otherwise short-circuit the traitlets diff and never re-reach
-it, leaving the frontend on the reverted white background).
+Since #223 this is **structural**: every grid is a `_Grid` subclass whose only
+write path is `_set_data`, which re-asserts the theme itself. So rather than
+re-testing each `_update_*_grid` call site, these tests pin the invariant at the
+base class — and `test_every_grid_class_is_covered` fails if a new subclass is
+added without a case here, which is the failure mode that produced the original
+bug.
 """
 
 from __future__ import annotations
 
 import pandas as pd
+import pytest
+from src.layout import grids
 from src.layout.grids import (
-    _calendar_grid,
-    _perf_grid,
+    CalendarGrid,
+    PerfGrid,
+    UniverseGrid,
+    _Grid,
     _reassert_dark_theme,
-    _universe_grid,
-    _update_calendar_grid,
-    _update_perf_grid,
-    _update_universe_grid,
 )
 from src.style import Color
 
@@ -39,56 +41,8 @@ def _spy_send_state(grid):
     return calls
 
 
-def _perf_frame():
-    cols = pd.MultiIndex.from_tuples(
-        [("1Y", "Return"), ("1Y", "Vol"), ("1Y", "Sharpe"), ("1Y", "Max DD")]
-    )
-    pt = pd.DataFrame(
-        [[0.1, 0.2, 0.5, -0.1]],
-        index=pd.Index(["A Index"], name="ticker"),
-        columns=cols,
-    )
-    meta = pd.DataFrame(
-        {
-            "ticker": ["A Index"],
-            "name": ["Alpha"],
-            "asset_class": ["Equity"],
-            "solution": ["ARP"],
-            "category": ["Core"],
-            "family": ["Core"],
-        }
-    )
-    return pt, meta
-
-
-def test_reassert_dark_theme_force_syncs_grid_style():
-    grid = _perf_grid()
-    calls = _spy_send_state(grid)
-    _reassert_dark_theme(grid)
-    assert "grid_style" in calls  # force-sent regardless of value equality
-    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
-
-
-def test_perf_grid_keeps_dark_theme_after_update():
-    grid = _perf_grid()
-    pt, meta = _perf_frame()
-    calls = _spy_send_state(grid)
-    _update_perf_grid(grid, pt, meta)
-    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
-    assert "grid_style" in calls
-
-
-def test_perf_grid_keeps_dark_theme_on_empty_update():
-    grid = _perf_grid()
-    calls = _spy_send_state(grid)
-    _update_perf_grid(grid, pd.DataFrame(), pd.DataFrame())
-    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
-    assert "grid_style" in calls
-
-
-def test_universe_grid_keeps_dark_theme_after_update():
-    grid = _universe_grid()
-    meta = pd.DataFrame(
+def _meta():
+    return pd.DataFrame(
         {
             "ticker": ["A Index"],
             "name": ["Alpha"],
@@ -100,16 +54,75 @@ def test_universe_grid_keeps_dark_theme_after_update():
             "live_date": pd.to_datetime(["2020-01-01"]),
         }
     )
-    calls = _spy_send_state(grid)
-    _update_universe_grid(grid, meta, pd.DataFrame())
-    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
+
+
+def _perf_frame():
+    cols = pd.MultiIndex.from_tuples(
+        [("1Y", "Return"), ("1Y", "Vol"), ("1Y", "Sharpe"), ("1Y", "Max DD")]
+    )
+    pt = pd.DataFrame(
+        [[0.1, 0.2, 0.5, -0.1]],
+        index=pd.Index(["A Index"], name="ticker"),
+        columns=cols,
+    )
+    return pt, _meta()
+
+
+def _calendar_table():
+    return pd.DataFrame([[0.01, 0.02]], index=pd.Index([2024]), columns=["Jan", "Feb"])
+
+
+#: (label, class, populated-update thunk) per concrete grid. The thunk takes the
+#: grid object so each case drives that grid's real `update` signature.
+GRID_CASES: list[tuple[str, type, object]] = [
+    ("perf", PerfGrid, lambda g: g.update(*_perf_frame())),
+    ("universe", UniverseGrid, lambda g: g.update(_meta(), pd.DataFrame())),
+    ("calendar", CalendarGrid, lambda g: g.update(_calendar_table(), kind="absolute")),
+]
+
+
+def test_reassert_dark_theme_force_syncs_grid_style():
+    g = PerfGrid()
+    calls = _spy_send_state(g.grid)
+    _reassert_dark_theme(g.grid)
+    assert "grid_style" in calls  # force-sent regardless of value equality
+    assert g.grid.grid_style["background_color"] == Color.CHROME_BG.value
+
+
+@pytest.mark.parametrize(
+    "label,cls,populate", GRID_CASES, ids=[c[0] for c in GRID_CASES]
+)
+def test_grid_keeps_dark_theme_after_update(label, cls, populate):
+    g = cls()
+    calls = _spy_send_state(g.grid)
+    populate(g)
+    assert g.grid.grid_style["background_color"] == Color.CHROME_BG.value
     assert "grid_style" in calls
 
 
-def test_calendar_grid_keeps_dark_theme_after_update():
-    grid = _calendar_grid()
-    table = pd.DataFrame([[0.01, 0.02]], index=pd.Index([2024]), columns=["Jan", "Feb"])
-    calls = _spy_send_state(grid)
-    _update_calendar_grid(grid, table, kind="absolute")
-    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
+@pytest.mark.parametrize(
+    "label,cls,populate", GRID_CASES, ids=[c[0] for c in GRID_CASES]
+)
+def test_grid_keeps_dark_theme_on_clear(label, cls, populate):
+    # The empty path is a separate branch in every `update` — it must re-assert
+    # too, or clearing a selection reverts the grid to white.
+    g = cls()
+    populate(g)  # populate first, so `clear` is a real transition
+    calls = _spy_send_state(g.grid)
+    g.clear()
+    assert g.grid.grid_style["background_color"] == Color.CHROME_BG.value
     assert "grid_style" in calls
+
+
+def test_every_grid_class_is_covered():
+    """A new `_Grid` subclass must arrive with a case above.
+
+    This is the guard that makes the invariant hold for grids that don't exist
+    yet — the original bug was exactly "a new update path forgot the re-assert".
+    """
+    defined = {
+        obj
+        for obj in vars(grids).values()
+        if isinstance(obj, type) and issubclass(obj, _Grid) and obj is not _Grid
+    }
+    assert defined == {cls for _, cls, _ in GRID_CASES}

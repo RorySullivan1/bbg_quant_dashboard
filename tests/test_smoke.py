@@ -522,9 +522,10 @@ def test_dark_grid_style():
 
 
 def test_grids_are_dark_themed():
-    from src.layout.grids import _perf_grid, _universe_grid
+    from src.layout.grids import CalendarGrid, PerfGrid, UniverseGrid
 
-    for grid in (_perf_grid(), _universe_grid()):
+    for owner in (PerfGrid(), UniverseGrid(), CalendarGrid()):
+        grid = owner.grid
         assert grid.grid_style["background_color"] == Color.CHROME_BG.value
         assert grid.header_renderer.text_color == Color.TEXT.value
         assert "bbg-grid" in grid._dom_classes

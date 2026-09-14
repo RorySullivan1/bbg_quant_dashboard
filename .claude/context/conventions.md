@@ -147,10 +147,10 @@ CSS, style tokens — live in `style.md`.)
   panels (`build_superlatives` / `build_launch_cards`) compute over the
   whole catalog (`arp_universe_prices`) in the commentary block, never
   the selection.
-- **Per-pane figures are pre-allocated, populated lazily (v0.6.9
-  Workstream D)**: each `AnalysisPane` owns one fresh plotly `FigureWidget`
-  per analysis type (unique instances, so the two panes never share). The
-  `FigureWidget`s are pre-built but **not** all populated on recompute —
+- **Per-pane charts are pre-allocated, populated lazily (v0.6.9
+  Workstream D)**: each `AnalysisPane` owns one fresh `Chart` per analysis type
+  (unique instances, so the two panes never share a figure). Each chart builds
+  its figure in `__init__` but is **not** populated on recompute —
   `render_pane` renders only the **currently-mounted** view per pane and
   records it in `pane.fresh`; the other eight are populated on **first
   pick** by `bind_lazy_render`'s `pane.picker` observer (then added to
@@ -159,20 +159,31 @@ CSS, style tokens — live in `style.md`.)
   unchanged. `pane.fresh` is reset on every recompute (only the mounted
   view is re-rendered) and emptied by `clear_pane`; the lazy observer
   no-ops while `state.cur_prep is None`.
-- **Chart updates go through `fig.batch_update()`**: every `_update_*`
-  helper mutates the FigureWidget inside a `batch_update()` block so the
+- **A chart is one object (v0.9.16 #223)**: `charts.py` holds a `Chart` class
+  per chart family, each owning its `FigureWidget` and exposing
+  `update(...)` / `clear()`. **New charts are a `Chart` subclass** — not a
+  factory here and an updater there, which is what let a figure be paired with
+  the wrong updater. Anything a chart needs for the life of the figure (a title
+  prefix, a companion grid) belongs on the object, not re-passed per update.
+- **Chart updates go through `fig.batch_update()`**: every `update`
+  mutates the FigureWidget inside a `batch_update()` block so the
   frontend sees a single atomic frame. Trace replacement uses
   `fig.data = ()` (clear) + `fig.add_traces(new_traces)` because plotly's
   `fig.data` setter only accepts a subset of the existing traces.
-  The five per-strategy line updaters (`_update_line`,
-  `_update_outperformance`, `_update_sharpe_line`, `_update_drawdown`,
-  `_update_rolling_ref`) are thin wrappers over one shared
-  `_update_line_series` engine — they only supply the per-chart hover
+  The five per-strategy line charts (`LineChart`, `OutperformanceChart`,
+  `SharpeZChart`, `DrawdownChart`, `RollingRefChart`) are thin callers of one
+  shared `_update_line_series` engine — they only supply the per-chart hover
   format/suffix, an optional `tail_n` (Sharpe-z 1Y window), and an
   optional dynamic title; reference lines stay baked into each figure's
-  `layout.shapes` at factory time. The four analysis-pane benchmark
-  dropdowns come from `_make_benchmark_dropdown`, and both grid updaters
+  `layout.shapes` at build time. The four analysis-pane benchmark
+  dropdowns come from `_make_benchmark_dropdown`, and the grid classes
   share `_build_info_block` + `_apply_grid_styling`.
+- **Grids re-assert their theme by construction (v0.9.16 #223)**: `PerfGrid` /
+  `UniverseGrid` / `CalendarGrid` subclass `_Grid`, whose `_set_data` is the one
+  place `grid.data` is assigned and which re-applies the dark theme on every
+  write. Never assign `grid.data` from a caller — a raw assignment silently
+  reverts the frontend to ipydatagrid's white background (the v0.6.5 bug), and
+  that used to depend on every update path remembering `_reassert_dark_theme`.
 - **Pane recompute preps once, renders the mounted views**: every
   Refresh-prices click preps the selected-set data slice once
   (`prep`, with `daily_returns` computed a single time and threaded into

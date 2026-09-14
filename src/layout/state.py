@@ -48,8 +48,8 @@ class DashboardState:
     ticker_w: W.SelectMultiple
     status_w: W.HTML  # post-load summary toast
     overlay_w: W.HTML  # dimmed loading overlay + staged progress
-    universe_grid: object  # ipydatagrid.DataGrid
-    selected_perf_grid: object  # ipydatagrid.DataGrid
+    universe_grid: object  # grids.UniverseGrid
+    selected_perf_grid: object  # grids.PerfGrid
     pane_left: AnalysisPane
     pane_right: AnalysisPane
     highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)
