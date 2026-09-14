@@ -32,7 +32,7 @@ import pandas as pd
 import pytest
 import src.bql_client as bc
 from src.price_cache import PriceCache
-from src.price_source import MockPriceSource, TickersUnresolved
+from src.price_source import MockPriceSource, TickersUnresolved, _ticker_seed
 
 _TICKERS = ["A Index", "B Index", "C Index"]
 _START = date(2022, 1, 3)
@@ -78,6 +78,34 @@ def test_mock_is_still_deterministic_per_ticker():
     first = MockPriceSource().fetch(["A Index"], _START, _END)
     second = MockPriceSource().fetch(["A Index"], _START, _END)
     pd.testing.assert_frame_equal(first, second)
+
+
+def test_mock_series_are_pinned_across_processes():
+    # #235: the seed used to be `hash(ticker)`, which Python randomizes per
+    # process — so the off-terminal dashboard showed different numbers on every
+    # restart and no two renders were comparable. Pinning actual values is the
+    # only assertion that catches a regression here: a same-process
+    # determinism check passed even while the bug was live.
+    assert _ticker_seed("SPX Index") == 435375205
+    assert _ticker_seed("VIX Index") == 1101518666
+
+    df = MockPriceSource().fetch(
+        ["SPX Index", "VIX Index"], date(2024, 1, 1), date(2024, 3, 1)
+    )
+    assert len(df) == 45
+    assert df["SPX Index"].iloc[0] == pytest.approx(100.571298, abs=1e-6)
+    assert df["SPX Index"].iloc[-1] == pytest.approx(110.555940, abs=1e-6)
+    # The level-indicator path (mean-reverting, not compounding) is seeded the
+    # same way, so pin it too.
+    assert df["VIX Index"].iloc[0] == pytest.approx(20.606146, abs=1e-6)
+    assert df["VIX Index"].iloc[-1] == pytest.approx(11.653985, abs=1e-6)
+
+
+def test_the_seed_depends_on_nothing_but_the_ticker():
+    # Stable across calls and independent of any process or global state.
+    assert _ticker_seed("A Index") == _ticker_seed("A Index")
+    assert _ticker_seed("A Index") != _ticker_seed("B Index")
+    assert 0 <= _ticker_seed("A Index") < 2**32
 
 
 # --------------------------------------------------------------------------

@@ -4,7 +4,7 @@ A Bloomberg BQuant App that lets clients browse an index catalog: filter by
 metadata, look up tickers, and view performance, correlation, and a 1-year
 rolling Sharpe-ratio z-score over a 5-year lookback. Index metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
-runtime (with a deterministic mock-price fallback off-terminal). The UI is built
+runtime (with a deterministic, process-stable mock-price fallback off-terminal). The UI is built
 with `ipywidgets`, `plotly` (`FigureWidget`), and `ipydatagrid`, and is
 deployable via Voila.
 

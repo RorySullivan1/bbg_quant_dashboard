@@ -52,7 +52,9 @@ that reset would leak into every test after it. `tests/test_mock_resolution.py`
 covers both, and pins them apart: reported as one generic error, a
 valid-but-no-data ticker reads to the user as a bug.
 
-Off-terminal, the mock-price fallback is deterministic per ticker, so:
+Off-terminal, the mock-price fallback is deterministic per ticker **and
+stable across processes** (v0.9.16 #235), so two runs render identical
+numbers and a rendered-HTML diff is a valid before/after check:
 
 ```python
 from src.layout import build_app

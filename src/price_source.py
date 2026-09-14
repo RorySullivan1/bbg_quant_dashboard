@@ -19,11 +19,14 @@ all — is failure shape, not just output shape:
 
 `MockPriceSource` mirrors that contract rather than BQL's internals; its
 `unresolvable` / `first_trade` attributes are how a test drives the two failure
-modes without touching the live path.
+modes without touching the live path. Its series are seeded from a digest of
+the ticker (`_ticker_seed`), so they are identical in every process — which is
+what makes an off-terminal render comparable between runs.
 """
 
 from __future__ import annotations
 
+import hashlib
 import time
 import warnings
 from datetime import date
@@ -69,6 +72,20 @@ class PriceSource(Protocol):
     name: str
 
     def fetch(self, tickers: list[str], start: date, end: date) -> pd.DataFrame: ...
+
+
+def _ticker_seed(ticker: str) -> int:
+    """A stable RNG seed for ``ticker`` (#235).
+
+    Not ``hash(ticker)``: Python randomizes string hashing per process unless
+    `PYTHONHASHSEED` is set, so that seeded a *different* series in every new
+    interpreter — the off-terminal dashboard showed different numbers on every
+    restart, and no before/after render comparison was possible. A digest
+    depends on nothing but the ticker.
+    """
+    return int.from_bytes(
+        hashlib.blake2b(ticker.encode(), digest_size=4).digest(), "big"
+    )
 
 
 def _chunked(seq: list[str], size: int) -> list[list[str]]:
@@ -360,7 +377,7 @@ class MockPriceSource:
 
         out = pd.DataFrame(index=idx)
         for ticker in resolved:
-            rng = np.random.default_rng(abs(hash(ticker)) % (2**32))
+            rng = np.random.default_rng(_ticker_seed(ticker))
             if ticker in LEVEL_INDICATOR_MOCK:
                 # Mean-reverting absolute *level* (not a compounding price) so
                 # the regime buckets partition the off-terminal mock. Per
