@@ -87,8 +87,9 @@ def _meta() -> pd.DataFrame:
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "name": ["Alpha", "Bravo", "Charlie"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
-            "family": ["X", "Y", "Z"],
+            "solution": ["ARP", "ARP", "Smart Beta"],
             "category": ["T1", "T2", "T3"],
+            "family": ["X", "Y", "Z"],
             "return_type": ["Total", "Total", "Excess"],
             "live_date": pd.to_datetime(["2010-01-01", "2015-06-01", "2020-03-15"]),
         }
@@ -119,15 +120,17 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     # block and immediately before the first stat column.
     cols = list(frame.columns)
     z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
-    # Family then Category: the info block follows META_COLUMNS, and the re-key
-    # put the leaf tier where "Category" used to sit.
+    # Headers and their order both come from the schema (#212): the info block
+    # is `SELECTED_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
+    # carries its schema label ("Launch Date", not the raw feed's "Live Date").
     info_cols = [
         "Name",
         "Asset Class",
-        "Family",
+        "Solution",
         "Category",
+        "Family",
         "Return Type",
-        "Live Date",
+        "Launch Date",
     ]
     assert cols[: len(info_cols)] == info_cols
     assert cols[len(info_cols)] == z_name

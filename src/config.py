@@ -127,7 +127,7 @@ CATALOG_SCHEMA: tuple[CatalogField, ...] = (
     CatalogField("category", ("Category", "Theme"), "Category", "tier"),
     CatalogField("solution", ("Solution",), "Solution", "tier"),
     CatalogField("return_type", ("ReturnType",), "Return Type", "attribute"),
-    CatalogField("live_date", ("LiveDate",), "Live Date", "date"),
+    CatalogField("live_date", ("LiveDate",), "Launch Date", "date"),
     CatalogField("currency", ("Currency",), "Currency", "attribute"),
     CatalogField("description", ("Description",), "Description", "text"),
 )
@@ -138,6 +138,30 @@ CATALOG_SCHEMA: tuple[CatalogField, ...] = (
 #: stays `solution`. A feed that arrives keyed `Class` instead is one extra
 #: alias on that field, not a rename.
 CLASSIFICATION_TIERS: tuple[str, ...] = ("solution", "category", "family")
+
+#: Which metadata fields each renderer shows, in display order. Field *keys*
+#: only — every label comes from the schema via `field_label`, so relabelling a
+#: column is a `CATALOG_SCHEMA` edit and nothing else. The tiers are splatted
+#: from `CLASSIFICATION_TIERS` rather than respelled, so renaming a tier key
+#: reaches every renderer without touching these tuples.
+UNIVERSE_GRID_FIELDS: tuple[str, ...] = ("name", "asset_class", *CLASSIFICATION_TIERS)
+SELECTED_GRID_FIELDS: tuple[str, ...] = (
+    "name",
+    "asset_class",
+    *CLASSIFICATION_TIERS,
+    "return_type",
+    "live_date",
+)
+PROFILE_CARD_FIELDS: tuple[str, ...] = (
+    "asset_class",
+    "currency",
+    "return_type",
+    *CLASSIFICATION_TIERS,
+    "live_date",
+)
+#: Fields joined with " · " on a New-Launch card's meta line.
+LAUNCH_CARD_META_FIELDS: tuple[str, ...] = ("asset_class", "category", "currency")
+
 
 _SCHEMA_BY_KEY: dict[str, CatalogField] = {f.key: f for f in CATALOG_SCHEMA}
 

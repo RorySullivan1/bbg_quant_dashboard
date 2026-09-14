@@ -53,7 +53,9 @@ def _perf_frame():
             "ticker": ["A Index"],
             "name": ["Alpha"],
             "asset_class": ["Equity"],
+            "solution": ["ARP"],
             "category": ["Core"],
+            "family": ["Core"],
         }
     )
     return pt, meta
@@ -91,8 +93,9 @@ def test_universe_grid_keeps_dark_theme_after_update():
             "ticker": ["A Index"],
             "name": ["Alpha"],
             "asset_class": ["Equity"],
-            "family": ["Core"],
+            "solution": ["ARP"],
             "category": ["Core"],
+            "family": ["Core"],
             "return_type": ["Total"],
             "live_date": pd.to_datetime(["2020-01-01"]),
         }

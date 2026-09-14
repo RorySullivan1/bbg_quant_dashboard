@@ -19,6 +19,7 @@ import ipywidgets as W
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
+from ..config import SELECTED_GRID_FIELDS, UNIVERSE_GRID_FIELDS, field_label
 from ..style import Color
 from .theme import _palette_color
 
@@ -259,12 +260,7 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
         grid.data = pd.DataFrame()
         _reassert_dark_theme(grid)
         return
-    info_block = _build_info_block(
-        meta,
-        pt.index,
-        ["name", "asset_class", "category"],
-        {"name": "Name", "asset_class": "Asset Class", "category": "Category"},
-    )
+    info_block = _build_info_block(meta, pt.index, UNIVERSE_GRID_FIELDS)
     # Per-row color swatch: each cell carries the hex string; the renderer
     # paints background + text the same color so it shows as a solid block —
     # the universal legend for every chart in the panes. It leads the Info
@@ -286,23 +282,23 @@ def _update_perf_grid(grid: DataGrid, pt: pd.DataFrame, meta: pd.DataFrame) -> N
 def _build_info_block(
     meta: pd.DataFrame,
     tickers: pd.Index | None,
-    columns: list[str],
-    rename: dict[str, str],
+    fields: tuple[str, ...],
     *,
     date_cols: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """Build a grid 'Info' block from metadata: index by ticker, optionally
-    `reindex` to `tickers` (selected-set order), select `columns`, ISO-format
-    any `date_cols`, then `rename` to display headers. Shared by the
-    selected-strategy grid (3 cols, reindexed to the current selection) and
-    the all-catalog grid (6 cols incl. a formatted live_date, all tickers)."""
+    `reindex` to `tickers` (selected-set order), select `fields`, ISO-format any
+    `date_cols`, then head each column with its schema label.
+
+    Headers are `field_label` reads, so a relabelled column follows from the
+    schema rather than from a rename map spelled at each call site."""
     info = meta.set_index("ticker")
     if tickers is not None:
         info = info.reindex(tickers)
-    info = info[columns].copy()
+    info = info[list(fields)].copy()
     for col in date_cols:
         info[col] = info[col].dt.strftime("%Y-%m-%d")
-    return info.rename(columns=rename)
+    return info.rename(columns={key: field_label(key) for key in fields})
 
 
 def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
@@ -510,20 +506,7 @@ def _build_universe_frame(
     (insufficient-history tickers, NaN z, sink to the bottom)."""
     if meta.empty:
         return pd.DataFrame()
-    info = _build_info_block(
-        meta,
-        None,
-        ["name", "asset_class", "family", "category", "return_type", "live_date"],
-        {
-            "name": "Name",
-            "asset_class": "Asset Class",
-            "family": "Family",
-            "category": "Category",
-            "return_type": "Return Type",
-            "live_date": "Live Date",
-        },
-        date_cols=("live_date",),
-    )
+    info = _build_info_block(meta, None, SELECTED_GRID_FIELDS, date_cols=("live_date",))
 
     blocks = [info]
     z_key: str | None = None
