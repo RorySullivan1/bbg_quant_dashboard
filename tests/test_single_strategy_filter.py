@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import ipywidgets as W
 import pandas as pd
+from src.config import field_label
 from src.layout import build_app
 from src.layout.filter_panel import make_filter_panel
 from src.layout.single_strategy import make_single_strategy_panel
@@ -372,3 +373,79 @@ def test_single_strategy_filter_live_narrows_picker():
 
     checks[0].value = False  # unchecking restores the full catalog
     assert len(picker.options) == n_all
+
+
+# --- the filter-panel object model (#218) ------------------------------------
+
+
+def test_panel_is_composed_of_typed_filters():
+    from src.layout.filter_panel import (
+        CategoricalFilter,
+        FilterPanel,
+        QuantFilter,
+    )
+
+    panel = make_filter_panel(_meta())
+    assert isinstance(panel, FilterPanel)
+    assert isinstance(panel.quant, QuantFilter)
+    for key, cat in panel.categoricals.items():
+        assert isinstance(cat, CategoricalFilter)
+        assert cat.key == key
+        # The pill's caption comes from the schema, via the dimension itself.
+        assert cat.label == field_label(key)
+        assert cat.selected() == []  # nothing ticked on a fresh panel
+
+
+def test_categorical_filter_selected_and_clear():
+    panel = make_filter_panel(_meta())
+    cat = panel.categoricals["asset_class"]
+    cat.checks[0].value = True
+    assert cat.selected() == [cat.checks[0].description]
+    cat.clear()
+    assert cat.selected() == []
+    assert not any(c.value for c in cat.checks)
+
+
+def test_quant_thresholds_reads_only_filled_rows():
+    panel = make_filter_panel(_meta())
+    assert panel.quant.thresholds() == {}
+    op, box = panel.quant.specs["Sharpe"]
+    box.value = "0.5"
+    assert panel.quant.thresholds() == {"Sharpe": ("≥", 0.5)}
+    op.value = "≤"
+    assert panel.quant.thresholds() == {"Sharpe": ("≤", 0.5)}
+    box.value = "not a number"  # unparseable is off, not an error
+    assert panel.quant.thresholds() == {}
+
+
+def test_quant_memo_is_inspectable_state_not_a_closure(multiyear_prices, benchmark):
+    # #167's memo used to be closure state nothing could see. As an attribute
+    # the invalidation contract is directly assertable.
+    meta = _meta()
+    panel = make_filter_panel(meta)
+    op, box = panel.quant.specs["Sharpe"]
+    op.value = "≥"
+    box.value = "-1000000"
+    state = _quant_state(multiyear_prices, benchmark)
+
+    assert panel.quant._memo == {}  # nothing computed yet
+    panel.matching(meta, state)
+    assert panel.quant._memo  # populated
+    assert panel.quant._memo_arp_id == id(state.arp_universe_prices)
+
+    state.arp_universe_prices = multiyear_prices.copy()  # a Refresh replaces it
+    panel.matching(meta, state)
+    assert panel.quant._memo_arp_id == id(state.arp_universe_prices)
+
+
+def test_two_panels_share_no_state():
+    # Both tabs build their own panel; a shared memo or shared checkboxes would
+    # make one tab's filtering leak into the other.
+    a, b = make_filter_panel(_meta()), make_filter_panel(_meta())
+    a.categoricals["asset_class"].checks[0].value = True
+    a.quant._memo["x"] = 1
+    assert b.categoricals["asset_class"].checks[0].value is False
+    assert b.quant._memo == {}
+    assert a.categoricals["asset_class"].content is not (
+        b.categoricals["asset_class"].content
+    )
