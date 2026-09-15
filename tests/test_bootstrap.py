@@ -117,3 +117,42 @@ def test_missing_ignores_a_pinned_version(spec, expected):
     assert (importlib.util.find_spec(expected) is None) == (
         bootstrap._missing((spec,)) == [spec]
     )
+
+
+def test_failure_banner_carries_the_reason():
+    # The banner is the only place the user sees why the app did not start, so
+    # pip's own message has to survive into it rather than be summarised away.
+    w = bootstrap.startup_failure_banner(
+        "ERROR: No matching distribution found for itables"
+    )
+    assert "No matching distribution found for itables" in w.value
+    assert "startup failed" in w.value.lower()
+
+
+def test_failure_banner_uses_style_tokens_not_literals():
+    # Same rule as every other renderer (#212): colours come from `src.style`,
+    # never spelled at the call site.
+    from src.style import Color
+
+    w = bootstrap.startup_failure_banner("boom")
+    assert Color.SURFACE.value in w.value
+    assert Color.TEXT.value in w.value
+
+
+def test_notebook_bootstraps_before_importing_layout():
+    """The ordering the notebook depends on, pinned as a test.
+
+    From #263 `src.layout` imports `itables` at module scope. If the notebook
+    ever imports `build_app` at the top of the cell — the natural thing to
+    write — the import runs before the bootstrap and the app dies on a cold
+    terminal. Reading the notebook is the only way to catch that.
+    """
+    import json
+    import pathlib
+
+    cells = json.loads(pathlib.Path("dashboard.ipynb").read_text())["cells"]
+    source = "\n".join("".join(c["source"]) for c in cells if c["cell_type"] == "code")
+
+    boot = source.index("ensure_runtime_packages()")
+    layout = source.index("from src.layout import build_app")
+    assert boot < layout, "dashboard.ipynb imports src.layout before bootstrapping"
