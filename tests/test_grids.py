@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from src import config
 from src.layout.grids import (
     PERF_COLOR_COLUMN_NAME,
     ZSCORE_SUPERCOL,
@@ -116,27 +117,24 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     zcol = pd.Series({"AAA Index": 0.5, "BBB Index": 2.0, "CCC Index": -1.0})
     frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
 
-    # Flat single-index columns; the Z-Score column sits right after the Info
-    # block and immediately before the first stat column.
+    # v0.9.18 #256: the tiers are row-header levels, so the body opens on Name
+    # and the Z-Score column still sits right after the remaining Info block.
     cols = list(frame.columns)
     z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
-    # Headers and their order both come from the schema (#212): the info block
-    # is `SELECTED_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
-    # carries its schema label ("Launch Date", not the raw feed's "Live Date").
-    info_cols = [
-        "Name",
-        "Asset Class",
-        "Solution",
-        "Category",
-        "Family",
-        "Return Type",
-        "Launch Date",
-    ]
+    # Headers and their order both come from the schema (#212); the three tier
+    # fields have moved out to the index, and `live_date` carries its schema
+    # label ("Launch Date", not the raw feed's "Live Date").
+    info_cols = ["Name", "Asset Class", "Return Type", "Launch Date"]
     assert cols[: len(info_cols)] == info_cols
     assert cols[len(info_cols)] == z_name
     assert cols[len(info_cols) + 1] == "1Y Return"
-    # Sorted by z descending: BBB (2.0) > AAA (0.5) > CCC (-1.0).
-    assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
+    # Each group holds one ticker here, so ordering groups by their best member
+    # reduces to the plain z-rank: BBB (2.0) > AAA (0.5) > CCC (-1.0).
+    assert list(frame.index.get_level_values("Ticker")) == [
+        "BBB Index",
+        "AAA Index",
+        "CCC Index",
+    ]
 
 
 def test_build_universe_frame_nan_z_sinks_to_bottom():
@@ -144,10 +142,14 @@ def test_build_universe_frame_nan_z_sinks_to_bottom():
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": np.nan, "BBB Index": 1.0, "CCC Index": 0.0})
     frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
-    assert list(frame.index) == ["BBB Index", "CCC Index", "AAA Index"]
+    assert list(frame.index.get_level_values("Ticker")) == [
+        "BBB Index",
+        "CCC Index",
+        "AAA Index",
+    ]
 
 
-def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
+def test_build_universe_frame_without_zcol_sorts_by_group():
     meta = _meta()
     up = _up(meta["ticker"])
     frame = _build_universe_frame(meta, up)
@@ -158,8 +160,11 @@ def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
     assert not any(
         c == ZSCORE_SUPERCOL or c.startswith(ZSCORE_SUPERCOL + " ") for c in cols
     )
-    # No sort applied → original metadata order preserved.
-    assert list(frame.index) == list(meta["ticker"])
+    # With no z to rank by, rows are ordered by the group keys. That is not
+    # cosmetic: ipydatagrid merges equal *neighbouring* row-header values, so an
+    # unsorted frame would render one group as several broken blocks.
+    tiers = frame.index.to_frame(index=False)[["Solution", "Category", "Family"]]
+    assert tiers.values.tolist() == sorted(tiers.values.tolist())
 
 
 def test_build_universe_frame_empty_meta():
@@ -229,3 +234,155 @@ def test_perf_renderers_dash_on_numeric_without_heatmap():
     assert _text_value_expr(r["1Y Sharpe"]) == dash
     assert _text_value_expr(r["Name"]) == ""
     assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""
+
+
+# --- Grouped row headers (v0.9.18 #256) ---------------------------------------
+#
+# The tiers become a merged row-header block instead of three body columns. The
+# frame builder is where that is decided, so these pin the frame shape, the
+# ordering the merge depends on, and the escape hatch back to the flat grid.
+
+
+def _grouped_meta() -> pd.DataFrame:
+    """Two tickers in one group and one in another, so "order groups by their
+    best member" is distinguishable from a plain global z-rank."""
+    return pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index", "CCC Index"],
+            "name": ["Alpha", "Bravo", "Charlie"],
+            "asset_class": ["Equity", "Equity", "Equity"],
+            "solution": ["ARP", "ARP", "ARP"],
+            "category": ["Carry", "Carry", "Momentum"],
+            "family": ["FX Carry", "FX Carry", "FX Momentum"],
+            "return_type": ["Total", "Total", "Total"],
+            "live_date": pd.to_datetime(["2010-01-01", "2015-06-01", "2020-03-15"]),
+        }
+    )
+
+
+def test_grouped_frame_indexes_on_tiers_and_drops_them_from_the_body():
+    meta = _grouped_meta()
+    frame = _build_universe_frame(meta, _up(meta["ticker"]))
+    assert list(frame.index.names) == ["Solution", "Category", "Family", "Ticker"]
+    # The point of the change: ~414px of repeated tier text leaves the body.
+    for tier in ("Solution", "Category", "Family"):
+        assert tier not in frame.columns
+
+
+def test_grouped_rows_of_one_group_are_contiguous():
+    # ipydatagrid merges equal *neighbouring* row-header values. If a group's
+    # rows are not adjacent it renders as several broken blocks rather than one
+    # spanning cell, which is the whole feature — so contiguity is a guarantee
+    # of the frame, not an accident of the data arriving pre-sorted.
+    meta = _grouped_meta()
+    zcol = pd.Series({"AAA Index": 0.1, "BBB Index": 3.0, "CCC Index": 2.0})
+    frame = _build_universe_frame(meta, _up(meta["ticker"]), zcol=zcol, zlabel="S")
+    keys = frame.index.to_frame(index=False)[["Solution", "Category", "Family"]]
+    runs = (keys != keys.shift()).any(axis=1).cumsum().nunique()
+    assert runs == len(keys.drop_duplicates())
+
+
+def test_grouped_sort_puts_the_catalog_best_first():
+    # #255 q3, option D: groups are ordered by their best member, so the first
+    # row is still the best index in the catalog — the property the flat grid
+    # had. Sorting on the group keys alone would bury BBB under whichever group
+    # sorts first alphabetically ("Carry" < "Momentum" here hides the tie).
+    meta = _grouped_meta()
+    zcol = pd.Series({"AAA Index": -1.0, "BBB Index": 3.0, "CCC Index": 2.0})
+    frame = _build_universe_frame(meta, _up(meta["ticker"]), zcol=zcol, zlabel="S")
+    z = f"{ZSCORE_SUPERCOL} S"
+    assert frame.index.get_level_values("Ticker")[0] == "BBB Index"
+    assert frame[z].iloc[0] == frame[z].max()
+    # And deliberately NOT globally monotonic: AAA (-1.0) rides above CCC (2.0)
+    # because it sits inside the leading group. That is inherent to grouping,
+    # and is the trade recorded on #254.
+    assert list(frame.index.get_level_values("Ticker")) == [
+        "BBB Index",
+        "AAA Index",
+        "CCC Index",
+    ]
+    assert not frame[z].is_monotonic_decreasing
+
+
+def test_empty_group_fields_restores_the_flat_grid(monkeypatch):
+    # The escape hatch: if grouping misbehaves on a terminal, one config edit
+    # returns the exact v0.9.17 grid — flat index, tiers back in the body,
+    # global z-rank.
+    monkeypatch.setattr(config, "UNIVERSE_GRID_GROUP_FIELDS", ())
+    meta = _meta()
+    zcol = pd.Series({"AAA Index": 0.5, "BBB Index": 2.0, "CCC Index": -1.0})
+    frame = _build_universe_frame(meta, _up(meta["ticker"]), zcol=zcol, zlabel="S")
+
+    assert not isinstance(frame.index, pd.MultiIndex)
+    assert frame.index.name == "Ticker"
+    assert list(frame.columns)[:7] == [
+        "Name",
+        "Asset Class",
+        "Solution",
+        "Category",
+        "Family",
+        "Return Type",
+        "Launch Date",
+    ]
+    assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
+
+
+def test_group_nesting_follows_the_configured_tier_order(monkeypatch):
+    # Reordering the hierarchy is a config edit, not a code edit.
+    monkeypatch.setattr(
+        config, "UNIVERSE_GRID_GROUP_FIELDS", ("family", "category", "solution")
+    )
+    meta = _grouped_meta()
+    frame = _build_universe_frame(meta, _up(meta["ticker"]))
+    assert list(frame.index.names) == ["Family", "Category", "Solution", "Ticker"]
+
+
+def test_group_level_names_come_from_the_schema(monkeypatch):
+    # Relabelling a tier reaches the grouped headers — nothing respells a label.
+    relabelled = tuple(
+        (
+            config.CatalogField(f.key, f.sources, f"ZZ_{f.label}", f.role)
+            if f.key in ("solution", "category", "family")
+            else f
+        )
+        for f in config.CATALOG_SCHEMA
+    )
+    monkeypatch.setattr(config, "CATALOG_SCHEMA", relabelled)
+    meta = _grouped_meta()
+    frame = _build_universe_frame(meta, _up(meta["ticker"]))
+    assert list(frame.index.names) == [
+        "ZZ_Solution",
+        "ZZ_Category",
+        "ZZ_Family",
+        "Ticker",
+    ]
+
+
+def test_grouping_does_not_leak_into_perf_or_calendar_grids():
+    """`_apply_grid_styling` is shared. Grouping added a `MultiIndex` branch to
+    it, so assert the other two grids still take the flat path unchanged — they
+    keep a single-level index and size their row header from it, with no tier
+    level anywhere in their widths."""
+    from src.layout.grids import CalendarGrid, PerfGrid
+
+    meta = _grouped_meta().set_index("ticker")
+    cols = pd.MultiIndex.from_product([["1Y"], ["Return", "Vol", "Sharpe", "Max DD"]])
+    pt = pd.DataFrame(
+        np.arange(12, dtype=float).reshape(3, 4),
+        index=pd.Index(meta.index, name="ticker"),
+        columns=cols,
+    )
+    pg = PerfGrid()
+    pg.update(pt, _grouped_meta())
+    assert not isinstance(pg.grid.data.index, pd.MultiIndex)
+    # The selected-strategy grid still carries the tiers as ordinary body
+    # columns with their own widths — grouping is the all-catalog grid's alone.
+    assert all(k in pg.grid.column_widths for k in ("Solution", "Category", "Family"))
+    assert pg.grid.base_row_header_size > 0
+
+    cg = CalendarGrid()
+    cg.update(
+        pd.DataFrame([[0.01, 0.02]], index=pd.Index([2024]), columns=["Jan", "Feb"]),
+        kind="absolute",
+    )
+    assert not isinstance(cg.grid.data.index, pd.MultiIndex)

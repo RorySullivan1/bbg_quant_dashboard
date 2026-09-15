@@ -21,7 +21,12 @@ import ipywidgets as W
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
 
-from ..config import SELECTED_GRID_FIELDS, UNIVERSE_GRID_FIELDS, field_label
+from ..config import (
+    SELECTED_GRID_FIELDS,
+    UNIVERSE_GRID_FIELDS,
+    field_label,
+    universe_grid_group_fields,
+)
 from ..style import Color
 from .theme import _palette_color
 
@@ -186,6 +191,9 @@ _TEXT_COL_MIN: int = 56
 _TEXT_COL_MAX: int = 340
 # Flat stat-column suffixes (a column is a "stat" if its name ends with one).
 _STAT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Sharpe", " Max DD")
+# Transient column holding each group's best z while the grouped frame is
+# ordered; dropped before the frame is returned, so it never reaches a grid.
+_GROUP_RANK_KEY: str = "__group_rank__"
 
 
 def _content_px(header: object, values: object) -> int:
@@ -410,10 +418,28 @@ def _apply_grid_styling(
     grids and the all-catalog grid; the latter opts into the diverging Sharpe /
     Z-Score `sharpe_heatmap`."""
     grid.renderers = _perf_renderers(frame.columns, sharpe_heatmap=sharpe_heatmap)
-    grid.column_widths = _perf_column_widths(frame)
-    grid.base_row_header_size = _content_px(
-        frame.index.name or "", frame.index.tolist()
-    )
+    widths = _perf_column_widths(frame)
+    if isinstance(frame.index, pd.MultiIndex):
+        # Grouped catalog grid: each row-header level is an addressable column
+        # and takes its own width (#255 q1), so the block is sized per level
+        # rather than sharing one `base_row_header_size`. Fit to the level's
+        # *distinct* values — a merged cell shows each label once.
+        for i, name in enumerate(frame.index.names):
+            widths[str(name)] = _content_px(
+                name, frame.index.get_level_values(i).unique().tolist()
+            )
+        grid.column_widths = widths
+        # The per-level widths above do the real work; this only keeps the
+        # default sane for any level they somehow miss.
+        grid.base_row_header_size = max(widths[str(n)] for n in frame.index.names)
+        # Deliberately no `renderers` entry for a level: one without an explicit
+        # `background_color` reverts that level to a white background and
+        # punches through the dark chrome (#255 q2).
+    else:
+        grid.column_widths = widths
+        grid.base_row_header_size = _content_px(
+            frame.index.name or "", frame.index.tolist()
+        )
 
 
 # The Single Strategy monthly-return calendar.
@@ -583,7 +609,36 @@ def _build_universe_frame(
         blocks.append(up_norm)
 
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
-    if z_key is not None:
-        combined = combined.sort_values(z_key, ascending=False, na_position="last")
     combined.index.name = "Ticker"
-    return combined
+
+    group_labels = [field_label(k) for k in universe_grid_group_fields()]
+    group_labels = [g for g in group_labels if g in combined.columns]
+
+    if not group_labels:
+        # Flat grid (v0.9.17 shape): a global z-rank, nothing grouped.
+        if z_key is not None:
+            combined = combined.sort_values(z_key, ascending=False, na_position="last")
+        return combined
+
+    # Grouped. Rows of one group MUST end up adjacent: ipydatagrid merges equal
+    # *neighbouring* row-header values, so an unsorted frame renders the same
+    # label as several broken blocks rather than one spanning cell.
+    if z_key is not None:
+        # Order groups by their best member, then by z within the group (#255,
+        # option D). Sorting by the group keys alone would bury the catalog's
+        # top index wherever its group happened to fall alphabetically; this
+        # keeps the first row the best index overall, as the flat grid does.
+        # Ordering is deliberately not globally monotonic — a weak index inside
+        # the leading group still outranks a strong one below it.
+        best = combined.groupby(group_labels, sort=False)[z_key].transform("max")
+        combined = (
+            combined.assign(**{_GROUP_RANK_KEY: best})
+            .sort_values([_GROUP_RANK_KEY, z_key], ascending=False, na_position="last")
+            .drop(columns=_GROUP_RANK_KEY)
+        )
+    else:
+        combined = combined.sort_values(group_labels, na_position="last")
+
+    # The group fields leave the body and become row-header levels; the ticker
+    # stays the leaf, so every row is still addressed by ticker.
+    return combined.reset_index().set_index([*group_labels, "Ticker"])

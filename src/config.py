@@ -163,6 +163,13 @@ PROFILE_CARD_FIELDS: tuple[str, ...] = (
 #: Fields joined with " · " on a New-Launch card's meta line.
 LAUNCH_CARD_META_FIELDS: tuple[str, ...] = ("asset_class", "category", "currency")
 
+#: Which catalog fields become the all-catalog grid's merged row-header groups,
+#: outermost first. Defaults to the classification hierarchy, splatted rather
+#: than respelled so renaming or reordering a tier reaches the grid without an
+#: edit here. Set to `()` to render the flat grid v0.9.17 shipped — the escape
+#: hatch if grouping misbehaves on a terminal.
+UNIVERSE_GRID_GROUP_FIELDS: tuple[str, ...] = CLASSIFICATION_TIERS
+
 
 def catalog_field(key: str) -> CatalogField:
     """The schema entry for an internal column key.
@@ -216,6 +223,20 @@ def sunburst_levels() -> tuple[str, ...]:
     for key in SUNBURST_LEVELS:
         catalog_field(key)  # raises KeyError naming the offending level
     return SUNBURST_LEVELS
+
+
+def universe_grid_group_fields() -> tuple[str, ...]:
+    """`UNIVERSE_GRID_GROUP_FIELDS`, validated against the schema.
+
+    Read through a call, like `sunburst_levels`, so a reconfigured hierarchy
+    reaches the frame builder and the width helper together. The validation
+    earns its keep because a mistyped key would not raise on its own: the field
+    would simply never be found in the frame, and the grid would silently fall
+    back to one fewer group level.
+    """
+    for key in UNIVERSE_GRID_GROUP_FIELDS:
+        catalog_field(key)  # raises KeyError naming the offending field
+    return UNIVERSE_GRID_GROUP_FIELDS
 
 
 def filter_dimensions() -> tuple[CatalogField, ...]:
