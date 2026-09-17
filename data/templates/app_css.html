@@ -379,6 +379,114 @@
   overflow: hidden;
 }
 
+/* v0.9.18 (#263) — dark theme for the all-catalog itables/DataTables table.
+
+   Two things here are load-bearing and look like noise:
+
+   1. The container class is `itables_anywidget`, NOT `itables`. With the
+      wrong selector the table silently renders stock-light, which reads as
+      "itables cannot be themed".
+   2. `!important` is required throughout. DataTables ships its own stylesheet
+      in the widget bundle, and these rules have to outrank it.
+
+   Colors are placeholder substitutions from `src/style.py`, same as the rest
+   of this file — nothing here is a literal hex. */
+.bbg-app div.itables_anywidget,
+div.itables_anywidget.bbg-catalog {
+  border: 1px solid {{border_color}};
+  border-radius: 6px;
+  overflow: hidden;
+}
+div.itables_anywidget table.dataTable,
+div.itables_anywidget table.dataTable tbody td,
+div.itables_anywidget table.dataTable tbody th {
+  background-color: {{chrome_bg}} !important;
+  color: {{text_color}} !important;
+  border-color: {{border_color}} !important;
+  font-family: {{sans}} !important;
+  font-size: {{caption_size}} !important;
+}
+div.itables_anywidget table.dataTable thead th {
+  background-color: {{surface}} !important;
+  color: {{text_color}} !important;
+  border-color: {{border_color}} !important;
+  font-family: {{sans}} !important;
+  font-size: {{caption_size}} !important;
+  text-align: left !important;
+}
+/* Zebra. The heat-ramp cells set their own inline background and so override
+   this; neutral and empty cells set none, and stripe normally. */
+div.itables_anywidget table.dataTable tbody tr:nth-child(even) td {
+  background-color: {{surface}} !important;
+}
+/* Nested group headers — the point of the change. Level 0 is the outermost
+   tier (Solution), each deeper level steps its indent and drops its weight,
+   so the hierarchy reads without reading the text.
+
+   RowGroup emits `<tr class="dtrg-group"><th colspan=N>` — a **th**, not a td.
+   Selecting only `td` here matched nothing and every level rendered in the
+   plain body colour, which looks like "the theme works" unless you check the
+   computed style per level. Both are listed so a future RowGroup version that
+   switches element still lands. */
+div.itables_anywidget table.dataTable tr.dtrg-group th,
+div.itables_anywidget table.dataTable tr.dtrg-group td {
+  border-color: {{border_color}} !important;
+  text-align: left !important;
+}
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 th,
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 td {
+  background-color: {{surface2}} !important;
+  color: {{accent}} !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+}
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 th,
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 td {
+  background-color: {{surface}} !important;
+  color: {{accent2}} !important;
+  font-weight: 600 !important;
+  padding-left: 22px !important;
+}
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 th,
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 td {
+  background-color: {{chrome_bg}} !important;
+  color: {{text_color}} !important;
+  font-weight: 600 !important;
+  padding-left: 40px !important;
+}
+/* Selected row (the Select extension) — the hook #265 builds on. */
+div.itables_anywidget table.dataTable tbody tr.selected td {
+  background-color: {{surface2}} !important;
+  box-shadow: inset 2px 0 0 {{accent}} !important;
+}
+/* The search box, row-count readout and scroll chrome DataTables draws
+   around the table. */
+div.itables_anywidget .dt-container,
+div.itables_anywidget .dt-info,
+div.itables_anywidget .dt-search,
+div.itables_anywidget .dt-length,
+div.itables_anywidget label {
+  color: {{text_muted}} !important;
+  font-family: {{sans}} !important;
+  font-size: {{caption_size}} !important;
+}
+div.itables_anywidget input,
+div.itables_anywidget select {
+  background-color: {{surface}} !important;
+  color: {{text_color}} !important;
+  border: 1px solid {{border_color}} !important;
+  border-radius: 4px !important;
+}
+div.itables_anywidget input:focus,
+div.itables_anywidget select:focus {
+  outline: none !important;
+  border-color: {{accent}} !important;
+}
+div.itables_anywidget .dt-scroll-body {
+  border-color: {{border_color}} !important;
+}
+
 /* Boxed grouping card — frames a section (e.g. the Platform analytics tabs) so
    the grouping reads at a glance, mirroring the Multi-Strategy bordered panels. */
 .bbg-app .bbg-card {

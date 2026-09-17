@@ -522,10 +522,25 @@ def test_dark_grid_style():
 
 
 def test_grids_are_dark_themed():
-    from src.layout.grids import CalendarGrid, PerfGrid, UniverseGrid
+    # The ipydatagrid grids theme their canvas through the `grid_style` API.
+    # The all-catalog grid is an `itables` table and is themed by page CSS
+    # instead — see `test_catalog_grid_carries_the_chrome_hook`.
+    from src.layout.grids import CalendarGrid, PerfGrid
 
-    for owner in (PerfGrid(), UniverseGrid(), CalendarGrid()):
+    for owner in (PerfGrid(), CalendarGrid()):
         grid = owner.grid
         assert grid.grid_style["background_color"] == Color.CHROME_BG.value
         assert grid.header_renderer.text_color == Color.TEXT.value
         assert "bbg-grid" in grid._dom_classes
+
+
+def test_catalog_grid_carries_the_chrome_hook():
+    # The dark chrome reaches the catalog table only if the CSS selector has
+    # something to hang off, so the class is part of the contract rather than
+    # decoration — and the stylesheet must actually define it.
+    from src.config import TEMPLATES_DIR
+    from src.layout.grids import CATALOG_TABLE_CLASS, UniverseGrid
+
+    assert CATALOG_TABLE_CLASS in UniverseGrid().widget._dom_classes
+    css = (TEMPLATES_DIR / "app_css.html").read_text(encoding="utf-8")
+    assert f".{CATALOG_TABLE_CLASS}" in css

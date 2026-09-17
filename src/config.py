@@ -218,6 +218,28 @@ def sunburst_levels() -> tuple[str, ...]:
     return SUNBURST_LEVELS
 
 
+#: Which catalog fields the all-catalog grid renders as nested row groups,
+#: outermost group first, instead of as repeated body columns. Splatted from
+#: `CLASSIFICATION_TIERS` rather than respelled, so renaming or reordering a
+#: tier reaches the grouping. `()` renders a flat, ungrouped table.
+UNIVERSE_GRID_GROUP_FIELDS: tuple[str, ...] = CLASSIFICATION_TIERS
+
+
+def universe_grid_group_fields() -> tuple[str, ...]:
+    """`UNIVERSE_GRID_GROUP_FIELDS`, validated against the schema.
+
+    Read through a call so a regrouped hierarchy reaches both the frame's row
+    ordering and the widget's group configuration, which have to agree: the
+    table groups *consecutive* rows only, so a field that orders the frame but
+    never reaches the widget (or the reverse) fragments the groups rather than
+    failing. The validation catches a mistyped key here instead of as a column
+    of empty group headers.
+    """
+    for key in UNIVERSE_GRID_GROUP_FIELDS:
+        catalog_field(key)  # raises KeyError naming the offending field
+    return UNIVERSE_GRID_GROUP_FIELDS
+
+
 def filter_dimensions() -> tuple[CatalogField, ...]:
     """The filterable fields in filter-panel order: tiers broadest-first, then
     the flat attributes in schema order.

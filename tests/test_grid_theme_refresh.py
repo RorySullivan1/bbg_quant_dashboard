@@ -6,7 +6,11 @@ rebuilds the frontend grid model and drops the styling back to ipydatagrid's
 default (white) background. ``_reassert_dark_theme`` re-applies the dark theme
 and force-syncs ``grid_style`` to the frontend.
 
-Since #223 this is **structural**: every grid is a `_Grid` subclass whose only
+`UniverseGrid` is deliberately absent since v0.9.18 (#263): it is an `itables`
+table whose chrome is ordinary page CSS, which a data swap cannot reset, so it
+has no theme-refresh invariant to pin and is not a `_Grid`.
+
+Since #223 this is **structural**: every ipydatagrid grid is a `_Grid` subclass whose only
 write path is `_set_data`, which re-asserts the theme itself. So rather than
 re-testing each `_update_*_grid` call site, these tests pin the invariant at the
 base class — and `test_every_grid_class_is_covered` fails if a new subclass is
@@ -22,7 +26,6 @@ from src.layout import grids
 from src.layout.grids import (
     CalendarGrid,
     PerfGrid,
-    UniverseGrid,
     _Grid,
     _reassert_dark_theme,
 )
@@ -76,7 +79,6 @@ def _calendar_table():
 #: grid object so each case drives that grid's real `update` signature.
 GRID_CASES: list[tuple[str, type, object]] = [
     ("perf", PerfGrid, lambda g: g.update(*_perf_frame())),
-    ("universe", UniverseGrid, lambda g: g.update(_meta(), pd.DataFrame())),
     ("calendar", CalendarGrid, lambda g: g.update(_calendar_table(), kind="absolute")),
 ]
 

@@ -1,8 +1,12 @@
-"""ipydatagrid table construction, theming, and formatting.
+"""Table construction, theming, and formatting.
 
-Every DataGrid in the app is built here: the all-catalog and selected-strategy
-perf grids, the Single Strategy monthly-return calendar, and the return-
-distribution stats table.
+Every table in the app is built here. Two stacks coexist deliberately. The
+selected-strategy perf grids, the Single Strategy monthly-return calendar and
+the return-distribution stats table are `ipydatagrid` ``DataGrid``s. The
+all-catalog grid is an `itables` ``ITable`` (v0.9.18 #263), because only
+DataTables renders the classification tiers as nested **row groups** rather
+than as three columns repeating the same strings on every row. Converging the
+other two is a separate decision, deliberately not taken here.
 
 Three concerns recur. **Theming** — `_dark_grid_style` / `_dark_grid_kwargs`
 express the dark chrome purely in `style.py` tokens, and `_reassert_dark_theme`
@@ -20,8 +24,15 @@ from collections.abc import Callable
 import ipywidgets as W
 import pandas as pd
 from ipydatagrid import DataGrid, TextRenderer, VegaExpr
+from itables import JavascriptFunction
+from itables.widget import ITable
 
-from ..config import SELECTED_GRID_FIELDS, UNIVERSE_GRID_FIELDS, field_label
+from ..config import (
+    SELECTED_GRID_FIELDS,
+    UNIVERSE_GRID_FIELDS,
+    field_label,
+    universe_grid_group_fields,
+)
 from ..style import Color
 from .theme import _palette_color
 
@@ -406,9 +417,13 @@ def _apply_grid_styling(
     """Wire the shared per-column renderers (text / pct / 2dp / color-swatch)
     onto a grid, plus the flat single-index column widths (tiny color swatch,
     uniform stat columns, content-fit descriptive columns) and a content-fit
-    ticker row-header. Shared by the selected-strategy / single-strategy perf
-    grids and the all-catalog grid; the latter opts into the diverging Sharpe /
-    Z-Score `sharpe_heatmap`."""
+    ticker row-header. Shared by the selected-strategy and single-strategy perf
+    grids; `sharpe_heatmap` opts into the diverging Sharpe / Z-Score ramp.
+
+    The all-catalog grid no longer comes through here — it is an `ITable` and
+    expresses the same ramp as a DataTables `createdCell` (`_js_heat_cell`).
+    The two must stay visually identical, so they read their bands from the
+    same `_SHARPE_HEAT_THRESHOLDS` / `_ZSCORE_HEAT_THRESHOLDS` tuples."""
     grid.renderers = _perf_renderers(frame.columns, sharpe_heatmap=sharpe_heatmap)
     grid.column_widths = _perf_column_widths(frame)
     grid.base_row_header_size = _content_px(
@@ -518,18 +533,170 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
     return renderers
 
 
-class UniverseGrid(_Grid):
-    """The all-catalog Platform grid — every in-universe index with its metadata,
-    1Y/3Y/5Y performance and the selectable Z-Score column."""
+# --- the all-catalog grid (itables / DataTables) -----------------------------
+#
+# This table is the one place the app leaves ipydatagrid. The reason is row
+# grouping: the three classification tiers are a hierarchy, and rendering them
+# as three body columns spends ~414px repeating the same strings on every row.
+# DataTables' RowGroup draws them as nested headers instead. ipydatagrid's
+# merged row headers were evaluated for the same job and render incorrectly in
+# 1.4.0 (#255), which is why two table stacks coexist.
+
+#: The class the dark-chrome CSS hangs off. The itables container's own class
+#: is `itables_anywidget` (NOT `itables`), and the stylesheet must outrank
+#: DataTables' bundled one — see the `.bbg-catalog` block in `app_css.html`.
+CATALOG_TABLE_CLASS: str = "bbg-catalog"
+
+#: Rows shown before DataTables paginates. The catalog is a browse surface, so
+#: it scrolls rather than paging; the value caps the DOM for a large catalog.
+_CATALOG_SCROLL_Y: str = "360px"
+
+
+def _catalog_group_labels() -> list[str]:
+    """Display labels of the fields the catalog groups by, outermost first.
+
+    Read through `universe_grid_group_fields` and `field_label` so both the
+    grouping and its headers follow `CATALOG_SCHEMA` — never respelled here.
+    """
+    return [field_label(key) for key in universe_grid_group_fields()]
+
+
+def _js_number_render(*, percent: bool) -> JavascriptFunction:
+    """A DataTables column renderer that formats only the *display* value.
+
+    Returning the raw number for every non-display request is what keeps
+    sorting and filtering numeric: DataTables asks for `type === 'sort'`
+    separately, and a column that answered "12.34%" there would sort
+    lexically. Empty cells show the same dash as the ipydatagrid grids.
+    """
+    body = "(data * 100).toFixed(2) + '%'" if percent else "Number(data).toFixed(2)"
+    return JavascriptFunction(
+        "function (data, type) {"
+        "  if (type !== 'display') { return data; }"
+        f"  if (data === null || data === '' || isNaN(data)) {{ return '{_MISSING_DASH}'; }}"
+        f"  return {body};"
+        "}"
+    )
+
+
+def _js_heat_cell(thresholds: tuple[float, float, float, float]) -> JavascriptFunction:
+    """A `createdCell` callback painting the diverging red→green ramp.
+
+    The same four-band scheme as `_diverging_bg_renderer`, which the
+    ipydatagrid grids use — the ramps have to read identically across the two
+    stacks. Empty cells and the neutral middle band set no background at all,
+    so the CSS zebra stripe shows through rather than being overpainted.
+
+    The band **must** be written with `setProperty(..., 'important')`, not
+    `td.style.backgroundColor = …`. The dark chrome themes body cells with an
+    `!important` background (it has to, to outrank DataTables' bundled
+    stylesheet), and an `!important` author rule beats an ordinary inline
+    style. Assigning the property the plain way computes the whole ramp
+    correctly and then renders none of it — the cells carry the colour in
+    their inline style and still paint flat navy.
+    """
+    t0, t1, t2, t3 = thresholds
+    return JavascriptFunction(
+        "function (td, cellData) {"
+        "  var bg = '';"
+        "  if (cellData !== null && cellData !== '' && !isNaN(cellData)) {"
+        f"    if (cellData < {t0}) {{ bg = '{Color.HEAT_NEG_STRONG}'; }}"
+        f"    else if (cellData < {t1}) {{ bg = '{Color.HEAT_NEG_SOFT}'; }}"
+        f"    else if (cellData < {t2}) {{ bg = ''; }}"
+        f"    else if (cellData < {t3}) {{ bg = '{Color.HEAT_POS_SOFT}'; }}"
+        f"    else {{ bg = '{Color.HEAT_POS_STRONG}'; }}"
+        "  }"
+        "  if (bg) { td.style.setProperty('background-color', bg, 'important'); }"
+        "  else { td.style.removeProperty('background-color'); }"
+        "}"
+    )
+
+
+def _catalog_display_frame(
+    frame: pd.DataFrame, group_labels: list[str]
+) -> tuple[pd.DataFrame, list[str]]:
+    """Reshape the assembled frame for DataTables: group columns first, then
+    the ticker, then everything else.
+
+    The ticker moves out of the index because DataTables addresses columns by
+    position, and a frame whose group fields lead gives the widget a stable
+    `[0 … n-1]` to both hide and group on. Returns the frame and the group
+    columns actually present, which is what `()` group fields degrade to.
+    """
+    if frame.empty:
+        return frame, []
+    display = frame.reset_index()
+    present = [label for label in group_labels if label in display.columns]
+    rest = [col for col in display.columns if col not in present]
+    return display[[*present, *rest]], present
+
+
+def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
+    """DataTable options for the catalog: hidden group columns surfaced as
+    nested row-group headers, numeric renderers, and the Sharpe / Z-Score heat.
+
+    `rowGroup.dataSrc` and the hidden `targets` are the *same* indices — the
+    tiers leave the body and come back as headers, which is the whole point of
+    the change. With no group fields both fall away and this is a flat table.
+    """
+    column_defs: list[dict] = []
+    if groups:
+        targets = list(range(len(groups)))
+        column_defs.append({"targets": targets, "visible": False})
+    for position, name in enumerate(str(c) for c in frame.columns):
+        if name in groups:
+            continue
+        if _is_zscore_col(name):
+            column_defs.append(
+                {
+                    "targets": [position],
+                    "render": _js_number_render(percent=False),
+                    "createdCell": _js_heat_cell(_ZSCORE_HEAT_THRESHOLDS),
+                }
+            )
+        elif name.endswith(" Sharpe"):
+            column_defs.append(
+                {
+                    "targets": [position],
+                    "render": _js_number_render(percent=False),
+                    "createdCell": _js_heat_cell(_SHARPE_HEAT_THRESHOLDS),
+                }
+            )
+        elif name.endswith((" Return", " Vol", " Max DD")):
+            column_defs.append(
+                {"targets": [position], "render": _js_number_render(percent=True)}
+            )
+    options: dict = {
+        "columnDefs": column_defs,
+        "showIndex": False,
+        "paging": False,
+        "scrollY": _CATALOG_SCROLL_Y,
+        "scrollCollapse": True,
+        # The frame arrives already ordered (see `_group_ordered`); an initial
+        # DataTables sort would undo the grouping contiguity it establishes.
+        "order": [],
+    }
+    if groups:
+        options["rowGroup"] = {"dataSrc": list(range(len(groups)))}
+    return options
+
+
+class UniverseGrid:
+    """The all-catalog Platform grid — every in-universe index with its
+    metadata, 1Y/3Y/5Y performance and the selectable Z-Score column, with the
+    classification tiers drawn as nested row-group headers.
+
+    Deliberately not a `_Grid`: that base class exists to make ipydatagrid's
+    theme-refresh invariant structural, and this table has no such invariant —
+    its chrome is ordinary page CSS, which a data swap cannot reset. It keeps
+    `update` / `clear` so its callers do not know the difference.
+    """
 
     def __init__(self) -> None:
-        super().__init__(
-            base_row_size=28,
-            base_column_size=_STAT_COL_WIDTH,  # uniform stat cols; per-col widths
-            base_column_header_size=26,  # single-row header (flat, single-index)
-            base_row_header_size=110,  # re-fit to the ticker content per update
-            layout=W.Layout(width="100%", height="360px"),
+        self.widget = ITable(
+            pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
+        self.widget.add_class(CATALOG_TABLE_CLASS)
 
     def update(
         self,
@@ -540,10 +707,14 @@ class UniverseGrid(_Grid):
         zlabel: str | None = None,
     ) -> None:
         combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
-        self._set_data(combined, style=self._style)
+        self._set_data(combined)
 
-    def _style(self, frame: pd.DataFrame) -> None:
-        _apply_grid_styling(self.grid, frame, sharpe_heatmap=True)
+    def _set_data(self, frame: pd.DataFrame) -> None:
+        """The single write path. Options are rebuilt on every write because
+        they are keyed to column *positions*, and the Z-Score column's name —
+        and so the column set — changes with the Metric/Window dropdowns."""
+        display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+        self.widget.update(display, **_catalog_table_options(display, groups))
 
     def clear(self) -> None:
         self._set_data(pd.DataFrame())
@@ -583,7 +754,58 @@ def _build_universe_frame(
         blocks.append(up_norm)
 
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
-    if z_key is not None:
-        combined = combined.sort_values(z_key, ascending=False, na_position="last")
+    combined = _group_ordered(combined, _catalog_group_labels(), z_key)
     combined.index.name = "Ticker"
     return combined
+
+
+#: Temporary per-level ranking columns used to order groups; dropped before the
+#: frame is returned, so they never reach a renderer.
+_GROUP_RANK_PREFIX: str = "_group_rank_"
+
+
+def _group_ordered(
+    frame: pd.DataFrame, group_labels: list[str], z_key: str | None
+) -> pd.DataFrame:
+    """Order rows so that each group is a single contiguous run at **every**
+    level, best group first, best row first within it.
+
+    RowGroup starts a new header whenever the group value changes between
+    adjacent rows — it does not gather scattered rows. So contiguity is a
+    correctness requirement of the frame, not a presentation nicety: a frame
+    sorted by z alone fragments into a header per row.
+
+    Ranking by the *deepest* group is not sufficient either. It makes families
+    contiguous while leaving their solutions interleaved, which measured as 17
+    top-level headers for 10 categories. Each level therefore gets its own
+    rank — a solution is ranked by its best member, a category by its best
+    member within that solution, and so on — and the level's own label follows
+    each rank as a tiebreaker, so two groups that happen to share a best member
+    still cannot interleave.
+
+    With no group fields this degrades to the plain z-descending sort the grid
+    had before grouping existed.
+    """
+    present = [label for label in group_labels if label in frame.columns]
+    if not present:
+        if z_key is None:
+            return frame
+        return frame.sort_values(z_key, ascending=False, na_position="last")
+    if z_key is None:
+        # No ranking column to order groups by, but they must still be
+        # contiguous, so fall back to the labels themselves.
+        return frame.sort_values(present, na_position="last")
+
+    ranked = frame.copy()
+    by: list[str] = []
+    ascending: list[bool] = []
+    for depth in range(1, len(present) + 1):
+        rank_key = f"{_GROUP_RANK_PREFIX}{depth}"
+        ranked[rank_key] = ranked.groupby(present[:depth], sort=False)[z_key].transform(
+            "max"
+        )
+        by += [rank_key, present[depth - 1]]
+        ascending += [False, True]
+    return ranked.sort_values(
+        [*by, z_key], ascending=[*ascending, False], na_position="last"
+    ).drop(columns=[c for c in ranked.columns if c.startswith(_GROUP_RANK_PREFIX)])

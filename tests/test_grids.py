@@ -139,12 +139,17 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
 
 
-def test_build_universe_frame_nan_z_sinks_to_bottom():
+def test_build_universe_frame_nan_z_sinks_within_its_group():
+    # A ticker with no z-score sinks to the bottom *of its group*, not of the
+    # table: AAA and BBB are both ARP, and pulling AAA out to the very bottom
+    # would split ARP into two runs, which is precisely what row grouping
+    # cannot render.
     meta = _meta()
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": np.nan, "BBB Index": 1.0, "CCC Index": 0.0})
     frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
-    assert list(frame.index) == ["BBB Index", "CCC Index", "AAA Index"]
+    assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
+    assert list(frame["Solution"]) == ["ARP", "ARP", "Smart Beta"]
 
 
 def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():

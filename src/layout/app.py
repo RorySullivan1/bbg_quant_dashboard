@@ -479,7 +479,7 @@ class DashboardApp:
             [
                 self.universe_header,
                 self.z_controls_row,
-                self.universe_grid.grid,
+                self.universe_grid.widget,
                 self.analytics.card,
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
