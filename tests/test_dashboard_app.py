@@ -198,26 +198,30 @@ def _ticker_options_for(app, tickers):
 # --- the grid's own controls: grouping and stats window (#266, #273) -------
 
 
-def test_group_checkboxes_cover_every_groupable_field_in_hierarchy_order(app):
-    from src.config import universe_grid_groupable_fields
+def _group_chip(app, key):
+    """The chip carrying `key`, found by value rather than by position."""
+    index = [value for _label, value in app.group_chips.options].index(key)
+    return app.group_chips.children[index]
 
-    assert list(app.group_boxes) == list(universe_grid_groupable_fields())
+
+def test_group_chips_cover_every_groupable_field_in_hierarchy_order(app):
+    from src.config import field_label, universe_grid_groupable_fields
+
+    fields = list(universe_grid_groupable_fields())
+    assert [value for _label, value in app.group_chips.options] == fields
+    # The text is schema-read, never spelled at the call site.
+    assert list(app.group_chips.labels) == [field_label(key) for key in fields]
 
 
-def test_group_checkboxes_start_on_the_configured_default(app):
+def test_group_chips_start_on_the_configured_default(app):
     from src.config import universe_grid_group_fields
 
-    default = set(universe_grid_group_fields())
-    for key, box in app.group_boxes.items():
-        assert box.value == (key in default)
+    assert app.group_chips.value == universe_grid_group_fields()
 
 
-def test_checking_a_box_regroups_the_grid(app):
-    for key, box in app.group_boxes.items():
-        box.unobserve(app._on_grouping_change, names="value")
-        box.value = key in ("solution", "category", "family")
-        box.observe(app._on_grouping_change, names="value")
-    app.group_boxes["asset_class"].value = True
+def test_ticking_a_chip_regroups_the_grid(app):
+    app.group_chips.value = ("solution", "category", "family")
+    _group_chip(app, "asset_class").click()
     assert app.universe_grid.group_fields == (
         "asset_class",
         "solution",
@@ -227,24 +231,23 @@ def test_checking_a_box_regroups_the_grid(app):
 
 
 def test_ticking_order_does_not_change_the_nesting(app):
-    # The fixed hierarchy order, exercised through the actual widgets: the two
-    # sequences below differ only in the order the boxes are set.
-    def _set(order):
-        for box in app.group_boxes.values():
-            box.unobserve(app._on_grouping_change, names="value")
-            box.value = False
-            box.observe(app._on_grouping_change, names="value")
+    # The fixed hierarchy order, exercised through the actual chips: the two
+    # sequences below differ only in the order they are clicked.
+    def _click(order):
+        app.group_chips.value = ()
         for key in order:
-            app.group_boxes[key].value = True
+            _group_chip(app, key).click()
         return app.universe_grid.group_fields
 
-    assert _set(["family", "asset_class"]) == _set(["asset_class", "family"])
+    assert _click(["family", "asset_class"]) == _click(["asset_class", "family"])
     assert app.universe_grid.group_fields == ("asset_class", "family")
 
 
-def test_unchecking_everything_leaves_a_flat_grid(app):
-    for box in app.group_boxes.values():
-        box.value = False
+def test_unticking_everything_leaves_a_flat_grid(app):
+    for key in [value for _label, value in app.group_chips.options]:
+        if key in app.group_chips.value:
+            _group_chip(app, key).click()
+    assert app.group_chips.value == ()
     assert app.universe_grid.group_fields == ()
 
 
@@ -272,12 +275,24 @@ def test_clicking_a_window_chip_moves_the_grid(app):
     assert app.universe_grid.window == "5Y"
 
 
-def test_the_window_rail_sits_left_of_the_grid(app):
-    # It reads as the table's own axis rather than another control in the row
-    # of dropdowns, which is why it is an HBox and not another row.
-    left, right = app.universe_grid_row.children
-    assert right is app.universe_grid.widget
-    assert app.window_chips in left.children
+def test_the_platform_shell_is_a_rail_either_side_of_the_grid(app):
+    # The controls read as the table's own axes rather than as another row of
+    # widgets above it, which is why this is an HBox and not another row. The
+    # right slot is empty until #279 moves the Z-Score ranking into it.
+    left, table, right = app.universe_grid_row.children
+    assert table is app.universe_grid.widget
+    assert right is app.right_rail_slot
+    assert right.children == ()
+    # Group by above Window: the order the two controls act in.
+    assert list(left.children).index(app.group_chips) < list(left.children).index(
+        app.window_chips
+    )
+
+
+def test_no_control_row_above_the_grid_carries_the_grouping(app):
+    # #278 moved it into the rail; z_controls_row keeps only the z-score
+    # dropdowns until #279 retires it.
+    assert app.group_chips not in app.z_controls_row.children
 
 
 # --- the commentary block: leaderboard + switchable pane (#290) -------------
