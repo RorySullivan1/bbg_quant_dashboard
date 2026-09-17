@@ -243,6 +243,56 @@
   outline-offset: 1px;
 }
 
+/* ---- Control rails + chips (#277) ------------------------------------
+   The Platform tab's side rails: a raised panel one step off the page, with
+   an uppercase headed section per control group, matching the `.bbg-card` /
+   `.bbg-tabband` treatment. A chip is a `.bbg-pill` reshaped for a stacked
+   rail — full width and left-aligned, so a rail reads as a list of choices
+   rather than as a row of buttons that happens to wrap. The pill family
+   supplies the base/hover/active/focus colours; the rules here only refine
+   them, which is why a chip cannot drift away from the tab band's palette. */
+.bbg-app .bbg-rail {
+  background: {{surface}};
+  border: 1px solid {{border_color}};
+  border-radius: 8px;
+  padding: 10px 10px 6px 10px;
+}
+.bbg-app .bbg-rail-heading {
+  color: {{text_muted}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 10px 0 4px 0;
+}
+/* The first heading sits flush with the rail's own padding; only the ones
+   below it need air separating them from the section above. */
+.bbg-app .bbg-rail > .bbg-rail-heading:first-child { margin-top: 0; }
+.bbg-app .bbg-chip-group { width: 100%; }
+/* `text-align` alone does not left-align a Jupyter button: the widget renders
+   a flex container, so the text is centred by `justify-content` regardless.
+   Both are set. */
+.bbg-app .bbg-chip {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  padding: 0 8px;
+  font-size: {{small_size}};
+  letter-spacing: 0.02em;
+}
+.bbg-app .bbg-chip:hover {
+  border-color: {{accent2}};
+}
+/* Selected: the pill's surface fill plus an accent bar down the leading edge,
+   so the ticked chips in a rail scan as a column at a glance. */
+.bbg-app .bbg-chip.is-active {
+  box-shadow: inset 2px 0 0 {{accent}};
+}
+.bbg-app .bbg-chip:focus-visible {
+  outline: 2px solid {{accent}};
+  outline-offset: 1px;
+}
+
 /* ---- Top-level section tab bar, stylized as a header band -------------
    The Platform / Multi-Strategy / Single Strategy tabs read as the *header*
    of the section shown below: a distinct raised strip one step lighter than

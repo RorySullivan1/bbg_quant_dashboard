@@ -248,18 +248,28 @@ def test_unchecking_everything_leaves_a_flat_grid(app):
     assert app.universe_grid.group_fields == ()
 
 
-def test_the_window_radio_offers_what_the_history_supports(app):
+def test_the_window_chips_offer_what_the_history_supports(app):
     from src.config import stat_windows, universe_grid_default_window
 
-    assert list(app.window_radio.options) == [label for label, _ in stat_windows()]
-    assert app.window_radio.value == universe_grid_default_window()
+    assert list(app.window_chips.labels) == [label for label, _ in stat_windows()]
+    assert app.window_chips.value == universe_grid_default_window()
 
 
 def test_picking_a_window_moves_the_grid(app):
-    app.window_radio.value = "5Y"
+    app.window_chips.value = "5Y"
     assert app.universe_grid.window == "5Y"
-    app.window_radio.value = "6M"
+    app.window_chips.value = "6M"
     assert app.universe_grid.window == "6M"
+
+
+def test_clicking_a_window_chip_moves_the_grid(app):
+    # The route a user actually takes. The test above drives the trait, which
+    # a broken click handler would still pass.
+    chip = dict(zip(app.window_chips.labels, app.window_chips.children, strict=True))[
+        "5Y"
+    ]
+    chip.click()
+    assert app.universe_grid.window == "5Y"
 
 
 def test_the_window_rail_sits_left_of_the_grid(app):
@@ -267,7 +277,7 @@ def test_the_window_rail_sits_left_of_the_grid(app):
     # of dropdowns, which is why it is an HBox and not another row.
     left, right = app.universe_grid_row.children
     assert right is app.universe_grid.widget
-    assert app.window_radio in left.children
+    assert app.window_chips in left.children
 
 
 # --- the commentary block: leaderboard + switchable pane (#290) -------------

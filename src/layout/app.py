@@ -111,6 +111,7 @@ from .multi_strategy import (
 )
 from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import PlatformAnalytics
+from .rails import ChipGroup, RailSection, control_rail
 from .selection import SelectionSlice
 from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
 from .state import DashboardState
@@ -462,34 +463,31 @@ class DashboardApp:
             self.group_boxes[key] = box
 
     def _build_window_rail(self) -> W.VBox:
-        """The stats-window radio, stacked, for the left of the grid.
+        """The stats-window chips, stacked, for the left of the grid.
 
         Only windows the fetched price history can serve are offered
         (`stat_windows`): a longer one has nothing to measure and would render
         a full column of dashes, which reads as a broken dashboard rather than
         as a pending feature.
+
+        A `ChipGroup` in a `control_rail` rather than a `W.RadioButtons` in a
+        hand-built `W.VBox` (#277): every other choice in the app is a
+        `.bbg-pill`, and the group keeps the radio's `.value` / `.observe`
+        surface, so this is chrome only — `_on_window_change` below is
+        untouched by the swap, and so is what the grid does with it.
         """
-        self.window_radio = W.RadioButtons(
-            options=[label for label, _ in stat_windows()],
+        self.window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
             value=universe_grid_default_window(),
-            layout=W.Layout(width="auto", margin="0"),
         )
-        self.window_radio.observe(self._on_window_change, names="value")
-        return W.VBox(
-            [_section_label("Window"), self.window_radio],
-            layout=W.Layout(
-                width="92px",
-                flex="0 0 auto",
-                padding="4px 8px 0 0",
-                align_items="flex-start",
-            ),
-        )
+        self.window_chips.observe(self._on_window_change, names="value")
+        return control_rail(RailSection("Window", self.window_chips))
 
     def _on_window_change(self, _change=None) -> None:
         """Switch the grid to one window. No recompute — every window was
         computed up front, so this is a column-visibility change and the
         grouping and selected row survive it."""
-        self.universe_grid.set_window(self.window_radio.value)
+        self.universe_grid.set_window(self.window_chips.value)
 
     def _on_grouping_change(self, _change=None) -> None:
         """Regroup the catalog grid from the checkboxes.
