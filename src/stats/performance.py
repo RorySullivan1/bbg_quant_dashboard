@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..config import PERF_TABLE_YEARS, TRADING_DAYS_PER_YEAR
+from ..config import (
+    PERF_TABLE_YEARS,
+    TRADING_DAYS_PER_YEAR,
+    stat_window_label,
+    stat_windows,
+)
 from ._common import (
     _first_valid_index,
     _has_enough_history,
@@ -319,7 +324,12 @@ def perf_table(
             {"Return": ret, "Vol": vol, "Sharpe": sharpe, "Max DD": dd}
         )
         block.loc[~enough] = np.nan
-        block.columns = pd.MultiIndex.from_product([[f"{y}Y"], block.columns])
+        # Labelled through the schema, not `f"{y}Y"`: a half-year window is a
+        # real window here (`ann_return` and friends take a float) and would
+        # otherwise read "0.5Y".
+        block.columns = pd.MultiIndex.from_product(
+            [[stat_window_label(y)], block.columns]
+        )
         blocks.append(block)
     return pd.concat(blocks, axis=1)
 
@@ -360,9 +370,15 @@ def since_inception_perf(prices: pd.DataFrame) -> pd.DataFrame:
 
 def universe_perf(
     prices: pd.DataFrame,
-    years: tuple[int, ...] = PERF_TABLE_YEARS,
+    years: tuple[float, ...] | None = None,
 ) -> pd.DataFrame:
-    """1Y / 3Y / 5Y window stats, in one MultiIndex frame.
+    """Window stats for the all-catalog grid, in one MultiIndex frame.
+
+    Defaults to every window the fetched price history can support
+    (`stat_windows`). All of them are computed once and the grid hides all but
+    the chosen one, so switching windows is a column-visibility change rather
+    than a recompute — which is what lets it happen without disturbing the
+    grouping or the selected row.
 
     Deliberately excludes Since-Inception: a full-history window is the least
     comparable across indices of differing ages. ``since_inception_perf``
@@ -370,6 +386,8 @@ def universe_perf(
     """
     if prices.empty:
         return pd.DataFrame()
+    if years is None:
+        years = tuple(value for _, value in stat_windows())
     # Compute the universe returns once and thread them into perf_table
     # instead of letting it recompute daily_returns internally.
     rets = daily_returns(prices)

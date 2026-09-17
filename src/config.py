@@ -218,54 +218,126 @@ def sunburst_levels() -> tuple[str, ...]:
     return SUNBURST_LEVELS
 
 
-#: The period blocks the all-catalog grid can show, in display order, derived
-#: from `PERF_TABLE_YEARS` so adding a window to the perf table reaches the
-#: grid without a second spelling.
-UNIVERSE_GRID_PERIODS: tuple[str, ...] = tuple(f"{y}Y" for y in PERF_TABLE_YEARS)
+#: The stats windows the all-catalog grid can offer, widest label first in
+#: display order, as (label, years). Years are floats because the windows are
+#: not all whole years — `ann_return` / `ann_volatility` / `max_drawdown` all
+#: take a float, so a half-year window computes correctly; only the *label*
+#: needed somewhere to live, which is here rather than as `f"{y}Y"` at the
+#: point of use.
+STAT_WINDOWS: tuple[tuple[str, float], ...] = (
+    ("6M", 0.5),
+    ("1Y", 1.0),
+    ("3Y", 3.0),
+    ("5Y", 5.0),
+    ("10Y", 10.0),
+    ("15Y", 15.0),
+)
 
-#: Which of those are visible on load. All three at once is 12 stat columns —
-#: 984px, the single largest item in the grid's horizontal budget — and it
-#: pushes the table past a standard BQuant viewport. One period fits; the rest
-#: are a click away (#266).
-UNIVERSE_GRID_DEFAULT_PERIODS: tuple[str, ...] = ("1Y",)
+#: The window shown on load.
+UNIVERSE_GRID_DEFAULT_WINDOW: str = "1Y"
 
 
-def universe_grid_periods() -> tuple[str, ...]:
-    """`UNIVERSE_GRID_PERIODS`, with the default set validated against it.
+def stat_windows() -> tuple[tuple[str, float], ...]:
+    """The windows the fetched price history can actually support.
 
-    The two are declared separately and have to agree: a default naming a
-    period the grid cannot show would render an empty table of stats rather
-    than fail, so the disagreement is caught here instead.
+    `LOOKBACK_YEARS` bounds how far back prices are pulled, so a longer window
+    has nothing to measure: `_has_enough_history` blanks every row and the
+    column renders as a full column of dashes. That reads as a broken
+    dashboard rather than as a pending feature, so those windows are not
+    offered at all.
+
+    Deriving the offered set from the fetch — rather than listing the windows
+    a desk eventually wants — means widening `LOOKBACK_YEARS` to full history
+    makes the longer windows appear on their own, with no UI change and
+    nothing to remember.
     """
-    unknown = set(UNIVERSE_GRID_DEFAULT_PERIODS) - set(UNIVERSE_GRID_PERIODS)
-    if unknown:
+    return tuple(
+        (label, years) for label, years in STAT_WINDOWS if years <= LOOKBACK_YEARS
+    )
+
+
+def stat_window_years(label: str) -> float:
+    """The year count behind a window label, e.g. `"6M"` -> `0.5`."""
+    for name, years in STAT_WINDOWS:
+        if name == label:
+            return years
+    raise KeyError(f"No stats window named {label!r}")
+
+
+def stat_window_label(years: float) -> str:
+    """The display label for a year count, e.g. `0.5` -> `"6M"`.
+
+    Falls back to `"{years}Y"` for a window not in `STAT_WINDOWS`, so callers
+    passing their own year tuples (the selected-strategy perf grid does) keep
+    working unchanged.
+    """
+    for label, value in STAT_WINDOWS:
+        if value == years:
+            return label
+    return f"{years}Y"
+
+
+def universe_grid_default_window() -> str:
+    """`UNIVERSE_GRID_DEFAULT_WINDOW`, validated against what is offered.
+
+    A default naming an unavailable window would render a grid whose statistics
+    are all dashes, which reads as "the data didn't load" rather than as a
+    misconfiguration.
+    """
+    offered = [label for label, _ in stat_windows()]
+    if UNIVERSE_GRID_DEFAULT_WINDOW not in offered:
         raise ValueError(
-            f"UNIVERSE_GRID_DEFAULT_PERIODS names periods the grid has no "
-            f"columns for: {sorted(unknown)}"
+            f"UNIVERSE_GRID_DEFAULT_WINDOW={UNIVERSE_GRID_DEFAULT_WINDOW!r} is not "
+            f"among the windows the {LOOKBACK_YEARS}-year price history supports "
+            f"({offered})"
         )
-    return UNIVERSE_GRID_PERIODS
+    return UNIVERSE_GRID_DEFAULT_WINDOW
 
 
-#: Which catalog fields the all-catalog grid renders as nested row groups,
-#: outermost group first, instead of as repeated body columns. Splatted from
-#: `CLASSIFICATION_TIERS` rather than respelled, so renaming or reordering a
-#: tier reaches the grouping. `()` renders a flat, ungrouped table.
+#: Every catalog field the all-catalog grid can group by, **in nesting order**:
+#: whichever subset the user picks, the grid nests them in this sequence. The
+#: order is the hierarchy's own, broadest first — asset class sits above the
+#: three classification tiers. Ticking order never changes the nesting, so the
+#: table reads the same however the user got there (#273).
+UNIVERSE_GRID_GROUPABLE_FIELDS: tuple[str, ...] = ("asset_class", *CLASSIFICATION_TIERS)
+
+#: Which of those are grouped on load. `()` renders a flat, ungrouped table.
 UNIVERSE_GRID_GROUP_FIELDS: tuple[str, ...] = CLASSIFICATION_TIERS
 
 
-def universe_grid_group_fields() -> tuple[str, ...]:
-    """`UNIVERSE_GRID_GROUP_FIELDS`, validated against the schema.
+def universe_grid_groupable_fields() -> tuple[str, ...]:
+    """`UNIVERSE_GRID_GROUPABLE_FIELDS`, validated against the schema."""
+    for key in UNIVERSE_GRID_GROUPABLE_FIELDS:
+        catalog_field(key)  # raises KeyError naming the offending field
+    return UNIVERSE_GRID_GROUPABLE_FIELDS
+
+
+def universe_grid_group_fields(
+    selected: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """The grouping fields to use, in nesting order, validated.
+
+    `selected` is the user's current choice; omitted, the configured default is
+    used. The return is always ordered by `UNIVERSE_GRID_GROUPABLE_FIELDS`, not
+    by the caller's order — nesting is the hierarchy's, never the order boxes
+    were ticked.
 
     Read through a call so a regrouped hierarchy reaches both the frame's row
     ordering and the widget's group configuration, which have to agree: the
     table groups *consecutive* rows only, so a field that orders the frame but
     never reaches the widget (or the reverse) fragments the groups rather than
-    failing. The validation catches a mistyped key here instead of as a column
-    of empty group headers.
+    failing.
     """
-    for key in UNIVERSE_GRID_GROUP_FIELDS:
+    chosen = UNIVERSE_GRID_GROUP_FIELDS if selected is None else selected
+    unknown = set(chosen) - set(UNIVERSE_GRID_GROUPABLE_FIELDS)
+    if unknown:
+        raise KeyError(
+            f"Not groupable in the catalog grid: {sorted(unknown)}. "
+            f"Groupable fields are {list(UNIVERSE_GRID_GROUPABLE_FIELDS)}."
+        )
+    for key in chosen:
         catalog_field(key)  # raises KeyError naming the offending field
-    return UNIVERSE_GRID_GROUP_FIELDS
+    return tuple(k for k in UNIVERSE_GRID_GROUPABLE_FIELDS if k in set(chosen))
 
 
 def filter_dimensions() -> tuple[CatalogField, ...]:

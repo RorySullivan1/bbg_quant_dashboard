@@ -195,44 +195,76 @@ def _ticker_options_for(app, tickers):
     return _ticker_options(app.meta.loc[app.meta["ticker"].isin(tickers)])
 
 
-# --- the period toggles above the catalog grid (#266) -----------------------
+# --- the grid's own controls: grouping and stats window (#266, #273) -------
 
 
-def test_period_pills_start_on_the_default_set(app):
-    from src.config import UNIVERSE_GRID_DEFAULT_PERIODS
+def test_group_checkboxes_cover_every_groupable_field_in_hierarchy_order(app):
+    from src.config import universe_grid_groupable_fields
 
-    for period, btn in app.period_btns.items():
-        active = "is-active" in btn._dom_classes
-        assert active == (period in UNIVERSE_GRID_DEFAULT_PERIODS)
+    assert list(app.group_boxes) == list(universe_grid_groupable_fields())
 
 
-def test_toggling_a_pill_moves_the_grid_and_the_pill_together(app):
-    app.universe_grid.set_periods(("1Y",))
-    for btn in app.period_btns.values():
-        btn._dom_classes = tuple(c for c in btn._dom_classes if c != "is-active")
-    app.period_btns["1Y"].add_class("is-active")
+def test_group_checkboxes_start_on_the_configured_default(app):
+    from src.config import universe_grid_group_fields
 
-    app._toggle_period("3Y")
-    assert app.universe_grid.periods == ("1Y", "3Y")
-    assert "is-active" in app.period_btns["3Y"]._dom_classes
-
-    app._toggle_period("3Y")
-    assert app.universe_grid.periods == ("1Y",)
-    assert "is-active" not in app.period_btns["3Y"]._dom_classes
+    default = set(universe_grid_group_fields())
+    for key, box in app.group_boxes.items():
+        assert box.value == (key in default)
 
 
-def test_the_last_period_cannot_be_switched_off(app):
-    # An Info-only grid with no statistics is not a view anyone asked for, and
-    # the way back from it is not obvious.
-    app.universe_grid.set_periods(("3Y",))
-    app._toggle_period("3Y")
-    assert app.universe_grid.periods == ("3Y",)
+def test_checking_a_box_regroups_the_grid(app):
+    for key, box in app.group_boxes.items():
+        box.unobserve(app._on_grouping_change, names="value")
+        box.value = key in ("solution", "category", "family")
+        box.observe(app._on_grouping_change, names="value")
+    app.group_boxes["asset_class"].value = True
+    assert app.universe_grid.group_fields == (
+        "asset_class",
+        "solution",
+        "category",
+        "family",
+    )
 
 
-def test_periods_are_shown_in_their_configured_order(app):
-    # Toggled on in any order, they read 1Y / 3Y / 5Y — the order a reader
-    # expects, not the order they were clicked.
-    app.universe_grid.set_periods(("1Y",))
-    app._toggle_period("5Y")
-    app._toggle_period("3Y")
-    assert app.universe_grid.periods == ("1Y", "3Y", "5Y")
+def test_ticking_order_does_not_change_the_nesting(app):
+    # The fixed hierarchy order, exercised through the actual widgets: the two
+    # sequences below differ only in the order the boxes are set.
+    def _set(order):
+        for box in app.group_boxes.values():
+            box.unobserve(app._on_grouping_change, names="value")
+            box.value = False
+            box.observe(app._on_grouping_change, names="value")
+        for key in order:
+            app.group_boxes[key].value = True
+        return app.universe_grid.group_fields
+
+    assert _set(["family", "asset_class"]) == _set(["asset_class", "family"])
+    assert app.universe_grid.group_fields == ("asset_class", "family")
+
+
+def test_unchecking_everything_leaves_a_flat_grid(app):
+    for box in app.group_boxes.values():
+        box.value = False
+    assert app.universe_grid.group_fields == ()
+
+
+def test_the_window_radio_offers_what_the_history_supports(app):
+    from src.config import stat_windows, universe_grid_default_window
+
+    assert list(app.window_radio.options) == [label for label, _ in stat_windows()]
+    assert app.window_radio.value == universe_grid_default_window()
+
+
+def test_picking_a_window_moves_the_grid(app):
+    app.window_radio.value = "5Y"
+    assert app.universe_grid.window == "5Y"
+    app.window_radio.value = "6M"
+    assert app.universe_grid.window == "6M"
+
+
+def test_the_window_rail_sits_left_of_the_grid(app):
+    # It reads as the table's own axis rather than another control in the row
+    # of dropdowns, which is why it is an HBox and not another row.
+    left, right = app.universe_grid_row.children
+    assert right is app.universe_grid.widget
+    assert app.window_radio in left.children

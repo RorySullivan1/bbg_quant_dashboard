@@ -48,11 +48,14 @@ from ..config import (
     SHORT_WINDOW_OPTIONS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
-    UNIVERSE_GRID_DEFAULT_PERIODS,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     WINDOW_LABELS,
-    universe_grid_periods,
+    field_label,
+    stat_windows,
+    universe_grid_default_window,
+    universe_grid_group_fields,
+    universe_grid_groupable_fields,
 )
 from ..data import load_metadata
 from ..stats import (
@@ -407,16 +410,16 @@ class DashboardApp:
             style={"description_width": "70px"},
             layout=W.Layout(width="180px"),
         )
-        self._build_period_toggles()
+        self._build_group_checkboxes()
         self.z_controls_row = W.HBox(
             [
                 _section_label("Z-Score ranking"),
                 self.z_metric_dd,
                 self.z_window_dd,
                 self.z_lookback_dd,
-                W.Box(layout=W.Layout(flex="1 1 auto")),  # push the periods right
-                _section_label("Periods"),
-                *self.period_btns.values(),
+                W.Box(layout=W.Layout(flex="1 1 auto")),  # push the grouping right
+                _section_label("Group by"),
+                *self.group_boxes.values(),
             ],
             layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
@@ -430,47 +433,67 @@ class DashboardApp:
 
         self.selected_perf_grid = PerfGrid()
 
-    def _build_period_toggles(self) -> None:
-        """One pill per period block, sitting in the row above the grid.
+    def _build_group_checkboxes(self) -> None:
+        """One checkbox per groupable field, in hierarchy order.
 
-        Independent toggles rather than a `ToggleButtons` picker: the periods
-        are not alternatives, a user comparing 1Y against 5Y wants both. They
-        live beside the Z-Score controls so the whole row reads as the grid's
-        own controls rather than as a setting somewhere else on the page.
+        Checking a box adds that level to the nesting; it never decides *where*
+        the level sits. The order is `UNIVERSE_GRID_GROUPABLE_FIELDS` — asset
+        class above the three classification tiers — so the table reads the
+        same however the user got there, and ticking order is not invisible
+        state anyone has to remember (#273).
         """
-        self.period_btns: dict[str, W.Button] = {}
-        for period in universe_grid_periods():
-            btn = W.Button(
-                description=period,
-                tooltip=f"Show or hide the {period} statistics",
-                layout=W.Layout(width="52px", height="26px", margin="0 4px 0 0"),
+        self.group_boxes: dict[str, W.Checkbox] = {}
+        grouped = set(universe_grid_group_fields())
+        for key in universe_grid_groupable_fields():
+            box = W.Checkbox(
+                value=key in grouped,
+                description=field_label(key),
+                indent=False,
+                layout=W.Layout(width="auto", margin="0 10px 0 0"),
             )
-            btn.add_class("bbg-pill")
-            _style_tab_button(btn, active=period in UNIVERSE_GRID_DEFAULT_PERIODS)
-            btn.on_click(self._make_period_handler(period))
-            self.period_btns[period] = btn
+            box.observe(self._on_grouping_change, names="value")
+            self.group_boxes[key] = box
 
-    def _make_period_handler(self, period: str):
-        def _handler(_b=None) -> None:
-            self._toggle_period(period)
+    def _build_window_rail(self) -> W.VBox:
+        """The stats-window radio, stacked, for the left of the grid.
 
-        return _handler
-
-    def _toggle_period(self, period: str) -> None:
-        """Add or remove one period block from the grid.
-
-        The last visible period cannot be turned off — an all-Info grid with no
-        statistics is not a view anyone asked for, and the user's way back from
-        it is not obvious. The pill simply stays active.
+        Only windows the fetched price history can serve are offered
+        (`stat_windows`): a longer one has nothing to measure and would render
+        a full column of dashes, which reads as a broken dashboard rather than
+        as a pending feature.
         """
-        shown = set(self.universe_grid.periods)
-        if period in shown and len(shown) == 1:
-            return
-        shown.symmetric_difference_update({period})
-        ordered = tuple(p for p in universe_grid_periods() if p in shown)
-        self.universe_grid.set_periods(ordered)
-        for key, btn in self.period_btns.items():
-            _style_tab_button(btn, active=key in ordered)
+        self.window_radio = W.RadioButtons(
+            options=[label for label, _ in stat_windows()],
+            value=universe_grid_default_window(),
+            layout=W.Layout(width="auto", margin="0"),
+        )
+        self.window_radio.observe(self._on_window_change, names="value")
+        return W.VBox(
+            [_section_label("Window"), self.window_radio],
+            layout=W.Layout(
+                width="92px",
+                flex="0 0 auto",
+                padding="4px 8px 0 0",
+                align_items="flex-start",
+            ),
+        )
+
+    def _on_window_change(self, _change=None) -> None:
+        """Switch the grid to one window. No recompute — every window was
+        computed up front, so this is a column-visibility change and the
+        grouping and selected row survive it."""
+        self.universe_grid.set_window(self.window_radio.value)
+
+    def _on_grouping_change(self, _change=None) -> None:
+        """Regroup the catalog grid from the checkboxes.
+
+        Unlike the window this genuinely rebuilds: grouping decides the row
+        order, because RowGroup only gathers consecutive rows. Re-rendering is
+        the point, not an oversight.
+        """
+        chosen = tuple(k for k, box in self.group_boxes.items() if box.value)
+        self.universe_grid.set_group_fields(chosen)
+        self.analytics.render_universe_grid(self.meta)
 
     def _build_state(self) -> None:
         """The `DashboardState` every orchestration method reads and writes."""
@@ -523,11 +546,18 @@ class DashboardApp:
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
+        # The window radio sits to the LEFT of the table rather than above it,
+        # so it reads as the table's own axis rather than as another control
+        # in the row of dropdowns (#273).
+        self.universe_grid_row = W.HBox(
+            [self._build_window_rail(), self.universe_grid.widget],
+            layout=W.Layout(width="100%", align_items="flex-start"),
+        )
         platform_panel = W.VBox(
             [
                 self.universe_header,
                 self.z_controls_row,
-                self.universe_grid.widget,
+                self.universe_grid_row,
                 self.analytics.card,
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
