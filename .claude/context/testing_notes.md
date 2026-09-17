@@ -215,10 +215,58 @@ renders the full dashboard without a Bloomberg session. Verify by:
   legal block renders justified.
 - The commentary block stays the same across filter changes — it
   describes the whole catalog every time.
-- The **Platform** tab shows every catalog index with metadata plus
-  1Y/3Y/5Y performance.
+- The **Platform** tab shows every catalog index with metadata plus **one
+  stats window** (1Y by default), the classification tiers drawn as nested
+  group headers rather than body columns.
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
+
+## The catalog grid renders — and a unit test cannot tell you (v0.9.18)
+
+A table's *rendering* is not unit-testable, and this is not a theoretical
+caveat: spike #255 returned a **go** verdict on `ipydatagrid` merged row
+headers while every frame-level assertion passed against a grid that drew its
+columns wrong. The verdict was reversed only after a minimal control test.
+Three more defects since have had the same shape — invisible to `pytest`, and
+two of them invisible to a screenshot as well:
+
+| Defect | What a unit test saw |
+|---|---|
+| Group-header CSS selected `td`; RowGroup emits `th` | Rules present and correct |
+| Heat ramp computed, then overpainted by the chrome's `!important` | Colour present in the inline style |
+| `rowGroup` omitted rather than disabled, so the grid grouped by ticker | `"rowGroup" not in options` — true |
+
+So: **assert the behaviour, not the presence of a setting**, and confirm a grid
+change by reading *computed* styles and element counts in a browser, not by
+looking at a picture. A green panel above a blank space is a fail.
+
+Two controls that help, both used across #263–#273:
+
+- **A density control.** The shipped sample catalog is 18 rows in which nearly
+  every ticker is its own family, so one group header per row there is the
+  data, not a bug. Render the same catalog cloned x3: if grouping works the
+  header counts stay flat while the row count triples.
+- **A mutation.** Break the feature and confirm the test fails. Every
+  guarantee in `test_catalog_grid.py` was checked this way.
+
+### Manual checklist — the catalog grid
+
+Run alongside the mock-price checklist above:
+
+- Tier columns are **absent from the body**; Solution / Category / Family
+  appear as three indented header levels instead.
+- Checking **Asset Class** adds a fourth level *above* Solution — the hierarchy
+  order, whatever order the boxes were ticked in.
+- Unchecking every box leaves a **flat table with no group headers at all** —
+  not one header per row.
+- The **Window** radio swaps all four stat columns; the grouping, the row order
+  and any selected row are undisturbed.
+- Only windows the price history supports are offered (6M/1Y/3Y/5Y at
+  `LOOKBACK_YEARS = 5`); no column of dashes.
+- Column headers sit **on** their columns at first paint, with no click needed.
+- Scrolling the grid keeps the header row pinned.
+- Clicking a row opens that strategy in the **Single Strategy** tab.
+- The best index by z-score is still the first row.
 
 ## Terminal verification (v0.9.16)
 

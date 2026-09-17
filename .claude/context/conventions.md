@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.17`.
+- **Current version**: `v0.9.18`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -159,6 +159,68 @@ CSS, style tokens — live in `style.md`.)
   unchanged. `pane.fresh` is reset on every recompute (only the mounted
   view is re-rendered) and emptied by `clear_pane`; the lazy observer
   no-ops while `state.cur_prep is None`.
+- **The all-catalog grid is a grouped table, and its row order is load-bearing
+  (v0.9.18 #263, #273)**. `UniverseGrid` is an `itables` `ITable`; the other two
+  grids stay on `ipydatagrid`. Four things about it are easy to break by
+  accident:
+
+  - **Contiguity is correctness, not presentation.** DataTables' RowGroup opens
+    a new header whenever a group value changes between *adjacent* rows — it
+    never gathers scattered rows. A frame sorted by z-score alone fragments
+    into one header per row. `_group_ordered` therefore ranks **every** level
+    (a solution by its best member, a category by its best within that
+    solution, and so on) with the level's own label as a tiebreaker, so two
+    groups sharing a best member still cannot interleave. Ranking by the
+    deepest level only is the obvious implementation and it is wrong: it leaves
+    outer levels interleaved.
+  - **Nesting order is the hierarchy's, never the user's.**
+    `UNIVERSE_GRID_GROUPABLE_FIELDS` declares all four groupable fields in
+    nesting order (asset class above the three tiers); the checkboxes pick
+    which appear, and `universe_grid_group_fields` normalises the selection
+    back into that order. Ticking order must stay meaningless.
+  - **There is no column sorting, and that is deliberate.** Header sort is
+    inert while RowGroup is active, and sorting by a stat column fights the
+    contiguity above — the two want the row order for different things. The
+    user drives row order through the grouping instead (#264, closed
+    not-planned). Filtering is DataTables' own search box.
+  - **Changing the window hides columns; it never drops them.** Every stats
+    window stays in the frame and all but one are hidden through `columnDefs`,
+    so switching is a visibility change: the grouping, the row order and the
+    selected row all survive, and nothing recomputes. Dropping columns rebuilds
+    the table and resets all three — including the row-position-to-ticker map
+    that routes a click.
+
+- **`ITable.update` merges its options (v0.9.18 #273)**: an option you leave
+  out keeps its previous value. It is not a full replacement. Omitting
+  `rowGroup` when the user unchecks every grouping box left the old `dataSrc`
+  in place, pointing at whatever column 0 had become — one group header per
+  row, each named after a ticker. Send the option explicitly (`False` to
+  disable) rather than omitting it, and note that a unit test asserting
+  `"rowGroup" not in options` passes throughout.
+
+- **The itables chrome needs the right selector and `!important`
+  (v0.9.18 #263)**: the container class is **`itables_anywidget`**, not
+  `itables`, and rules must outrank DataTables' bundled stylesheet —
+  `div.itables_anywidget table.dataTable … !important`. With the wrong
+  selector the table renders stock-light, which reads as "itables cannot be
+  themed". Two consequences that cost real time: RowGroup emits
+  `<tr class="dtrg-group"><th>`, a **th** not a td, so a `td`-only rule styles
+  nothing while looking correct; and because the body-cell background is
+  `!important`, the diverging heat ramp must be written with
+  `setProperty(..., 'important')` — a plain inline style loses to it, and the
+  cells carry the right colour while painting flat navy.
+
+- **The catalog scrolls in CSS, not through `scrollY` (v0.9.18 #272)**:
+  DataTables' `scrollY` renders the header in a second table and sizes both
+  once, at init. When the container settles to its real width afterwards — or
+  when this app's `!important` font rules land after DataTables measured — the
+  two end up different widths and the header sits off its columns until a
+  redraw. That was the "headers need one click to snap into place" report from
+  a BQuant terminal, measured at 169px of drift across 18 columns. The scroll
+  lives on `.dt-layout-cell` (**not** the `.dt-layout-row` around it —
+  DataTables already gives the cell `overflow: auto`, so the cell is the
+  header's nearest scrolling ancestor and a sticky `th` sticks to it).
+
 - **A chart is one object (v0.9.17 #223)**: `charts.py` holds a `Chart` class
   per chart family, each owning its `FigureWidget` and exposing
   `update(...)` / `clear()`. **New charts are a `Chart` subclass** — not a
