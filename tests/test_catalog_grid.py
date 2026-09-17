@@ -462,3 +462,92 @@ def test_the_stylesheet_scrolls_the_catalog_and_pins_its_header():
     assert "max-height" in css
     sticky = css[css.index("table.dataTable thead th {") :]
     assert "position: sticky" in sticky[:400]
+
+
+# --- the horizontal budget: period visibility (#266) ------------------------
+
+
+def _visible_columns(grid) -> list[str]:
+    """The columns DataTables would actually draw, in order."""
+    from src.layout.grids import _catalog_table_options
+
+    options = _catalog_table_options(grid._display, grid._groups, grid.periods)
+    hidden: set[int] = set()
+    for spec in options["columnDefs"]:
+        if spec.get("visible") is False:
+            hidden.update(spec["targets"])
+    return [c for i, c in enumerate(grid._display.columns) if i not in hidden]
+
+
+def _populated_grid():
+    from src.layout.grids import UniverseGrid
+
+    meta = _catalog()
+    grid = UniverseGrid()
+    grid.update(meta, _up(meta["ticker"]), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    return grid
+
+
+def test_the_periods_come_from_the_perf_table_not_a_second_spelling():
+    from src.config import PERF_TABLE_YEARS
+
+    assert tuple(f"{y}Y" for y in PERF_TABLE_YEARS) == config.UNIVERSE_GRID_PERIODS
+
+
+def test_a_default_period_the_grid_cannot_show_is_rejected(monkeypatch):
+    # Left unchecked this renders a grid with no statistics at all rather than
+    # failing, which reads as "the data didn't load".
+    monkeypatch.setattr(config, "UNIVERSE_GRID_DEFAULT_PERIODS", ("7Y",))
+    with pytest.raises(ValueError, match="7Y"):
+        config.universe_grid_periods()
+
+
+def test_only_the_default_period_is_visible_on_load():
+    grid = _populated_grid()
+    assert grid.periods == config.UNIVERSE_GRID_DEFAULT_PERIODS
+    visible = _visible_columns(grid)
+    assert [c for c in visible if c.startswith("1Y ")]
+    assert not [c for c in visible if c.startswith(("3Y ", "5Y "))]
+
+
+def test_toggling_a_period_adds_exactly_its_four_columns():
+    grid = _populated_grid()
+    before = _visible_columns(grid)
+    grid.set_periods(("1Y", "3Y"))
+    after = _visible_columns(grid)
+    added = [c for c in after if c not in before]
+    assert added == ["3Y Return", "3Y Vol", "3Y Sharpe", "3Y Max DD"]
+    # Nothing else moved: the Info block and the Z-Score are not period columns.
+    assert [c for c in before if c not in after] == []
+
+
+def test_hidden_periods_stay_in_the_frame():
+    # Dropping them from the frame instead would rebuild the table, which
+    # resets the sort and the selected row. Hiding is what makes a toggle a
+    # toggle rather than a reload.
+    grid = _populated_grid()
+    columns_before = list(grid._display.columns)
+    grid.set_periods(("1Y", "3Y", "5Y"))
+    grid.set_periods(("5Y",))
+    assert list(grid._display.columns) == columns_before
+    assert [c for c in _visible_columns(grid) if c.startswith("5Y ")]
+
+
+def test_a_period_toggle_does_not_touch_the_row_to_ticker_map():
+    # The map is what routes a click (#265). If a toggle rebuilt the frame this
+    # would drift, and clicks would open the wrong strategy.
+    grid = _populated_grid()
+    before = grid._tickers
+    grid.set_periods(("1Y", "3Y", "5Y"))
+    assert grid._tickers == before
+
+
+def test_period_columns_are_recognised_by_their_prefix_only():
+    from src.layout.grids import _period_of
+
+    assert _period_of("1Y Sharpe") == "1Y"
+    assert _period_of("5Y Max DD") == "5Y"
+    # The Z-Score column's label embeds a window ("Sharpe 1M/1Y") and must not
+    # be swept up by a period toggle — it is the ranking column, always shown.
+    assert _period_of("Z-Score Sharpe 1M/1Y") is None
+    assert _period_of("Name") is None

@@ -29,9 +29,11 @@ from itables.widget import ITable
 
 from ..config import (
     SELECTED_GRID_FIELDS,
+    UNIVERSE_GRID_DEFAULT_PERIODS,
     UNIVERSE_GRID_FIELDS,
     field_label,
     universe_grid_group_fields,
+    universe_grid_periods,
 )
 from ..style import Color
 from .theme import _palette_color
@@ -641,18 +643,47 @@ def _catalog_display_frame(
     return display[[*present, *rest]], present
 
 
-def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
+def _period_of(name: str) -> str | None:
+    """The period block a flat stat column belongs to, e.g. `"1Y Sharpe"` -> `"1Y"`.
+
+    Returns None for anything that is not a period stat — the Info columns and
+    the Z-Score, which are never hidden by a period toggle.
+    """
+    for period in universe_grid_periods():
+        if name.startswith(f"{period} "):
+            return period
+    return None
+
+
+def _catalog_table_options(
+    frame: pd.DataFrame,
+    groups: list[str],
+    periods: tuple[str, ...] = UNIVERSE_GRID_DEFAULT_PERIODS,
+) -> dict:
     """DataTable options for the catalog: hidden group columns surfaced as
     nested row-group headers, numeric renderers, and the Sharpe / Z-Score heat.
 
     `rowGroup.dataSrc` and the hidden `targets` are the *same* indices — the
     tiers leave the body and come back as headers, which is the whole point of
     the change. With no group fields both fall away and this is a flat table.
+
+    `periods` selects which period blocks are **visible**. The others stay in
+    the frame and are hidden here, so toggling one on is a column-visibility
+    change rather than a rebuild: the data, the grouping, the current sort and
+    the row selection all survive it, which dropping columns from the frame
+    would not.
     """
     column_defs: list[dict] = []
     if groups:
         targets = list(range(len(groups)))
         column_defs.append({"targets": targets, "visible": False})
+    hidden_periods = [
+        position
+        for position, name in enumerate(str(c) for c in frame.columns)
+        if (p := _period_of(name)) is not None and p not in periods
+    ]
+    if hidden_periods:
+        column_defs.append({"targets": hidden_periods, "visible": False})
     for position, name in enumerate(str(c) for c in frame.columns):
         if name in groups:
             continue
@@ -712,6 +743,10 @@ class UniverseGrid:
     """
 
     def __init__(self, on_pick: Callable[[str], None] | None = None) -> None:
+        #: The period blocks currently shown. Held on the object per the v0.9.16
+        #: object model — it is state, not something a caller threads through
+        #: every `update`.
+        self.periods: tuple[str, ...] = UNIVERSE_GRID_DEFAULT_PERIODS
         self.widget = ITable(
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
@@ -721,6 +756,10 @@ class UniverseGrid:
         #: that knows which ticker that was, so the translation lives here
         #: rather than at the handler's call site.
         self._tickers: tuple[str, ...] = ()
+        #: The frame as last handed to the widget, kept so a period toggle can
+        #: re-send options without rebuilding it.
+        self._display: pd.DataFrame | None = None
+        self._groups: list[str] = []
         self._on_pick = on_pick
         self.widget.observe(self._forward_pick, names="selected_rows")
 
@@ -761,8 +800,28 @@ class UniverseGrid:
         # ticker into a column: that function reorders columns only, so row
         # positions line up with the frame the widget is about to render.
         self._tickers = tuple(str(t) for t in frame.index)
-        display, groups = _catalog_display_frame(frame, _catalog_group_labels())
-        self.widget.update(display, **_catalog_table_options(display, groups))
+        self._display, self._groups = _catalog_display_frame(
+            frame, _catalog_group_labels()
+        )
+        self.widget.update(
+            self._display,
+            **_catalog_table_options(self._display, self._groups, self.periods),
+        )
+
+    def set_periods(self, periods: tuple[str, ...]) -> None:
+        """Show exactly `periods`, without rebuilding the table.
+
+        The options are re-sent with no dataframe, so DataTables only changes
+        column visibility. That is the difference between a toggle and a
+        reload: the grouping, the current sort and the selected row all survive
+        it, and nothing recomputes.
+        """
+        self.periods = periods
+        if getattr(self, "_display", None) is None or self._display.empty:
+            return
+        self.widget.update(
+            **_catalog_table_options(self._display, self._groups, self.periods)
+        )
 
     def clear(self) -> None:
         self._set_data(pd.DataFrame())
@@ -795,8 +854,11 @@ def _build_universe_frame(
 
     if not up.empty:
         # Flatten the (period, metric) columns to single-index "1Y Return".
-        period_order = ["1Y", "3Y", "5Y"]
-        present = [p for p in period_order if p in up.columns.get_level_values(0)]
+        # Every period the grid knows about stays in the frame even when it is
+        # not currently shown — see `_catalog_table_options`, which hides the
+        # unwanted ones rather than dropping them.
+        available = up.columns.get_level_values(0)
+        present = [p for p in universe_grid_periods() if p in available]
         up_norm = up.reindex(columns=present, level=0).reindex(info.index)
         up_norm.columns = _flatten_perf_columns(up_norm.columns)
         blocks.append(up_norm)

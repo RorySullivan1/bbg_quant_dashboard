@@ -218,6 +218,34 @@ def sunburst_levels() -> tuple[str, ...]:
     return SUNBURST_LEVELS
 
 
+#: The period blocks the all-catalog grid can show, in display order, derived
+#: from `PERF_TABLE_YEARS` so adding a window to the perf table reaches the
+#: grid without a second spelling.
+UNIVERSE_GRID_PERIODS: tuple[str, ...] = tuple(f"{y}Y" for y in PERF_TABLE_YEARS)
+
+#: Which of those are visible on load. All three at once is 12 stat columns —
+#: 984px, the single largest item in the grid's horizontal budget — and it
+#: pushes the table past a standard BQuant viewport. One period fits; the rest
+#: are a click away (#266).
+UNIVERSE_GRID_DEFAULT_PERIODS: tuple[str, ...] = ("1Y",)
+
+
+def universe_grid_periods() -> tuple[str, ...]:
+    """`UNIVERSE_GRID_PERIODS`, with the default set validated against it.
+
+    The two are declared separately and have to agree: a default naming a
+    period the grid cannot show would render an empty table of stats rather
+    than fail, so the disagreement is caught here instead.
+    """
+    unknown = set(UNIVERSE_GRID_DEFAULT_PERIODS) - set(UNIVERSE_GRID_PERIODS)
+    if unknown:
+        raise ValueError(
+            f"UNIVERSE_GRID_DEFAULT_PERIODS names periods the grid has no "
+            f"columns for: {sorted(unknown)}"
+        )
+    return UNIVERSE_GRID_PERIODS
+
+
 #: Which catalog fields the all-catalog grid renders as nested row groups,
 #: outermost group first, instead of as repeated body columns. Splatted from
 #: `CLASSIFICATION_TIERS` rather than respelled, so renaming or reordering a

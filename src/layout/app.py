@@ -48,9 +48,11 @@ from ..config import (
     SHORT_WINDOW_OPTIONS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
+    UNIVERSE_GRID_DEFAULT_PERIODS,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     WINDOW_LABELS,
+    universe_grid_periods,
 )
 from ..data import load_metadata
 from ..stats import (
@@ -405,12 +407,16 @@ class DashboardApp:
             style={"description_width": "70px"},
             layout=W.Layout(width="180px"),
         )
+        self._build_period_toggles()
         self.z_controls_row = W.HBox(
             [
                 _section_label("Z-Score ranking"),
                 self.z_metric_dd,
                 self.z_window_dd,
                 self.z_lookback_dd,
+                W.Box(layout=W.Layout(flex="1 1 auto")),  # push the periods right
+                _section_label("Periods"),
+                *self.period_btns.values(),
             ],
             layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
@@ -423,6 +429,48 @@ class DashboardApp:
         )
 
         self.selected_perf_grid = PerfGrid()
+
+    def _build_period_toggles(self) -> None:
+        """One pill per period block, sitting in the row above the grid.
+
+        Independent toggles rather than a `ToggleButtons` picker: the periods
+        are not alternatives, a user comparing 1Y against 5Y wants both. They
+        live beside the Z-Score controls so the whole row reads as the grid's
+        own controls rather than as a setting somewhere else on the page.
+        """
+        self.period_btns: dict[str, W.Button] = {}
+        for period in universe_grid_periods():
+            btn = W.Button(
+                description=period,
+                tooltip=f"Show or hide the {period} statistics",
+                layout=W.Layout(width="52px", height="26px", margin="0 4px 0 0"),
+            )
+            btn.add_class("bbg-pill")
+            _style_tab_button(btn, active=period in UNIVERSE_GRID_DEFAULT_PERIODS)
+            btn.on_click(self._make_period_handler(period))
+            self.period_btns[period] = btn
+
+    def _make_period_handler(self, period: str):
+        def _handler(_b=None) -> None:
+            self._toggle_period(period)
+
+        return _handler
+
+    def _toggle_period(self, period: str) -> None:
+        """Add or remove one period block from the grid.
+
+        The last visible period cannot be turned off — an all-Info grid with no
+        statistics is not a view anyone asked for, and the user's way back from
+        it is not obvious. The pill simply stays active.
+        """
+        shown = set(self.universe_grid.periods)
+        if period in shown and len(shown) == 1:
+            return
+        shown.symmetric_difference_update({period})
+        ordered = tuple(p for p in universe_grid_periods() if p in shown)
+        self.universe_grid.set_periods(ordered)
+        for key, btn in self.period_btns.items():
+            _style_tab_button(btn, active=key in ordered)
 
     def _build_state(self) -> None:
         """The `DashboardState` every orchestration method reads and writes."""
