@@ -71,15 +71,59 @@ the viewport rather than the below-the-fold page is exactly right.)
   scrollbars, the `.bbg-masthead`, the loading `.bbg-overlay`/`.bbg-progress`
   + post-load `.bbg-toast`, button states (`.bbg-pill`/`.bbg-pill.is-active`,
   `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, the
-  `.bbg-grid` frame, and the `.bbg-card` boxed-grouping card (v0.8.8, used for
-  the Platform analytics tab card). Widgets opt in via `widget.add_class(...)` (the
-  ipywidgets `.style` API can't express `:hover`/`:focus`). The grids' cell
+  `.bbg-grid` frame, the `.bbg-card` boxed-grouping card (v0.8.8, used for
+  the Platform analytics tab card, the leaderboard and the commentary pane),
+  and the `.bbg-lb-*` leaderboard rules (v0.9.20, below). Widgets opt in via
+  `widget.add_class(...)` (the ipywidgets `.style` API can't express
+  `:hover`/`:focus`). The grids' cell
   colors come from ipydatagrid's `grid_style`/renderer API, not CSS. All
   values flow from `src/style.py` tokens through `STYLE_CTX` — no inline hex.
 - **Style tokens live in `src/style.py`**, not inline. Hex colors, font
   stacks, and font sizes used by `src/layout/` and `data/templates/`
   reference the `Color`, `Font`, `FontSize`, `StatusTone`, and `Sentiment`
   enums. Adding a new color or size: extend the enum, don't inline.
+
+## The commentary block (v0.9.20, epic #286)
+
+**The leaderboard's rows are three buttons each, drawn as one strip.** An
+ipywidgets `Button` renders its `description` as a single text node, so the
+whole label takes one colour — but a row needs three treatments: a dimmed rank,
+the ticker in the primary text colour, and a right-aligned value coloured by its
+sentiment. So a row is an `HBox` (`.bbg-lb-row`) of three `W.Button`s, each
+carrying `.bbg-lb-cell` plus one of `.bbg-lb-rank` / `.bbg-lb-ticker` /
+`.bbg-lb-value`. The cells are borderless, radius-free and transparent, so they
+read as one continuous strip rather than three buttons.
+
+Two rules follow from that:
+
+- **The hover is on the row, not the cell** (`.bbg-lb-row:hover .bbg-lb-cell`),
+  so all three light together and the strip reads as one target. The ticker
+  additionally shifts to `{{accent2}}` on hover.
+- **Only the value's colour is inline.** The rank and ticker colours are static
+  and live in the stylesheet; the value's is *data* (green / red / bright by
+  sentiment) and is the single per-row `style.text_color`. `_value_color` in
+  `leaderboard.py` maps `Sentiment.NEUTRAL` to the bright chrome text token,
+  because the shared neutral is brand navy and illegible on the dark surface.
+  (It lived in `html.py` as `_superlative_value_color` until #291 retired the
+  cards and the leaderboard became its only caller.)
+
+The value cell uses `font-variant-numeric: tabular-nums` so figures line up
+column to column; rank and value cells are fixed-width and the ticker flexes,
+so the numbers align vertically regardless of ticker length. A blank slot is
+`visibility: hidden`, **not** `display: none`, so a short column keeps its
+height instead of pulling the divider up.
+
+**The pane's pill pair follows the tab-band idiom.** *Commentary* | *New
+Launches* are ordinary `.bbg-pill`s (the subtle style, not the inverted
+`.bbg-tabband` one), toggled by `_style_tab_button` — the active state is the
+`is-active` class, never an inline button colour, which would win over the
+`:hover` / `:focus-visible` rules.
+
+**Known inconsistency.** `weekly_commentary.html` still uses the *light*
+palette (`{{slate50}}` panel, `{{navy}}` heading, `{{slate200}}` border) from
+before the dark chrome, so the Weekly Commentary board renders as a white card
+inside the dark pane — now directly beside the dark leaderboard. Predates this
+epic and is not yet fixed.
 
 ## Benchmark selector (#192)
 

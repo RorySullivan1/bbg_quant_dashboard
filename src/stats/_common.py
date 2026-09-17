@@ -76,7 +76,7 @@ def max_drawup(prices: pd.DataFrame, years: float) -> pd.Series:
 
     The max over the window of ``price / running-min - 1`` — the biggest gain
     from a running low to a subsequent high. Always non-negative; columns with
-    no data in the window are NaN. Powers the "Largest drawup" superlative.
+    no data in the window are NaN.
     """
     sliced = _slice_last_years(prices, years)
     if sliced.empty:
@@ -110,8 +110,10 @@ def asset_class_demeaned_zscore(series: pd.Series, asset_class: pd.Series) -> pd
     across the whole catalog. This makes a metric **cross-asset-neutral**: an
     index scores high for being extreme *relative to its asset-class cohort*,
     not because its whole class is structurally high/low. Used **only to rank**
-    the cross-asset-neutral superlative cards (the card still shows the raw
-    metric). ``asset_class`` is a per-ticker Series aligned to ``series.index``;
+    a metric, never to display it — a caller shows the raw value. (It ranked
+    the v0.8.x superlative cards, retired in v0.9.20 #291; the Platform sunburst
+    is the live caller.) ``asset_class`` is a per-ticker Series aligned to
+    ``series.index``;
     tickers with no mapped class (NaN key) demean to NaN and drop out of the
     ranking. Returns an empty Series for empty input.
     """

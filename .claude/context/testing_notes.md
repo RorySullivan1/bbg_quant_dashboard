@@ -215,11 +215,39 @@ renders the full dashboard without a Bloomberg session. Verify by:
   legal block renders justified.
 - The commentary block stays the same across filter changes — it
   describes the whole catalog every time.
+- The "Recently launched" indices appear on the commentary pane's **New
+  Launches** board, reachable by its pill.
 - The **Platform** tab shows every catalog index with metadata plus **one
   stats window** (1Y by default), the classification tiers drawn as nested
   group headers rather than body columns.
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
+
+### Manual checklist — the commentary block (v0.9.20)
+
+The block above the tab bar, on every tab:
+
+- Four leaderboard columns — **Return / Sharpe / Calmar / Sortino** — each with
+  a top block and a bottom block separated by a divider. Values are right
+  aligned and line up column to column; positive values are green, negative red.
+- Ranks in the bottom block are the **true catalog positions** (52 / 53 / 54 on
+  a 54-index catalog), not 1 / 2 / 3.
+- Hovering a row lights **all three cells** at once and shows the strategy name;
+  the row reads as one strip, not three buttons.
+- **Clicking any leaderboard row opens that strategy in the Single Strategy
+  tab**, exactly as a catalog-grid row does — including clicking the rank or the
+  value, not just the ticker. If the Single Strategy filters had excluded it,
+  they clear and the status toast says so.
+- Changing the **Ranking window** (1W / 1M / 3M / 6M) retitles the board
+  (`Ranking · Past Week`) and genuinely **reorders** the rows — with no fetch and
+  no visible pause. Toggling back to a window already seen is instant.
+- The **Commentary** / **New Launches** pills swap the right pane's board and
+  move the active highlight; Commentary is what is showing on load. Switching
+  issues no fetch.
+- A **Refresh** while the New Launches board is open leaves it open — it must
+  not snap back to Commentary.
+- An error in the block renders in the strip **above both panes** and survives
+  both a window change and a pane switch.
 
 ## The catalog grid renders — and a unit test cannot tell you (v0.9.18)
 
@@ -265,7 +293,8 @@ Run alongside the mock-price checklist above:
   `LOOKBACK_YEARS = 5`); no column of dashes.
 - Column headers sit **on** their columns at first paint, with no click needed.
 - Scrolling the grid keeps the header row pinned.
-- Clicking a row opens that strategy in the **Single Strategy** tab.
+- Clicking a row opens that strategy in the **Single Strategy** tab (the same
+  route a leaderboard row takes).
 - The best index by z-score is still the first row.
 
 ## Terminal verification (v0.9.16)

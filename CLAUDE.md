@@ -14,8 +14,9 @@ via `FigureWidget`), `ipydatagrid` (the per-strategy tables) and `itables`
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
-block** (Weekly Commentary + a two-section Key Highlights panel: Market
-Superlatives and New Launches) → a **top-level pill-button tab bar** with three
+block** (a ranked **leaderboard** of four metric columns with clickable rows,
+beside a pane that switches between Weekly Commentary and New Launches) → a
+**top-level pill-button tab bar** with three
 tabs — **Platform** (all-catalog performance grid + a Platform-analytics card
 of Sunburst / Regime / Factor-exposure charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
@@ -56,8 +57,8 @@ each own a `DataGrid` whose single write path re-asserts the dark theme — so
 the figure-to-updater pairing and the v0.6.5 theme-refresh invariant are
 structural rather than something each call site has to remember. Data that
 moves between them is a **frozen dataclass** — `AnalysisPane`,
-`SingleAnalysisPane`, `SelectionSlice`, `RenderContext`, `SuperlativeCard`,
-`LaunchCard`, `LevelRegime` / `TercileRegime`. Two rules hold across all of
+`SingleAnalysisPane`, `SelectionSlice`, `RenderContext`, `LeaderboardColumn` /
+`LeaderboardRow`, `LaunchCard`, `LevelRegime` / `TercileRegime`. Two rules hold across all of
 them: **`state` is held on the object** (one mutable object, always current,
 annotated `DashboardState` rather than `object`) while **`meta` stays a
 per-call argument or a callable provider** — the app re-points `meta` to the
@@ -81,9 +82,26 @@ RowGroup only gathers adjacent rows, and **changing the window hides columns
 rather than dropping them**, so it cannot disturb the grouping or the
 selection. See `.claude/context/conventions.md`.
 
+The commentary block is a **ranked board beside a switchable pane** (epic #286,
+v0.9.20). The left pane is a **leaderboard**: four columns — Return, Sharpe,
+Calmar, Sortino — each listing the catalog's top three and bottom three as
+`rank · ticker · value`, ranked over the window the **Ranking window** toggle
+selects. Ranking is by the **raw** metric, so a row's position and the number it
+shows always agree; the asset-class-demeaned z-score stays where it belongs, on
+the Platform sunburst and the Z-Score column. **Clicking any row opens that
+strategy in Single Strategy**, through the same `_show_in_single_strategy` the
+catalog grid uses, so the two entry points cannot diverge. The right pane holds
+one board at a time — Weekly Commentary or New Launches — chosen by a pill pair.
+Three rules hold underneath: **a row is three buttons** because a `Button`'s
+description is one text node and a row needs three colours; **`errors_w` is a
+sibling of both panes**, never inside one, so no live control can wipe an init
+error; and **Refresh invalidates while a toggle re-slices** — the window toggle
+and the pane switch never issue BQL. This replaced the v0.8.x 16-card Market
+Superlatives board (#291); its metrics all live on in `src/stats/`.
+
 ## Current version
 
-`v0.9.18` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.20` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
