@@ -189,22 +189,45 @@ def test_no_group_fields_degrades_to_the_plain_zscore_sort(monkeypatch):
     assert list(frame.index) == expected
     display, groups = _catalog_display_frame(frame, _catalog_group_labels())
     assert groups == []
-    assert "rowGroup" not in _catalog_table_options(display, groups)
+    assert _catalog_table_options(display, groups)["rowGroup"] is False
 
 
-def test_reordering_the_group_fields_reorders_the_nesting(monkeypatch):
-    meta = _catalog()
-    zcol = _zcol(meta)
+def test_the_default_selection_does_not_set_the_nesting_order(monkeypatch):
+    # v0.9.18 (#273): nesting is the hierarchy's, not the order fields are
+    # listed in. Spelling the default out of order must NOT re-nest the table —
+    # otherwise ticking order would quietly become meaningful again.
     monkeypatch.setattr(
         config, "UNIVERSE_GRID_GROUP_FIELDS", ("category", "solution", "family")
     )
-    frame = _frame(meta, zcol)
-    # Category is now the outermost group, so it — not Solution — is the level
-    # that must form single runs.
+    frame = _frame(_catalog(), _zcol(_catalog()))
+    _display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    assert groups == ["Solution", "Category", "Family"]
+
+
+def test_the_hierarchy_order_is_the_config_knob(monkeypatch):
+    # Reordering the *groupable* tuple is how the nesting changes — that is the
+    # declaration of what sits above what.
+    monkeypatch.setattr(
+        config,
+        "UNIVERSE_GRID_GROUPABLE_FIELDS",
+        ("category", "solution", "family", "asset_class"),
+    )
+    meta = _catalog()
+    zcol = _zcol(meta)
+    frame = _build_universe_frame(
+        meta,
+        pd.DataFrame(),
+        zcol=zcol,
+        zlabel=_Z_LABEL,
+        group_fields=("solution", "category", "family"),
+    )
+    _display, groups = _catalog_display_frame(
+        frame, _catalog_group_labels(("solution", "category", "family"))
+    )
+    assert groups == ["Category", "Solution", "Family"]
+    # Category is now outermost, so it is the level that must form single runs.
     top = _runs(list(frame["Category"]))
     assert len(top) == len(set(top))
-    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
-    assert groups == ["Category", "Solution", "Family"]
 
 
 def test_an_unknown_group_field_is_rejected_by_name(monkeypatch):
@@ -275,7 +298,7 @@ def test_numeric_renderers_are_scoped_to_the_numeric_columns():
     # Text columns must not get a numeric renderer — it would blank them.
     assert "Name" not in rendered and "Ticker" not in rendered
     # The heat ramp belongs to the ranking columns only.
-    assert heated == {_Z_NAME, "1Y Sharpe", "3Y Sharpe", "5Y Sharpe"}
+    assert heated == {_Z_NAME, "6M Sharpe", "1Y Sharpe", "3Y Sharpe", "5Y Sharpe"}
 
 
 def test_display_renderer_leaves_sort_values_numeric():
@@ -462,3 +485,219 @@ def test_the_stylesheet_scrolls_the_catalog_and_pins_its_header():
     assert "max-height" in css
     sticky = css[css.index("table.dataTable thead th {") :]
     assert "position: sticky" in sticky[:400]
+
+
+# --- one stats window at a time, and user-chosen grouping (#266, #273) -----
+
+
+def _visible_columns(grid) -> list[str]:
+    """The columns DataTables would actually draw, in order."""
+    from src.layout.grids import _catalog_table_options
+
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+    hidden: set[int] = set()
+    for spec in options["columnDefs"]:
+        if spec.get("visible") is False:
+            hidden.update(spec["targets"])
+    return [c for i, c in enumerate(grid._display.columns) if i not in hidden]
+
+
+def _populated_grid(group_fields: tuple[str, ...] | None = None):
+    from src.layout.grids import UniverseGrid
+
+    meta = _catalog()
+    grid = UniverseGrid()
+    if group_fields is not None:
+        grid.set_group_fields(group_fields)
+    grid.update(meta, _up(meta["ticker"]), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    return grid
+
+
+def _up(tickers, windows=("6M", "1Y", "3Y", "5Y")) -> pd.DataFrame:
+    """A `universe_perf`-shaped frame: (window, metric) MultiIndex columns."""
+    metrics = ["Return", "Vol", "Sharpe", "Max DD"]
+    cols = pd.MultiIndex.from_product([list(windows), metrics])
+    data = np.arange(len(tickers) * len(cols), dtype=float).reshape(
+        len(tickers), len(cols)
+    )
+    return pd.DataFrame(data, index=pd.Index(tickers, name="ticker"), columns=cols)
+
+
+# --- the offered windows follow the data, not a wish list -------------------
+
+
+def test_only_windows_the_price_history_supports_are_offered():
+    # A window longer than the fetch has nothing to measure: every row blanks
+    # and the column renders as a full column of dashes, which reads as a
+    # broken dashboard rather than a pending feature.
+    offered = [label for label, _ in config.stat_windows()]
+    assert offered == ["6M", "1Y", "3Y", "5Y"]
+    assert "10Y" not in offered and "15Y" not in offered
+    # They are declared, though — widening the fetch is meant to reveal them
+    # with no UI change.
+    assert "15Y" in [label for label, _ in config.STAT_WINDOWS]
+
+
+def test_widening_the_fetch_reveals_the_longer_windows(monkeypatch):
+    # The mechanism the note above promises, exercised rather than asserted in
+    # a comment: nothing but LOOKBACK_YEARS decides what is on offer.
+    monkeypatch.setattr(config, "LOOKBACK_YEARS", 20)
+    assert [label for label, _ in config.stat_windows()] == [
+        "6M",
+        "1Y",
+        "3Y",
+        "5Y",
+        "10Y",
+        "15Y",
+    ]
+
+
+def test_a_default_window_the_history_cannot_serve_is_rejected(monkeypatch):
+    monkeypatch.setattr(config, "UNIVERSE_GRID_DEFAULT_WINDOW", "15Y")
+    with pytest.raises(ValueError, match="15Y"):
+        config.universe_grid_default_window()
+
+
+def test_a_half_year_window_is_labelled_6m_not_zero_point_five_years():
+    # `ann_return` and friends take a float, so 0.5 computes correctly; only
+    # the label needed somewhere to live.
+    assert config.stat_window_label(0.5) == "6M"
+    assert config.stat_window_years("6M") == 0.5
+    # An unlisted window still labels sensibly, so callers passing their own
+    # year tuples keep working.
+    assert config.stat_window_label(7) == "7Y"
+
+
+# --- exactly one window is visible ------------------------------------------
+
+
+def test_only_the_default_window_is_visible_on_load():
+    grid = _populated_grid()
+    assert grid.window == config.UNIVERSE_GRID_DEFAULT_WINDOW
+    visible = _visible_columns(grid)
+    assert [c for c in visible if c.startswith("1Y ")]
+    assert not [c for c in visible if c.startswith(("6M ", "3Y ", "5Y "))]
+
+
+def test_changing_the_window_swaps_exactly_four_columns():
+    grid = _populated_grid()
+    before = _visible_columns(grid)
+    grid.set_window("5Y")
+    after = _visible_columns(grid)
+    assert [c for c in after if c not in before] == [
+        "5Y Return",
+        "5Y Vol",
+        "5Y Sharpe",
+        "5Y Max DD",
+    ]
+    assert [c for c in before if c not in after] == [
+        "1Y Return",
+        "1Y Vol",
+        "1Y Sharpe",
+        "1Y Max DD",
+    ]
+
+
+def test_hidden_windows_stay_in_the_frame():
+    # Dropping them would rebuild the table, resetting the grouping and the
+    # selected row. Hiding is what makes the radio a radio rather than a
+    # reload — and every window was computed up front, so nothing recomputes.
+    grid = _populated_grid()
+    columns_before = list(grid._display.columns)
+    grid.set_window("6M")
+    grid.set_window("3Y")
+    assert list(grid._display.columns) == columns_before
+
+
+def test_changing_the_window_does_not_touch_the_row_to_ticker_map():
+    # The map is what routes a click (#265). If a window change rebuilt the
+    # frame this would drift and clicks would open the wrong strategy.
+    grid = _populated_grid()
+    before = grid._tickers
+    grid.set_window("5Y")
+    assert grid._tickers == before
+
+
+def test_window_columns_are_recognised_by_their_prefix_only():
+    from src.layout.grids import _window_of
+
+    assert _window_of("1Y Sharpe") == "1Y"
+    assert _window_of("6M Max DD") == "6M"
+    # The Z-Score label embeds its own window ("Sharpe 1M/1Y") and must not be
+    # swept up by the radio — it is the ranking column, always shown.
+    assert _window_of("Z-Score Sharpe 1M/1Y") is None
+    assert _window_of("Name") is None
+
+
+# --- the user chooses the grouping ------------------------------------------
+
+
+def test_asset_class_is_groupable_above_the_tiers():
+    assert config.universe_grid_groupable_fields() == (
+        "asset_class",
+        *config.CLASSIFICATION_TIERS,
+    )
+
+
+def test_nesting_follows_the_hierarchy_not_the_order_boxes_were_ticked():
+    # The whole point of the fixed order: the table reads the same however the
+    # user got there, so ticking order is not invisible state to remember.
+    assert config.universe_grid_group_fields(("family", "asset_class")) == (
+        "asset_class",
+        "family",
+    )
+    assert config.universe_grid_group_fields(("asset_class", "family")) == (
+        "asset_class",
+        "family",
+    )
+
+
+def test_a_field_that_is_not_groupable_is_rejected_by_name():
+    with pytest.raises(KeyError, match="currency"):
+        config.universe_grid_group_fields(("currency",))
+
+
+def test_grouping_on_a_subset_groups_only_those_levels():
+    grid = _populated_grid(("asset_class", "family"))
+    assert grid.group_fields == ("asset_class", "family")
+    assert list(grid._display.columns)[:2] == ["Asset Class", "Family"]
+    # Solution and Category stay in the body — unchecked levels leave the
+    # hierarchy, they are not hidden from the table altogether.
+    assert "Solution" in grid._display.columns
+    assert "Solution" not in grid._groups
+
+
+def test_grouping_on_nothing_renders_a_flat_table():
+    grid = _populated_grid(())
+    assert grid.group_fields == ()
+    assert grid._groups == []
+    from src.layout.grids import _catalog_table_options
+
+    # Explicitly disabled, not merely absent: `ITable.update` merges options,
+    # so an omitted `rowGroup` keeps the previous one and the grid carries on
+    # grouping by whatever column 0 has become — a header per row, each named
+    # after a ticker. Only the browser showed this; "key not in options" was
+    # true the whole time.
+    assert _catalog_table_options(grid._display, grid._groups)["rowGroup"] is False
+
+
+def test_every_grouping_subset_stays_contiguous_at_every_level():
+    # The guarantee RowGroup depends on has to hold for whatever the user
+    # picks, not just the default — that is what makes the grouping safe to
+    # hand over.
+    import itertools
+
+    fields = config.universe_grid_groupable_fields()
+    for size in range(1, len(fields) + 1):
+        for subset in itertools.combinations(fields, size):
+            grid = _populated_grid(subset)
+            labels = [config.field_label(k) for k in subset]
+            for depth in range(1, len(labels) + 1):
+                path = list(
+                    zip(
+                        *(grid._display[label] for label in labels[:depth]),
+                        strict=True,
+                    )
+                )
+                runs = _runs(path)
+                assert len(runs) == len(set(runs)), f"{subset} fragments at {depth}"

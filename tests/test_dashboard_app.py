@@ -193,3 +193,78 @@ def _ticker_options_for(app, tickers):
     from src.layout.app import _ticker_options
 
     return _ticker_options(app.meta.loc[app.meta["ticker"].isin(tickers)])
+
+
+# --- the grid's own controls: grouping and stats window (#266, #273) -------
+
+
+def test_group_checkboxes_cover_every_groupable_field_in_hierarchy_order(app):
+    from src.config import universe_grid_groupable_fields
+
+    assert list(app.group_boxes) == list(universe_grid_groupable_fields())
+
+
+def test_group_checkboxes_start_on_the_configured_default(app):
+    from src.config import universe_grid_group_fields
+
+    default = set(universe_grid_group_fields())
+    for key, box in app.group_boxes.items():
+        assert box.value == (key in default)
+
+
+def test_checking_a_box_regroups_the_grid(app):
+    for key, box in app.group_boxes.items():
+        box.unobserve(app._on_grouping_change, names="value")
+        box.value = key in ("solution", "category", "family")
+        box.observe(app._on_grouping_change, names="value")
+    app.group_boxes["asset_class"].value = True
+    assert app.universe_grid.group_fields == (
+        "asset_class",
+        "solution",
+        "category",
+        "family",
+    )
+
+
+def test_ticking_order_does_not_change_the_nesting(app):
+    # The fixed hierarchy order, exercised through the actual widgets: the two
+    # sequences below differ only in the order the boxes are set.
+    def _set(order):
+        for box in app.group_boxes.values():
+            box.unobserve(app._on_grouping_change, names="value")
+            box.value = False
+            box.observe(app._on_grouping_change, names="value")
+        for key in order:
+            app.group_boxes[key].value = True
+        return app.universe_grid.group_fields
+
+    assert _set(["family", "asset_class"]) == _set(["asset_class", "family"])
+    assert app.universe_grid.group_fields == ("asset_class", "family")
+
+
+def test_unchecking_everything_leaves_a_flat_grid(app):
+    for box in app.group_boxes.values():
+        box.value = False
+    assert app.universe_grid.group_fields == ()
+
+
+def test_the_window_radio_offers_what_the_history_supports(app):
+    from src.config import stat_windows, universe_grid_default_window
+
+    assert list(app.window_radio.options) == [label for label, _ in stat_windows()]
+    assert app.window_radio.value == universe_grid_default_window()
+
+
+def test_picking_a_window_moves_the_grid(app):
+    app.window_radio.value = "5Y"
+    assert app.universe_grid.window == "5Y"
+    app.window_radio.value = "6M"
+    assert app.universe_grid.window == "6M"
+
+
+def test_the_window_rail_sits_left_of_the_grid(app):
+    # It reads as the table's own axis rather than another control in the row
+    # of dropdowns, which is why it is an HBox and not another row.
+    left, right = app.universe_grid_row.children
+    assert right is app.universe_grid.widget
+    assert app.window_radio in left.children

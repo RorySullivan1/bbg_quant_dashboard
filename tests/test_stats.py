@@ -384,11 +384,25 @@ def test_perf_table_returns_param_matches_internal(multiyear_prices):
 
 
 def test_universe_perf_is_windows_only_no_since_inception(multiyear_prices):
-    # v0.7.2: universe_perf returns only the 1Y/3Y/5Y windowed block (it threads
+    # v0.7.2: universe_perf returns only the windowed block (it threads
     # daily_returns once into perf_table); the Since-Inception block is dropped.
+    #
+    # v0.9.18 (#273): the two no longer share a default — universe_perf serves
+    # every window the price history supports so the catalog grid can switch
+    # between them without a recompute, while perf_table still defaults to
+    # PERF_TABLE_YEARS for the selected-strategy grid. Comparing them over the
+    # *same* windows keeps what this test was actually for: that universe_perf
+    # is perf_table's maths with no extra block, not that the two happen to be
+    # configured alike.
+    from src.config import stat_windows
+
+    windows = tuple(years for _, years in stat_windows())
     up = stats.universe_perf(multiyear_prices)
-    pd.testing.assert_frame_equal(up, stats.perf_table(multiyear_prices))
+    pd.testing.assert_frame_equal(up, stats.perf_table(multiyear_prices, windows))
     assert "SI" not in up.columns.get_level_values(0)
+    assert list(dict.fromkeys(up.columns.get_level_values(0))) == [
+        label for label, _ in stat_windows()
+    ]
 
 
 def test_quant_metrics_table_returns_param_matches_internal(

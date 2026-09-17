@@ -31,6 +31,8 @@ from ..config import (
     SELECTED_GRID_FIELDS,
     UNIVERSE_GRID_FIELDS,
     field_label,
+    stat_windows,
+    universe_grid_default_window,
     universe_grid_group_fields,
 )
 from ..style import Color
@@ -562,13 +564,15 @@ CATALOG_TABLE_CLASS: str = "bbg-catalog"
 # nothing to drift: measured at a 0px offset, including after a resize.
 
 
-def _catalog_group_labels() -> list[str]:
+def _catalog_group_labels(selected: tuple[str, ...] | None = None) -> list[str]:
     """Display labels of the fields the catalog groups by, outermost first.
 
     Read through `universe_grid_group_fields` and `field_label` so both the
-    grouping and its headers follow `CATALOG_SCHEMA` — never respelled here.
+    grouping and its headers follow `CATALOG_SCHEMA` — never respelled here,
+    and the nesting order is the hierarchy's rather than the order the user
+    ticked the boxes.
     """
-    return [field_label(key) for key in universe_grid_group_fields()]
+    return [field_label(key) for key in universe_grid_group_fields(selected)]
 
 
 def _js_number_render(*, percent: bool) -> JavascriptFunction:
@@ -641,18 +645,52 @@ def _catalog_display_frame(
     return display[[*present, *rest]], present
 
 
-def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
+def _window_of(name: str) -> str | None:
+    """The stats window a flat column belongs to, e.g. `"1Y Sharpe"` -> `"1Y"`.
+
+    Returns None for anything that is not a window stat — the Info columns and
+    the Z-Score, which the window radio never hides. The Z-Score matters here:
+    its label embeds its own window ("Z-Score Sharpe 1M/1Y"), and matching on a
+    prefix rather than a substring is what keeps it out of the radio's reach.
+    """
+    for label, _ in stat_windows():
+        if name.startswith(f"{label} "):
+            return label
+    return None
+
+
+def _catalog_table_options(
+    frame: pd.DataFrame,
+    groups: list[str],
+    window: str | None = None,
+) -> dict:
     """DataTable options for the catalog: hidden group columns surfaced as
     nested row-group headers, numeric renderers, and the Sharpe / Z-Score heat.
 
     `rowGroup.dataSrc` and the hidden `targets` are the *same* indices — the
     tiers leave the body and come back as headers, which is the whole point of
     the change. With no group fields both fall away and this is a flat table.
+
+    `window` selects the one stats window that is **visible**. Every other
+    window stays in the frame and is hidden here, so changing the radio is a
+    column-visibility change rather than a rebuild: the data, the grouping and
+    the selected row all survive it, and nothing recomputes. Dropping the
+    columns from the frame instead would reset all three, including the
+    row-to-ticker map that routes a click (#265).
     """
+    if window is None:
+        window = universe_grid_default_window()
     column_defs: list[dict] = []
     if groups:
         targets = list(range(len(groups)))
         column_defs.append({"targets": targets, "visible": False})
+    hidden_windows = [
+        position
+        for position, name in enumerate(str(c) for c in frame.columns)
+        if (w := _window_of(name)) is not None and w != window
+    ]
+    if hidden_windows:
+        column_defs.append({"targets": hidden_windows, "visible": False})
     for position, name in enumerate(str(c) for c in frame.columns):
         if name in groups:
             continue
@@ -695,8 +733,12 @@ def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
         # catalog grows, far from any change that would explain it.
         "maxBytes": 0,
     }
-    if groups:
-        options["rowGroup"] = {"dataSrc": list(range(len(groups)))}
+    # Always sent, never omitted. `ITable.update` *merges* options — anything
+    # left out keeps its previous value — so dropping `rowGroup` when the user
+    # unchecks every box leaves the old `dataSrc` in place, pointing at
+    # whatever column 0 has become. That renders one group header per row,
+    # each named after a ticker. `False` is how RowGroup is switched off.
+    options["rowGroup"] = {"dataSrc": list(range(len(groups)))} if groups else False
     return options
 
 
@@ -712,6 +754,11 @@ class UniverseGrid:
     """
 
     def __init__(self, on_pick: Callable[[str], None] | None = None) -> None:
+        #: The stats window currently shown, and the fields currently grouped.
+        #: Held on the object per the v0.9.16 object model — both are state, not
+        #: something a caller threads through every `update`.
+        self.window: str = universe_grid_default_window()
+        self.group_fields: tuple[str, ...] = universe_grid_group_fields()
         self.widget = ITable(
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
@@ -721,6 +768,10 @@ class UniverseGrid:
         #: that knows which ticker that was, so the translation lives here
         #: rather than at the handler's call site.
         self._tickers: tuple[str, ...] = ()
+        #: The frame as last handed to the widget, kept so a period toggle can
+        #: re-send options without rebuilding it.
+        self._display: pd.DataFrame | None = None
+        self._groups: list[str] = []
         self._on_pick = on_pick
         self.widget.observe(self._forward_pick, names="selected_rows")
 
@@ -750,7 +801,9 @@ class UniverseGrid:
         zcol: pd.Series | None = None,
         zlabel: str | None = None,
     ) -> None:
-        combined = _build_universe_frame(meta, up, zcol=zcol, zlabel=zlabel)
+        combined = _build_universe_frame(
+            meta, up, zcol=zcol, zlabel=zlabel, group_fields=self.group_fields
+        )
         self._set_data(combined)
 
     def _set_data(self, frame: pd.DataFrame) -> None:
@@ -761,8 +814,38 @@ class UniverseGrid:
         # ticker into a column: that function reorders columns only, so row
         # positions line up with the frame the widget is about to render.
         self._tickers = tuple(str(t) for t in frame.index)
-        display, groups = _catalog_display_frame(frame, _catalog_group_labels())
-        self.widget.update(display, **_catalog_table_options(display, groups))
+        self._display, self._groups = _catalog_display_frame(
+            frame, _catalog_group_labels(self.group_fields)
+        )
+        self.widget.update(
+            self._display,
+            **_catalog_table_options(self._display, self._groups, self.window),
+        )
+
+    def set_window(self, window: str) -> None:
+        """Show exactly one stats window, without rebuilding the table.
+
+        The options are re-sent with no dataframe, so DataTables only changes
+        column visibility. That is the difference between a radio and a reload:
+        the grouping and the selected row both survive it, and nothing
+        recomputes — every window was computed once, up front.
+        """
+        self.window = window
+        if getattr(self, "_display", None) is None or self._display.empty:
+            return
+        self.widget.update(
+            **_catalog_table_options(self._display, self._groups, self.window)
+        )
+
+    def set_group_fields(self, fields: tuple[str, ...]) -> None:
+        """Change which fields the grid groups by.
+
+        Unlike the window, this **does** rebuild: the grouping decides the row
+        order, because RowGroup only gathers consecutive rows. The caller has
+        to re-`update` with the data afterwards — there is no way to regroup
+        without reordering, and no way to reorder without rebuilding.
+        """
+        self.group_fields = universe_grid_group_fields(fields)
 
     def clear(self) -> None:
         self._set_data(pd.DataFrame())
@@ -774,6 +857,7 @@ def _build_universe_frame(
     *,
     zcol: pd.Series | None = None,
     zlabel: str | None = None,
+    group_fields: tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """Assemble the all-catalog grid's DataFrame (pure — no grid side effects).
 
@@ -794,15 +878,18 @@ def _build_universe_frame(
         blocks.append(pd.DataFrame({z_key: zcol.reindex(info.index)}))
 
     if not up.empty:
-        # Flatten the (period, metric) columns to single-index "1Y Return".
-        period_order = ["1Y", "3Y", "5Y"]
-        present = [p for p in period_order if p in up.columns.get_level_values(0)]
+        # Flatten the (window, metric) columns to single-index "1Y Return".
+        # Every window stays in the frame even when it is not the one on show —
+        # see `_catalog_table_options`, which hides the others rather than
+        # dropping them, so the radio can switch without a recompute.
+        available = up.columns.get_level_values(0)
+        present = [label for label, _ in stat_windows() if label in available]
         up_norm = up.reindex(columns=present, level=0).reindex(info.index)
         up_norm.columns = _flatten_perf_columns(up_norm.columns)
         blocks.append(up_norm)
 
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
-    combined = _group_ordered(combined, _catalog_group_labels(), z_key)
+    combined = _group_ordered(combined, _catalog_group_labels(group_fields), z_key)
     combined.index.name = "Ticker"
     return combined
 
