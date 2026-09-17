@@ -330,3 +330,94 @@ def _up(tickers) -> pd.DataFrame:
         len(tickers), len(cols)
     )
     return pd.DataFrame(data, index=pd.Index(tickers, name="ticker"), columns=cols)
+
+
+# --- a clicked row names a strategy (#265) ---------------------------------
+
+
+def _grid_with(picked: list[str]):
+    """A populated grid whose picks land in `picked`."""
+    from src.layout.grids import UniverseGrid
+
+    meta = _catalog()
+    grid = UniverseGrid(on_pick=picked.append)
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    return grid
+
+
+def test_a_selected_row_reports_the_ticker_at_that_position():
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    # The widget reports a row by position into the data it was given, so the
+    # expected ticker is read off the same frame rather than assumed to be the
+    # catalog's source order — which the grouping has already changed.
+    for position in (0, 3, len(grid._tickers) - 1):
+        picked.clear()
+        grid.widget.selected_rows = [position]
+        assert picked == [grid._tickers[position]]
+
+
+def test_deselecting_is_a_no_op_rather_than_a_blank_selection():
+    # Clicking the selected row again deselects it. Treating that as "the user
+    # chose nothing" and clearing the analysis panes would be worse than
+    # useless, so an empty list must not reach the callback at all.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    grid.widget.selected_rows = [1]
+    assert len(picked) == 1
+    grid.widget.selected_rows = []
+    assert len(picked) == 1  # unchanged, and no exception
+
+
+def test_a_row_position_outside_the_current_frame_is_ignored():
+    # Reachable when a re-render lands between the click and the callback.
+    # Unguarded this raises inside traitlets, where the exception surfaces as a
+    # widget that has quietly stopped responding rather than as an error.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    grid.widget.selected_rows = [len(grid._tickers) + 5]
+    assert picked == []
+
+
+def test_a_grid_with_no_callback_still_accepts_clicks():
+    from src.layout.grids import UniverseGrid
+
+    grid = UniverseGrid()
+    meta = _catalog()
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    grid.widget.selected_rows = [0]  # must not raise
+
+
+def test_the_row_to_ticker_map_follows_the_rendered_frame():
+    # The map is rebuilt on the single write path, so a re-render with a
+    # different catalog cannot leave the previous catalog's tickers behind —
+    # which would route clicks to strategies that are no longer on screen.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    first = grid._tickers
+    smaller = _catalog().head(4)
+    grid.update(smaller, pd.DataFrame(), zcol=_zcol(smaller), zlabel=_Z_LABEL)
+    assert len(grid._tickers) == 4
+    assert grid._tickers != first
+    grid.widget.selected_rows = [2]
+    assert picked[-1] == grid._tickers[2]
+
+
+def test_the_catalog_enables_single_row_selection():
+    # Without the Select extension switched on, `selected_rows` never changes
+    # and every test above passes against a table nobody can click.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    options = _catalog_table_options(display, groups)
+    assert options["select"] == {"style": "single"}
+
+
+def test_the_catalog_is_never_downsampled():
+    # itables drops the middle of a table over ~64KB of JSON. On a browse
+    # surface that is silent data loss, and the row a user wants is as likely
+    # to be in the dropped middle as anywhere.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    assert _catalog_table_options(display, groups)["maxBytes"] == 0

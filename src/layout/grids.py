@@ -675,6 +675,17 @@ def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
         # The frame arrives already ordered (see `_group_ordered`); an initial
         # DataTables sort would undo the grouping contiguity it establishes.
         "order": [],
+        # One row at a time. Without this the Select extension is inert and
+        # `selected_rows` never changes, so the click handler below never runs.
+        "select": {"style": "single"},
+        # itables downsamples a table over ~64KB of JSON, keeping the head and
+        # tail and dropping the middle. For a browse surface whose job is to
+        # show the whole catalog that is a silent data loss, and the row a user
+        # wants is as likely to be in the dropped middle as anywhere. A
+        # terminal-sized catalog measures ~31KB, so this is headroom rather
+        # than a live fix — but it is the kind of limit that bites after the
+        # catalog grows, far from any change that would explain it.
+        "maxBytes": 0,
     }
     if groups:
         options["rowGroup"] = {"dataSrc": list(range(len(groups)))}
@@ -692,11 +703,36 @@ class UniverseGrid:
     `update` / `clear` so its callers do not know the difference.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_pick: Callable[[str], None] | None = None) -> None:
         self.widget = ITable(
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
         self.widget.add_class(CATALOG_TABLE_CLASS)
+        #: Row position -> ticker for the frame currently rendered. The widget
+        #: reports a clicked row by position, and the grid is the only object
+        #: that knows which ticker that was, so the translation lives here
+        #: rather than at the handler's call site.
+        self._tickers: tuple[str, ...] = ()
+        self._on_pick = on_pick
+        self.widget.observe(self._forward_pick, names="selected_rows")
+
+    def _forward_pick(self, change: dict) -> None:
+        """Translate a clicked row into a ticker and hand it to `on_pick`.
+
+        Two non-events are swallowed deliberately. A **deselection** arrives as
+        an empty list and must do nothing — clearing the panes because the user
+        clicked the selected row again would be worse than useless. And a row
+        position **outside the current frame** is reachable whenever a re-render
+        lands between the click and this callback, so it is guarded rather than
+        left to raise inside traitlets, where the exception would surface as a
+        dead widget rather than as an error anyone can act on.
+        """
+        rows = change.get("new") or []
+        if not rows or self._on_pick is None:
+            return
+        row = rows[0]
+        if 0 <= row < len(self._tickers):
+            self._on_pick(self._tickers[row])
 
     def update(
         self,
@@ -713,6 +749,10 @@ class UniverseGrid:
         """The single write path. Options are rebuilt on every write because
         they are keyed to column *positions*, and the Z-Score column's name —
         and so the column set — changes with the Metric/Window dropdowns."""
+        # Recorded from the index before `_catalog_display_frame` moves the
+        # ticker into a column: that function reorders columns only, so row
+        # positions line up with the frame the widget is about to render.
+        self._tickers = tuple(str(t) for t in frame.index)
         display, groups = _catalog_display_frame(frame, _catalog_group_labels())
         self.widget.update(display, **_catalog_table_options(display, groups))
 
