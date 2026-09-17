@@ -129,4 +129,7 @@ def test_benchmark_window_note_flags_a_late_start(app):
     idx = pd.bdate_range(start, periods=40)
     note = app._benchmark_window_note(pd.Series(1.0, index=idx))
     assert "History starts" in note
-    assert str(start.date()) in note
+    # The note reports the series' first index, not the requested start:
+    # bdate_range snaps a weekend start forward to the next business day.
+    # Asserting `start` here passes or fails on what weekday today is.
+    assert str(idx[0].date()) in note
