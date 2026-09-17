@@ -268,3 +268,131 @@ def test_the_window_rail_sits_left_of_the_grid(app):
     left, right = app.universe_grid_row.children
     assert right is app.universe_grid.widget
     assert app.window_radio in left.children
+
+
+# --- the commentary block: leaderboard + switchable pane (#290) -------------
+
+
+def _board_tickers(app) -> list[str]:
+    return [
+        slot.shown
+        for column in app.leaderboard.columns.values()
+        for slot in column.slots
+        if slot.shown is not None
+    ]
+
+
+def test_the_leaderboard_is_populated_after_the_initial_load(app):
+    for metric, column in app.leaderboard.columns.items():
+        filled = [s for s in column.slots if s.shown is not None]
+        assert filled, f"{metric} column is empty"
+        # Ranks read top-down, and every filled row carries a formatted value.
+        ranks = [s.rank.description for s in filled]
+        assert ranks == sorted(ranks, key=int)
+        assert all(s.value.description for s in filled)
+    assert "Ranking · " in app.leaderboard.title_w.value
+
+
+def test_every_leaderboard_row_names_an_index_in_the_catalog(app):
+    # A row whose ticker is not in the catalog would route a click to a
+    # strategy the Single Strategy picker cannot offer.
+    catalog = set(app.meta["ticker"])
+    shown = _board_tickers(app)
+    assert shown
+    assert set(shown) <= catalog
+
+
+def test_a_leaderboard_click_opens_that_strategy_in_single_strategy(app):
+    target = _board_tickers(app)[0]
+    slot = next(
+        s
+        for column in app.leaderboard.columns.values()
+        for s in column.slots
+        if s.shown == target
+    )
+    slot.ticker.click()
+
+    assert app.single_strategy.picker.value == target
+    assert app.top_tab_content.children == (app._top_panels["single"],)
+
+
+def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch):
+    from src.layout import app as app_mod
+
+    before_title = app.leaderboard.title_w.value
+    before_rows = _board_tickers(app)
+
+    calls = {"n": 0}
+    real = app_mod.fetch_prices
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(app_mod, "fetch_prices", counting)
+    try:
+        app.ranking_window.value = 5  # WEEK_WINDOW → fires the observer
+        assert calls["n"] == 0  # re-ranked from the cache, no BQL
+        assert "Past Week" in app.leaderboard.title_w.value
+        assert app.leaderboard.title_w.value != before_title
+        # The board is genuinely re-ranked, not just retitled: a week's
+        # ordering differs from a month's on this catalog.
+        after_rows = _board_tickers(app)
+        assert after_rows
+        assert after_rows != before_rows
+    finally:
+        app.ranking_window.value = 21  # restore the module-scoped fixture
+
+
+def test_re_toggling_a_window_is_a_cache_hit(app):
+    # The cache is keyed by window, so returning to one already computed must
+    # not rebuild it — this is what makes the toggle feel live.
+    app.ranking_window.value = 63
+    first = app.highlights_cache[63]
+    app.ranking_window.value = 21
+    app.ranking_window.value = 63
+    assert app.highlights_cache[63] is first
+    app.ranking_window.value = 21
+
+
+def test_an_init_error_survives_a_window_change_and_a_pane_switch(app):
+    # `errors_w` is a sibling of both panes precisely so neither live control
+    # can wipe it. It was split out of the old highlights widget for this.
+    marker = "INIT-ERROR-MARKER"
+    before = app.state.errors_w.value
+    app.state.errors_w.value = before + marker
+    try:
+        app.ranking_window.value = 5
+        assert marker in app.state.errors_w.value
+        app.commentary_pane.show("launches")
+        assert marker in app.state.errors_w.value
+        app.commentary_pane.show("commentary")
+        assert marker in app.state.errors_w.value
+    finally:
+        app.state.errors_w.value = before
+        app.ranking_window.value = 21
+
+
+def test_the_pane_carries_the_launch_cards_built_from_the_catalog(app):
+    assert "launches" in app.highlights_cache
+    assert "New Launches" in app.commentary_pane.launches_w.value
+    assert app.commentary_pane.active == "commentary"  # opens on the commentary
+
+
+def test_the_block_is_a_fixed_leaderboard_beside_an_absorbing_pane(app):
+    # #276's rail idiom: the leaderboard takes a fixed basis wide enough for
+    # its four columns and the pane absorbs the remainder, so the split holds
+    # at any viewport width with no pixel constant on the pane. A pane given
+    # its own fixed width would leave dead space or overflow instead.
+    errors_w, row = app.commentary_box.children
+    assert errors_w is app.state.errors_w  # the error strip is first, full width
+    board_col, pane_col = row.children
+
+    assert board_col.layout.flex.startswith("0 0 ")  # fixed basis
+    assert pane_col.layout.flex == "1 1 0%"  # absorbs the remainder
+    assert board_col.layout.min_width == "0"
+    assert pane_col.layout.min_width == "0"
+
+    # The toggle sits above the board it re-ranks, inside the same column.
+    assert board_col.children == (app.ranking_window_row, app.leaderboard.root)
+    assert pane_col.children == (app.commentary_pane.root,)

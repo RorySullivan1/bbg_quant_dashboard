@@ -355,69 +355,60 @@ def test_correlation_benchmark_regime_controls():
     assert pane.heat_regime_chk.value is False
 
 
-def test_superlatives_window_toggle_re_renders_live():
-    # v0.8.x: a 1W/1M/3M/6M ToggleButtons drives the Market Superlatives board;
-    # changing it re-renders the panel live from the cache (no BQL) with the
-    # matching window label. v0.8.9 dropped overbought/oversold/VaR → 16 cards.
+def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
+    # v0.9.20 (#290): the block above the tab bar is two panes side by side —
+    # the ranked leaderboard on the left under its window toggle, the
+    # Commentary / New Launches pane on the right. The 16-card Market
+    # 16-card board it replaced must be nowhere on screen.
     app = build_app(verbose=False)
-    widgets = list(_walk(app))
+    commentary_box = app.children[3]
+    widgets = list(_walk(commentary_box))
+
+    boards = [w for w in widgets if "bbg-leaderboard" in getattr(w, "_dom_classes", ())]
+    panes = [
+        w for w in widgets if "bbg-commentary-pane" in getattr(w, "_dom_classes", ())
+    ]
+    assert len(boards) == 1
+    assert len(panes) == 1
+
+    # The window toggle lives with the leaderboard, labelled for what it now
+    # ranks rather than for the board it replaced.
     toggle = next(
         w
         for w in widgets
         if isinstance(w, W.ToggleButtons)
         and [o[0] for o in w.options] == ["1W", "1M", "3M", "6M"]
     )
-    panel = next(
+    labels = [w.value for w in widgets if isinstance(w, W.HTML)]
+    assert any("Ranking window" in (v or "") for v in labels)
+    assert toggle.value == 21  # MONTH_WINDOW, the default
+
+    # No trace of the retired board survives anywhere in the app — #291 took
+    # the cards, the two templates and the stylesheet rule with it.
+    rendered = [w for w in _walk(app) if isinstance(w, W.HTML)]
+    assert rendered  # the sweep is not vacuous
+    assert not any("bbg-superlative" in (w.value or "") for w in rendered)
+
+
+def test_the_error_strip_sits_outside_both_panes():
+    # It was split out of the highlights widget in v0.8.x so a live control
+    # could not wipe an init error. Inside either pane it would be back in
+    # range of the window toggle or the pane switch.
+    app = build_app(verbose=False)
+    commentary_box = app.children[3]
+    board = next(
         w
-        for w in widgets
-        if isinstance(w, W.HTML) and "Market Superlatives" in (w.value or "")
+        for w in _walk(commentary_box)
+        if "bbg-leaderboard" in getattr(w, "_dom_classes", ())
     )
-    before = panel.value
-    assert "Past Month" in before
-    assert before.count("bbg-superlative") == 16  # all 16 cards rendered
-    assert "title='" in before  # hover descriptions present
-
-    toggle.value = 5  # WEEK_WINDOW → fires the observer
-    after = panel.value
-    assert "Past Week" in after
-    assert after.count("bbg-superlative") == 16
-    assert after != before  # the board recomputed for the new window
-
-
-def test_highlights_sections_are_height_capped_and_scrollable():
-    # v0.8.x: each highlights section's card area is bounded (~22.5vh, halved in
-    # v0.8.11) and scrolls past it, so a tall board doesn't push the page down.
-    # The headers stay outside the scroll regions.
-    from datetime import date
-
-    from src.commentary import LaunchCard, SuperlativeCard
-    from src.layout.html import _render_highlights
-    from src.style import Sentiment
-
-    sup = [
-        SuperlativeCard(
-            label="Top performer",
-            value="+5.0%",
-            name="Alpha",
-            ticker="AAA",
-            sentiment=Sentiment.POSITIVE,
-            description="Highest return.",
-        )
-    ]
-    launches = [
-        LaunchCard(
-            name="New One",
-            ticker="NEW",
-            meta="Equity · Trend · USD",
-            live_date=date(2026, 5, 30),
-            days_ago=10,
-            since_return=0.02,
-        )
-    ]
-    html = _render_highlights(sup, launches)
-    # Both panels' card areas are capped + scrollable (one per section).
-    assert html.count("max-height:30vh") == 2
-    assert html.count("overflow-y:auto") == 2
+    pane = next(
+        w
+        for w in _walk(commentary_box)
+        if "bbg-commentary-pane" in getattr(w, "_dom_classes", ())
+    )
+    errors_w = commentary_box.children[0]
+    assert errors_w not in list(_walk(board))
+    assert errors_w not in list(_walk(pane))
 
 
 def test_masthead_renders():

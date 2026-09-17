@@ -18,15 +18,16 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..commentary import LaunchCard, SuperlativeCard
+from ..commentary import LaunchCard
 from ..config import (
+    NEW_LAUNCH_DAYS,
     PROFILE_CARD_FIELDS,
     TEMPLATES_DIR,
     WEEKLY_COMMENTARY_PATH,
     catalog_field,
     field_label,
 )
-from ..style import Color, Font, FontSize, Sentiment, StatusTone
+from ..style import Color, Font, FontSize, StatusTone
 
 # Shared style-token vocabulary spread into every template's context, so the
 # `data/templates/*.html` files carry placeholders ({{navy}}, {{label_size}},
@@ -116,39 +117,6 @@ def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     )
 
 
-def _superlative_value_color(sentiment: Sentiment) -> str:
-    """Sentiment → value color for the dark superlative cards.
-
-    Reuses the shared green/red sentiment palette but maps ``NEUTRAL`` to the
-    bright chrome text token (the shared ``Sentiment.NEUTRAL`` is brand navy,
-    which is illegible on the dark surface).
-
-    Takes the enum member, not its name: `Sentiment` is a `StrEnum` over *color*
-    values, so a member's string form is a hex code — feeding one to
-    `_sentiment_color`, which looks up by member *name*, would miss and silently
-    return neutral for every card.
-    """
-    if sentiment is Sentiment.NEUTRAL:
-        return str(Color.TEXT)
-    return str(sentiment.value)
-
-
-def _render_superlative_cards(cards: list[SuperlativeCard]) -> str:
-    return "".join(
-        render_template(
-            "superlative_card",
-            **STYLE_CTX,
-            color=_superlative_value_color(c.sentiment),
-            label=html.escape(c.label),
-            value=html.escape(c.value),
-            name=html.escape(c.name),
-            ticker=html.escape(c.ticker),
-            description=html.escape(c.description),
-        )
-        for c in cards
-    )
-
-
 def _fmt_since_return(value: float | None) -> str:
     """A launch card's since-launch return, or an em dash when there isn't one.
 
@@ -180,26 +148,25 @@ def _render_launch_cards(cards: list[LaunchCard]) -> str:
     )
 
 
-def _render_highlights(
-    superlatives: list[SuperlativeCard],
-    launches: list[LaunchCard],
-    *,
-    window_label: str = "Past Month",
-) -> str:
-    """Two-section highlights: left = window superlatives, right = new launches.
+def _render_launches(cards: list[LaunchCard]) -> str:
+    """The New Launches board: the launch cards under a titled section.
 
-    ``window_label`` (e.g. "Past Week"/"Past Month") titles the Superlatives
-    board to match the live window toggle. Returns ``""`` when there is nothing
-    to show yet (initial empty widget / no data), so the commentary block
-    collapses cleanly."""
-    if not superlatives and not launches:
-        return ""
+    Split out of the retired two-section highlights renderer for the switchable
+    commentary pane (v0.9.20, #289), which shows this board on its own rather
+    than beside the superlative cards. Unlike that renderer it never returns
+    `""` — the pane that mounts it is reached by a deliberate click, so an
+    empty board must say there is nothing rather than leave the pane blank.
+    `_render_launch_cards` supplies that message.
+
+    The subtitle reads `NEW_LAUNCH_DAYS` rather than re-spelling the window, so
+    widening the launch window retitles the board on its own.
+    """
     return render_template(
-        "highlights_two_col",
+        "launches_board",
         **STYLE_CTX,
-        window_label=html.escape(window_label),
-        superlatives=_render_superlative_cards(superlatives),
-        launches=_render_launch_cards(launches),
+        title=html.escape("New Launches"),
+        subtitle=html.escape(f"· live in the past {NEW_LAUNCH_DAYS} days"),
+        cards=_render_launch_cards(cards),
     )
 
 

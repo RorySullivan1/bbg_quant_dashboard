@@ -50,8 +50,8 @@ def weekly_change(prices: pd.DataFrame) -> pd.Series:
 def period_return(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     """Simple cumulative return over the trailing ``window_days`` rows.
 
-    The intuitive "past-month return" used by the superlative cards — a plain
-    last/first - 1 over the window, **not** annualized. Columns with fewer than
+    The intuitive "past-month return" — a plain last/first - 1 over the
+    window, **not** annualized. Backs the leaderboard's Return column. Columns with fewer than
     two valid observations in the window are NaN.
     """
     if prices.empty:
@@ -89,7 +89,7 @@ def longest_up_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Ser
     Slices ``returns`` to the trailing ``window_days`` and counts the longest
     streak of strictly-positive days per ticker (NaN/zero days break the run).
     Columns with no valid data in the window are NaN; the rest are non-negative
-    integer-valued floats. Powers the "Longest bull run" superlative.
+    integer-valued floats.
     """
     if returns.empty:
         return pd.Series(dtype=float)
@@ -102,8 +102,7 @@ def longest_down_streak(returns: pd.DataFrame, *, window_days: int = 21) -> pd.S
 
     Mirror of ``longest_up_streak`` for strictly-negative days (NaN/zero days
     break the run). Columns with no valid data in the window are NaN; the rest
-    are non-negative integer-valued floats. Powers the "Longest losing streak"
-    superlative.
+    are non-negative integer-valued floats.
     """
     if returns.empty:
         return pd.Series(dtype=float)
@@ -136,7 +135,7 @@ def trend_strength(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     OLS slope of log price vs time, scaled by the fit's R² (slope·R²), so a
     clean, persistent uptrend ranks above a noisy one of the same average
     slope. Columns with fewer than three valid points are NaN; a perfectly
-    flat series is 0. Powers the "Strongest trend" superlative.
+    flat series is 0.
     """
     if prices.empty:
         return pd.Series(dtype=float)
@@ -169,8 +168,7 @@ def return_autocorr(
     ``lag``-shifted copy over the trailing ``window_days``. A positive value
     means returns persist (trending); a negative value means they reverse
     (mean-reverting). Columns with fewer than ``lag + 3`` valid points — or
-    zero return variance — are NaN. Powers the "Most trending / Most
-    mean-reverting" superlatives.
+    zero return variance — are NaN.
     """
     if returns.empty:
         return pd.Series(dtype=float)
@@ -214,8 +212,7 @@ def macd_histogram(
     is comparable across tickers of different price levels. Returns the latest
     value per ticker over the **full history** — a fixed-lookback oscillator
     (12/26/9) that is **independent of the window toggle**. Columns with fewer
-    than ``slow`` valid observations are NaN. Powers the "Most extended up /
-    down" superlatives.
+    than ``slow`` valid observations are NaN.
     """
     if prices.empty:
         return pd.Series(dtype=float)
@@ -235,8 +232,7 @@ def win_rate(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
 
     ``mean(returns > 0)`` over the last ``window_days`` (strictly-positive days
     divided by the count of valid days; NaN days are excluded from both). In
-    [0, 1]; columns with no valid data in the window are NaN. Powers the
-    "Highest / Lowest win rate" superlatives.
+    [0, 1]; columns with no valid data in the window are NaN.
     """
     if returns.empty:
         return pd.Series(dtype=float)

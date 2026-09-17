@@ -121,8 +121,7 @@ def return_skew(returns: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
 
     Positive = a right tail (occasional large gains); negative = a left tail
     (occasional large losses). Columns with fewer than three valid points in
-    the window are NaN. Powers the "Most positive / Most negative skew"
-    superlatives.
+    the window are NaN.
     """
     if returns.empty:
         return pd.Series(dtype=float)

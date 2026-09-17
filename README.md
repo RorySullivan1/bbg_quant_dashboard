@@ -16,9 +16,11 @@ deployable via Voila.
    dismisses to a slim, auto-fading post-load toast reporting the source (BQL,
    cache, or mock) and timing. On Refresh the refetch runs on a background
    worker thread so the overlay reliably paints before the fetch blocks.
-3. **All-catalog commentary** — automated highlight cards (top/bottom
-   performers, Sharpe extremes, recently launched indices), always
-   whole-catalog.
+3. **All-catalog commentary** — a ranked **leaderboard** (Return / Sharpe /
+   Calmar / Sortino, top three and bottom three each, clickable straight
+   through to Single Strategy) beside a pane that switches between the
+   **Weekly Commentary** and **New Launches**. Always whole-catalog, and
+   re-ranked live over a 1W / 1M / 3M / 6M window with no refetch.
 4. **Top-level tab bar** with three tabs:
    - **Platform** — a full-width all-catalog performance grid (every index with
      metadata plus 1Y / 3Y / 5Y / Since-Inception performance), above a boxed
@@ -91,7 +93,7 @@ bbg_quant_dashboard/
 │   ├── price_cache.py         # two-tier cache: session superset + parquet
 │   ├── price_source.py        # PriceSource protocol: BQL + off-terminal mock
 │   ├── style.py               # centralized style tokens (Color/Font/…)
-│   ├── commentary.py          # rule-based highlight cards
+│   ├── commentary.py          # leaderboard + new-launch card builders
 │   ├── user_benchmarks.py     # persists user-added benchmark tickers
 │   ├── stats/                 # metrics package: _common / performance / risk /
 │   │                          #   rolling / factors / regime / calendar
@@ -99,7 +101,7 @@ bbg_quant_dashboard/
 │                              #   DashboardApp controller) + theme/chrome/filters/
 │                              #   panes/selection/platform/filter_panel/benchmarks/
 │                              #   single_strategy/multi_strategy/charts/grids/html/state
-│                              #   (build_app re-exported)
+│                              #   leaderboard/commentary_pane (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
                                #   cache/commentary/grids/catalog-grid/platform/single_strategy/
                                #   live-controls/lazy-views/state/smoke tests

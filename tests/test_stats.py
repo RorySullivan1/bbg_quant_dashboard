@@ -658,7 +658,7 @@ def test_sunburst_levels_rejects_a_level_that_is_not_a_schema_field(monkeypatch)
         cfg.sunburst_levels()
 
 
-# --- v0.8.0 superlative helpers: period_return / streak / trend -------------
+# --- period_return / streak / trend ----------------------------------------
 
 
 def test_period_return_simple_cumulative(tiny_prices):
@@ -740,7 +740,7 @@ def test_trend_strength_short_history_is_nan(bdays):
     assert np.isnan(stats.trend_strength(prices, window_days=21)["X Index"])
 
 
-# --- v0.8.x superlative helpers: down-streak / ma-spread --------------------
+# --- down-streak / ma-spread -----------------------------------------------
 
 
 def test_longest_down_streak_counts_consecutive_losses(bdays):
@@ -790,7 +790,7 @@ def test_ma_spread_empty_passthrough():
     assert stats.ma_spread(pd.DataFrame(), window_days=21).empty
 
 
-# --- v0.8.4 superlative-redo helpers ---------------------------------------
+# --- skew / win-rate / MACD / drawup ----------------------------------------
 
 
 def test_max_drawup_window(tiny_prices):

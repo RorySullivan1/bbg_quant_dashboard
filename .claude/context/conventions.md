@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.18`.
+- **Current version**: `v0.9.20`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -143,10 +143,22 @@ CSS, style tokens — live in `style.md`.)
   the user sees market-wide context regardless of what they're inspecting.
 - **Selected-set analyses** (the 9 analysis options available in each
   Selected-Strategies pane) are over the currently selected tickers
-  only — that's the user's focus area. The whole-catalog Key Highlights
-  panels (`build_superlatives` / `build_launch_cards`) compute over the
-  whole catalog (`arp_universe_prices`) in the commentary block, never
-  the selection.
+  only — that's the user's focus area. The commentary block's builders
+  (`build_leaderboard` / `build_launch_cards`) compute over the
+  whole catalog (`arp_universe_prices`), never the selection.
+- **Refresh invalidates; a toggle re-slices (v0.9.20 #290).** The commentary
+  block's `highlights_cache` on `DashboardApp` is keyed by window, with one
+  extra `"launches"` entry. `_recompute` clears it — a fresh fetch makes every
+  ranking stale — while the Ranking-window toggle and the Commentary /
+  New Launches pill only *read* it, so neither issues a BQL call. A window
+  already computed is returned by identity, which is what makes the toggle feel
+  live. The corollary: anything that changes the underlying prices must go
+  through `_recompute`, because nothing else drops the cache.
+- **A compute failure keeps the last good board.** `_render_leaderboard`
+  appends its traceback to `errors_w` rather than writing it over the board. A
+  board that is merely stale beats no board at all, and the toggle that caused
+  the failure is one click from a window that works. `errors_w` is a sibling of
+  the block's two panes, never inside one, so no live control can wipe it.
 - **Per-pane charts are pre-allocated, populated lazily (v0.6.9
   Workstream D)**: each `AnalysisPane` owns one fresh `Chart` per analysis type
   (unique instances, so the two panes never share a figure). Each chart builds
@@ -311,8 +323,8 @@ CSS, style tokens — live in `style.md`.)
   (`src/layout/app.py`: `_set_date_bounds`, `_on_range_box`).
 - **Inline HTML lives in `data/templates/`, not Python.** Every HTML
   snippet the UI builds (banner, status banner, section labels, quant-row
-  labels, the two-section Key-Highlights cards/wrapper (`superlative_card`,
-  `launch_card`, `launch_empty`, `highlights_two_col`), error box,
+  labels, the commentary block's cards and boards (`launch_card`,
+  `launch_empty`, `launches_board`, `leaderboard_column_title`), error box,
   weekly-commentary wrapper + fallback, grid headers) is a `*.html` file
   rendered via
   `render_template(name, /, **ctx)` in `src/layout/html.py`. Templates carry
