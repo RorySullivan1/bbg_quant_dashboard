@@ -191,14 +191,32 @@ def _rail_heading(text: str) -> W.HTML:
     return heading
 
 
-def control_rail(*sections: RailSection, width: str = RAIL_WIDTH) -> W.VBox:
-    """A rail: its sections stacked in the order given.
+def _rail_title(text: str) -> W.HTML:
+    """A rail's own title, above its sections.
+
+    A rail whose sections are each one facet of a single control — Metric /
+    Window / Lookback, all of them the z-score's (#279) — needs to say what
+    they are facets *of*, and it cannot say it in the section headings without
+    spelling "Z-Score" three times. A rail whose sections stand on their own
+    (#278's Group by / Window) passes no title and renders without one.
+    """
+    title = W.HTML(html.escape(text))
+    title.add_class("bbg-rail-title")
+    return title
+
+
+def control_rail(
+    *sections: RailSection, title: str | None = None, width: str = RAIL_WIDTH
+) -> W.VBox:
+    """A rail: its sections stacked in the order given, under an optional title.
 
     Declared, not assembled — the caller says what the rail contains and this
     owns the frame, the fixed basis and the heading treatment, so the two
     Platform rails cannot drift apart.
     """
     children: list[W.Widget] = []
+    if title is not None:
+        children.append(_rail_title(title))
     for section in sections:
         children.append(_rail_heading(section.heading))
         children.append(section.control)

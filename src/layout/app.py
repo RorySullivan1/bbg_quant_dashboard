@@ -383,49 +383,31 @@ class DashboardApp:
         self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
-        """The all-catalog grid and its Z-Score ranking controls."""
-        self.z_metric_dd = W.Dropdown(
-            options=[
+        """The all-catalog grid and its Z-Score ranking chips."""
+        self.z_metric_chips = ChipGroup(
+            [
                 ("Sharpe", "sharpe"),
                 ("Sortino", "sortino"),
                 ("Return", "return"),
                 ("Vol", "vol"),
             ],
             value="sharpe",
-            description="Metric",
-            style={"description_width": "55px"},
-            layout=W.Layout(width="175px"),
         )
-        self.z_window_dd = W.Dropdown(
-            options=[
+        self.z_window_chips = ChipGroup(
+            [
                 ("1M", MONTH_WINDOW),
                 ("3M", QUARTER_WINDOW),
                 ("6M", HALF_YEAR_WINDOW),
             ],
             value=MONTH_WINDOW,
-            description="Window",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="165px"),
         )
-        self.z_lookback_dd = W.Dropdown(
-            options=[
+        self.z_lookback_chips = ChipGroup(
+            [
                 ("1Y", TRADING_DAYS_PER_YEAR),
                 ("3Y", TRADING_DAYS_PER_YEAR * 3),
                 ("5Y", TRADING_DAYS_PER_YEAR * 5),
             ],
             value=TRADING_DAYS_PER_YEAR,
-            description="Lookback",
-            style={"description_width": "70px"},
-            layout=W.Layout(width="180px"),
-        )
-        self.z_controls_row = W.HBox(
-            [
-                _section_label("Z-Score ranking"),
-                self.z_metric_dd,
-                self.z_window_dd,
-                self.z_lookback_dd,
-            ],
-            layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
 
         self.pane_left = _make_analysis_pane("left", registry=self.benchmarks)
@@ -449,6 +431,25 @@ class DashboardApp:
         return control_rail(
             RailSection("Group by", self._build_group_chips()),
             RailSection("Window", self._build_window_chips()),
+        )
+
+    def _build_right_rail(self) -> W.VBox:
+        """The Z-Score ranking, beside the table rather than above it (#279).
+
+        Three facets of one control, so the rail is titled and the sections
+        are named for the facets — spelling "Z-Score" into each heading would
+        say it three times to say it once.
+
+        Chips rather than the three `W.Dropdown`s this was: a dropdown hides
+        its options, so the user could not see that the column they are reading
+        is one of four metrics without opening it. Ten chips is the whole
+        choice, visible.
+        """
+        return control_rail(
+            RailSection("Metric", self.z_metric_chips),
+            RailSection("Window", self.z_window_chips),
+            RailSection("Lookback", self.z_lookback_chips),
+            title="Z-Score ranking",
         )
 
     def _build_group_chips(self) -> MultiChipGroup:
@@ -564,32 +565,27 @@ class DashboardApp:
         """The three tab panels and the top-level tab bar."""
         self.analytics = PlatformAnalytics(
             self.state,
-            z_metric_dd=self.z_metric_dd,
-            z_window_dd=self.z_window_dd,
-            z_lookback_dd=self.z_lookback_dd,
+            z_metric_chips=self.z_metric_chips,
+            z_window_chips=self.z_window_chips,
+            z_lookback_chips=self.z_lookback_chips,
         )
         # A callable, so the observers always see the *current* catalog —
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
-        # The three-column Platform shell (#278): a control rail on each side
-        # of the table, so the controls read as the table's own axes rather
-        # than as another row of widgets above it (#273). The right slot is a
-        # placeholder until #279 moves the Z-Score ranking into it; it carries
-        # no basis of its own, so an unfilled rail costs no width.
-        self.right_rail_slot = W.Box(layout=W.Layout(flex="0 0 auto"))
+        # The three-column Platform shell (#278, #279): a control rail on each
+        # side of the table, so the controls read as the table's own axes
+        # rather than as another row of widgets above it (#273). Nothing sits
+        # between the header and the table any more.
+        self.left_rail = self._build_left_rail()
+        self.right_rail = self._build_right_rail()
         self.universe_grid_row = W.HBox(
-            [
-                self._build_left_rail(),
-                self.universe_grid.widget,
-                self.right_rail_slot,
-            ],
+            [self.left_rail, self.universe_grid.widget, self.right_rail],
             layout=W.Layout(width="100%", align_items="flex-start"),
         )
         platform_panel = W.VBox(
             [
                 self.universe_header,
-                self.z_controls_row,
                 self.universe_grid_row,
                 self.analytics.card,
             ],

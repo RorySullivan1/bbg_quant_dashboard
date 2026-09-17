@@ -164,3 +164,20 @@ def test_a_rail_is_typed_and_holds_its_basis():
     assert rail.layout.width == "210px"
     # It must not flex: the table between the rails absorbs the width (#280).
     assert rail.layout.flex == "0 0 210px"
+
+
+def test_a_rail_can_carry_a_title_above_its_sections():
+    # A rail whose sections are facets of one control says so once (#279).
+    rail = control_rail(
+        RailSection("Metric", ChipGroup(WINDOWS)),
+        RailSection("Window", ChipGroup(WINDOWS)),
+        title="Z-Score ranking",
+    )
+    assert "bbg-rail-title" in _classes(rail.children[0])
+    assert rail.children[0].value == "Z-Score ranking"
+
+
+def test_a_rail_without_a_title_renders_none():
+    rail = control_rail(RailSection("Window", ChipGroup(WINDOWS)))
+    assert not any("bbg-rail-title" in _classes(c) for c in rail.children)
+    assert "bbg-rail-title" in render_template("app_css", **STYLE_CTX)

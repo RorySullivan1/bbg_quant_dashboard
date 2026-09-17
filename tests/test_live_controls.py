@@ -144,3 +144,36 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
             dd.value = other
 
     assert calls["n"] == after_refresh
+
+
+def test_a_z_score_change_rerenders_the_column_without_refetching(monkeypatch):
+    """The Z-Score rail re-slices the cache; it never issues a fetch (#279).
+
+    The controls became chips in a rail beside the table, which is a chrome
+    change — but they drive `render_universe_grid`, so the guarantee that a
+    metric/window/lookback change costs no BQL is worth holding onto through
+    the swap.
+    """
+    from src.layout.app import DashboardApp
+
+    calls = _patch_fetch_counter(monkeypatch)
+    app = DashboardApp(verbose=False)
+    assert calls["n"] == 1  # the one startup fetch
+    after_load = calls["n"]
+
+    def _z_columns():
+        return [
+            c for c in app.universe_grid._display.columns if c.startswith("Z-Score")
+        ]
+
+    assert _z_columns() == ["Z-Score Sharpe 1M/1Y"]
+
+    # Click, rather than set the trait: the handler wiring is half of what is
+    # being asserted.
+    sortino = dict(
+        zip(app.z_metric_chips.labels, app.z_metric_chips.children, strict=True)
+    )["Sortino"]
+    sortino.click()
+
+    assert _z_columns() == ["Z-Score Sortino 1M/1Y"]
+    assert calls["n"] == after_load

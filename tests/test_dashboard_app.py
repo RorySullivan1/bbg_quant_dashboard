@@ -13,7 +13,13 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from src.config import FACTOR_TICKERS, REGIME_TICKERS
+from src.config import (
+    FACTOR_TICKERS,
+    MONTH_WINDOW,
+    QUARTER_WINDOW,
+    REGIME_TICKERS,
+    universe_grid_default_window,
+)
 from src.layout.app import DashboardApp
 from src.price_source import MockPriceSource
 
@@ -277,22 +283,41 @@ def test_clicking_a_window_chip_moves_the_grid(app):
 
 def test_the_platform_shell_is_a_rail_either_side_of_the_grid(app):
     # The controls read as the table's own axes rather than as another row of
-    # widgets above it, which is why this is an HBox and not another row. The
-    # right slot is empty until #279 moves the Z-Score ranking into it.
+    # widgets above it, which is why this is an HBox and not another row.
     left, table, right = app.universe_grid_row.children
+    assert (left, right) == (app.left_rail, app.right_rail)
     assert table is app.universe_grid.widget
-    assert right is app.right_rail_slot
-    assert right.children == ()
     # Group by above Window: the order the two controls act in.
     assert list(left.children).index(app.group_chips) < list(left.children).index(
         app.window_chips
     )
+    # Metric, Window, Lookback — the three facets of the z-score, in that order.
+    z_chips = [app.z_metric_chips, app.z_window_chips, app.z_lookback_chips]
+    assert [c for c in right.children if c in z_chips] == z_chips
 
 
-def test_no_control_row_above_the_grid_carries_the_grouping(app):
-    # #278 moved it into the rail; z_controls_row keeps only the z-score
-    # dropdowns until #279 retires it.
-    assert app.group_chips not in app.z_controls_row.children
+def test_no_control_row_sits_above_the_grid(app):
+    # #278 moved the grouping into the left rail and #279 the z-score ranking
+    # into the right one, which retired the row they shared.
+    assert not hasattr(app, "z_controls_row")
+
+
+def test_the_z_score_column_header_follows_the_chips(app):
+    app.z_metric_chips.value = "sortino"
+    app.z_window_chips.value = QUARTER_WINDOW
+    zcols = [c for c in app.universe_grid._display.columns if c.startswith("Z-Score")]
+    assert zcols == ["Z-Score Sortino 3M/1Y"]
+    app.z_metric_chips.value = "sharpe"
+    app.z_window_chips.value = MONTH_WINDOW
+
+
+def test_the_window_chips_cannot_hide_the_z_score_column(app):
+    # The z-score's own window is embedded in its label ("Sharpe 1M/1Y"), which
+    # `_window_of` deliberately does not match — a stats-window switch must not
+    # take the column with it (#279).
+    app.window_chips.value = "6M"
+    assert any(c.startswith("Z-Score") for c in app.universe_grid._display.columns)
+    app.window_chips.value = universe_grid_default_window()
 
 
 # --- the commentary block: leaderboard + switchable pane (#290) -------------

@@ -59,19 +59,22 @@ def test_build_app_renders_expected_tree():
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
-    # v0.7.0 Workstream A: a Z-Score control row (Metric/Window/Lookback) above
-    # the grid, defaulting to z(1M Sharpe, 1Y). The three analytics charts now
-    # live in one boxed "Platform analytics" card with inner pill-tabs sharing
-    # the lookback toggle (sunburst default tab).
+    # v0.7.0 Workstream A: Z-Score ranking (Metric/Window/Lookback) defaulting
+    # to z(1M Sharpe, 1Y) — since #279 three chip groups in the rail to the
+    # RIGHT of the grid rather than a control row above it. The three analytics
+    # charts live in one boxed "Platform analytics" card with inner pill-tabs
+    # sharing the lookback toggle (sunburst default tab).
     import plotly.graph_objects as go
+    from src.layout.rails import ChipGroup
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    # Grid group (header + z-score controls + grid) then the analytics card.
-    universe_header, controls, grid, analytics_card = platform_panel.children
-    dropdowns = [c for c in controls.children if isinstance(c, W.Dropdown)]
-    assert [d.label for d in dropdowns] == ["Sharpe", "1M", "1Y"]
+    # Header, then the three-column grid row, then the analytics card.
+    universe_header, grid_row, analytics_card = platform_panel.children
+    right_rail = grid_row.children[-1]
+    z_chips = [c for c in right_rail.children if isinstance(c, ChipGroup)]
+    assert [c.label for c in z_chips] == ["Sharpe", "1M", "1Y"]
 
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].
@@ -125,7 +128,7 @@ def test_regime_analysis_section_conditions_live():
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
-    analytics_card = platform_panel.children[3]
+    analytics_card = platform_panel.children[-1]  # the analytics card is last (#279)
     tab_bar, body = analytics_card.children[1], analytics_card.children[2]
     pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
     pills[1].click()  # activate the Regime analysis tab
