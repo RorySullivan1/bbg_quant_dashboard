@@ -547,9 +547,19 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
 #: DataTables' bundled one — see the `.bbg-catalog` block in `app_css.html`.
 CATALOG_TABLE_CLASS: str = "bbg-catalog"
 
-#: Rows shown before DataTables paginates. The catalog is a browse surface, so
-#: it scrolls rather than paging; the value caps the DOM for a large catalog.
-_CATALOG_SCROLL_Y: str = "360px"
+# The catalog scrolls rather than pages, but that scrolling is done in CSS
+# (`.bbg-catalog` in `app_css.html`), NOT by DataTables' `scrollY`.
+#
+# `scrollY` puts the header in its own table and sizes both tables once, at
+# init. Anything that changes the metrics afterwards — the container settling
+# to its real width, or this app's own `!important` font rules landing after
+# DataTables measured — leaves the two at different widths, and the header sits
+# off its columns until a redraw snaps it back. On a BQuant terminal that
+# showed as headers that needed one click to jump into place. Measured here at
+# a 169px drift across an 18-column table, which a redraw did not always clear.
+#
+# A CSS-scrolled container keeps header and body in **one** table, so there is
+# nothing to drift: measured at a 0px offset, including after a resize.
 
 
 def _catalog_group_labels() -> list[str]:
@@ -670,8 +680,6 @@ def _catalog_table_options(frame: pd.DataFrame, groups: list[str]) -> dict:
         "columnDefs": column_defs,
         "showIndex": False,
         "paging": False,
-        "scrollY": _CATALOG_SCROLL_Y,
-        "scrollCollapse": True,
         # The frame arrives already ordered (see `_group_ordered`); an initial
         # DataTables sort would undo the grouping contiguity it establishes.
         "order": [],

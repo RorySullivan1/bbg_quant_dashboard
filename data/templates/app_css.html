@@ -397,6 +397,32 @@ div.itables_anywidget.bbg-catalog {
   border-radius: 6px;
   overflow: hidden;
 }
+/* The catalog scrolls here rather than through DataTables' `scrollY`.
+   `scrollY` renders the header in a second table and sizes the two once, at
+   init; when the container settles to its real width afterwards — or when the
+   font rules below land after DataTables measured — they end up different
+   widths and the header sits off its columns until a redraw. That is the
+   "headers need one click to snap into place" symptom. Scrolling the row that
+   holds the table keeps header and body in ONE table, so they cannot drift. */
+div.itables_anywidget .dt-layout-row.dt-layout-table {
+  overflow: visible;
+}
+/* The scroll goes on the CELL, not the row. DataTables' own stylesheet already
+   gives `.dt-layout-cell` `overflow: auto`, which makes it the nearest
+   scrolling ancestor of the header — so a sticky `th` sticks to the cell
+   whatever the row does. Scrolling the row instead left the header scrolling
+   away with the body. */
+div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
+  max-height: 360px;
+  overflow: auto;
+}
+/* Sticky header, which is the one thing `scrollY` gave us for free. It needs
+   an opaque background — the body scrolls underneath it, not behind a gap. */
+div.itables_anywidget table.dataTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
 div.itables_anywidget table.dataTable,
 div.itables_anywidget table.dataTable tbody td,
 div.itables_anywidget table.dataTable tbody th {

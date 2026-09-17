@@ -421,3 +421,44 @@ def test_the_catalog_is_never_downsampled():
     frame = _frame(meta, _zcol(meta))
     display, groups = _catalog_display_frame(frame, _catalog_group_labels())
     assert _catalog_table_options(display, groups)["maxBytes"] == 0
+
+
+# --- header alignment: why the catalog does not use DataTables scrolling ----
+
+
+def _catalog_css() -> str:
+    from src.config import TEMPLATES_DIR
+
+    return (TEMPLATES_DIR / "app_css.html").read_text(encoding="utf-8")
+
+
+def test_the_catalog_does_not_use_datatables_scrolling():
+    # `scrollY` renders the header in a SECOND table and sizes both once, at
+    # init. When the container settles to its real width afterwards — or when
+    # this app's `!important` font rules land after DataTables measured — the
+    # two end up different widths and the header sits off its columns until a
+    # redraw. On a BQuant terminal that showed as headers needing one click to
+    # snap into place; measured here at a 169px drift across 18 columns.
+    #
+    # Scrolling in CSS keeps header and body in one table, where they cannot
+    # drift. Re-adding either option brings the bug back with no other symptom,
+    # so it is pinned rather than left to a comment.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    options = _catalog_table_options(display, groups)
+    assert "scrollY" not in options
+    assert "scrollCollapse" not in options
+
+
+def test_the_stylesheet_scrolls_the_catalog_and_pins_its_header():
+    # The scroll must sit on `.dt-layout-cell`, not the row around it:
+    # DataTables' own stylesheet already gives the cell `overflow: auto`, which
+    # makes it the nearest scrolling ancestor of the header. Scrolling the row
+    # instead leaves the header scrolling away with the body — sticky in name
+    # and not in behaviour.
+    css = _catalog_css()
+    assert ".dt-layout-row.dt-layout-table .dt-layout-cell" in css
+    assert "max-height" in css
+    sticky = css[css.index("table.dataTable thead th {") :]
+    assert "position: sticky" in sticky[:400]
