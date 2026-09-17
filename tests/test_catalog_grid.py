@@ -330,3 +330,135 @@ def _up(tickers) -> pd.DataFrame:
         len(tickers), len(cols)
     )
     return pd.DataFrame(data, index=pd.Index(tickers, name="ticker"), columns=cols)
+
+
+# --- a clicked row names a strategy (#265) ---------------------------------
+
+
+def _grid_with(picked: list[str]):
+    """A populated grid whose picks land in `picked`."""
+    from src.layout.grids import UniverseGrid
+
+    meta = _catalog()
+    grid = UniverseGrid(on_pick=picked.append)
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    return grid
+
+
+def test_a_selected_row_reports_the_ticker_at_that_position():
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    # The widget reports a row by position into the data it was given, so the
+    # expected ticker is read off the same frame rather than assumed to be the
+    # catalog's source order — which the grouping has already changed.
+    for position in (0, 3, len(grid._tickers) - 1):
+        picked.clear()
+        grid.widget.selected_rows = [position]
+        assert picked == [grid._tickers[position]]
+
+
+def test_deselecting_is_a_no_op_rather_than_a_blank_selection():
+    # Clicking the selected row again deselects it. Treating that as "the user
+    # chose nothing" and clearing the analysis panes would be worse than
+    # useless, so an empty list must not reach the callback at all.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    grid.widget.selected_rows = [1]
+    assert len(picked) == 1
+    grid.widget.selected_rows = []
+    assert len(picked) == 1  # unchanged, and no exception
+
+
+def test_a_row_position_outside_the_current_frame_is_ignored():
+    # Reachable when a re-render lands between the click and the callback.
+    # Unguarded this raises inside traitlets, where the exception surfaces as a
+    # widget that has quietly stopped responding rather than as an error.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    grid.widget.selected_rows = [len(grid._tickers) + 5]
+    assert picked == []
+
+
+def test_a_grid_with_no_callback_still_accepts_clicks():
+    from src.layout.grids import UniverseGrid
+
+    grid = UniverseGrid()
+    meta = _catalog()
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    grid.widget.selected_rows = [0]  # must not raise
+
+
+def test_the_row_to_ticker_map_follows_the_rendered_frame():
+    # The map is rebuilt on the single write path, so a re-render with a
+    # different catalog cannot leave the previous catalog's tickers behind —
+    # which would route clicks to strategies that are no longer on screen.
+    picked: list[str] = []
+    grid = _grid_with(picked)
+    first = grid._tickers
+    smaller = _catalog().head(4)
+    grid.update(smaller, pd.DataFrame(), zcol=_zcol(smaller), zlabel=_Z_LABEL)
+    assert len(grid._tickers) == 4
+    assert grid._tickers != first
+    grid.widget.selected_rows = [2]
+    assert picked[-1] == grid._tickers[2]
+
+
+def test_the_catalog_enables_single_row_selection():
+    # Without the Select extension switched on, `selected_rows` never changes
+    # and every test above passes against a table nobody can click.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    options = _catalog_table_options(display, groups)
+    assert options["select"] == {"style": "single"}
+
+
+def test_the_catalog_is_never_downsampled():
+    # itables drops the middle of a table over ~64KB of JSON. On a browse
+    # surface that is silent data loss, and the row a user wants is as likely
+    # to be in the dropped middle as anywhere.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    assert _catalog_table_options(display, groups)["maxBytes"] == 0
+
+
+# --- header alignment: why the catalog does not use DataTables scrolling ----
+
+
+def _catalog_css() -> str:
+    from src.config import TEMPLATES_DIR
+
+    return (TEMPLATES_DIR / "app_css.html").read_text(encoding="utf-8")
+
+
+def test_the_catalog_does_not_use_datatables_scrolling():
+    # `scrollY` renders the header in a SECOND table and sizes both once, at
+    # init. When the container settles to its real width afterwards — or when
+    # this app's `!important` font rules land after DataTables measured — the
+    # two end up different widths and the header sits off its columns until a
+    # redraw. On a BQuant terminal that showed as headers needing one click to
+    # snap into place; measured here at a 169px drift across 18 columns.
+    #
+    # Scrolling in CSS keeps header and body in one table, where they cannot
+    # drift. Re-adding either option brings the bug back with no other symptom,
+    # so it is pinned rather than left to a comment.
+    meta = _catalog()
+    frame = _frame(meta, _zcol(meta))
+    display, groups = _catalog_display_frame(frame, _catalog_group_labels())
+    options = _catalog_table_options(display, groups)
+    assert "scrollY" not in options
+    assert "scrollCollapse" not in options
+
+
+def test_the_stylesheet_scrolls_the_catalog_and_pins_its_header():
+    # The scroll must sit on `.dt-layout-cell`, not the row around it:
+    # DataTables' own stylesheet already gives the cell `overflow: auto`, which
+    # makes it the nearest scrolling ancestor of the header. Scrolling the row
+    # instead leaves the header scrolling away with the body — sticky in name
+    # and not in behaviour.
+    css = _catalog_css()
+    assert ".dt-layout-row.dt-layout-table .dt-layout-cell" in css
+    assert "max-height" in css
+    sticky = css[css.index("table.dataTable thead th {") :]
+    assert "position: sticky" in sticky[:400]

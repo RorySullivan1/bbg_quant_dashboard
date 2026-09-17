@@ -367,7 +367,7 @@ class DashboardApp:
             [_section_label("Superlatives window"), self.superlative_window],
             layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
-        self.universe_grid = UniverseGrid()
+        self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
         """The all-catalog grid and its Z-Score ranking controls."""
@@ -775,6 +775,33 @@ class DashboardApp:
         _style_tab_button(self.selected_btn, active=which == "selected")
         _style_tab_button(self.single_btn, active=which == "single")
         self.top_tab_content.children = (self._top_panels[which],)
+
+    def _show_in_single_strategy(self, ticker: str) -> None:
+        """Route a click on the all-catalog grid into the Single Strategy tab.
+
+        Sets the picker's value and lets that picker's own observer render,
+        rather than rendering here — a click and a manual pick then cannot
+        diverge, and this stays one line of routing instead of a second copy of
+        the render path.
+
+        The Single Strategy tab has its own filter accordion, which can narrow
+        the picker below the full catalog, so a clicked index may not currently
+        be on offer. Refusing the click would be a dead end — the user named the
+        strategy they want — so the filters are cleared to reach it, and the
+        status says so: silently discarding someone's filters is the part that
+        would be surprising, not the widening itself.
+        """
+        panel = self.single_strategy
+        offered = {o[1] if isinstance(o, tuple) else o for o in panel.picker.options}
+        if ticker not in offered:
+            panel.filters.clear_all()
+            self._on_single_filter_change()
+            self._set_status(
+                f"Cleared the Single Strategy filters to show {ticker}.",
+                tone=StatusTone.INFO,
+            )
+        panel.picker.value = ticker
+        self._activate_tab("single")
 
     def _default_selection(self) -> tuple[str, ...]:
         """The startup strategy selection: the 5 indices with the highest

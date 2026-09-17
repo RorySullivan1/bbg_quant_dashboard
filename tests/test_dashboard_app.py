@@ -133,3 +133,63 @@ def test_benchmark_window_note_flags_a_late_start(app):
     # bdate_range snaps a weekend start forward to the next business day.
     # Asserting `start` here passes or fails on what weekday today is.
     assert str(idx[0].date()) in note
+
+
+# --- a catalog-grid click steers the Single Strategy tab (#265) -------------
+
+
+def _offered(app) -> list[str]:
+    return [
+        o[1] if isinstance(o, tuple) else o for o in app.single_strategy.picker.options
+    ]
+
+
+def test_a_catalog_click_opens_that_strategy_in_single_strategy(app):
+    target = _offered(app)[-1]
+    app._show_in_single_strategy(target)
+    assert app.single_strategy.picker.value == target
+    # And the user is taken there, not left on Platform wondering what happened.
+    assert app.top_tab_content.children == (app._top_panels["single"],)
+
+
+def test_the_catalog_click_goes_through_the_picker_not_around_it(app):
+    # Routing sets the picker's value and lets that picker's own observer
+    # render. If this ever renders directly instead, a click and a manual pick
+    # can diverge — the bug would be two code paths, not one wrong line.
+    seen: list[object] = []
+    app.single_strategy.picker.observe(seen.append, names="value")
+    try:
+        first, second = _offered(app)[0], _offered(app)[1]
+        app._show_in_single_strategy(first)
+        app._show_in_single_strategy(second)
+        assert [c["new"] for c in seen][-2:] == [first, second]
+    finally:
+        app.single_strategy.picker.unobserve(seen.append, names="value")
+
+
+def test_a_filtered_out_strategy_clears_the_filters_and_says_so(app):
+    # The Single Strategy tab has its own filters, which can narrow the picker
+    # below the full catalog. Refusing the click would be a dead end — the user
+    # named the strategy they want — but silently discarding their filters is
+    # the surprising part, so it has to be reported.
+    everything = list(app.meta["ticker"])
+    target = everything[-1]
+    # Narrow the picker so `target` is not on offer.
+    app.single_strategy._suspend = True
+    try:
+        app.single_strategy.picker.options = _ticker_options_for(app, everything[:1])
+        app.single_strategy.picker.value = everything[0]
+    finally:
+        app.single_strategy._suspend = False
+    assert target not in _offered(app)
+
+    app._show_in_single_strategy(target)
+    assert app.single_strategy.picker.value == target
+    assert target in _offered(app)
+    assert target in app.state.status_w.value
+
+
+def _ticker_options_for(app, tickers):
+    from src.layout.app import _ticker_options
+
+    return _ticker_options(app.meta.loc[app.meta["ticker"].isin(tickers)])
