@@ -20,6 +20,7 @@ import pandas as pd
 
 from ..commentary import LaunchCard, SuperlativeCard
 from ..config import (
+    NEW_LAUNCH_DAYS,
     PROFILE_CARD_FIELDS,
     TEMPLATES_DIR,
     WEEKLY_COMMENTARY_PATH,
@@ -177,6 +178,28 @@ def _render_launch_cards(cards: list[LaunchCard]) -> str:
             since_return=html.escape(_fmt_since_return(c.since_return)),
         )
         for c in cards
+    )
+
+
+def _render_launches(cards: list[LaunchCard]) -> str:
+    """The New Launches board: the launch cards under a titled section.
+
+    Split out of `_render_highlights` for the switchable commentary pane
+    (v0.9.20, #289), which shows this board on its own rather than beside the
+    superlatives. Unlike `_render_highlights` it never returns `""` — the pane
+    that mounts it is reached by a deliberate click, so an empty board must say
+    there is nothing rather than leave the pane blank. `_render_launch_cards`
+    supplies that message.
+
+    The subtitle reads `NEW_LAUNCH_DAYS` rather than re-spelling the window, so
+    widening the launch window retitles the board on its own.
+    """
+    return render_template(
+        "launches_board",
+        **STYLE_CTX,
+        title=html.escape("New Launches"),
+        subtitle=html.escape(f"· live in the past {NEW_LAUNCH_DAYS} days"),
+        cards=_render_launch_cards(cards),
     )
 
 
