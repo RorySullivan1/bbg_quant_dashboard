@@ -33,11 +33,12 @@ from IPython import get_ipython
 from IPython.display import display
 
 from ..bql_client import _DEFAULT_CACHE, TickersUnresolved, fetch_prices
-from ..commentary import build_launch_cards, build_leaderboard, superlative_returns
+from ..commentary import build_launch_cards, build_leaderboard, window_returns
 from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
     FACTOR_TICKERS,
     HALF_YEAR_WINDOW,
+    LEADERBOARD_WINDOW_DAYS,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
     MAX_SELECTED_STRATEGIES,
@@ -46,7 +47,6 @@ from ..config import (
     QUARTER_WINDOW,
     REGIME_TICKERS,
     SHORT_WINDOW_OPTIONS,
-    SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
@@ -368,7 +368,7 @@ class DashboardApp:
         leaderboard, and the switchable Commentary / New Launches pane."""
         self.ranking_window = W.ToggleButtons(
             options=SHORT_WINDOW_OPTIONS,
-            value=SUPERLATIVE_WINDOW_DAYS,
+            value=LEADERBOARD_WINDOW_DAYS,
             layout=W.Layout(width="auto"),
         )
         self.ranking_window_row = W.HBox(
@@ -1085,9 +1085,7 @@ class DashboardApp:
                 # Only the trailing window feeds the returns-based metrics, so
                 # derive daily_returns over just the span they need rather than
                 # over the whole 5-year slice.
-                window_rets = superlative_returns(
-                    universe_window, window_days=window_days
-                )
+                window_rets = window_returns(universe_window, window_days=window_days)
                 columns = build_leaderboard(
                     self.meta, universe_window, window_rets, window_days=window_days
                 )

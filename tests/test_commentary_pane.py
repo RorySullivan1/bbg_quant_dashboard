@@ -112,7 +112,7 @@ def test_showing_the_open_board_again_is_harmless():
 def test_an_unknown_view_is_refused():
     pane = _pane()
     with pytest.raises(KeyError):
-        pane.show("superlatives")  # type: ignore[arg-type]
+        pane.show("highlights")  # type: ignore[arg-type]
 
 
 def test_the_pills_never_carry_an_inline_colour():

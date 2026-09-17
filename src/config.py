@@ -27,9 +27,10 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
-#: Trailing window (trading days, ~1 month) for the monthly "Market
-#: Superlatives" board, computed whole-catalog from the already-fetched prices.
-SUPERLATIVE_WINDOW_DAYS = 21
+#: Trailing window (trading days, ~1 month) the leaderboard ranks over on load,
+#: computed whole-catalog from the already-fetched prices. The Ranking window
+#: toggle moves it live; this is only the default.
+LEADERBOARD_WINDOW_DAYS = 21
 
 #: How many indices each leaderboard column lists at the top and at the
 #: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again
@@ -48,7 +49,7 @@ MONTH_WINDOW = 21
 QUARTER_WINDOW = 63
 HALF_YEAR_WINDOW = 126
 
-#: Shared window options and day → label map, so the superlatives toggle, the
+#: Shared window options and day → label map, so the ranking-window toggle, the
 #: sunburst Z-score control, and the Quantitative Z-Score window agree without
 #: re-spelling the list at each widget.
 SHORT_WINDOW_OPTIONS: list[tuple[str, int]] = [

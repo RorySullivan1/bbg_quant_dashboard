@@ -33,7 +33,30 @@ import ipywidgets as W
 
 from ..commentary import LEADERBOARD_METRICS, LeaderboardColumn, LeaderboardRow
 from ..config import LEADERBOARD_ROWS
-from .html import STYLE_CTX, _superlative_value_color, render_template
+from ..style import Color, Sentiment
+from .html import STYLE_CTX, render_template
+
+
+def _value_color(sentiment: Sentiment) -> str:
+    """Sentiment → a row's value colour on the dark surface.
+
+    Reuses the shared green/red sentiment palette but maps ``NEUTRAL`` to the
+    bright chrome text token: the shared ``Sentiment.NEUTRAL`` is brand navy,
+    which is illegible here.
+
+    Takes the enum member, not its name. `Sentiment` is a `StrEnum` over *color*
+    values, so a member's string form is a hex code — feeding one to
+    `_sentiment_color`, which looks up by member *name*, would miss and silently
+    return neutral for every row.
+
+    (Lived in `html.py` as `_superlative_value_color` until v0.9.20 #291, when
+    the cards it was written for were retired and the leaderboard, its only
+    remaining caller, took it in.)
+    """
+    if sentiment is Sentiment.NEUTRAL:
+        return str(Color.TEXT)
+    return str(sentiment.value)
+
 
 #: Cell widths. The ticker cell flexes; the rank and value cells are fixed so
 #: the four columns' numbers line up vertically regardless of ticker length.
@@ -93,7 +116,7 @@ class _RowSlot:
         # cannot come from the stylesheet the way the rank and ticker colours
         # do. Neutral maps to bright chrome text, not the shared brand navy,
         # which is illegible on the dark surface.
-        self.value.style.text_color = _superlative_value_color(row.sentiment)
+        self.value.style.text_color = _value_color(row.sentiment)
         self.root.layout.visibility = "visible"
 
     def blank(self) -> None:

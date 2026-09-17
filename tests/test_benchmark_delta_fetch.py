@@ -190,7 +190,7 @@ def test_an_added_benchmark_lands_in_the_price_cache(captured):
 def test_an_added_benchmark_never_enters_the_universe_views(captured):
     # Benchmarks are scoped out by `reindex(columns=meta["ticker"])`; a user
     # benchmark is not a catalog member and must not show up in the grid,
-    # highlights, or superlatives.
+    # highlights, or the leaderboard.
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
 

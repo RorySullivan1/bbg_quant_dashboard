@@ -359,7 +359,7 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     # v0.9.20 (#290): the block above the tab bar is two panes side by side —
     # the ranked leaderboard on the left under its window toggle, the
     # Commentary / New Launches pane on the right. The 16-card Market
-    # Superlatives board it replaced must be nowhere on screen.
+    # 16-card board it replaced must be nowhere on screen.
     app = build_app(verbose=False)
     commentary_box = app.children[3]
     widgets = list(_walk(commentary_box))
@@ -372,7 +372,7 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     assert len(panes) == 1
 
     # The window toggle lives with the leaderboard, labelled for what it now
-    # ranks rather than for the retired superlatives board.
+    # ranks rather than for the board it replaced.
     toggle = next(
         w
         for w in widgets
@@ -383,13 +383,9 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     assert any("Ranking window" in (v or "") for v in labels)
     assert toggle.value == 21  # MONTH_WINDOW, the default
 
-    # No superlative card survives anywhere in the app. The injected
-    # stylesheet is excluded rather than pattern-matched around: it still
-    # carries the `.bbg-superlative` rule *and* a comment quoting the class
-    # attribute, so both a bare-token and an attribute match hit it. #291
-    # removes the rule with the template.
-    stylesheet = app.children[0]
-    rendered = [w for w in _walk(app) if isinstance(w, W.HTML) and w is not stylesheet]
+    # No trace of the retired board survives anywhere in the app — #291 took
+    # the cards, the two templates and the stylesheet rule with it.
+    rendered = [w for w in _walk(app) if isinstance(w, W.HTML)]
     assert rendered  # the sweep is not vacuous
     assert not any("bbg-superlative" in (w.value or "") for w in rendered)
 
@@ -413,42 +409,6 @@ def test_the_error_strip_sits_outside_both_panes():
     errors_w = commentary_box.children[0]
     assert errors_w not in list(_walk(board))
     assert errors_w not in list(_walk(pane))
-
-
-def test_highlights_sections_are_height_capped_and_scrollable():
-    # v0.8.x: each highlights section's card area is bounded (~22.5vh, halved in
-    # v0.8.11) and scrolls past it, so a tall board doesn't push the page down.
-    # The headers stay outside the scroll regions.
-    from datetime import date
-
-    from src.commentary import LaunchCard, SuperlativeCard
-    from src.layout.html import _render_highlights
-    from src.style import Sentiment
-
-    sup = [
-        SuperlativeCard(
-            label="Top performer",
-            value="+5.0%",
-            name="Alpha",
-            ticker="AAA",
-            sentiment=Sentiment.POSITIVE,
-            description="Highest return.",
-        )
-    ]
-    launches = [
-        LaunchCard(
-            name="New One",
-            ticker="NEW",
-            meta="Equity · Trend · USD",
-            live_date=date(2026, 5, 30),
-            days_ago=10,
-            since_return=0.02,
-        )
-    ]
-    html = _render_highlights(sup, launches)
-    # Both panels' card areas are capped + scrollable (one per section).
-    assert html.count("max-height:30vh") == 2
-    assert html.count("overflow-y:auto") == 2
 
 
 def test_masthead_renders():

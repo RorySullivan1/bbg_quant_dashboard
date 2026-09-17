@@ -1,9 +1,12 @@
 """Unit tests for the commentary builders.
 
-``build_superlatives`` (whole-catalog monthly extremes), ``build_launch_cards``
-(new-launch metadata) and ``build_leaderboard`` (v0.9.20, #287 — the top /
-bottom rows per metric) are pure functions over small fixed frames, mirroring
-the ``test_stats.py`` conventions.
+``build_leaderboard`` (v0.9.20 #287 — the top / bottom rows per metric) and
+``build_launch_cards`` (new-launch metadata) are pure functions over small
+fixed frames, mirroring the ``test_stats.py`` conventions.
+
+The ``build_superlatives`` cases were removed with the board in #291. Every
+metric they exercised still has its own unit test in ``test_stats.py``; what
+went was the card builder, not the maths.
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ from src.commentary import (
     LaunchCard,
     LeaderboardColumn,
     LeaderboardRow,
-    SuperlativeCard,
 )
 from src.config import LEADERBOARD_ROWS, TRADING_DAYS_PER_YEAR
 from src.stats import (
@@ -39,92 +41,12 @@ def _meta(rows: list[dict]) -> pd.DataFrame:
     return frame
 
 
-SUPERLATIVE_LABELS = {
-    "Best performer",
-    "Worst performer",
-    "Most trending",
-    "Most mean-reverting",
-    "Longest bull run",
-    "Longest bear run",
-    "Most extended up",
-    "Most extended down",
-    "Largest drawup",
-    "Deepest drawdown",
-    "Best risk-adjusted",
-    "Worst risk-adjusted",
-    "Highest win rate",
-    "Lowest win rate",
-    "Most positive skew",
-    "Most negative skew",
-}
-
-
-def _superlative_prices(bdays):
-    """Three noisy series with well-separated drift → deterministic extremes."""
-    rng = np.random.default_rng(5)
-    idx = bdays(40)
-    n = len(idx)
-    specs = {"AAA Index": 0.004, "BBB Index": -0.004, "CCC Index": 0.0}
-    data = {
-        t: 100.0 * np.cumprod(1.0 + rng.normal(d, 0.002, n)) for t, d in specs.items()
-    }
-    return pd.DataFrame(data, index=idx)
-
-
-def test_build_superlatives_all_cards_and_extremes(bdays):
-    prices = _superlative_prices(bdays)
-    returns = daily_returns(prices)
-    meta = _meta(
-        [
-            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
-            {"ticker": "BBB Index", "name": "Beta", "live_date": "2010-01-01"},
-            {"ticker": "CCC Index", "name": "Gamma", "live_date": "2010-01-01"},
-        ]
-    )
-    cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
-
-    assert {c.label for c in cards} == SUPERLATIVE_LABELS
-    for c in cards:
-        # The field set is the dataclass's now, so there is nothing to assert
-        # about which keys are present — only that the values are right.
-        assert isinstance(c, SuperlativeCard)
-        assert c.description  # every card carries a hover description
-
-    by_label = {c.label: c for c in cards}
-    # No asset_class column → all tickers share one cohort, so the demeaned
-    # z-rank is monotonic in the raw metric and the extremes match the raw ones.
-    assert by_label["Best performer"].ticker == "AAA Index"
-    assert by_label["Best performer"].name == "Alpha"
-    assert by_label["Worst performer"].ticker == "BBB Index"
-    # Opposite-extreme pairs pick opposite tickers.
-    assert (
-        by_label["Best risk-adjusted"].ticker != by_label["Worst risk-adjusted"].ticker
-    )
-
-
-def test_every_card_sentiment_is_a_sentiment_member(bdays):
-    # #224: sentiment used to be a bare string handed to a colour lookup, so a
-    # typo ("postive") fell through to neutral instead of failing. Typing the
-    # field makes the card's own construction the check.
-    prices = _superlative_prices(bdays)
-    returns = daily_returns(prices)
-    meta = _meta(
-        [
-            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
-            {"ticker": "BBB Index", "name": "Beta", "live_date": "2010-01-01"},
-            {"ticker": "CCC Index", "name": "Gamma", "live_date": "2010-01-01"},
-        ]
-    )
-    cards = commentary.build_superlatives(meta, prices, returns, window_days=21)
-    assert cards
-    for c in cards:
-        assert isinstance(c.sentiment, Sentiment), c.label
-
-
 def test_launch_cards_are_typed_with_a_real_date_and_a_numeric_return(bdays):
     # The builder returns a `date` and a `float | None`; turning those into an
     # ISO string and an em dash is the renderer's job (#224).
-    prices = _superlative_prices(bdays).rename(columns={"AAA Index": "NEW1 Index"})
+    prices = _leaderboard_prices(bdays, THREE_DRIFTS).rename(
+        columns={"AAA Index": "NEW1 Index"}
+    )
     as_of = prices.index.max().date()
     meta = _meta(
         [
@@ -146,175 +68,6 @@ def test_launch_cards_are_typed_with_a_real_date_and_a_numeric_return(bdays):
     # rather than a placeholder string.
     bare = commentary.build_launch_cards(meta, pd.DataFrame(), as_of=as_of)
     assert bare[0].since_return is None
-
-
-def test_build_superlatives_returns_slice_is_equivalent(bdays):
-    # v0.9.13: the highlights panel derives the returns frame over only the
-    # trailing window (+1 row) rather than the full 5-year slice. Every
-    # returns-based metric tails to ``window_days`` internally, so feeding the
-    # short slice must produce byte-identical cards to feeding the full returns.
-    idx = bdays(200)
-    rng = np.random.default_rng(11)
-    prices = pd.DataFrame(
-        {
-            "AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.003, 0.01, len(idx))),
-            "BBB Index": 100.0 * np.cumprod(1.0 + rng.normal(-0.002, 0.01, len(idx))),
-            "CCC Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0, 0.015, len(idx))),
-        },
-        index=idx,
-    )
-    meta = _meta(
-        [
-            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
-            {"ticker": "BBB Index", "name": "Beta", "live_date": "2010-01-01"},
-            {"ticker": "CCC Index", "name": "Gamma", "live_date": "2010-01-01"},
-        ]
-    )
-    full_rets = daily_returns(prices)
-    for window_days in (5, 21, 63, 126):  # the four superlative-toggle windows
-        short = commentary.superlative_returns(prices, window_days=window_days)
-        # The slice is a genuine trailing subset, not the whole history…
-        assert len(short) < len(full_rets)
-        # …yet every card is byte-identical to feeding the full-history returns.
-        full = commentary.build_superlatives(
-            meta, prices, full_rets, window_days=window_days
-        )
-        sliced = commentary.build_superlatives(
-            meta, prices, short, window_days=window_days
-        )
-        assert full == sliced, f"window_days={window_days}"
-
-
-def test_build_superlatives_z_ranked_value_is_raw_metric(bdays):
-    # Two asset classes: Equity sits structurally higher than Bond. The raw top
-    # performer is the high-class name (EQ2, +12%), but the asset-class-demeaned
-    # z-rank crowns the biggest *cohort-relative* mover (BD2, +6% vs a low Bond
-    # cohort). The "Best performer" card must name BD2 while still displaying
-    # BD2's raw return — proving value uses the raw metric, winner uses the z-rank.
-    idx = bdays(30)
-
-    def ramp(target: float) -> np.ndarray:
-        return np.linspace(100.0, 100.0 * (1.0 + target), len(idx))
-
-    prices = pd.DataFrame(
-        {
-            "EQ1 Index": ramp(0.10),
-            "EQ2 Index": ramp(0.12),
-            "BD1 Index": ramp(0.01),
-            "BD2 Index": ramp(0.06),
-        },
-        index=idx,
-    )
-    meta = _meta(
-        [
-            {
-                "ticker": "EQ1 Index",
-                "name": "E1",
-                "asset_class": "Equity",
-                "live_date": "2010-01-01",
-            },
-            {
-                "ticker": "EQ2 Index",
-                "name": "E2",
-                "asset_class": "Equity",
-                "live_date": "2010-01-01",
-            },
-            {
-                "ticker": "BD1 Index",
-                "name": "B1",
-                "asset_class": "Bond",
-                "live_date": "2010-01-01",
-            },
-            {
-                "ticker": "BD2 Index",
-                "name": "B2",
-                "asset_class": "Bond",
-                "live_date": "2010-01-01",
-            },
-        ]
-    )
-    cards = commentary.build_superlatives(
-        meta, prices, daily_returns(prices), window_days=len(idx)
-    )
-    best = next(c for c in cards if c.label == "Best performer")
-    assert best.ticker == "BD2 Index"  # cohort-relative winner, not the raw max
-    assert best.value == "+6.0%"  # but the displayed value is BD2's raw return
-
-
-def test_build_superlatives_empty_inputs():
-    assert (
-        commentary.build_superlatives(pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
-        == []
-    )
-
-
-def test_build_superlatives_single_ticker_renders(bdays):
-    # A single-ticker universe has a degenerate cross-section (the demeaned
-    # z-rank is undefined), so the z-ranked cards fall back to the raw metric
-    # rather than erroring; the board still renders without a traceback.
-    rng = np.random.default_rng(2)
-    idx = bdays(40)
-    prices = pd.DataFrame(
-        {"AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.001, 0.01, len(idx)))},
-        index=idx,
-    )
-    meta = _meta([{"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"}])
-    cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
-    labels = {c.label for c in cards}
-    # The lone ticker is its own extreme on every defined metric (z-ranked cards
-    # fall back to the raw value).
-    assert "Best performer" in labels
-    assert "Best risk-adjusted" in labels
-    # Dropped v0.8.0 cards are gone.
-    assert "Best diversifier" not in labels
-    assert "Steadiest" not in labels
-
-
-def test_build_superlatives_tie_break_by_ticker(bdays):
-    idx = bdays(30)
-    ramp = 100.0 * 1.005 ** np.arange(len(idx))
-    prices = pd.DataFrame(
-        {"AAA Index": ramp.copy(), "ZZZ Index": ramp.copy()}, index=idx
-    )
-    meta = _meta(
-        [
-            {"ticker": "ZZZ Index", "name": "Zed", "live_date": "2010-01-01"},
-            {"ticker": "AAA Index", "name": "Alpha", "live_date": "2010-01-01"},
-        ]
-    )
-    cards = commentary.build_superlatives(meta, prices, daily_returns(prices))
-    top = next(c for c in cards if c.label == "Best performer")
-    # Identical paths → tie broken deterministically by sorted ticker.
-    assert top.ticker == "AAA Index"
-
-
-def test_build_superlatives_window_sensitivity(bdays):
-    # An index that fell early then rallied late should be the top performer on
-    # a short window but not on a long one — proving the window toggle matters.
-    idx = bdays(80)
-    n = len(idx)
-    # REBOUND falls 100→70 then rallies to 95 (net -5% over the full window, but
-    # a strong recent rally); STEADY drifts 100→106 (+6%) throughout.
-    early_down_late_up = np.concatenate(
-        [np.linspace(100.0, 70.0, n - 10), np.linspace(70.0, 95.0, 10)]
-    )
-    steady = np.linspace(100.0, 106.0, n)
-    prices = pd.DataFrame(
-        {"REBOUND Index": early_down_late_up, "STEADY Index": steady}, index=idx
-    )
-    meta = _meta(
-        [
-            {"ticker": "REBOUND Index", "name": "Rebound", "live_date": "2010-01-01"},
-            {"ticker": "STEADY Index", "name": "Steady", "live_date": "2010-01-01"},
-        ]
-    )
-    returns = daily_returns(prices)
-    short = commentary.build_superlatives(meta, prices, returns, window_days=5)
-    long = commentary.build_superlatives(meta, prices, returns, window_days=n)
-    short_top = next(c for c in short if c.label == "Best performer").ticker
-    long_top = next(c for c in long if c.label == "Best performer").ticker
-    assert short_top == "REBOUND Index"  # the late rally dominates a 1W window
-    assert long_top == "STEADY Index"  # the full-window drawdown sinks REBOUND
 
 
 def test_build_launch_cards_metadata_and_order(bdays):
@@ -440,6 +193,10 @@ def _leaderboard_meta(tickers) -> pd.DataFrame:
         ]
     )
 
+
+#: A small drift set for the launch-card cases, which need three series
+#: rather than a full board.
+THREE_DRIFTS = {"AAA Index": 0.004, "BBB Index": -0.004, "CCC Index": 0.0}
 
 SIX_DRIFTS = {
     "AAA Index": 0.006,
@@ -581,3 +338,36 @@ def test_leaderboard_rows_default_from_config(bdays):
     columns = _build(bdays, rows=2)
     assert all([r.rank for r in c.top] == [1, 2] for c in columns)
     assert all([r.rank for r in c.bottom] == [5, 6] for c in columns)
+
+
+def test_the_window_returns_tail_gives_the_same_board_as_full_history(bdays):
+    """``window_returns`` hands `build_leaderboard` a trailing slice instead of
+    the whole 5-year returns frame. That is only safe if the board it produces
+    is identical, which is what this pins — the optimisation is invisible or it
+    is a bug. (Carried over from the superlatives' version of this test in
+    v0.9.13; #291 re-pointed it at the builder that inherited the tail.)"""
+    idx = bdays(200)
+    rng = np.random.default_rng(11)
+    prices = pd.DataFrame(
+        {
+            "AAA Index": 100.0 * np.cumprod(1.0 + rng.normal(0.003, 0.01, len(idx))),
+            "BBB Index": 100.0 * np.cumprod(1.0 + rng.normal(-0.002, 0.01, len(idx))),
+            "CCC Index": 100.0 * np.cumprod(1.0 + rng.normal(0.0, 0.015, len(idx))),
+        },
+        index=idx,
+    )
+    meta = _leaderboard_meta(prices.columns)
+    full_rets = daily_returns(prices)
+
+    for window_days in (5, 21, 63, 126):  # the four ranking-window options
+        short = commentary.window_returns(prices, window_days=window_days)
+        # A genuine trailing subset, not the whole history…
+        assert len(short) < len(full_rets)
+        # …yet the board is identical either way.
+        full = commentary.build_leaderboard(
+            meta, prices, full_rets, window_days=window_days
+        )
+        sliced = commentary.build_leaderboard(
+            meta, prices, short, window_days=window_days
+        )
+        assert full == sliced, f"window_days={window_days}"
