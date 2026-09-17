@@ -33,7 +33,7 @@ from IPython import get_ipython
 from IPython.display import display
 
 from ..bql_client import _DEFAULT_CACHE, TickersUnresolved, fetch_prices
-from ..commentary import build_launch_cards, build_superlatives, superlative_returns
+from ..commentary import build_launch_cards, build_leaderboard, superlative_returns
 from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
     FACTOR_TICKERS,
@@ -84,6 +84,7 @@ from .chrome import (
     _status_banner,
     _style_tab_button,
 )
+from .commentary_pane import CommentaryPane
 from .filter_panel import make_filter_panel
 from .filters import (
     CheckboxMultiSelect,
@@ -97,12 +98,10 @@ from .grids import (
 from .html import (
     STYLE_CTX,
     _load_disclaimer,
-    _load_weekly_commentary,
     _render_error,
-    _render_highlights,
-    _render_weekly_commentary,
     render_template,
 )
+from .leaderboard import Leaderboard
 from .multi_strategy import (
     RenderContext,
     bind_lazy_render,
@@ -157,6 +156,10 @@ class DashboardApp:
     def _build_overlay_and_catalog(self) -> None:
         """Display the loading overlay, then load the in-universe catalog."""
         self.t0 = time.perf_counter()
+        # One date for the whole session, fixed before any widget is built: the
+        # commentary header, the fetch window and every window slice must agree,
+        # and a build that straddles midnight would otherwise date them apart.
+        self.today = date.today()
 
         # `build_app` is synchronous, so display() the overlay first, push staged
         # progress as each load step completes, then mount the dashboard (which also
@@ -355,23 +358,27 @@ class DashboardApp:
             layout=W.Layout(width="100%"),
         )
 
-        self.weekly_w = W.HTML(
-            _render_weekly_commentary(_load_weekly_commentary(), date.today())
-        )
-        self.highlights_w = W.HTML(_render_highlights([], []))
-        self.errors_w = W.HTML("")  # init/pane-error boxes (kept out of highlights_w)
+        # Init/pane-error boxes. A sibling of the commentary block's two panes,
+        # never inside one, so neither a window change nor a pane switch can wipe
+        # an error off the screen.
+        self.errors_w = W.HTML("")
 
     def _build_commentary(self) -> None:
-        """The all-catalog commentary block and its Superlatives window toggle."""
-        self.superlative_window = W.ToggleButtons(
+        """The all-catalog commentary block: the ranking window toggle, the
+        leaderboard, and the switchable Commentary / New Launches pane."""
+        self.ranking_window = W.ToggleButtons(
             options=SHORT_WINDOW_OPTIONS,
             value=SUPERLATIVE_WINDOW_DAYS,
             layout=W.Layout(width="auto"),
         )
-        self.superlative_window_row = W.HBox(
-            [_section_label("Superlatives window"), self.superlative_window],
+        self.ranking_window_row = W.HBox(
+            [_section_label("Ranking window"), self.ranking_window],
             layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
+        # A leaderboard row and a catalog row route the same way, through the one
+        # method, so the two entry points into Single Strategy cannot diverge.
+        self.leaderboard = Leaderboard(on_pick=self._show_in_single_strategy)
+        self.commentary_pane = CommentaryPane(as_of=self.today)
         self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
@@ -506,7 +513,6 @@ class DashboardApp:
             selected_perf_grid=self.selected_perf_grid,
             pane_left=self.pane_left,
             pane_right=self.pane_right,
-            highlights_w=self.highlights_w,
             errors_w=self.errors_w,
         )
 
@@ -520,12 +526,25 @@ class DashboardApp:
             layout=W.Layout(width="100%", padding="4px 0 8px 0"),
         )
 
+        # Leaderboard left under its window toggle, the switchable pane right.
+        # The leaderboard takes a fixed basis wide enough for its four columns
+        # and the pane absorbs the remainder (#276's rail idiom), so the split
+        # holds at any viewport width without a pixel constant for the pane.
+        leaderboard_col = W.VBox(
+            [self.ranking_window_row, self.leaderboard.root],
+            layout=W.Layout(flex="0 0 620px", min_width="0"),
+        )
+        pane_col = W.Box(
+            [self.commentary_pane.root],
+            layout=W.Layout(flex="1 1 0%", min_width="0", padding="0 0 0 12px"),
+        )
         self.commentary_box = W.VBox(
             [
-                self.weekly_w,
                 self.errors_w,
-                self.superlative_window_row,
-                self.highlights_w,
+                W.HBox(
+                    [leaderboard_col, pane_col],
+                    layout=W.Layout(width="100%", align_items="flex-start"),
+                ),
             ],
             layout=W.Layout(width="100%", padding="12px 16px"),
         )
@@ -606,11 +625,6 @@ class DashboardApp:
         self.selected_btn.on_click(lambda _b: self._activate_tab("selected"))
         self.single_btn.on_click(lambda _b: self._activate_tab("single"))
 
-        # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
-        # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
-        # all-catalog grid's windows are likewise bounded by this lookback.
-        self.today = date.today()
-
     def _wire_and_load(self) -> None:
         """Wire every observer, assemble the app container, run the initial load."""
         self._wire_fetch_window()
@@ -619,6 +633,9 @@ class DashboardApp:
 
     def _wire_fetch_window(self) -> None:
         """The startup fetch window and the benchmark registry's callbacks."""
+        # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
+        # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
+        # all-catalog grid's windows are likewise bounded by this lookback.
         self.universe_start = (
             pd.Timestamp(self.today) - pd.DateOffset(years=LOOKBACK_YEARS)
         ).date()
@@ -648,8 +665,8 @@ class DashboardApp:
         # cleared by `_recompute`, so re-toggling a window is a cache hit.
         self.highlights_cache: dict = {}
 
-        self.superlative_window.observe(
-            lambda c: self._render_highlights_panel(c["new"]), names="value"
+        self.ranking_window.observe(
+            lambda c: self._render_leaderboard(c["new"]), names="value"
         )
 
         # Guards against a second Refresh being launched while a worker thread is
@@ -1031,50 +1048,56 @@ class DashboardApp:
             t for t in selected if t in combined["ticker"].values
         )
 
-    def _render_highlights_panel(self, window_days):
-        """Render the whole-catalog Key Highlights panel at ``window_days``.
+    def _render_leaderboard(self, window_days):
+        """Render the whole-catalog leaderboard and launches at ``window_days``.
 
-        Builds the superlatives (at the chosen window) + new-launch cards from
-        the already-fetched ARP cache and writes ``state.highlights_w`` — no
-        BQL, no selection. Shared by ``_recompute`` (initial/Refresh) and the
-        live window-toggle observer; a compute failure surfaces in-place rather
-        than blanking the panel."""
+        Ranks the catalog on the four leaderboard metrics over the chosen
+        window and rebuilds the new-launch cards, both from the already-fetched
+        ARP cache — no BQL, no dependence on the strategy selection. Shared by
+        ``_recompute`` (initial load / Refresh) and the live window-toggle
+        observer.
+
+        A compute failure goes to ``errors_w`` and leaves the last good board on
+        screen. Blanking it would replace a board that is merely stale with no
+        board at all, and the toggle that caused it is one click away from a
+        window that works.
+        """
         try:
             universe = self.state.arp_universe_prices
             if universe.empty:
-                self.state.highlights_w.value = _render_highlights([], [])
+                self.leaderboard.clear()
+                self.commentary_pane.update_launches([])
                 return
             if "launches" not in self.highlights_cache:
                 self.highlights_cache["launches"] = build_launch_cards(
                     self.meta, universe, as_of=self.today
                 )
-            superlatives = self.highlights_cache.get(window_days)
-            if superlatives is None:
+            self.commentary_pane.update_launches(self.highlights_cache["launches"])
+            columns = self.highlights_cache.get(window_days)
+            if columns is None:
                 window_start = pd.Timestamp(self.today) - pd.DateOffset(
                     years=LOOKBACK_YEARS
                 )
                 universe_window = universe.loc[universe.index >= window_start]
                 if universe_window.empty:
-                    self.state.highlights_w.value = _render_highlights([], [])
+                    self.leaderboard.clear()
                     return
-                # Only the trailing window feeds the returns-based metrics (MACD,
-                # a fixed-lookback oscillator, reads the full price history
-                # itself), so derive daily_returns over just the span they need
-                # — not the whole 5-year slice.
+                # Only the trailing window feeds the returns-based metrics, so
+                # derive daily_returns over just the span they need rather than
+                # over the whole 5-year slice.
                 window_rets = superlative_returns(
                     universe_window, window_days=window_days
                 )
-                superlatives = build_superlatives(
+                columns = build_leaderboard(
                     self.meta, universe_window, window_rets, window_days=window_days
                 )
-                self.highlights_cache[window_days] = superlatives
-            self.state.highlights_w.value = _render_highlights(
-                superlatives,
-                self.highlights_cache["launches"],
+                self.highlights_cache[window_days] = columns
+            self.leaderboard.update(
+                columns,
                 window_label=WINDOW_LABELS.get(window_days, "Past Month"),
             )
         except Exception:
-            self.state.highlights_w.value = _render_error(traceback.format_exc())
+            self.state.errors_w.value += _render_error(traceback.format_exc())
 
     def _recompute(self, _btn=None):
         # A recompute rebuilds the selection slice (`cur_prep`), so every
@@ -1083,17 +1106,17 @@ class DashboardApp:
         # no-selection guard branches below). Benchmark flips don't call
         # _recompute, so the memo survives across them within a stable slice.
         self.state.memo.clear()
-        # The highlights are whole-catalog; a fresh fetch invalidates them.
+        # The leaderboard is whole-catalog; a fresh fetch invalidates it.
         self.highlights_cache.clear()
         error_html = ""
         # Surface any errors from the initial universe fetch so the user can
         # see what actually went wrong, not just the downstream "cache empty".
         for err in self.state.init_errors:
             error_html += _render_error(err)
-        # Highlights are always whole-catalog (ARP only), regardless of
-        # selection. Render the panel at the currently-selected window; the
-        # toggle re-renders it live (no BQL) via the same closure.
-        self._render_highlights_panel(self.superlative_window.value)
+        # The leaderboard is always whole-catalog (ARP only), regardless of
+        # selection. Render it at the currently-selected window; the toggle
+        # re-renders it live (no BQL) through the same method.
+        self._render_leaderboard(self.ranking_window.value)
 
         # 5Y bound for the selected-set slice below.
         universe_window_start = pd.Timestamp(self.today) - pd.DateOffset(

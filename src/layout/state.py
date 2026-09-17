@@ -53,9 +53,11 @@ class DashboardState:
     selected_perf_grid: PerfGrid
     pane_left: AnalysisPane
     pane_right: AnalysisPane
-    highlights_w: W.HTML  # the two-section Key Highlights panel (toggle-driven)
-    #: Init/pane-error boxes. Kept out of ``highlights_w`` so the live
-    #: superlatives-window toggle never wipes them.
+    #: Init/pane-error boxes. A sibling of the commentary block's two panes,
+    #: never inside one, so neither the live ranking-window toggle nor a
+    #: Commentary/New Launches switch can wipe an error off the screen. (The
+    #: v0.9.20 leaderboard and pane are owned by `DashboardApp`, not held here:
+    #: nothing outside the controller renders them.)
     errors_w: W.HTML
 
     # --- mutable session state ---
