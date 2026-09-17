@@ -1,9 +1,9 @@
-"""Unit tests for the v0.8.0 commentary builders.
+"""Unit tests for the commentary builders.
 
-``build_superlatives`` (whole-catalog monthly extremes) and
-``build_launch_cards`` (new-launch metadata) are pure functions over small
-fixed frames, mirroring the ``test_stats.py`` conventions. The legacy
-``build_highlights`` stays untested here (it is removed in Workstream C).
+``build_superlatives`` (whole-catalog monthly extremes), ``build_launch_cards``
+(new-launch metadata) and ``build_leaderboard`` (v0.9.20, #287 — the top /
+bottom rows per metric) are pure functions over small fixed frames, mirroring
+the ``test_stats.py`` conventions.
 """
 
 from __future__ import annotations
@@ -14,8 +14,21 @@ import numpy as np
 import pandas as pd
 import pytest
 from src import commentary
-from src.commentary import LaunchCard, SuperlativeCard
-from src.stats import daily_returns
+from src.commentary import (
+    LEADERBOARD_METRICS,
+    LaunchCard,
+    LeaderboardColumn,
+    LeaderboardRow,
+    SuperlativeCard,
+)
+from src.config import LEADERBOARD_ROWS, TRADING_DAYS_PER_YEAR
+from src.stats import (
+    ann_sharpe,
+    calmar_ratio,
+    daily_returns,
+    period_return,
+    sortino_ratio,
+)
 from src.style import Sentiment
 
 
@@ -385,3 +398,186 @@ def test_build_launch_cards_empty_when_none_recent():
         meta, pd.DataFrame(), as_of=date(2026, 6, 9), new_launch_days=30
     )
     assert cards == []
+
+
+# ---- build_leaderboard (#287) ----------------------------------------------
+
+
+def _leaderboard_prices(bdays, drifts: dict[str, float], n: int = 40) -> pd.DataFrame:
+    """One noisy series per ticker.
+
+    The noise is deliberately large relative to the drift: a near-monotonic
+    series has no drawdown and no down days, so its Calmar and Sortino are
+    NaN by construction and it would fall out of those columns.
+    """
+    rng = np.random.default_rng(11)
+    idx = bdays(n)
+    data = {
+        t: 100.0 * np.cumprod(1.0 + rng.normal(d, 0.01, len(idx)))
+        for t, d in drifts.items()
+    }
+    return pd.DataFrame(data, index=idx)
+
+
+def _expected_order(metric: str, prices, returns, window_days: int) -> list[str]:
+    """The metric recomputed from `src.stats`, ranked descending, ties by ticker."""
+    years = window_days / TRADING_DAYS_PER_YEAR
+    series = {
+        "return": lambda: period_return(prices, window_days=window_days),
+        "sharpe": lambda: ann_sharpe(returns, prices, years),
+        "calmar": lambda: calmar_ratio(prices, years),
+        "sortino": lambda: sortino_ratio(returns, prices, years),
+    }[metric]()
+    ranked = series.dropna().sort_index().sort_values(ascending=False, kind="stable")
+    return list(ranked.index)
+
+
+def _leaderboard_meta(tickers) -> pd.DataFrame:
+    return _meta(
+        [
+            {"ticker": t, "name": f"Name {t.split()[0]}", "live_date": "2010-01-01"}
+            for t in tickers
+        ]
+    )
+
+
+SIX_DRIFTS = {
+    "AAA Index": 0.006,
+    "BBB Index": 0.004,
+    "CCC Index": 0.002,
+    "DDD Index": -0.002,
+    "EEE Index": -0.004,
+    "FFF Index": -0.006,
+}
+
+
+def _build(bdays, drifts=SIX_DRIFTS, **kw):
+    prices = _leaderboard_prices(bdays, drifts)
+    returns = daily_returns(prices)
+    return commentary.build_leaderboard(
+        _leaderboard_meta(drifts), prices, returns, window_days=21, **kw
+    )
+
+
+def test_leaderboard_columns_in_declared_order_with_bounded_rows(bdays):
+    columns = _build(bdays)
+
+    assert [(c.metric, c.label) for c in columns] == list(LEADERBOARD_METRICS)
+    for col in columns:
+        assert isinstance(col, LeaderboardColumn)
+        assert len(col.top) <= LEADERBOARD_ROWS
+        assert len(col.bottom) <= LEADERBOARD_ROWS
+        assert all(isinstance(r, LeaderboardRow) for r in col.top + col.bottom)
+
+
+def test_leaderboard_rank_agrees_with_the_displayed_value(bdays):
+    """Rank 1 is the largest raw value, the last bottom row the smallest, and
+    the ranks are true catalog positions — six tickers, so the bottom block is
+    ranks 4-6. The order is checked against the metric recomputed from
+    `src.stats`, so the board cannot drift from the numbers it shows."""
+    prices = _leaderboard_prices(bdays, SIX_DRIFTS)
+    returns = daily_returns(prices)
+    columns = commentary.build_leaderboard(
+        _leaderboard_meta(SIX_DRIFTS), prices, returns, window_days=21
+    )
+    for col in columns:
+        rows = col.top + col.bottom
+        values = [r.value for r in rows]
+        assert values == sorted(values, reverse=True)
+        assert [r.rank for r in col.top] == [1, 2, 3]
+        assert [r.rank for r in col.bottom] == [4, 5, 6]
+        assert len({r.ticker for r in rows}) == 6  # no overlap
+        assert [r.ticker for r in rows] == _expected_order(
+            col.metric, prices, returns, 21
+        )
+        assert all(r.name == f"Name {r.ticker.split()[0]}" for r in rows)
+
+
+def test_leaderboard_excludes_nan_and_ties_by_ticker(bdays):
+    prices = _leaderboard_prices(bdays, SIX_DRIFTS)
+    # BBB duplicates AAA exactly → an equal value on every metric; the tie
+    # resolves alphabetically. ZZZ has no data in the window → excluded.
+    prices["BBB Index"] = prices["AAA Index"]
+    prices["ZZZ Index"] = np.nan
+    returns = daily_returns(prices)
+    meta = _leaderboard_meta(prices.columns)
+    columns = commentary.build_leaderboard(meta, prices, returns, window_days=21)
+
+    for col in columns:
+        rows = col.top + col.bottom
+        tickers = [r.ticker for r in rows]
+        assert "ZZZ Index" not in tickers
+        assert len(tickers) == 6  # the six with data all rank
+        # Equal values → adjacent rows, AAA first.
+        a, b = tickers.index("AAA Index"), tickers.index("BBB Index")
+        assert b == a + 1
+        assert rows[a].value == rows[b].value
+
+
+def test_leaderboard_small_catalog_never_repeats_a_row(bdays):
+    four = {t: d for t, d in list(SIX_DRIFTS.items())[:4]}
+    for col in _build(bdays, drifts=four):
+        assert [r.rank for r in col.top] == [1, 2, 3]
+        assert [r.rank for r in col.bottom] == [4]
+        assert len({r.ticker for r in col.top + col.bottom}) == 4
+
+    two = {t: d for t, d in list(SIX_DRIFTS.items())[:2]}
+    for col in _build(bdays, drifts=two):
+        assert [r.rank for r in col.top] == [1, 2]
+        assert col.bottom == ()
+
+
+def test_leaderboard_text_format_and_sentiment_follow_the_metric(bdays):
+    by_metric = {c.metric: c for c in _build(bdays)}
+
+    ret = by_metric["return"]
+    assert ret.top[0].text.endswith("%") and ret.top[0].text.startswith("+")
+    assert ret.top[0].sentiment is Sentiment.POSITIVE
+    assert ret.bottom[-1].text.startswith("-")
+    assert ret.bottom[-1].sentiment is Sentiment.NEGATIVE
+
+    for metric in ("sharpe", "calmar", "sortino"):
+        col = by_metric[metric]
+        for r in col.top + col.bottom:
+            assert r.text == f"{r.value:.2f}"
+            expected = (
+                Sentiment.POSITIVE
+                if r.value > 0
+                else Sentiment.NEGATIVE if r.value < 0 else Sentiment.NEUTRAL
+            )
+            assert r.sentiment is expected
+
+
+def test_leaderboard_uses_the_window_it_is_given(bdays):
+    """A drift that flips sign inside the 40-day history reorders the board
+    between a short and a long window."""
+    rng = np.random.default_rng(3)
+    idx = bdays(40)
+    n = len(idx)
+    # AAA: strong early, weak late. BBB: the mirror.
+    a = np.concatenate([rng.normal(0.008, 0.001, n - 5), rng.normal(-0.008, 0.001, 5)])
+    b = np.concatenate([rng.normal(-0.008, 0.001, n - 5), rng.normal(0.008, 0.001, 5)])
+    prices = pd.DataFrame(
+        {"AAA Index": 100 * np.cumprod(1 + a), "BBB Index": 100 * np.cumprod(1 + b)},
+        index=idx,
+    )
+    returns = daily_returns(prices)
+    meta = _leaderboard_meta(prices.columns)
+
+    short = commentary.build_leaderboard(meta, prices, returns, window_days=5)
+    long = commentary.build_leaderboard(meta, prices, returns, window_days=30)
+    assert short[0].top[0].ticker == "BBB Index"
+    assert long[0].top[0].ticker == "AAA Index"
+
+
+def test_leaderboard_empty_inputs():
+    empty = pd.DataFrame()
+    assert commentary.build_leaderboard(pd.DataFrame(), empty, empty) == ()
+
+
+def test_leaderboard_rows_default_from_config(bdays):
+    columns = _build(bdays)
+    assert all(len(c.top) == LEADERBOARD_ROWS for c in columns)
+    columns = _build(bdays, rows=2)
+    assert all([r.rank for r in c.top] == [1, 2] for c in columns)
+    assert all([r.rank for r in c.bottom] == [5, 6] for c in columns)

@@ -31,6 +31,11 @@ PERF_TABLE_YEARS = (1, 3, 5)
 #: Superlatives" board, computed whole-catalog from the already-fetched prices.
 SUPERLATIVE_WINDOW_DAYS = 21
 
+#: How many indices each leaderboard column lists at the top and at the
+#: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again
+#: in the widget that draws the slots.
+LEADERBOARD_ROWS = 3
+
 #: Hard cap on the Multi-Strategy selection. Analysis over the selected set is
 #: O(n²) in the number of picks, so the picker is bounded to keep it fast and
 #: the heatmaps legible; a further pick is rejected with an error popup.

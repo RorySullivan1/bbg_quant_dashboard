@@ -1,10 +1,13 @@
-"""All-catalog commentary: the Market Superlatives and New Launches cards.
+"""All-catalog commentary: the leaderboard, the Market Superlatives and the
+New Launches cards.
 
-Computes the two Key Highlights sections from the already-fetched price frame
-and the catalog metadata — no BQL call of its own. Superlatives rank the whole
-catalog over a trailing window (best/worst return, highest Sharpe, longest
-streaks, largest MACD extension, …); launch cards pick out indices that went
-live within `NEW_LAUNCH_DAYS`.
+Computes the Key Highlights sections from the already-fetched price frame and
+the catalog metadata — no BQL call of its own. The leaderboard ranks the whole
+catalog over a trailing window on four metrics (return, Sharpe, Calmar,
+Sortino) and keeps the top and bottom few of each; superlatives pick the single
+most extreme index per indicator over the same kind of window (best/worst
+return, highest Sharpe, longest streaks, largest MACD extension, …); launch
+cards pick out indices that went live within `NEW_LAUNCH_DAYS`.
 
 Each superlative is declared as a spec — a metric function plus a label,
 formatter, sentiment, and description — so adding one means adding a spec
@@ -22,10 +25,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 
 from .config import (
     LAUNCH_CARD_META_FIELDS,
+    LEADERBOARD_ROWS,
     NEW_LAUNCH_DAYS,
     SUPERLATIVE_WINDOW_DAYS,
     TRADING_DAYS_PER_YEAR,
@@ -33,6 +38,7 @@ from .config import (
 from .stats import (
     ann_sharpe,
     asset_class_demeaned_zscore,
+    calmar_ratio,
     daily_returns,
     longest_down_streak,
     longest_up_streak,
@@ -42,6 +48,7 @@ from .stats import (
     period_return,
     return_autocorr,
     return_skew,
+    sortino_ratio,
     win_rate,
 )
 from .style import Sentiment
@@ -79,6 +86,153 @@ class LaunchCard:
     live_date: date
     days_ago: int
     since_return: float | None
+
+
+@dataclass(frozen=True)
+class LeaderboardRow:
+    """One ranked index in a leaderboard column.
+
+    `rank` is the index's true 1-based position across the whole catalog for
+    that metric, so a bottom row reads e.g. "52" of 54 rather than "3rd from
+    last". `value` is the raw metric; `text` is its formatted form (percent for
+    the window return, two decimals for the ratios), because the formatter
+    differs per column and the widget should not re-derive it.
+    """
+
+    rank: int
+    ticker: str
+    name: str
+    value: float
+    text: str
+    sentiment: Sentiment
+
+
+@dataclass(frozen=True)
+class LeaderboardColumn:
+    """One metric's ranking: the top rows and the bottom rows of the catalog.
+
+    Both tuples run in rank order (rank 1 first; the catalog's last index
+    last). They never share a ticker — a small catalog yields a short `bottom`
+    rather than a repeated row.
+    """
+
+    metric: str
+    label: str
+    top: tuple[LeaderboardRow, ...]
+    bottom: tuple[LeaderboardRow, ...]
+
+
+#: The leaderboard's columns in display order, as (metric key, display label).
+#: Declared once, here, so the widget titles its columns from the data it is
+#: handed rather than respelling the labels.
+LEADERBOARD_METRICS: tuple[tuple[str, str], ...] = (
+    ("return", "Return"),
+    ("sharpe", "Sharpe"),
+    ("calmar", "Calmar"),
+    ("sortino", "Sortino"),
+)
+
+
+def _sign_sentiment(value: float) -> Sentiment:
+    if value > 0:
+        return Sentiment.POSITIVE
+    if value < 0:
+        return Sentiment.NEGATIVE
+    return Sentiment.NEUTRAL
+
+
+def _rank_column(
+    metric: str,
+    label: str,
+    series: pd.Series,
+    *,
+    fmt: Callable[[float], str],
+    name_of: Callable[[str], str],
+    rows: int,
+) -> LeaderboardColumn:
+    """Rank `series` descending and keep its first and last `rows` entries.
+
+    The rank is by the **raw** value — the number the row displays — so rank 1
+    always carries the largest figure. NaN and infinite values (a ratio whose
+    denominator degenerated) are excluded before ranking, and ties resolve by
+    ticker so the board is deterministic run to run.
+    """
+    s = series.replace([np.inf, -np.inf], np.nan).dropna().astype(float)
+    # Sort by ticker first, then a stable sort by value, so equal values keep
+    # ticker order — the tie-break — without a second sort key.
+    ranked = s.sort_index().sort_values(ascending=False, kind="stable")
+
+    def row(position: int) -> LeaderboardRow:
+        ticker = str(ranked.index[position])
+        value = float(ranked.iloc[position])
+        return LeaderboardRow(
+            rank=position + 1,
+            ticker=ticker,
+            name=name_of(ticker),
+            value=value,
+            text=fmt(value),
+            sentiment=_sign_sentiment(value),
+        )
+
+    n = len(ranked)
+    top = tuple(row(i) for i in range(min(rows, n)))
+    # The bottom block starts after the top block even when the catalog is too
+    # small for both, so no ticker appears twice.
+    bottom = tuple(row(i) for i in range(max(rows, n - rows), n))
+    return LeaderboardColumn(metric=metric, label=label, top=top, bottom=bottom)
+
+
+def build_leaderboard(
+    meta: pd.DataFrame,
+    prices: pd.DataFrame,
+    returns: pd.DataFrame,
+    *,
+    window_days: int = SUPERLATIVE_WINDOW_DAYS,
+    rows: int = LEADERBOARD_ROWS,
+) -> tuple[LeaderboardColumn, ...]:
+    """Whole-catalog top / bottom `rows` on return, Sharpe, Calmar and Sortino.
+
+    Every column is scoped to the trailing ``window_days``: the return is the
+    simple window return (``period_return``, not annualized), and the three
+    ratios take ``years = window_days / TRADING_DAYS_PER_YEAR`` — the same
+    scoping the superlatives' Sharpe card uses, so the board and the cards
+    agree on what "past month" means. ``returns`` is expected to be the
+    ``superlative_returns`` tail of ``prices``. Computed from the fetched
+    frames only, no BQL. An empty catalog yields an empty tuple; a metric that
+    is NaN for every index yields a column with no rows.
+    """
+    if prices.empty or returns.empty:
+        return ()
+
+    name_lookup = meta.set_index("ticker")["name"].to_dict() if not meta.empty else {}
+
+    def name_of(ticker: str) -> str:
+        return name_lookup.get(ticker, ticker)
+
+    def pct(v: float) -> str:
+        return f"{v:+.1%}"
+
+    def num2(v: float) -> str:
+        return f"{v:.2f}"
+
+    years = window_days / TRADING_DAYS_PER_YEAR
+    series_by_metric: dict[str, tuple[pd.Series, Callable[[float], str]]] = {
+        "return": (period_return(prices, window_days=window_days), pct),
+        "sharpe": (ann_sharpe(returns, prices, years), num2),
+        "calmar": (calmar_ratio(prices, years), num2),
+        "sortino": (sortino_ratio(returns, prices, years), num2),
+    }
+    return tuple(
+        _rank_column(
+            metric,
+            label,
+            series_by_metric[metric][0],
+            fmt=series_by_metric[metric][1],
+            name_of=name_of,
+            rows=rows,
+        )
+        for metric, label in LEADERBOARD_METRICS
+    )
 
 
 @dataclass
