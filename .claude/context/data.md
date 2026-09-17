@@ -35,7 +35,8 @@ no column name of its own.
 Labels are configuration, not code: relabelling a column is a `CATALOG_SCHEMA`
 edit and nothing else. Every renderer reads `field_label`, and which fields it
 shows comes from a field-key tuple in `config.py` —
-`UNIVERSE_GRID_FIELDS` / `SELECTED_GRID_FIELDS` (the two grids),
+`CATALOG_GRID_FIELDS` (the all-catalog table) / `PERF_GRID_FIELDS` (the
+shared `PerfGrid`; each tuple is named for the grid it feeds, #282),
 `PROFILE_CARD_FIELDS` (the Single Strategy profile card),
 `LAUNCH_CARD_META_FIELDS` (the New-Launch cards' meta line). The filter pills
 come from `filter_dimensions()` and the Platform sunburst's rings from

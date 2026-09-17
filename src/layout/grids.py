@@ -28,8 +28,8 @@ from itables import JavascriptFunction
 from itables.widget import ITable
 
 from ..config import (
-    SELECTED_GRID_FIELDS,
-    UNIVERSE_GRID_FIELDS,
+    CATALOG_GRID_FIELDS,
+    PERF_GRID_FIELDS,
     field_label,
     stat_windows,
     universe_grid_default_window,
@@ -158,7 +158,7 @@ class PerfGrid(_Grid):
         if pt.empty:
             self.clear()
             return
-        info_block = _build_info_block(meta, pt.index, UNIVERSE_GRID_FIELDS)
+        info_block = _build_info_block(meta, pt.index, PERF_GRID_FIELDS)
         # Per-row color swatch: each cell carries the hex string; the renderer
         # paints background + text the same color so it shows as a solid block —
         # the universal legend for every chart in the panes. It leads the Info
@@ -869,7 +869,7 @@ def _build_universe_frame(
     (insufficient-history tickers, NaN z, sink to the bottom)."""
     if meta.empty:
         return pd.DataFrame()
-    info = _build_info_block(meta, None, SELECTED_GRID_FIELDS, date_cols=("live_date",))
+    info = _build_info_block(meta, None, CATALOG_GRID_FIELDS, date_cols=("live_date",))
 
     blocks = [info]
     z_key: str | None = None

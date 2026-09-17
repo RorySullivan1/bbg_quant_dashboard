@@ -53,6 +53,9 @@ def test_render_profile_card_contains_fields():
     html = _render_profile_card(_meta().iloc[0])
     for token in ("Alpha", "AAA Index", "USD", "Total", "Alpha desc"):
         assert token in html
+    # Return Type left the catalog table in #282 but stays here, which is where
+    # a user who wants it now reads it.
+    assert "Return Type" in html
     # Launch date is rendered as YYYY-MM-DD.
     assert "Launch Date" in html and "2010-03-15" in html
 
