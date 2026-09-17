@@ -9,8 +9,8 @@ metadata, look up tickers, and view performance, correlation, and a 1-year
 rolling Sharpe-ratio z-score over a 5-year lookback. Metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime. The UI is built with `ipywidgets`, `plotly` (interactive charts
-via `FigureWidget`), and `ipydatagrid` (tables), and is deployable via
-Voila.
+via `FigureWidget`), `ipydatagrid` (the per-strategy tables) and `itables`
+(the grouped all-catalog table), and is deployable via Voila.
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
@@ -65,9 +65,25 @@ pruned catalog after every load, so an attribute holding it goes stale
 silently (#242). Prefer injecting a collaborator over reaching for a module
 global.
 
+The catalog table is **grouped, and the user shapes it** (epic #261, v0.9.18).
+The all-catalog grid is an `itables` / DataTables `ITable`; `PerfGrid` and
+`CalendarGrid` stay on `ipydatagrid`, and the two stacks coexist on purpose —
+ipydatagrid's merged row headers render incorrectly in 1.4.0, and only
+DataTables' RowGroup draws the classification tiers as **nested group headers**
+instead of three body columns repeating the same strings on every row. Which
+levels group is the user's choice (`UNIVERSE_GRID_GROUPABLE_FIELDS`, four
+checkboxes) but the *nesting order is always the hierarchy's*, never the order
+they ticked; the grid shows **one stats window at a time**, chosen from a radio
+beside the table and offering only what `LOOKBACK_YEARS` can serve. Clicking a
+row opens that strategy in Single Strategy. Two rules hold underneath: **row
+contiguity at every grouping level is a correctness requirement**, because
+RowGroup only gathers adjacent rows, and **changing the window hides columns
+rather than dropping them**, so it cannot disturb the grouping or the
+selection. See `.claude/context/conventions.md`.
+
 ## Current version
 
-`v0.9.17` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.18` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

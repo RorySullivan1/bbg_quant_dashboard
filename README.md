@@ -5,7 +5,7 @@ metadata, look up tickers, and view performance, correlation, and a 1-year
 rolling Sharpe-ratio z-score over a 5-year lookback. Index metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime (with a deterministic, process-stable mock-price fallback off-terminal). The UI is built
-with `ipywidgets`, `plotly` (`FigureWidget`), and `ipydatagrid`, and is
+with `ipywidgets`, `plotly` (`FigureWidget`), `ipydatagrid` and `itables`, and is
 deployable via Voila.
 
 ## Layout
@@ -101,7 +101,7 @@ bbg_quant_dashboard/
 │                              #   single_strategy/multi_strategy/charts/grids/html/state
 │                              #   (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
-                               #   cache/commentary/grids/platform/single_strategy/
+                               #   cache/commentary/grids/catalog-grid/platform/single_strategy/
                                #   live-controls/lazy-views/state/smoke tests
 ```
 
