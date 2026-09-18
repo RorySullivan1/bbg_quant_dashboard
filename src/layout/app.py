@@ -68,6 +68,8 @@ from ..stats import (
 from ..style import (
     CATALOG_TABLE_HEIGHT,
     COMMENTARY_BOX_HEIGHT,
+    COMMENTARY_BULLETIN_SHARE,
+    COMMENTARY_LEADERBOARD_SHARE,
     Color,
     StatusTone,
 )
@@ -397,7 +399,7 @@ class DashboardApp:
         # A leaderboard row and a catalog row route the same way, through the one
         # method, so the two entry points into Single Strategy cannot diverge.
         self.leaderboard = Leaderboard(on_pick=self._show_in_single_strategy)
-        self.commentary_pane = CommentaryPane(as_of=self.today)
+        self.commentary_pane = CommentaryPane()
         self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
@@ -561,11 +563,19 @@ class DashboardApp:
             layout=W.Layout(width="100%", padding="4px 0 8px 0"),
         )
 
-        # Two sections of the same shape side by side: Leaderboard left, QIS
-        # Bulletin right, each a `section_panel` of title → control bar → boxed
-        # body at one height. The leaderboard still takes a fixed basis wide
-        # enough for its four columns and the Bulletin absorbs the remainder
-        # (#276's rail idiom); the 60:40 split is #308's.
+        # Two sections of the same shape side by side at 60:40 (#308):
+        # Leaderboard left, QIS Bulletin right, each a `section_panel` of
+        # title → control bar → boxed body at one height.
+        #
+        # **Both share, neither absorbs.** `flex: 1 1 <share>` on each is what
+        # makes the ratio hold as the viewport narrows; the `0 0 620px` basis
+        # this replaced read as 60% at 1030px and 43% at 1440px, so the split
+        # was really a width that happened to look right on one screen.
+        # `min_width: 0` on both is load-bearing, not tidiness: a flex item's
+        # automatic minimum is its content, so without it the leaderboard's
+        # four columns would refuse to narrow and push the Bulletin off the row
+        # instead of letting both shrink — the same pairing the catalog table
+        # needs beside its rail (#276).
         leaderboard_col = W.Box(
             [
                 section_panel(
@@ -575,7 +585,7 @@ class DashboardApp:
                     height=COMMENTARY_BOX_HEIGHT,
                 )
             ],
-            layout=W.Layout(flex="0 0 620px", min_width="0"),
+            layout=W.Layout(flex=f"1 1 {COMMENTARY_LEADERBOARD_SHARE}", min_width="0"),
         )
         pane_col = W.Box(
             [
@@ -586,7 +596,11 @@ class DashboardApp:
                     height=COMMENTARY_BOX_HEIGHT,
                 )
             ],
-            layout=W.Layout(flex="1 1 0%", min_width="0", padding="0 0 0 12px"),
+            layout=W.Layout(
+                flex=f"1 1 {COMMENTARY_BULLETIN_SHARE}",
+                min_width="0",
+                padding="0 0 0 12px",
+            ),
         )
         self.commentary_box = W.VBox(
             [

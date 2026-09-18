@@ -24,7 +24,6 @@ swaps its whole child on a click is exactly that hazard.
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -52,18 +51,13 @@ class CommentaryPane:
     Notes are loaded once, at build: they are authored files, not price data,
     and nothing in the session invalidates them.
 
-    `as_of` is vestigial — the notes date themselves (#304), so nothing reads
-    it. It stays until #308 retires the last of the weekly-commentary plumbing
-    that passes it.
+    It takes no `as_of`. The board used to be dated by the app so one session
+    could not date two things differently; a note carries its own date now
+    (#304), and the parameter went with the rest of the weekly-commentary
+    plumbing in #308.
     """
 
-    def __init__(
-        self,
-        *,
-        as_of: date | None = None,
-        notes_path: Path | str = COMMENTARY_PATH,
-    ) -> None:
-        del as_of  # retiring with the rest of the weekly-commentary plumbing (#308)
+    def __init__(self, *, notes_path: Path | str = COMMENTARY_PATH) -> None:
         self.commentary_w = W.HTML(
             _render_commentary_notes(load_commentary_notes(notes_path))
         )

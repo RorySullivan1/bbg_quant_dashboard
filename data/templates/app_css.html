@@ -855,13 +855,6 @@ div.itables_anywidget .dt-search input::placeholder {
   outline: 2px solid {{accent}};
   outline-offset: -2px;
 }
-/* ---- Weekly Commentary body (v0.9.20) ---------------------------------
-   The body is author-written HTML from `data/weekly_commentary.html`, so it
-   arrives with no styling of its own and picks up browser defaults — a default
-   link blue and near-black `code` are both unreadable on the navy surface.
-   These rules give arbitrary author markup a legible dark rendering without
-   asking the author to style anything. Scoped to the body only, so the
-   surrounding chrome is untouched. */
 /* ---- QIS Bulletin note bodies (v0.9.22, #307) -------------------------
    A note's text is plain text split into `<p>`s by `_render_note_paragraphs`,
    so the only thing to style is the paragraph rhythm. The browser's default
@@ -877,47 +870,6 @@ div.itables_anywidget .dt-search input::placeholder {
 .bbg-app .bbg-note-body p:last-child {
   margin-bottom: 0;
 }
-.bbg-app .bbg-commentary-body a {
-  color: {{accent2}};
-  text-decoration: underline;
-}
-.bbg-app .bbg-commentary-body a:hover {
-  color: {{accent}};
-}
-.bbg-app .bbg-commentary-body code {
-  background: {{surface2}};
-  border: 1px solid {{border_color}};
-  border-radius: 3px;
-  padding: 0 4px;
-  font-family: {{mono}};
-  font-size: {{caption_size}};
-}
-.bbg-app .bbg-commentary-body h1,
-.bbg-app .bbg-commentary-body h2,
-.bbg-app .bbg-commentary-body h3,
-.bbg-app .bbg-commentary-body h4,
-.bbg-app .bbg-commentary-body strong {
-  color: {{text_color}};
-}
-.bbg-app .bbg-commentary-body blockquote {
-  margin: 6px 0;
-  padding-left: 10px;
-  border-left: 3px solid {{border_color}};
-  color: {{text_muted}};
-}
-.bbg-app .bbg-commentary-body hr {
-  border: none;
-  border-top: 1px solid {{border_color}};
-}
-.bbg-app .bbg-commentary-body table {
-  border-collapse: collapse;
-}
-.bbg-app .bbg-commentary-body th,
-.bbg-app .bbg-commentary-body td {
-  border: 1px solid {{border_color}};
-  padding: 3px 8px;
-}
-
 /* Separates the top block from the bottom block of each column. */
 .bbg-app .bbg-lb-divider {
   background: {{border_color}};

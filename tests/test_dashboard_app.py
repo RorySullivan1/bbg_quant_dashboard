@@ -24,6 +24,7 @@ from src.config import (
 from src.layout.app import DashboardApp
 from src.layout.rails import RAIL_WIDTH
 from src.price_source import MockPriceSource
+from src.style import COMMENTARY_BULLETIN_SHARE, COMMENTARY_LEADERBOARD_SHARE
 
 
 @pytest.fixture(scope="module")
@@ -570,19 +571,25 @@ def test_the_pane_carries_the_launch_cards_built_from_the_catalog(app):
     assert app.commentary_pane.active == "commentary"  # opens on the commentary
 
 
-def test_the_block_is_a_fixed_leaderboard_beside_an_absorbing_pane(app):
-    # #276's rail idiom: the leaderboard takes a fixed basis wide enough for
-    # its four columns and the pane absorbs the remainder, so the split holds
-    # at any viewport width with no pixel constant on the pane. A pane given
-    # its own fixed width would leave dead space or overflow instead.
+def test_the_block_is_two_sections_at_sixty_forty(app):
+    # #308: both sections share, neither absorbs. The `0 0 620px` basis this
+    # replaced was a width that happened to look like 60% on one screen — it
+    # read as 60% at 1030px wide and 43% at 1440px. `flex: 1 1 <share>` on each
+    # is what makes the ratio survive a narrower viewport.
     errors_w, row = app.commentary_box.children
     assert errors_w is app.state.errors_w  # the error strip is first, full width
     board_col, pane_col = row.children
 
-    assert board_col.layout.flex.startswith("0 0 ")  # fixed basis
-    assert pane_col.layout.flex == "1 1 0%"  # absorbs the remainder
+    assert board_col.layout.flex == f"1 1 {COMMENTARY_LEADERBOARD_SHARE}"
+    assert pane_col.layout.flex == f"1 1 {COMMENTARY_BULLETIN_SHARE}"
+    # Load-bearing, not tidiness: a flex item's automatic minimum is its
+    # content, so without this the leaderboard's four columns would refuse to
+    # narrow and push the Bulletin off the row instead of both shrinking.
     assert board_col.layout.min_width == "0"
     assert pane_col.layout.min_width == "0"
+    # No pixel basis survives anywhere in the block.
+    assert "px" not in board_col.layout.flex
+    assert "px" not in pane_col.layout.flex
 
     # The board sits in a `section_panel`: title line, the Window chip bar it
     # is re-ranked by, then the boxed board (#305, #306).

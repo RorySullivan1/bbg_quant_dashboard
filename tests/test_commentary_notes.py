@@ -1,7 +1,7 @@
 """The QIS Bulletin's commentary notes (#304, epic #303).
 
-`data/commentary.json` replaces the single `weekly_commentary.html` blob with a
-list of dated notes. What these tests pin is the contract the renderer (#307)
+`data/commentary.json` replaces the single author-written HTML blob with a list
+of dated notes. What these tests pin is the contract the renderer (#307)
 will read against: the three fields, the newest-first order, `text` carried
 verbatim, and — the half that matters at startup — that no shape of broken file
 can raise. The loader runs while the app is being built, so a malformed note
