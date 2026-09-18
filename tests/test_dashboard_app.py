@@ -21,6 +21,7 @@ from src.config import (
     universe_grid_default_window,
 )
 from src.layout.app import DashboardApp
+from src.layout.rails import RAIL_WIDTH
 from src.price_source import MockPriceSource
 
 
@@ -281,84 +282,58 @@ def test_clicking_a_window_chip_moves_the_grid(app):
     assert app.universe_grid.window == "5Y"
 
 
-def test_the_platform_shell_is_a_dock_then_the_table(app):
-    # Both rails sit behind one left-docked strip of buttons; the table takes
-    # whatever they are not using.
-    dock, table = app.universe_grid_row.children
-    assert dock is app.rail_dock.root
-    assert table is app.universe_grid.widget
-    assert app.rail_dock.strip is dock.children[0]
-    assert list(dock.children)[1:] == [app.left_rail, app.right_rail]
-    # Group by above Window: the order the two controls act in.
-    assert list(app.left_rail.children).index(app.group_chips) < list(
-        app.left_rail.children
-    ).index(app.window_chips)
-    # Metric, Window, Lookback — the three facets of the z-score, in that order.
-    z_chips = [app.z_metric_chips, app.z_window_chips, app.z_lookback_chips]
-    assert [c for c in app.right_rail.children if c in z_chips] == z_chips
+def test_the_platform_shell_is_a_bar_above_and_a_rail_beside_the_table(app):
+    # The controls that shape the rows sit above the table; the ranking rail
+    # runs down its left side. Neither is a row of widgets the table has to
+    # share its own line with.
+    rail, table = app.universe_grid_row.children
+    assert (rail, table) == (app.ranking_rail, app.universe_grid.widget)
+
+    children = list(app._top_panels["platform"].children)
+    assert children.index(app.table_bar) < children.index(app.universe_grid_row)
 
 
-def test_the_three_platform_containers_stand_the_same_height(app):
+def test_the_bar_lays_its_sections_across(app):
+    # Group by before Window: the order the two act in.
+    headings = [
+        c.value
+        for block in app.table_bar.children
+        for c in getattr(block, "children", ())
+        if "bbg-rail-heading" in c._dom_classes
+    ]
+    assert headings == ["Group by", "Window"]
+    # Same chrome as the rail beside the table, turned.
+    assert "bbg-rail" in app.table_bar._dom_classes
+    assert "bbg-rail-bar" in app.table_bar._dom_classes
+    # Its chips lay out across too, or the bar would be as tall as a rail.
+    for chips in (app.group_chips, app.window_chips):
+        assert chips.layout.flex_flow == "row wrap"
+        assert "bbg-chip-row" in chips._dom_classes
+
+
+def test_the_ranking_rail_stands_the_table_s_height(app):
     from src.layout.html import STYLE_CTX, render_template
     from src.style import CATALOG_TABLE_MAX_HEIGHT
 
-    # The row stretches its children rather than letting each size to its own
-    # content, and the rails cap at the table's own scroll height — so the
-    # strip, an open rail and the table stand level.
+    # Stretched by the row, and capped at the table's own scroll height, so the
+    # two stand level whichever is taller.
     assert app.universe_grid_row.layout.align_items == "stretch"
+    assert app.ranking_rail.layout.flex == f"0 0 {RAIL_WIDTH}"
     css = render_template("app_css", **STYLE_CTX)
     rail = css.split(".bbg-app .bbg-rail {")[1].split("}")[0]
     assert f"max-height: {CATALOG_TABLE_MAX_HEIGHT}" in rail
-    cell = css.split(".dt-layout-row.dt-layout-table .dt-layout-cell {")[1].split("}")[
-        0
-    ]
-    assert f"max-height: {CATALOG_TABLE_MAX_HEIGHT}" in cell
+    # ...but the bar above is not a column, so the cap does not apply to it.
+    bar = css.split(".bbg-app .bbg-rail-bar {")[1].split("}")[0]
+    assert "max-height: none" in bar
 
 
-def test_both_rails_start_hidden_behind_their_buttons(app):
-    dock = app.rail_dock
-    assert dock.open == set()
-    for entry in dock.entries:
-        assert entry.rail.layout.display == "none"
-    assert all("is-active" not in b._dom_classes for b in dock.buttons.values())
-
-
-def test_a_dock_button_opens_its_rail_and_closes_it_again(app):
-    dock = app.rail_dock
-    button = dock.buttons["Table view"]
-
-    button.click()
-    assert dock.is_open("Table view")
-    assert app.left_rail.layout.display is None
-    assert "is-active" in button._dom_classes
-
-    button.click()
-    assert not dock.is_open("Table view")
-    assert app.left_rail.layout.display == "none"
-    assert "is-active" not in button._dom_classes
-
-
-def test_the_two_rails_open_independently(app):
-    dock = app.rail_dock
-    dock.buttons["Table view"].click()
-    dock.buttons["Z-Score ranking"].click()
-    assert dock.open == {"Table view", "Z-Score ranking"}
-
-    dock.buttons["Table view"].click()
-    # Closing one leaves the other open — a user comparing the two can have both.
-    assert dock.open == {"Z-Score ranking"}
-    assert app.right_rail.layout.display is None
-    dock.buttons["Z-Score ranking"].click()
-
-
-def test_each_button_says_what_its_panel_says(app):
-    # The word on the button a user pressed and the title on the panel that
-    # appears are the same string, spelled once.
-    for entry in app.rail_dock.entries:
-        titles = [
-            c.value for c in entry.rail.children if "bbg-rail-title" in c._dom_classes
+def test_both_containers_carry_a_title(app):
+    titles = []
+    for container in (app.table_bar, app.ranking_rail):
+        titles += [
+            c.value for c in container.children if "bbg-rail-title" in c._dom_classes
         ]
-        assert titles == [entry.label]
+    assert titles == ["Table view", "Z-Score ranking"]
 
 
 def test_no_control_row_sits_above_the_grid(app):

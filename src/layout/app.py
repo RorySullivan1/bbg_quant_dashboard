@@ -113,10 +113,9 @@ from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import PlatformAnalytics
 from .rails import (
     ChipGroup,
-    DockEntry,
     MultiChipGroup,
-    RailDock,
     RailSection,
+    control_bar,
     control_rail,
 )
 from .selection import SelectionSlice
@@ -134,11 +133,10 @@ from .state import DashboardState
 # at least this long, or an instant refetch hides it in the same frame.
 _OVERLAY_PAINT_DELAY_S = 0.35
 
-#: The two Platform rails' titles. Each names its rail *and* the dock button
-#: that opens it, so the button a user pressed and the panel that appears say
-#: the same word — spelled once here rather than at both call sites.
-LEFT_RAIL_TITLE = "Table view"
-RIGHT_RAIL_TITLE = "Z-Score ranking"
+#: The two Platform control containers' titles — the bar above the table and
+#: the rail beside it. Spelled once so the docs, the tests and the screen agree.
+TABLE_BAR_TITLE = "Table view"
+RANKING_RAIL_TITLE = "Z-Score ranking"
 
 
 class DashboardApp:
@@ -432,27 +430,27 @@ class DashboardApp:
 
         self.selected_perf_grid = PerfGrid()
 
-    def _build_left_rail(self) -> W.VBox:
-        """The two controls that shape the table's *rows*, in one rail (#278).
+    def _build_table_bar(self) -> W.HBox:
+        """The two controls that shape the table's *rows*, in a bar above it.
 
-        Group by above Window, because that is the order they act in: the
+        Group by before Window, because that is the order they act in: the
         chips decide what the rows are gathered into, the window decides what
         is measured across them. They were in different places and different
         idioms before — checkboxes above the table, a radio beside it — and
         nothing said they belonged together.
 
-        Titled, like the Z-Score rail: two rails that sit either side of the
-        same table and are opened from the same strip should read the same way,
-        and one of them wearing a title while the other went bare was the only
-        thing telling them apart.
+        Across rather than down (`control_bar`): these sit above the table,
+        where the eye starts, and a stacked rail there would cost the table
+        vertical space for chips that fit comfortably in a row. Same `.bbg-rail`
+        chrome as the ranking rail beside the table — one component, turned.
         """
-        return control_rail(
+        return control_bar(
             RailSection("Group by", self._build_group_chips()),
             RailSection("Window", self._build_window_chips()),
-            title=LEFT_RAIL_TITLE,
+            title=TABLE_BAR_TITLE,
         )
 
-    def _build_right_rail(self) -> W.VBox:
+    def _build_ranking_rail(self) -> W.VBox:
         """The Z-Score ranking, beside the table rather than above it (#279).
 
         Three facets of one control, so the rail is titled and the sections
@@ -468,7 +466,7 @@ class DashboardApp:
             RailSection("Metric", self.z_metric_chips),
             RailSection("Window", self.z_window_chips),
             RailSection("Lookback", self.z_lookback_chips),
-            title=RIGHT_RAIL_TITLE,
+            title=RANKING_RAIL_TITLE,
         )
 
     def _build_group_chips(self) -> MultiChipGroup:
@@ -488,6 +486,7 @@ class DashboardApp:
         self.group_chips = MultiChipGroup(
             [(field_label(key), key) for key in universe_grid_groupable_fields()],
             value=universe_grid_group_fields(),
+            row=True,
         )
         self.group_chips.observe(self._on_grouping_change, names="value")
         return self.group_chips
@@ -508,6 +507,7 @@ class DashboardApp:
         self.window_chips = ChipGroup(
             [label for label, _ in stat_windows()],
             value=universe_grid_default_window(),
+            row=True,
         )
         self.window_chips.observe(self._on_window_change, names="value")
         return self.window_chips
@@ -592,27 +592,23 @@ class DashboardApp:
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
-        # The Platform shell: both rails behind one left-docked strip of
-        # toggle buttons, then the table. #278/#279 put a fixed rail on each
-        # side and #276 settled collapsible rails as out of scope; this
-        # reverses that deliberately — the rails hold width the table wants,
-        # and a closed panel hands it straight back because the row is flex.
+        # The Platform shell: the row-shaping controls in a bar above the
+        # table, the Z-Score ranking in a rail down its left side. The two
+        # containers wear the same chrome and differ only in direction.
         #
-        # `stretch`, not `flex-start`: the strip, an open panel and the table
-        # stand the same height instead of each sizing to its own content.
-        self.left_rail = self._build_left_rail()
-        self.right_rail = self._build_right_rail()
-        self.rail_dock = RailDock(
-            DockEntry(LEFT_RAIL_TITLE, self.left_rail),
-            DockEntry(RIGHT_RAIL_TITLE, self.right_rail),
-        )
+        # `stretch`, not `flex-start`: the rail stands the table's full height
+        # rather than sizing to its own chips, which is the whole reason it
+        # reads as the table's axis instead of as a box parked beside it.
+        self.table_bar = self._build_table_bar()
+        self.ranking_rail = self._build_ranking_rail()
         self.universe_grid_row = W.HBox(
-            [self.rail_dock.root, self.universe_grid.widget],
+            [self.ranking_rail, self.universe_grid.widget],
             layout=W.Layout(width="100%", align_items="stretch"),
         )
         platform_panel = W.VBox(
             [
                 self.universe_header,
+                self.table_bar,
                 self.universe_grid_row,
                 self.analytics.card,
             ],

@@ -263,20 +263,35 @@
   max-height: {{table_max_height}};
   overflow-y: auto;
 }
-/* The dock strip: the two rail buttons, in one place on the left whichever
-   panels are open, so a user looking for a control never hunts for the
-   toggle. It stands the full row height for the same reason the rails do. */
-.bbg-app .bbg-rail-strip {
-  background: {{surface}};
-  border: 1px solid {{border_color}};
-  border-radius: 8px;
-  padding: 10px 8px 6px 8px;
-  margin: 0 8px 0 0;
+/* The same rail turned on its side, for the controls that sit ABOVE the table.
+   It keeps `.bbg-rail`'s surface and border — only the direction changes — and
+   drops the height cap, which exists to keep a *column* level with the table. */
+.bbg-app .bbg-rail-bar {
+  max-height: none;
+  overflow: visible;
+  padding: 8px 12px;
+  margin: 0 0 8px 0;
 }
-.bbg-app .bbg-dock-btn {
-  height: 30px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* In the bar a title sits beside the sections rather than over them, with a
+   rule separating it from the first control. */
+.bbg-app .bbg-rail-bar .bbg-rail-title {
+  border-bottom: none;
+  border-right: 1px solid {{border_color}};
+  padding: 0 18px 0 0;
+  margin: 0 18px 0 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.bbg-app .bbg-rail-bar .bbg-rail-heading {
+  margin: 0 0 4px 0;
+}
+/* Chips in a row size to their text instead of filling a rail's width, and
+   wrap rather than squeezing when the bar runs out of room. */
+.bbg-app .bbg-chip-row .bbg-chip {
+  width: auto !important;
+  margin: 0 6px 0 0 !important;
+  padding: 0 12px;
 }
 .bbg-app .bbg-rail-title {
   color: {{accent}};

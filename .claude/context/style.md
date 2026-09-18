@@ -142,9 +142,11 @@ renders legibly without their doing anything.
 
 ## Control rails and chips (v0.9.21, epic #276)
 
-The Platform tab's controls are two rails, one either side of the catalog
-table, built by `control_rail` (`src/layout/rails.py`) rather than assembled at
-the call site — the rails differ by content, not by code.
+The Platform tab's controls sit in two containers of the same chrome, built by
+`control_bar` / `control_rail` (`src/layout/rails.py`) rather than assembled at
+the call site: a **bar above** the table (Group by + Window) and a **rail down
+its left** (Z-Score ranking). They differ by direction and content, not by
+code.
 
 - **`.bbg-rail`** — the raised panel: `surface` fill, border, 8px radius, at a
   fixed 210px basis (`RAIL_WIDTH`). It does **not** flex; the table between the
@@ -153,19 +155,25 @@ the call site — the rails differ by content, not by code.
   sections are facets of one control (the Z-Score rail's Metric / Window /
   Lookback). Group by / Window stand on their own and pass no title.
 - **`.bbg-rail-heading`** — a section heading: uppercase, letterspaced, muted.
-- **`.bbg-rail-strip` / `.bbg-dock-btn`** — the dock: a narrow panel of
-  uppercase toggle buttons at the left of the Platform row, one per rail.
+- **`.bbg-rail-bar`** — the same rail turned on its side, for the controls
+  **above** the table: `.bbg-rail`'s surface and border, sections laid across,
+  the title beside them behind a vertical rule, and **no height cap** (a cap
+  exists to keep a column level with the table).
+- **`.bbg-chip-row`** — chips laid across: they size to their text instead of
+  filling a rail's width, and wrap rather than squeeze when the bar runs out.
 - **`.bbg-chip`** — a chip, in the `.bbg-pill` family so the base, hover,
   active and focus colours are the tab band's and these rules only refine them:
   full-rail width, left-aligned, with an accent bar down the leading edge when
   active. `text-align` alone does **not** left-align a Jupyter button — the
   widget renders a flex container, so `justify-content` is set with it.
 
-**One height for the row.** `.bbg-rail` caps at `CATALOG_TABLE_MAX_HEIGHT` —
-the same token as the catalog table's own scroll cell — and the row is
-`align_items: stretch`, so the strip, an open rail and the table stand level
-instead of each sizing to its content, and either one scrolls internally past
-it. Written as two values they would drift and the row would step.
+**The rail stands the table's height.** `.bbg-rail` caps at
+`CATALOG_TABLE_MAX_HEIGHT` — the same token as the catalog table's own scroll
+cell — and the row is `align_items: stretch`, so the rail and the table stand
+level instead of each sizing to its content, and either one scrolls internally
+past it. Written as two values they would drift and the row would step. The
+bar overrides the cap to `none`: it is not a column, and nothing is level
+with it.
 
 **The active state is a class, never inline `.style`.** `_make_chip` /
 `_style_chip` (`chrome.py`) toggle `is-active`, exactly as the tab-button pair

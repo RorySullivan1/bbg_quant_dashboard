@@ -314,26 +314,24 @@ cannot judge is anything about *fit* — real fonts, the rails, the viewport —
 so the width items below are still unrendered, and reading the bundle is still
 not evidence that something draws.
 
-The rails and their dock:
+The control bar and the ranking rail:
 
-- The row opens with a **strip of two buttons** — *Table view* and *Z-Score
-  ranking* — and **both panels closed**, so the table has the full width. There
-  is **no control row above the table** either: nothing between the universe
-  header and the grid.
-- Clicking a button opens its panel beside the strip and marks the button
-  active; clicking again closes it and the table **takes the width straight
-  back**. The two are independent: opening one does not close the other.
-- The button's word and the panel's title match (*Table view* opens a panel
-  titled TABLE VIEW), and both rails carry a title in the same treatment.
-- The strip, an open panel and the table stand **level** — same top, same
-  bottom — with both panels open, one open and none open. A panel with more
-  chips than fit scrolls inside itself rather than making the row taller.
+- A **bar above the table** carries TABLE VIEW, then Group by and Window laid
+  **across**, chips sized to their text. It is one line of chips tall, not a
+  rail lying down.
+- The **ranking rail** runs down the **left** of the table, stacked, titled
+  Z-SCORE RANKING, and its top and bottom line up with the table's — check at a
+  short catalog (table shorter than the rail) and a long one (table scrolling),
+  since the two are level for different reasons in each case.
+- Both containers wear the same surface, border and radius; only the direction
+  differs.
+- Narrow the window until the bar runs out of room: the chips **wrap** onto a
+  second line rather than squeezing or clipping.
 - The chips read like the top tab band, not like native checkboxes and radios:
   hover lights them, the selected one carries the accent bar, and keyboard
   focus draws a visible ring.
-- Both rails hold their 210px width as the window is resized; neither shrinks
-  to let the table grow. Closing a panel while the catalog is filtered or
-  grouped leaves the filter, the grouping and the selected row untouched.
+- The rail holds its 210px width as the window is resized; it must not shrink
+  to let the table grow.
 
 The table surface:
 
@@ -363,9 +361,8 @@ The table surface:
 - No Return Type column. Launch Date is still there; Return Type is still on
   the Single Strategy profile card and still a filter pill.
 - **No page-level horizontal scrollbar** at the default single-window column
-  set on a standard BQuant viewport, and the table fills the space the dock
-  leaves rather than leaving dead space to its right — checked **with both
-  panels open and with both closed**, since the width the table gets differs.
+  set on a standard BQuant viewport, and the table fills the space the ranking
+  rail leaves rather than leaving dead space to its right.
 - Widen the column set until it cannot fit: it scrolls **inside** the table,
   with both rails still in place and fully visible.
 - Resize the viewport: the header stays on its columns. This is the event class
