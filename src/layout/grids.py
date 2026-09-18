@@ -710,17 +710,46 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
     label row and clicking into an input cannot re-sort. (`orderCellsTop`, the
     documented answer when both rows exist at init, is therefore not needed —
     and is not a documented itables option, so passing it warns.)
+
+    **Why the cells are `td` and not `th`.** This is what made the first cut of
+    the row render blank. itables leaves `text_in_header_can_be_selected` on by
+    default, and the wrapper that option installs walks `$("thead th", …)` in
+    `initComplete` — which runs *after* the first draw, so after this callback
+    — and calls `.empty()` on every cell whose `span.dt-column-title` is
+    missing or blank. Our cells carry an input and no title, so it read them as
+    stray header cells and emptied all of them: the `<tr>` survived with the
+    right number of cells and not one input inside it, which looks exactly like
+    a callback that never ran. A `td` is outside that selector's reach, and the
+    row is a strip of controls rather than a row of column headings, so it is
+    also the truer element. (Turning the option off would work too, but it
+    would trade the filters for header-text selection and move sorting onto the
+    whole label cell — a change to the header this issue never asked for.)
+
+    The guard below counts inputs rather than testing for the row, so if a
+    future version of that pass empties them anyway the next draw rebuilds
+    them, instead of the row sitting there blank forever.
     """
     return JavascriptFunction(
         "function (settings) {"
         "  var api = this.api();"
         "  var node = api.table().node();"
         "  var head = node.tHead;"
-        # Built once per table. Every later draw — a filter keystroke, a sort,
-        # a regroup — finds the row and returns, so a focused input is never
-        # torn out from under the user mid-type.
-        "  if (!head || head.querySelector('tr.bbg-filter-row')) { return; }"
+        "  if (!head) { return; }"
         f"  var filterable = {list(filterable)!r};"
+        "  var expected = 0;"
+        "  api.columns(':visible').every(function () {"
+        "    if (filterable.indexOf(this.index()) !== -1) { expected++; }"
+        "  });"
+        # Built once per table. Every later draw — a filter keystroke, a sort,
+        # a regroup — finds the row intact and returns, so a focused input is
+        # never torn out from under the user mid-type. A row whose inputs are
+        # gone, or that predates a column-visibility change, is rebuilt.
+        "  var existing = head.querySelector('tr.bbg-filter-row');"
+        "  if (existing) {"
+        "    if (existing.querySelectorAll('input.bbg-filter-input').length"
+        "        === expected) { return; }"
+        "    existing.remove();"
+        "  }"
         "  var store = (window.__bbgCatalogFilters = window.__bbgCatalogFilters || {});"
         "  var saved = (store[node.id] = store[node.id] || {});"
         "  var row = document.createElement('tr');"
@@ -729,7 +758,8 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
         # ':visible' only — an input under a hidden column would be an orphan
         # the user could type into with nothing to filter.
         "  api.columns(':visible').every(function () {"
-        "    var cell = document.createElement('th');"
+        "    var cell = document.createElement('td');"
+        "    cell.className = 'bbg-filter-cell';"
         "    var index = this.index();"
         "    if (filterable.indexOf(index) !== -1) {"
         "      var column = this;"
@@ -744,7 +774,11 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
         "          column.search(input.value).draw();"
         "        }"
         "      };"
-        "      input.addEventListener('keyup', apply);"
+        # `input` rather than `keyup`: a paste and the clear button of a
+        # `type=search` box both change the value without a keystroke. `search`
+        # is the clear button's own event; the guard above makes the pair idem-
+        # potent when a browser fires both.
+        "      input.addEventListener('input', apply);"
         "      input.addEventListener('search', apply);"
         "      cell.appendChild(input);"
         "      if (saved[index]) { pending.push([column, saved[index]]); }"

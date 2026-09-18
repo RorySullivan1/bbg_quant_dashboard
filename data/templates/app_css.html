@@ -511,8 +511,17 @@ div.itables_anywidget table.dataTable thead tr:first-child th {
   height: {{filter_row_top}} !important;
   box-sizing: border-box !important;
 }
-div.itables_anywidget table.dataTable thead tr.bbg-filter-row th {
+/* The filter row's cells are `td`, not `th` — see `_js_filter_row` for why
+   (itables empties a `thead th` that carries no column title, which is what
+   left this row blank). So they inherit none of the header rules above and
+   carry their own: the pin, the offset beneath the labels, and the same
+   opaque surface, or the body would scroll through them. */
+div.itables_anywidget table.dataTable thead tr.bbg-filter-row td.bbg-filter-cell {
+  position: sticky !important;
   top: {{filter_row_top}} !important;
+  z-index: 2 !important;
+  background-color: {{surface}} !important;
+  border-color: {{border_color}} !important;
   padding: 2px 4px !important;
   font-weight: 400 !important;
 }

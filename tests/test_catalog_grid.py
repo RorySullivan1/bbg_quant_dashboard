@@ -897,9 +897,11 @@ def test_the_callback_holds_the_invariants_the_row_depends_on():
     grid = _populated_grid(("solution", "category"))
     js = _draw_callback(grid)
 
-    # Built once: every later draw finds the row and returns, so a focused
-    # input is never torn out from under someone mid-type.
+    # Built once: every later draw finds the row intact and returns, so a
+    # focused input is never torn out from under someone mid-type. "Intact" is
+    # a count of inputs, not the row's existence — see the next test.
     assert "querySelector('tr.bbg-filter-row')" in js
+    assert "querySelectorAll('input.bbg-filter-input').length" in js
     # Only visible columns, so a hidden one cannot leave an orphaned input.
     assert "columns(':visible')" in js
     # Matched by data index, which is stable under sorting and filtering.
@@ -909,6 +911,42 @@ def test_the_callback_holds_the_invariants_the_row_depends_on():
     assert "window.__bbgCatalogFilters" in js
     # Re-applied outside the draw that is running, or it re-enters it.
     assert "setTimeout" in js
+    # `input`, not `keyup`: a paste and the clear button of a `type=search`
+    # box both change the value with no keystroke behind it.
+    assert "addEventListener('input'" in js
+
+
+def test_the_filter_cells_are_td_so_itables_cannot_empty_them():
+    """The regression that left the row rendering blank.
+
+    itables leaves `text_in_header_can_be_selected` on by default, and the
+    wrapper it installs walks `$("thead th", …)` in `initComplete` — which runs
+    *after* the first draw, so after this callback — and `.empty()`s every cell
+    whose `span.dt-column-title` is missing or blank. A filter cell has an
+    input and no title, so every one of them was emptied: the `<tr>` survived
+    with the right number of cells and not one input in it, which is
+    indistinguishable from a callback that never ran.
+    """
+    js = _draw_callback(_populated_grid())
+    assert "createElement('td')" in js
+    assert "createElement('th')" not in js
+
+
+def test_the_itables_pass_that_forced_that_choice_is_still_there():
+    # Grounds the test above in the dependency rather than in a memory of it:
+    # if a future itables stops emptying untitled `thead th` cells — or widens
+    # the selector to `td` — this fails and the choice gets re-made against
+    # what the bundle actually does.
+    from pathlib import Path
+
+    import itables.widget
+
+    bundle = Path(itables.widget.__file__).parent / "static" / "widget.js"
+    if not bundle.exists():  # pragma: no cover - a source layout we don't ship
+        pytest.skip("itables widget bundle not found")
+    js = bundle.read_text(encoding="utf-8")
+    assert '"thead th"' in js
+    assert "text_in_header_can_be_selected" in js
 
 
 def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
@@ -922,6 +960,14 @@ def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
     assert f"height: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
     assert f"top: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
     assert ".bbg-filter-input" in css
+    # A `td` inherits none of the `thead th` chrome, so the filter cells carry
+    # their own pin and their own opaque surface — without which the body
+    # scrolls straight through the row that is supposed to be pinned over it.
+    cell = "tr.bbg-filter-row td.bbg-filter-cell"
+    block = css.split(cell, 1)[-1].split("}", 1)[0]
+    assert cell in css
+    assert "position: sticky" in block
+    assert "background-color" in block
 
 
 # --- the table claims the width between the rails (#280) -------------------

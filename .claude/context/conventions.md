@@ -258,6 +258,22 @@ CSS, style tokens — live in `style.md`.)
   `setProperty(..., 'important')` — a plain inline style loses to it, and the
   cells carry the right colour while painting flat navy.
 
+- **The per-column filter row is built from `td`, not `th` (v0.9.21 #285)**:
+  itables leaves `text_in_header_can_be_selected` on by default, and the
+  wrapper that option installs walks `$("thead th", …)` in `initComplete` —
+  which runs *after* the first draw, so after the `drawCallback` that builds
+  the row — and `.empty()`s every cell whose `span.dt-column-title` is missing
+  or blank. A filter cell is exactly that: an input and no title. The first cut
+  of the row used `th` and every input was wiped a tick after it was created,
+  leaving a `<tr>` with the right number of cells and nothing inside it — which
+  is indistinguishable from a callback that never ran, and is why the row
+  looked like it was not rendering at all. A `td` is outside that selector's
+  reach; the price is that the cells inherit none of the `thead th` chrome and
+  carry their own pin and opaque background in `app_css.html`. The callback's
+  built-once guard counts inputs rather than testing for the row, so a future
+  version of that pass degrades to a rebuild on the next draw rather than to a
+  blank row that never comes back.
+
 - **The catalog scrolls in CSS, not through `scrollY` (v0.9.18 #272)**:
   DataTables' `scrollY` renders the header in a second table and sizes both
   once, at init. When the container settles to its real width afterwards — or
