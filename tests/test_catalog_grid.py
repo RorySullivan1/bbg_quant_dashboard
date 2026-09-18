@@ -701,3 +701,266 @@ def test_every_grouping_subset_stays_contiguous_at_every_level():
                 )
                 runs = _runs(path)
                 assert len(runs) == len(set(runs)), f"{subset} fragments at {depth}"
+
+
+# --- the search box leads the table from the top-left (#283) ---------------
+
+
+def test_the_search_box_is_slotted_top_left_and_only_once():
+    from src.layout.grids import _catalog_table_options
+
+    layout = _catalog_table_options(_catalog(), [])["layout"]
+    assert layout["topStart"] == "search"
+    # Cleared explicitly: the default layout object is merged, so leaving
+    # `topEnd` alone would draw a second search box on the right.
+    assert layout["topEnd"] is None
+    assert "search" not in [
+        layout["topEnd"],
+        layout["bottomStart"],
+        layout["bottomEnd"],
+    ]
+    # The row-count readout stays where it was.
+    assert layout["bottomStart"] == "info"
+
+
+def test_the_search_box_carries_a_placeholder_the_bundle_actually_reads():
+    from src.layout.grids import _catalog_table_options
+
+    language = _catalog_table_options(_catalog(), [])["language"]
+    # `sSearchPlaceholder`, not the documented camelCase `searchPlaceholder`:
+    # this bundle's camelCase map does not carry that key, so the camelCase
+    # form would be dropped silently and no placeholder would ever render.
+    assert language["sSearchPlaceholder"]
+    assert language["sSearch"] == ""  # the "Search:" label, dropped
+
+
+def test_the_relocated_search_box_keeps_the_dark_chrome():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    # The `topStart` cell aligns with `justify-content`, so the feature moving
+    # is not enough on its own.
+    assert ".dt-layout-cell.dt-layout-start" in css
+    assert ".dt-search input::placeholder" in css
+
+
+def test_moving_the_search_box_leaves_the_scroll_container_alone():
+    from src.layout.html import STYLE_CTX, render_template
+
+    # That cell is what keeps header and body in ONE table; the `scrollY` drift
+    # recorded in grids.py is what it exists to avoid.
+    css = render_template("app_css", **STYLE_CTX)
+    assert ".dt-layout-row.dt-layout-table .dt-layout-cell" in css
+
+
+# --- nested group-header bands (#284) --------------------------------------
+
+
+def _luminance(color: str) -> float:
+    """WCAG relative luminance of an opaque ``#rrggbb`` colour."""
+
+    def _channel(value: float) -> float:
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
+
+
+def _contrast(fill: str, text: str) -> float:
+    dark, light = sorted((_luminance(fill), _luminance(text)))
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _bands() -> list[str]:
+    from src.layout.html import STYLE_CTX
+
+    return [str(STYLE_CTX[f"group_band{level}"]) for level in range(4)]
+
+
+def test_every_nesting_level_gets_its_own_band():
+    from src.style import Color
+
+    bands = _bands()
+    assert len(set(bands)) == 4
+    # Level 2 used to be `chrome_bg` — the table body's own colour — so the
+    # deepest tier separated from its rows by weight and indent alone.
+    assert str(Color.CHROME_BG) not in bands
+
+
+def test_text_contrast_holds_on_every_band_including_the_brightest():
+    from src.style import Color
+
+    # The foreground flips partway down: the two bright fills take dark text,
+    # the two deep ones take light text. A band that kept the light text all
+    # the way up is exactly the failure this asserts against.
+    dark, light = str(Color.CHROME_BG), str(Color.TEXT)
+    band0, band1, band2, band3 = _bands()
+    for fill, text in ((band0, dark), (band1, dark), (band2, light), (band3, light)):
+        assert _contrast(fill, text) >= 4.5, f"{fill} on {text}"
+    # And the pairing is the right way round — light text on the brightest
+    # fill would fail, which is why it is not used there.
+    assert _contrast(band0, light) < 4.5
+
+
+def test_the_stylesheet_bands_every_reachable_level_and_then_some():
+    from src.config import UNIVERSE_GRID_GROUPABLE_FIELDS
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    deepest = len(UNIVERSE_GRID_GROUPABLE_FIELDS) - 1
+    for level in range(deepest + 1):
+        assert f"tr.dtrg-group.dtrg-level-{level} th" in css
+    # The base rule carries a band of its own, so a level past the named ones
+    # renders as a defined band rather than falling through to the body.
+    base = css.split("tr.dtrg-group th,")[1].split("}")[0]
+    assert "background-color" in base and "color" in base
+    # Both elements stay listed: RowGroup emits a `th`, and a td-only rule
+    # matches nothing at all.
+    assert "tr.dtrg-group td {" in css
+
+
+# --- per-column filter row (#285) ------------------------------------------
+#
+# The row itself is built in the browser, so what is asserted here is
+# everything that decides whether it *can* work: which columns get an input,
+# that the callback reaches DataTables at all through the itables widget, and
+# the invariants the JS depends on. The rendered DOM is the manual pass.
+
+
+def _draw_callback(grid) -> str:
+    from src.layout.grids import _catalog_table_options
+
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+    return str(options["drawCallback"])
+
+
+def test_only_the_text_columns_get_a_filter_input():
+    from src.layout.grids import _filterable_positions
+
+    grid = _populated_grid(("solution",))
+    positions = _filterable_positions(grid._display, grid._groups)
+    named = [str(grid._display.columns[p]) for p in positions]
+
+    assert "Name" in named and "Asset Class" in named and "Launch Date" in named
+    # Numbers are excluded: a substring filter over them matches nonsense
+    # ("1.2" would match 1.23, 11.2 and -1.2 alike).
+    assert not any(n.startswith("Z-Score") for n in named)
+    assert not any(n.endswith((" Return", " Vol", " Sharpe", " Max DD")) for n in named)
+    # Grouped columns are hidden and come back as row-group headers.
+    assert "Solution" not in named
+
+
+def test_the_filterable_set_does_not_move_with_the_stats_window():
+    from src.layout.grids import _filterable_positions
+
+    grid = _populated_grid()
+    first = _filterable_positions(grid._display, grid._groups)
+    grid.set_window("6M")
+    assert _filterable_positions(grid._display, grid._groups) == first
+
+
+def test_the_filter_row_is_built_from_a_drawcallback_the_widget_forwards():
+    from itables import JavascriptFunction
+    from src.layout.grids import _catalog_table_options
+
+    grid = _populated_grid()
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+
+    # `drawCallback`, NOT `initComplete`: the itables widget destructures
+    # `initComplete` out of the options and calls it only from inside its own
+    # wrapper, which it installs only when `column_filters` or
+    # `text_in_header_can_be_selected` is set — so a bare `initComplete` is
+    # dropped in silence.
+    assert isinstance(options["drawCallback"], JavascriptFunction)
+    assert "initComplete" not in options
+    # And not itables' own column filters: in this build that replaces the
+    # header with a flat `<thead><th>…</th></thead>` — no labels, no `<tr>` —
+    # and its wrapper only wires inputs it finds, creating none.
+    assert "column_filters" not in options
+
+
+def test_the_callback_reaches_datatables_through_the_widget():
+    from itables.javascript import get_itables_extension_arguments
+    from src.layout.grids import _catalog_table_options
+
+    grid = _populated_grid()
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+    dt_args, _ = get_itables_extension_arguments(grid._display, **options)
+
+    # Present in the args the widget forwards, and registered for evaluation —
+    # a JS function that arrives as a string never runs.
+    assert "drawCallback" in dt_args
+    assert ["drawCallback"] in dt_args["keys_to_be_evaluated"]
+
+
+def test_the_callback_holds_the_invariants_the_row_depends_on():
+    grid = _populated_grid(("solution", "category"))
+    js = _draw_callback(grid)
+
+    # Built once: every later draw finds the row and returns, so a focused
+    # input is never torn out from under someone mid-type.
+    assert "querySelector('tr.bbg-filter-row')" in js
+    # Only visible columns, so a hidden one cannot leave an orphaned input.
+    assert "columns(':visible')" in js
+    # Matched by data index, which is stable under sorting and filtering.
+    assert "this.index()" in js
+    # The text survives the destroy-and-rebuild any options change causes:
+    # nothing carries it to the kernel, so it is stashed in the browser.
+    assert "window.__bbgCatalogFilters" in js
+    # Re-applied outside the draw that is running, or it re-enters it.
+    assert "setTimeout" in js
+
+
+def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
+    from src.layout.html import STYLE_CTX, render_template
+    from src.style import CATALOG_HEADER_ROW_HEIGHT
+
+    css = render_template("app_css", **STYLE_CTX)
+    # One token drives both the label row's height and the filter row's sticky
+    # offset. Written separately they would drift, and the symptom would be a
+    # filter row parked over the labels.
+    assert f"height: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
+    assert f"top: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
+    assert ".bbg-filter-input" in css
+
+
+# --- the table claims the width between the rails (#280) -------------------
+#
+# What is assertable here is that the rules exist and compose: the flex share,
+# the `min-width: 0` that lets the item shrink, and the width rules inside the
+# cell. Whether the result fits a real BQuant viewport is a measurement, and
+# it is on the manual checklist rather than here.
+
+
+def test_the_table_widget_takes_the_remaining_width_and_can_shrink():
+    from src.layout.grids import UniverseGrid
+
+    layout = UniverseGrid().widget.layout
+    assert layout.flex == "1 1 0%"
+    # The load-bearing half. A flex item's default `min-width: auto` refuses to
+    # shrink below its content, so a wide column set would push the rails off
+    # the row instead of scrolling inside the table.
+    assert layout.min_width == "0"
+
+
+def test_the_table_fills_its_cell_from_the_inside_too():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    rule = css.split("div.itables_anywidget.bbg-catalog,")[1].split("}")[0]
+    # The widget, DataTables' own wrapper, and the table itself. Widening the
+    # outer widget alone moves the dead space rather than removing it.
+    assert ".dt-container" in rule and "table.dataTable" in rule
+    assert "width: 100% !important" in rule
+
+
+def test_a_too_wide_column_set_scrolls_inside_the_table():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    # The same cell that makes the header sticky is the scroll container, so
+    # the overflow stays inside the table and the rails keep their place.
+    cell = css.split(".dt-layout-row.dt-layout-table .dt-layout-cell {")[1].split("}")[
+        0
+    ]
+    assert "overflow: auto" in cell

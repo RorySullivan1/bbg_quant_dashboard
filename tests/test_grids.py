@@ -121,15 +121,16 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     cols = list(frame.columns)
     z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
     # Headers and their order both come from the schema (#212): the info block
-    # is `SELECTED_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
+    # is `CATALOG_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
     # carries its schema label ("Launch Date", not the raw feed's "Live Date").
+    # Return Type left this table in #282 — it is near-constant across the
+    # catalog and cost a column on every row; it stays on the profile card.
     info_cols = [
         "Name",
         "Asset Class",
         "Solution",
         "Category",
         "Family",
-        "Return Type",
         "Launch Date",
     ]
     assert cols[: len(info_cols)] == info_cols
@@ -234,3 +235,30 @@ def test_perf_renderers_dash_on_numeric_without_heatmap():
     assert _text_value_expr(r["1Y Sharpe"]) == dash
     assert _text_value_expr(r["Name"]) == ""
     assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""
+
+
+def test_the_two_grids_read_different_field_tuples():
+    """The trap #282 closed: each tuple feeds exactly one grid, and the names
+    now say which. `PerfGrid` keeps Return Type; the catalog table dropped it.
+
+    Asserted together, in one test, because the failure mode is editing one
+    tuple and changing the other grid — which only shows up when both are
+    checked against each other.
+    """
+    from src.config import CATALOG_GRID_FIELDS, PERF_GRID_FIELDS
+    from src.layout.grids import PerfGrid
+
+    meta = _meta()
+    grid = PerfGrid()
+    grid.update(_up(meta["ticker"]), meta)
+    perf_cols = list(grid.grid.data.columns)
+
+    assert perf_cols[1:6] == ["Name", "Asset Class", "Solution", "Category", "Family"]
+    assert "Return Type" not in perf_cols  # PerfGrid never carried it
+
+    catalog_cols = list(_build_universe_frame(meta, _up(meta["ticker"])).columns)
+    assert "Return Type" not in catalog_cols
+    assert "Launch Date" in catalog_cols  # the other Info column stays
+
+    assert "return_type" not in CATALOG_GRID_FIELDS
+    assert "return_type" not in PERF_GRID_FIELDS

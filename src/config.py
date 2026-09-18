@@ -151,12 +151,16 @@ CLASSIFICATION_TIERS: tuple[str, ...] = ("solution", "category", "family")
 #: column is a `CATALOG_SCHEMA` edit and nothing else. The tiers are splatted
 #: from `CLASSIFICATION_TIERS` rather than respelled, so renaming a tier key
 #: reaches every renderer without touching these tuples.
-UNIVERSE_GRID_FIELDS: tuple[str, ...] = ("name", "asset_class", *CLASSIFICATION_TIERS)
-SELECTED_GRID_FIELDS: tuple[str, ...] = (
+#:
+#: Each tuple is named for the grid it actually feeds. Until #282 they were
+#: named the other way round — `UNIVERSE_GRID_FIELDS` fed `PerfGrid` and
+#: `SELECTED_GRID_FIELDS` fed the all-catalog table — so editing the
+#: obviously-named constant changed the other grid and reviewed as correct.
+PERF_GRID_FIELDS: tuple[str, ...] = ("name", "asset_class", *CLASSIFICATION_TIERS)
+CATALOG_GRID_FIELDS: tuple[str, ...] = (
     "name",
     "asset_class",
     *CLASSIFICATION_TIERS,
-    "return_type",
     "live_date",
 )
 PROFILE_CARD_FIELDS: tuple[str, ...] = (

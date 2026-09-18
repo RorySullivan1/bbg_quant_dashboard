@@ -243,6 +243,66 @@
   outline-offset: 1px;
 }
 
+/* ---- Control rails + chips (#277) ------------------------------------
+   The Platform tab's side rails: a raised panel one step off the page, with
+   an uppercase headed section per control group, matching the `.bbg-card` /
+   `.bbg-tabband` treatment. A chip is a `.bbg-pill` reshaped for a stacked
+   rail — full width and left-aligned, so a rail reads as a list of choices
+   rather than as a row of buttons that happens to wrap. The pill family
+   supplies the base/hover/active/focus colours; the rules here only refine
+   them, which is why a chip cannot drift away from the tab band's palette. */
+.bbg-app .bbg-rail {
+  background: {{surface}};
+  border: 1px solid {{border_color}};
+  border-radius: 8px;
+  padding: 10px 10px 6px 10px;
+}
+.bbg-app .bbg-rail-title {
+  color: {{accent}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid {{border_color}};
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+}
+.bbg-app .bbg-rail-heading {
+  color: {{text_muted}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 10px 0 4px 0;
+}
+/* The first heading sits flush with the rail's own padding; only the ones
+   below it need air separating them from the section above. */
+.bbg-app .bbg-rail > .bbg-rail-heading:first-child { margin-top: 0; }
+.bbg-app .bbg-chip-group { width: 100%; }
+/* `text-align` alone does not left-align a Jupyter button: the widget renders
+   a flex container, so the text is centred by `justify-content` regardless.
+   Both are set. */
+.bbg-app .bbg-chip {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  padding: 0 8px;
+  font-size: {{small_size}};
+  letter-spacing: 0.02em;
+}
+.bbg-app .bbg-chip:hover {
+  border-color: {{accent2}};
+}
+/* Selected: the pill's surface fill plus an accent bar down the leading edge,
+   so the ticked chips in a rail scan as a column at a glance. */
+.bbg-app .bbg-chip.is-active {
+  box-shadow: inset 2px 0 0 {{accent}};
+}
+.bbg-app .bbg-chip:focus-visible {
+  outline: 2px solid {{accent}};
+  outline-offset: 1px;
+}
+
 /* ---- Top-level section tab bar, stylized as a header band -------------
    The Platform / Multi-Strategy / Single Strategy tabs read as the *header*
    of the section shown below: a distinct raised strip one step lighter than
@@ -397,6 +457,24 @@ div.itables_anywidget.bbg-catalog {
   border-radius: 6px;
   overflow: hidden;
 }
+/* The catalog table fills the width the two rails leave (#280). The flex
+   share and `min-width: 0` are set on the widget in `UniverseGrid`, because
+   they belong to the ipywidgets layout of the HBox child rather than to page
+   CSS. What is needed HERE is the inside of that cell: DataTables sizes the
+   table to its content, so without these the flex cell stretches and the
+   table sits in the left of it, still surrounded by dead space.
+
+   `.dt-container` is included because it is the element DataTables wraps its
+   own layout rows in — widening the outer widget and the table while leaving
+   the wrapper at content width moves the dead space rather than removing it.
+   The scroll on a too-wide column set stays INSIDE the table: the layout cell
+   already carries `overflow: auto` (see the sticky-header rules below), so
+   the rails keep their place instead of being pushed off the row. */
+div.itables_anywidget.bbg-catalog,
+div.itables_anywidget.bbg-catalog .dt-container,
+div.itables_anywidget.bbg-catalog table.dataTable {
+  width: 100% !important;
+}
 /* The catalog scrolls here rather than through DataTables' `scrollY`.
    `scrollY` renders the header in a second table and sizes the two once, at
    init; when the container settles to its real width afterwards — or when the
@@ -417,11 +495,35 @@ div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs
-   an opaque background — the body scrolls underneath it, not behind a gap. */
+   an opaque background — the body scrolls underneath it, not behind a gap.
+
+   Since #285 the header is TWO rows: the labels, then the per-column filter
+   inputs. Both pin, which means the second row cannot also sit at `top: 0` —
+   it would cover the labels it belongs to. Its offset is the label row's
+   height, so the two are set together here: a sticky `top` cannot be a
+   percentage or `auto`, so the height has to be pinned rather than measured. */
 div.itables_anywidget table.dataTable thead th {
   position: sticky;
   top: 0;
   z-index: 2;
+}
+div.itables_anywidget table.dataTable thead tr:first-child th {
+  height: {{filter_row_top}} !important;
+  box-sizing: border-box !important;
+}
+div.itables_anywidget table.dataTable thead tr.bbg-filter-row th {
+  top: {{filter_row_top}} !important;
+  padding: 2px 4px !important;
+  font-weight: 400 !important;
+}
+/* The inputs themselves. They fill their column so the row reads as part of
+   the header rather than as a strip of controls sitting on top of it. */
+div.itables_anywidget .bbg-filter-input {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  font-size: {{micro_size}} !important;
+  padding: 2px 6px !important;
+  margin: 0 !important;
 }
 div.itables_anywidget table.dataTable,
 div.itables_anywidget table.dataTable tbody td,
@@ -445,41 +547,63 @@ div.itables_anywidget table.dataTable thead th {
 div.itables_anywidget table.dataTable tbody tr:nth-child(even) td {
   background-color: {{surface}} !important;
 }
-/* Nested group headers — the point of the change. Level 0 is the outermost
-   tier (Solution), each deeper level steps its indent and drops its weight,
-   so the hierarchy reads without reading the text.
+/* Nested group headers — the point of the change, restyled in #284. Level 0
+   is the outermost tier (Solution); each deeper level steps its indent, drops
+   its weight, and steps DOWN in tint, so the hierarchy reads as bands without
+   reading the text.
 
-   RowGroup emits `<tr class="dtrg-group"><th colspan=N>` — a **th**, not a td.
-   Selecting only `td` here matched nothing and every level rendered in the
-   plain body colour, which looks like "the theme works" unless you check the
-   computed style per level. Both are listed so a future RowGroup version that
-   switches element still lands. */
+   Two things here are load-bearing and look like detail:
+
+   1. RowGroup emits `<tr class="dtrg-group"><th colspan=N>` — a **th**, not a
+      td. Selecting only `td` matched nothing and every level rendered in the
+      plain body colour, which looks like "the theme works" unless you check
+      the computed style per level. Both are listed so a future RowGroup
+      version that switches element still lands.
+   2. The foreground FLIPS partway down the scale. Levels 0 and 1 are bright
+      enough that light text fails contrast on them, so they take dark text —
+      exactly as `.bbg-tabband .bbg-pill.is-active` does. Levels 2 and 3 are
+      deep enough to take the normal light text. Each level's text colour is
+      part of its band, not a leftover from the level above.
+
+   The base rule carries the deepest band, so a nesting level beyond those
+   named below renders as a defined band rather than falling through to the
+   body colour. Four fields are groupable, so level 3 is reachable today. */
 div.itables_anywidget table.dataTable tr.dtrg-group th,
 div.itables_anywidget table.dataTable tr.dtrg-group td {
+  background-color: {{group_band3}} !important;
+  color: {{text_color}} !important;
   border-color: {{border_color}} !important;
   text-align: left !important;
+  font-weight: 600 !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 td {
-  background-color: {{surface2}} !important;
-  color: {{accent}} !important;
+  background-color: {{group_band0}} !important;
+  color: {{chrome_bg}} !important;
   font-weight: 700 !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 td {
-  background-color: {{surface}} !important;
-  color: {{accent2}} !important;
+  background-color: {{group_band1}} !important;
+  color: {{chrome_bg}} !important;
   font-weight: 600 !important;
   padding-left: 22px !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 td {
-  background-color: {{chrome_bg}} !important;
+  background-color: {{group_band2}} !important;
   color: {{text_color}} !important;
   font-weight: 600 !important;
   padding-left: 40px !important;
+}
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 th,
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 td {
+  background-color: {{group_band3}} !important;
+  color: {{text_color}} !important;
+  font-weight: 600 !important;
+  padding-left: 58px !important;
 }
 /* Selected row (the Select extension) — the hook #265 builds on. */
 div.itables_anywidget table.dataTable tbody tr.selected td {
@@ -511,6 +635,27 @@ div.itables_anywidget select:focus {
 }
 div.itables_anywidget .dt-scroll-body {
   border-color: {{border_color}} !important;
+}
+/* The search box leads the table from the top-left (#283). The layout row is
+   flex and DataTables aligns the `topStart` cell with `justify-content`, so
+   moving the feature is not enough on its own — the cell has to stop pushing
+   its content to the end, or the box renders left-slotted but right-parked. */
+div.itables_anywidget .dt-layout-row .dt-layout-cell.dt-layout-start {
+  justify-content: flex-start !important;
+  text-align: left !important;
+}
+div.itables_anywidget .dt-search {
+  text-align: left !important;
+}
+div.itables_anywidget .dt-search input {
+  width: 260px !important;
+  max-width: 100% !important;
+  margin: 0 0 6px 0 !important;
+  padding: 4px 8px !important;
+}
+div.itables_anywidget .dt-search input::placeholder {
+  color: {{text_muted}} !important;
+  opacity: 1 !important;
 }
 
 /* Boxed grouping card — frames a section (e.g. the Platform analytics tabs) so

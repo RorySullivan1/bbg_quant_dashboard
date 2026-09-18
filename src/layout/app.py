@@ -111,6 +111,7 @@ from .multi_strategy import (
 )
 from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import PlatformAnalytics
+from .rails import ChipGroup, MultiChipGroup, RailSection, control_rail
 from .selection import SelectionSlice
 from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
 from .state import DashboardState
@@ -382,53 +383,31 @@ class DashboardApp:
         self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
-        """The all-catalog grid and its Z-Score ranking controls."""
-        self.z_metric_dd = W.Dropdown(
-            options=[
+        """The all-catalog grid and its Z-Score ranking chips."""
+        self.z_metric_chips = ChipGroup(
+            [
                 ("Sharpe", "sharpe"),
                 ("Sortino", "sortino"),
                 ("Return", "return"),
                 ("Vol", "vol"),
             ],
             value="sharpe",
-            description="Metric",
-            style={"description_width": "55px"},
-            layout=W.Layout(width="175px"),
         )
-        self.z_window_dd = W.Dropdown(
-            options=[
+        self.z_window_chips = ChipGroup(
+            [
                 ("1M", MONTH_WINDOW),
                 ("3M", QUARTER_WINDOW),
                 ("6M", HALF_YEAR_WINDOW),
             ],
             value=MONTH_WINDOW,
-            description="Window",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="165px"),
         )
-        self.z_lookback_dd = W.Dropdown(
-            options=[
+        self.z_lookback_chips = ChipGroup(
+            [
                 ("1Y", TRADING_DAYS_PER_YEAR),
                 ("3Y", TRADING_DAYS_PER_YEAR * 3),
                 ("5Y", TRADING_DAYS_PER_YEAR * 5),
             ],
             value=TRADING_DAYS_PER_YEAR,
-            description="Lookback",
-            style={"description_width": "70px"},
-            layout=W.Layout(width="180px"),
-        )
-        self._build_group_checkboxes()
-        self.z_controls_row = W.HBox(
-            [
-                _section_label("Z-Score ranking"),
-                self.z_metric_dd,
-                self.z_window_dd,
-                self.z_lookback_dd,
-                W.Box(layout=W.Layout(flex="1 1 auto")),  # push the grouping right
-                _section_label("Group by"),
-                *self.group_boxes.values(),
-            ],
-            layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
         )
 
         self.pane_left = _make_analysis_pane("left", registry=self.benchmarks)
@@ -440,65 +419,94 @@ class DashboardApp:
 
         self.selected_perf_grid = PerfGrid()
 
-    def _build_group_checkboxes(self) -> None:
-        """One checkbox per groupable field, in hierarchy order.
+    def _build_left_rail(self) -> W.VBox:
+        """The two controls that shape the table's *rows*, in one rail (#278).
 
-        Checking a box adds that level to the nesting; it never decides *where*
+        Group by above Window, because that is the order they act in: the
+        chips decide what the rows are gathered into, the window decides what
+        is measured across them. They were in different places and different
+        idioms before — checkboxes above the table, a radio beside it — and
+        nothing said they belonged together.
+        """
+        return control_rail(
+            RailSection("Group by", self._build_group_chips()),
+            RailSection("Window", self._build_window_chips()),
+        )
+
+    def _build_right_rail(self) -> W.VBox:
+        """The Z-Score ranking, beside the table rather than above it (#279).
+
+        Three facets of one control, so the rail is titled and the sections
+        are named for the facets — spelling "Z-Score" into each heading would
+        say it three times to say it once.
+
+        Chips rather than the three `W.Dropdown`s this was: a dropdown hides
+        its options, so the user could not see that the column they are reading
+        is one of four metrics without opening it. Ten chips is the whole
+        choice, visible.
+        """
+        return control_rail(
+            RailSection("Metric", self.z_metric_chips),
+            RailSection("Window", self.z_window_chips),
+            RailSection("Lookback", self.z_lookback_chips),
+            title="Z-Score ranking",
+        )
+
+    def _build_group_chips(self) -> MultiChipGroup:
+        """One chip per groupable field, in hierarchy order.
+
+        Ticking a chip adds that level to the nesting; it never decides *where*
         the level sits. The order is `UNIVERSE_GRID_GROUPABLE_FIELDS` — asset
         class above the three classification tiers — so the table reads the
         same however the user got there, and ticking order is not invisible
         state anyone has to remember (#273).
-        """
-        self.group_boxes: dict[str, W.Checkbox] = {}
-        grouped = set(universe_grid_group_fields())
-        for key in universe_grid_groupable_fields():
-            box = W.Checkbox(
-                value=key in grouped,
-                description=field_label(key),
-                indent=False,
-                layout=W.Layout(width="auto", margin="0 10px 0 0"),
-            )
-            box.observe(self._on_grouping_change, names="value")
-            self.group_boxes[key] = box
 
-    def _build_window_rail(self) -> W.VBox:
-        """The stats-window radio, stacked, for the left of the grid.
-
-        Only windows the fetched price history can serve are offered
-        (`stat_windows`): a longer one has nothing to measure and would render
-        a full column of dashes, which reads as a broken dashboard rather than
-        as a pending feature.
+        A chip *looks* more like an ordered selection than a checkbox did, so
+        the guarantee is structural rather than remembered: `MultiChipGroup`
+        reports membership in options order and cannot encode a click sequence
+        (#277), and `universe_grid_group_fields` remains the single sort.
         """
-        self.window_radio = W.RadioButtons(
-            options=[label for label, _ in stat_windows()],
+        self.group_chips = MultiChipGroup(
+            [(field_label(key), key) for key in universe_grid_groupable_fields()],
+            value=universe_grid_group_fields(),
+        )
+        self.group_chips.observe(self._on_grouping_change, names="value")
+        return self.group_chips
+
+    def _build_window_chips(self) -> ChipGroup:
+        """The stats windows the fetched price history can serve.
+
+        Only those are offered (`stat_windows`): a longer window has nothing to
+        measure and would render a full column of dashes, which reads as a
+        broken dashboard rather than as a pending feature.
+
+        A `ChipGroup` rather than the `W.RadioButtons` this was (#277): every
+        other choice in the app is a `.bbg-pill`, and the group keeps the
+        radio's `.value` / `.observe` surface, so the swap is chrome only —
+        `_on_window_change` below is untouched by it, and so is what the grid
+        does with it.
+        """
+        self.window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
             value=universe_grid_default_window(),
-            layout=W.Layout(width="auto", margin="0"),
         )
-        self.window_radio.observe(self._on_window_change, names="value")
-        return W.VBox(
-            [_section_label("Window"), self.window_radio],
-            layout=W.Layout(
-                width="92px",
-                flex="0 0 auto",
-                padding="4px 8px 0 0",
-                align_items="flex-start",
-            ),
-        )
+        self.window_chips.observe(self._on_window_change, names="value")
+        return self.window_chips
 
     def _on_window_change(self, _change=None) -> None:
         """Switch the grid to one window. No recompute — every window was
         computed up front, so this is a column-visibility change and the
         grouping and selected row survive it."""
-        self.universe_grid.set_window(self.window_radio.value)
+        self.universe_grid.set_window(self.window_chips.value)
 
     def _on_grouping_change(self, _change=None) -> None:
-        """Regroup the catalog grid from the checkboxes.
+        """Regroup the catalog grid from the chips.
 
         Unlike the window this genuinely rebuilds: grouping decides the row
         order, because RowGroup only gathers consecutive rows. Re-rendering is
         the point, not an oversight.
         """
-        chosen = tuple(k for k, box in self.group_boxes.items() if box.value)
+        chosen = tuple(self.group_chips.value)
         self.universe_grid.set_group_fields(chosen)
         self.analytics.render_universe_grid(self.meta)
 
@@ -557,25 +565,27 @@ class DashboardApp:
         """The three tab panels and the top-level tab bar."""
         self.analytics = PlatformAnalytics(
             self.state,
-            z_metric_dd=self.z_metric_dd,
-            z_window_dd=self.z_window_dd,
-            z_lookback_dd=self.z_lookback_dd,
+            z_metric_chips=self.z_metric_chips,
+            z_window_chips=self.z_window_chips,
+            z_lookback_chips=self.z_lookback_chips,
         )
         # A callable, so the observers always see the *current* catalog —
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
-        # The window radio sits to the LEFT of the table rather than above it,
-        # so it reads as the table's own axis rather than as another control
-        # in the row of dropdowns (#273).
+        # The three-column Platform shell (#278, #279): a control rail on each
+        # side of the table, so the controls read as the table's own axes
+        # rather than as another row of widgets above it (#273). Nothing sits
+        # between the header and the table any more.
+        self.left_rail = self._build_left_rail()
+        self.right_rail = self._build_right_rail()
         self.universe_grid_row = W.HBox(
-            [self._build_window_rail(), self.universe_grid.widget],
+            [self.left_rail, self.universe_grid.widget, self.right_rail],
             layout=W.Layout(width="100%", align_items="flex-start"),
         )
         platform_panel = W.VBox(
             [
                 self.universe_header,
-                self.z_controls_row,
                 self.universe_grid_row,
                 self.analytics.card,
             ],

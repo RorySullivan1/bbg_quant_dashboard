@@ -28,8 +28,8 @@ from itables import JavascriptFunction
 from itables.widget import ITable
 
 from ..config import (
-    SELECTED_GRID_FIELDS,
-    UNIVERSE_GRID_FIELDS,
+    CATALOG_GRID_FIELDS,
+    PERF_GRID_FIELDS,
     field_label,
     stat_windows,
     universe_grid_default_window,
@@ -158,7 +158,7 @@ class PerfGrid(_Grid):
         if pt.empty:
             self.clear()
             return
-        info_block = _build_info_block(meta, pt.index, UNIVERSE_GRID_FIELDS)
+        info_block = _build_info_block(meta, pt.index, PERF_GRID_FIELDS)
         # Per-row color swatch: each cell carries the hex string; the renderer
         # paints background + text the same color so it shows as a solid block —
         # the universal legend for every chart in the panes. It leads the Info
@@ -659,6 +659,111 @@ def _window_of(name: str) -> str | None:
     return None
 
 
+def _filterable_positions(frame: pd.DataFrame, groups: list[str]) -> list[int]:
+    """Which columns get a filter input, by position in `frame` (#285).
+
+    Positions rather than names: the JS matches on `column().index()`, which is
+    the *data* index and is stable under sorting, filtering and the hidden
+    columns a window switch produces — a name match would have to survive
+    DataTables wrapping the title in its own markup.
+
+    The Info block is text (or a date, where "2019" is a useful substring); the
+    stat and Z-Score columns are excluded because a substring filter over a
+    number is close to useless — "1.2" matches 1.23, 11.2 and -1.2 alike, and
+    those columns render through `_js_number_render`, which hands filtering the
+    raw value rather than the formatted one. Group columns are excluded because
+    they are hidden and come back as row-group headers.
+    """
+    return [
+        position
+        for position, name in enumerate(str(c) for c in frame.columns)
+        if name not in groups and not _is_zscore_col(name) and not _is_stat_col(name)
+    ]
+
+
+def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
+    """A `drawCallback` that builds the per-column filter row, once per table.
+
+    **Why `drawCallback` and not `initComplete`.** The itables widget
+    destructures `initComplete` out of the options and calls it *only* from
+    inside its own wrapper, which it installs only when `column_filters` or
+    `text_in_header_can_be_selected` is set — so a bare `initComplete` is
+    dropped without a word. `drawCallback` is a documented itables option and
+    lands in the options the widget forwards to DataTables untouched.
+
+    **Why not itables' own `column_filters="header"`.** In this build it does
+    not create inputs at all: its wrapper only *wires* inputs it finds
+    (`$("input", this.header())`), and it replaces the header markup with a
+    flat `<thead><th>…</th></thead>` — no `<tr>`, and no labels. It costs the
+    header row to gain nothing.
+
+    **Why the state lives in the browser.** Any options change destroys and
+    rebuilds the whole DataTable (`ITable.update` writes `_dt_args`; the widget
+    does `destroy()` then `new`), and only `selected_rows` is re-sent across
+    that. Typed filter text never reaches the kernel — there is no traitlet
+    carrying it — so `UniverseGrid` cannot hold it. It is stashed on `window`,
+    keyed by table id and column index, and re-applied here after every
+    rebuild. That is what makes a window switch preserve the filters.
+
+    The row is appended **after** DataTables has parsed the header and bound
+    its sort listeners, so its cells cannot receive them: sorting stays on the
+    label row and clicking into an input cannot re-sort. (`orderCellsTop`, the
+    documented answer when both rows exist at init, is therefore not needed —
+    and is not a documented itables option, so passing it warns.)
+    """
+    return JavascriptFunction(
+        "function (settings) {"
+        "  var api = this.api();"
+        "  var node = api.table().node();"
+        "  var head = node.tHead;"
+        # Built once per table. Every later draw — a filter keystroke, a sort,
+        # a regroup — finds the row and returns, so a focused input is never
+        # torn out from under the user mid-type.
+        "  if (!head || head.querySelector('tr.bbg-filter-row')) { return; }"
+        f"  var filterable = {list(filterable)!r};"
+        "  var store = (window.__bbgCatalogFilters = window.__bbgCatalogFilters || {});"
+        "  var saved = (store[node.id] = store[node.id] || {});"
+        "  var row = document.createElement('tr');"
+        "  row.className = 'bbg-filter-row';"
+        "  var pending = [];"
+        # ':visible' only — an input under a hidden column would be an orphan
+        # the user could type into with nothing to filter.
+        "  api.columns(':visible').every(function () {"
+        "    var cell = document.createElement('th');"
+        "    var index = this.index();"
+        "    if (filterable.indexOf(index) !== -1) {"
+        "      var column = this;"
+        "      var input = document.createElement('input');"
+        "      input.type = 'search';"
+        "      input.className = 'bbg-filter-input';"
+        "      input.value = saved[index] || '';"
+        "      input.addEventListener('click', function (e) { e.stopPropagation(); });"
+        "      var apply = function () {"
+        "        saved[index] = input.value;"
+        "        if (column.search() !== input.value) {"
+        "          column.search(input.value).draw();"
+        "        }"
+        "      };"
+        "      input.addEventListener('keyup', apply);"
+        "      input.addEventListener('search', apply);"
+        "      cell.appendChild(input);"
+        "      if (saved[index]) { pending.push([column, saved[index]]); }"
+        "    }"
+        "    row.appendChild(cell);"
+        "  });"
+        "  head.appendChild(row);"
+        # Deferred out of the draw cycle: re-applying inside `drawCallback`
+        # would re-enter the draw that is still running.
+        "  if (pending.length) {"
+        "    setTimeout(function () {"
+        "      pending.forEach(function (p) { p[0].search(p[1]); });"
+        "      api.draw();"
+        "    }, 0);"
+        "  }"
+        "}"
+    )
+
+
 def _catalog_table_options(
     frame: pd.DataFrame,
     groups: list[str],
@@ -724,6 +829,36 @@ def _catalog_table_options(
         # One row at a time. Without this the Select extension is inert and
         # `selected_rows` never changes, so the click handler below never runs.
         "select": {"style": "single"},
+        # The search box goes top-LEFT (#283). DataTables' default puts it at
+        # `topEnd`, which is a default rather than a decision: the Platform tab
+        # reads from the left rail inwards, so the table's own search was the
+        # one piece of its chrome facing the other way. `topEnd` has to be
+        # cleared explicitly — the default layout object is merged, so setting
+        # `topStart` alone draws the search box twice. `None` → JSON `null` is
+        # how a slot is removed; DataTables' own SearchPanes extension clears
+        # layout the same way. `paging: False` already empties the two slots
+        # below, and `bottomStart` keeps the row-count readout where it is.
+        "layout": {
+            "topStart": "search",
+            "topEnd": None,
+            "bottomStart": "info",
+            "bottomEnd": None,
+        },
+        # Read as `sSearch` / `sSearchPlaceholder` — the internal names. The
+        # documented camelCase `searchPlaceholder` does not appear anywhere in
+        # this bundle's `widget.js`: DataTables translates camelCase options
+        # through a fixed map and that key is not in it, so the camelCase form
+        # would be dropped silently and the placeholder would never appear.
+        # An empty `sSearch` drops the "Search:" label; with the box now
+        # leading the table, the placeholder carries the meaning instead.
+        "language": {
+            "sSearch": "",
+            "sSearchPlaceholder": "Search the catalog…",
+        },
+        # The per-column filter row (#285), built in the browser because the
+        # inputs are not part of the frame. See `_js_filter_row` for why this
+        # is a `drawCallback` and why the filter text lives on `window`.
+        "drawCallback": _js_filter_row(_filterable_positions(frame, groups)),
         # itables downsamples a table over ~64KB of JSON, keeping the head and
         # tail and dropping the middle. For a browse surface whose job is to
         # show the whole catalog that is a silent data loss, and the row a user
@@ -763,6 +898,13 @@ class UniverseGrid:
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
         self.widget.add_class(CATALOG_TABLE_CLASS)
+        # The table takes the width the two rails leave (#280). `min_width` is
+        # the load-bearing half: a flex item's default `min-width: auto`
+        # refuses to shrink below its content, so a wide column set pushes the
+        # rails off the row instead of scrolling inside the table. The layout
+        # looks correct without it until the columns grow, which is why it is
+        # set here rather than discovered later.
+        self.widget.layout = W.Layout(flex="1 1 0%", min_width="0", width="auto")
         #: Row position -> ticker for the frame currently rendered. The widget
         #: reports a clicked row by position, and the grid is the only object
         #: that knows which ticker that was, so the translation lives here
@@ -869,7 +1011,7 @@ def _build_universe_frame(
     (insufficient-history tickers, NaN z, sink to the bottom)."""
     if meta.empty:
         return pd.DataFrame()
-    info = _build_info_block(meta, None, SELECTED_GRID_FIELDS, date_cols=("live_date",))
+    info = _build_info_block(meta, None, CATALOG_GRID_FIELDS, date_cols=("live_date",))
 
     blocks = [info]
     z_key: str | None = None

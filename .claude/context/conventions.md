@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.20`.
+- **Current version**: `v0.9.21`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -154,6 +154,39 @@ CSS, style tokens — live in `style.md`.)
   already computed is returned by identity, which is what makes the toggle feel
   live. The corollary: anything that changes the underlying prices must go
   through `_recompute`, because nothing else drops the cache.
+- **A control is a widget, not a row of buttons (v0.9.21 #277).** `ChipGroup`
+  presents a `W.Dropdown`'s surface — `value`, `label`,
+  `observe(..., names="value")` — so a call site reading a dropdown does not
+  care that the widget underneath is `.bbg-pill` buttons. That is what let the
+  Z-Score controls move into a rail as a *restyle*: `PlatformAnalytics` takes
+  them by constructor injection and reads `.value` to compute, **`.label`** to
+  title the z column and `.observe` to re-render, and `.label` is a Dropdown
+  API a bare `W.Button` row does not have. Build a control the app *reads* on
+  this primitive rather than on loose buttons, or the read sites get rewritten
+  to match the widget.
+- **A multi-select reports membership, never click order (v0.9.21 #278).**
+  `MultiChipGroup` normalizes its `value` into options order on every write, so
+  "ticked A then C" and "ticked C then A" are one state. The catalog nests by
+  the hierarchy and never by tick order (#273); making the widget incapable of
+  carrying an order is stronger than every reader remembering to ignore one.
+- **The catalog's filter text lives in the browser — deliberately (v0.9.21
+  #285).** It is the one piece of state that is *not* on its object, and the
+  reason is mechanical: any options change destroys and rebuilds the whole
+  DataTable, `selected_rows` is the only state itables re-sends across that
+  rebuild, and **no traitlet carries typed filter text to the kernel**. So
+  `UniverseGrid` cannot hold it without forking the widget. It is stashed on
+  `window.__bbgCatalogFilters`, keyed by table id and column index, and
+  re-applied by the same `drawCallback` after every rebuild — which is what
+  makes a window switch preserve the filters instead of silently clearing them.
+  Treat this as an exception with a reason, not a pattern to copy.
+- **A JS hook has to be one the widget actually forwards (v0.9.21 #285).** The
+  itables widget destructures `initComplete` out of the options and calls it
+  only from inside its own wrapper, which it installs only when
+  `column_filters` or `text_in_header_can_be_selected` is set — so a bare
+  `initComplete` is dropped without an error. `drawCallback` is documented,
+  forwarded untouched, and registered in `keys_to_be_evaluated`. Assert both
+  when adding a callback: "it never ran" and "it ran and did nothing" look
+  identical from Python.
 - **A compute failure keeps the last good board.** `_render_leaderboard`
   appends its traceback to `errors_w` rather than writing it over the board. A
   board that is merely stale beats no board at all, and the toggle that caused
@@ -187,14 +220,17 @@ CSS, style tokens — live in `style.md`.)
     outer levels interleaved.
   - **Nesting order is the hierarchy's, never the user's.**
     `UNIVERSE_GRID_GROUPABLE_FIELDS` declares all four groupable fields in
-    nesting order (asset class above the three tiers); the checkboxes pick
+    nesting order (asset class above the three tiers); the Group by chips pick
     which appear, and `universe_grid_group_fields` normalises the selection
-    back into that order. Ticking order must stay meaningless.
+    back into that order. Ticking order must stay meaningless — and since
+    v0.9.21 `MultiChipGroup` cannot report one, so the guarantee no longer
+    rests on every reader remembering to discard it.
   - **There is no column sorting, and that is deliberate.** Header sort is
     inert while RowGroup is active, and sorting by a stat column fights the
     contiguity above — the two want the row order for different things. The
     user drives row order through the grouping instead (#264, closed
-    not-planned). Filtering is DataTables' own search box.
+    not-planned). Filtering is the top-left global search box plus the
+    per-column filter row beneath the header labels (v0.9.21 #283, #285).
   - **Changing the window hides columns; it never drops them.** Every stats
     window stays in the frame and all but one are hidden through `columnDefs`,
     so switching is a visibility change: the grouping, the row order and the

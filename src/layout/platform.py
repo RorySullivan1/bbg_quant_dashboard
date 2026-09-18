@@ -54,6 +54,7 @@ from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _section_label
 from .html import STYLE_CTX, render_template
+from .rails import ChipGroup
 from .theme import _chart_layout, _short_ticker
 
 if TYPE_CHECKING:
@@ -546,19 +547,23 @@ class PlatformAnalytics:
         self,
         state: DashboardState,
         *,
-        z_metric_dd: W.Dropdown,
-        z_window_dd: W.Dropdown,
-        z_lookback_dd: W.Dropdown,
+        z_metric_chips: ChipGroup,
+        z_window_chips: ChipGroup,
+        z_lookback_chips: ChipGroup,
     ) -> None:
         self.state = state
-        # The all-catalog grid's Z-Score ranking row sits above the card, not in
-        # it, but drives `render_universe_grid` — so it is passed in, not built.
-        self.z_metric_dd = z_metric_dd
-        self.z_window_dd = z_window_dd
-        self.z_lookback_dd = z_lookback_dd
+        # The all-catalog grid's Z-Score ranking sits in the rail beside the
+        # table, not in the card, but drives `render_universe_grid` — so it is
+        # passed in, not built. The chips replaced three `W.Dropdown`s in #279
+        # and this injection survived the swap unchanged, because `ChipGroup`
+        # carries the same `.value` / `.label` / `.observe` surface a dropdown
+        # does — `.label` in particular, which titles the z column below.
+        self.z_metric_chips = z_metric_chips
+        self.z_window_chips = z_window_chips
+        self.z_lookback_chips = z_lookback_chips
 
         # Shared 6M/1Y/3Y/5Y lookback — drives all three tabs. Value is a
-        # trading-day count, like z_lookback_dd; the factor scatter converts it
+        # trading-day count, like z_lookback_chips; the factor scatter converts it
         # to years. Re-slices the cache only (no BQL).
         self.lookback_selector = W.ToggleButtons(
             options=[
@@ -701,7 +706,7 @@ class PlatformAnalytics:
 
     def render_universe_grid(self, meta: pd.DataFrame) -> None:
         """Render the all-catalog grid with the dynamic z-score column from the
-        current Metric/Window/Lookback dropdowns. Reads the cached perf table
+        current Metric/Window/Lookback chips. Reads the cached perf table
         (``state.universe_up``) and computes only the z-score column live from
         the already-fetched ``arp_universe_prices`` — no BQL, no recompute."""
         state = self.state
@@ -710,14 +715,14 @@ class PlatformAnalytics:
         with _guard_render(state, "all-catalog grid z-score render"):
             zcol = rolling_metric_zscore(
                 state.arp_universe_prices,
-                metric=self.z_metric_dd.value,
-                window=self.z_window_dd.value,
-                zscore_window=self.z_lookback_dd.value,
+                metric=self.z_metric_chips.value,
+                window=self.z_window_chips.value,
+                zscore_window=self.z_lookback_chips.value,
                 returns=state.universe_rets,
             )
             zlabel = (
-                f"{self.z_metric_dd.label} "
-                f"{self.z_window_dd.label}/{self.z_lookback_dd.label}"
+                f"{self.z_metric_chips.label} "
+                f"{self.z_window_chips.label}/{self.z_lookback_chips.label}"
             )
             state.universe_grid.update(
                 meta, state.universe_up, zcol=zcol, zlabel=zlabel
@@ -912,8 +917,12 @@ class PlatformAnalytics:
         into the grid. Resolving it at fire time makes that impossible, and
         needs nothing remembered at the prune sites.
         """
-        for _dd in (self.z_metric_dd, self.z_window_dd, self.z_lookback_dd):
-            _dd.observe(
+        for chips in (
+            self.z_metric_chips,
+            self.z_window_chips,
+            self.z_lookback_chips,
+        ):
+            chips.observe(
                 lambda _c: self.render_universe_grid(current_meta()), names="value"
             )
 

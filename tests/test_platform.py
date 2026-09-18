@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import ipywidgets as W
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -35,6 +34,7 @@ from src.layout.platform import (
     _update_sunburst,
     regime_bucket_options,
 )
+from src.layout.rails import ChipGroup
 from src.layout.theme import _v_ref
 from src.stats import daily_returns, tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
@@ -393,7 +393,7 @@ def test_regime_bucket_options_by_spec_type():
 def _analytics() -> PlatformAnalytics:
     """A `PlatformAnalytics` over a stub state — enough for the pure resolvers."""
     # Two options, so a test can actually change the value and fire observers.
-    dd = lambda: W.Dropdown(options=[("a", 1), ("b", 2)], value=1)  # noqa: E731
+    chips = lambda: ChipGroup([("a", 1), ("b", 2)], value=1)  # noqa: E731
     state = SimpleNamespace(
         benchmarks=SimpleNamespace(
             options=lambda labeled=False: [("SPX", "SPX Index")],
@@ -402,7 +402,10 @@ def _analytics() -> PlatformAnalytics:
         universe_prices=pd.DataFrame(),
     )
     return PlatformAnalytics(
-        state, z_metric_dd=dd(), z_window_dd=dd(), z_lookback_dd=dd()
+        state,
+        z_metric_chips=chips(),
+        z_window_chips=chips(),
+        z_lookback_chips=chips(),
     )
 
 
@@ -581,7 +584,9 @@ def test_platform_analytics_tab_swap():
 
     app = build_app(verbose=False)
     panel = app.children[5].children[0]
-    analytics_card = panel.children[3]
+    analytics_card = panel.children[
+        -1
+    ]  # the card is last; #279 removed the row above the table
     chart_box = analytics_card.children[2].children[1]  # analytics_body -> chart_box
     pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
     first = chart_box.children[0]
@@ -623,7 +628,7 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
     # On load only the visible Sunburst tab is computed.
     assert calls == {"sunburst": 1, "regime": 0, "factor": 0}
 
-    analytics_card = app.children[5].children[0].children[3]
+    analytics_card = app.children[5].children[0].children[-1]
     pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
 
     pills["Factor exposures"].click()  # first activation → render once
@@ -709,7 +714,7 @@ def test_observers_render_against_the_current_catalog_not_the_wired_one():
     pa.wire(lambda: holder["meta"])
 
     holder["meta"] = pd.DataFrame({"ticker": ["A"]})  # what the prune leaves
-    pa.z_metric_dd.value = pa.z_metric_dd.options[-1][1]
+    pa.z_metric_chips.value = pa.z_metric_chips.options[-1][1]
 
-    assert seen, "the z-score dropdown should have driven a grid render"
+    assert seen, "the z-score chips should have driven a grid render"
     assert list(seen[-1]["ticker"]) == ["A"]  # the pruned catalog, not the wired one

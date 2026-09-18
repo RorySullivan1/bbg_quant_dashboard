@@ -148,3 +148,35 @@ def _make_tab_button(
     btn.add_class("bbg-pill")
     _style_tab_button(btn, active=active)
     return btn
+
+
+def _style_chip(btn: W.Button, *, active: bool) -> None:
+    """Toggle a chip's selected state.
+
+    Same contract as `_style_tab_button`, for the same reason: the state is a
+    CSS class (`.bbg-chip.is-active`), never inline `.style`, because inline
+    button colors take precedence over the `:hover`/`:focus-visible` rules in
+    app_css.html and would leave a chip that never lights up.
+    """
+    if active:
+        btn.add_class("is-active")
+    else:
+        btn.remove_class("is-active")
+
+
+def _make_chip(label: str, *, active: bool) -> W.Button:
+    """One chip: a full-width `.bbg-pill` sized for a stacked rail.
+
+    The tab-button pair's sibling (`_make_tab_button`), differing only in shape
+    — a chip fills its rail's width and stacks, where a tab is fixed-width
+    furniture in a horizontal band. Both carry `.bbg-pill`, so the two share
+    the hover/active/focus vocabulary; `.bbg-chip` refines it.
+    """
+    btn = W.Button(
+        description=label,
+        layout=W.Layout(width="100%", height="26px", margin="0 0 4px 0"),
+    )
+    btn.add_class("bbg-pill")
+    btn.add_class("bbg-chip")
+    _style_chip(btn, active=active)
+    return btn

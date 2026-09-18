@@ -17,8 +17,9 @@ organized as: masthead banner → an always-visible **all-catalog commentary
 block** (a ranked **leaderboard** of four metric columns with clickable rows,
 beside a pane that switches between Weekly Commentary and New Launches) → a
 **top-level pill-button tab bar** with three
-tabs — **Platform** (all-catalog performance grid + a Platform-analytics card
-of Sunburst / Regime / Factor-exposure charts), **Multi-Strategy**
+tabs — **Platform** (a control rail either side of the all-catalog performance
+grid + a Platform-analytics card of Sunburst / Regime / Factor-exposure
+charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
 live-narrowing filter accordion, a profile card + cumulative chart, a
@@ -73,9 +74,9 @@ ipydatagrid's merged row headers render incorrectly in 1.4.0, and only
 DataTables' RowGroup draws the classification tiers as **nested group headers**
 instead of three body columns repeating the same strings on every row. Which
 levels group is the user's choice (`UNIVERSE_GRID_GROUPABLE_FIELDS`, four
-checkboxes) but the *nesting order is always the hierarchy's*, never the order
-they ticked; the grid shows **one stats window at a time**, chosen from a radio
-beside the table and offering only what `LOOKBACK_YEARS` can serve. Clicking a
+chips) but the *nesting order is always the hierarchy's*, never the order
+they ticked; the grid shows **one stats window at a time**, chosen in the left
+rail and offering only what `LOOKBACK_YEARS` can serve. Clicking a
 row opens that strategy in Single Strategy. Two rules hold underneath: **row
 contiguity at every grouping level is a correctness requirement**, because
 RowGroup only gathers adjacent rows, and **changing the window hides columns
@@ -99,9 +100,27 @@ error; and **Refresh invalidates while a toggle re-slices** — the window toggl
 and the pane switch never issue BQL. This replaced the v0.8.x 16-card Market
 Superlatives board (#291); its metrics all live on in `src/stats/`.
 
+The Platform tab is **one composed surface** (epic #276, v0.9.21): a stylized
+control rail on each side of the catalog table and nothing above it. Both rails
+are built from **one component** (`control_rail`, `src/layout/rails.py`) and
+carry `ChipGroup` chips — Group by + Window on the left, Z-Score ranking on the
+right. A chip group is a **widget, not a row of buttons**: it presents a
+`W.Dropdown`'s `value` / `label` / `observe` surface, which is what let the
+z-score controls move into a rail as a restyle rather than a rewrite of
+everything that reads them, and its multi-select flavour reports **membership**
+so a tick order cannot reach the grouping. The table between the rails takes
+the remaining width (`flex: 1 1 0%` **and** `min-width: 0`, or a wide column
+set pushes the rails off instead of scrolling inside the table), leads with a
+top-left search box, draws its tiers as stepped cyan bands, and carries a
+**per-column filter row** beneath its header labels. One deliberate exception
+lives here: **the filter text is held in the browser, not on `UniverseGrid`**,
+because every options change destroys and rebuilds the table and no traitlet
+carries typed text to the kernel. See `.claude/context/style.md` and
+`conventions.md`.
+
 ## Current version
 
-`v0.9.20` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.21` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

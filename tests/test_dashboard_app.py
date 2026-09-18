@@ -13,7 +13,13 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from src.config import FACTOR_TICKERS, REGIME_TICKERS
+from src.config import (
+    FACTOR_TICKERS,
+    MONTH_WINDOW,
+    QUARTER_WINDOW,
+    REGIME_TICKERS,
+    universe_grid_default_window,
+)
 from src.layout.app import DashboardApp
 from src.price_source import MockPriceSource
 
@@ -198,26 +204,30 @@ def _ticker_options_for(app, tickers):
 # --- the grid's own controls: grouping and stats window (#266, #273) -------
 
 
-def test_group_checkboxes_cover_every_groupable_field_in_hierarchy_order(app):
-    from src.config import universe_grid_groupable_fields
+def _group_chip(app, key):
+    """The chip carrying `key`, found by value rather than by position."""
+    index = [value for _label, value in app.group_chips.options].index(key)
+    return app.group_chips.children[index]
 
-    assert list(app.group_boxes) == list(universe_grid_groupable_fields())
+
+def test_group_chips_cover_every_groupable_field_in_hierarchy_order(app):
+    from src.config import field_label, universe_grid_groupable_fields
+
+    fields = list(universe_grid_groupable_fields())
+    assert [value for _label, value in app.group_chips.options] == fields
+    # The text is schema-read, never spelled at the call site.
+    assert list(app.group_chips.labels) == [field_label(key) for key in fields]
 
 
-def test_group_checkboxes_start_on_the_configured_default(app):
+def test_group_chips_start_on_the_configured_default(app):
     from src.config import universe_grid_group_fields
 
-    default = set(universe_grid_group_fields())
-    for key, box in app.group_boxes.items():
-        assert box.value == (key in default)
+    assert app.group_chips.value == universe_grid_group_fields()
 
 
-def test_checking_a_box_regroups_the_grid(app):
-    for key, box in app.group_boxes.items():
-        box.unobserve(app._on_grouping_change, names="value")
-        box.value = key in ("solution", "category", "family")
-        box.observe(app._on_grouping_change, names="value")
-    app.group_boxes["asset_class"].value = True
+def test_ticking_a_chip_regroups_the_grid(app):
+    app.group_chips.value = ("solution", "category", "family")
+    _group_chip(app, "asset_class").click()
     assert app.universe_grid.group_fields == (
         "asset_class",
         "solution",
@@ -227,47 +237,87 @@ def test_checking_a_box_regroups_the_grid(app):
 
 
 def test_ticking_order_does_not_change_the_nesting(app):
-    # The fixed hierarchy order, exercised through the actual widgets: the two
-    # sequences below differ only in the order the boxes are set.
-    def _set(order):
-        for box in app.group_boxes.values():
-            box.unobserve(app._on_grouping_change, names="value")
-            box.value = False
-            box.observe(app._on_grouping_change, names="value")
+    # The fixed hierarchy order, exercised through the actual chips: the two
+    # sequences below differ only in the order they are clicked.
+    def _click(order):
+        app.group_chips.value = ()
         for key in order:
-            app.group_boxes[key].value = True
+            _group_chip(app, key).click()
         return app.universe_grid.group_fields
 
-    assert _set(["family", "asset_class"]) == _set(["asset_class", "family"])
+    assert _click(["family", "asset_class"]) == _click(["asset_class", "family"])
     assert app.universe_grid.group_fields == ("asset_class", "family")
 
 
-def test_unchecking_everything_leaves_a_flat_grid(app):
-    for box in app.group_boxes.values():
-        box.value = False
+def test_unticking_everything_leaves_a_flat_grid(app):
+    for key in [value for _label, value in app.group_chips.options]:
+        if key in app.group_chips.value:
+            _group_chip(app, key).click()
+    assert app.group_chips.value == ()
     assert app.universe_grid.group_fields == ()
 
 
-def test_the_window_radio_offers_what_the_history_supports(app):
+def test_the_window_chips_offer_what_the_history_supports(app):
     from src.config import stat_windows, universe_grid_default_window
 
-    assert list(app.window_radio.options) == [label for label, _ in stat_windows()]
-    assert app.window_radio.value == universe_grid_default_window()
+    assert list(app.window_chips.labels) == [label for label, _ in stat_windows()]
+    assert app.window_chips.value == universe_grid_default_window()
 
 
 def test_picking_a_window_moves_the_grid(app):
-    app.window_radio.value = "5Y"
+    app.window_chips.value = "5Y"
     assert app.universe_grid.window == "5Y"
-    app.window_radio.value = "6M"
+    app.window_chips.value = "6M"
     assert app.universe_grid.window == "6M"
 
 
-def test_the_window_rail_sits_left_of_the_grid(app):
-    # It reads as the table's own axis rather than another control in the row
-    # of dropdowns, which is why it is an HBox and not another row.
-    left, right = app.universe_grid_row.children
-    assert right is app.universe_grid.widget
-    assert app.window_radio in left.children
+def test_clicking_a_window_chip_moves_the_grid(app):
+    # The route a user actually takes. The test above drives the trait, which
+    # a broken click handler would still pass.
+    chip = dict(zip(app.window_chips.labels, app.window_chips.children, strict=True))[
+        "5Y"
+    ]
+    chip.click()
+    assert app.universe_grid.window == "5Y"
+
+
+def test_the_platform_shell_is_a_rail_either_side_of_the_grid(app):
+    # The controls read as the table's own axes rather than as another row of
+    # widgets above it, which is why this is an HBox and not another row.
+    left, table, right = app.universe_grid_row.children
+    assert (left, right) == (app.left_rail, app.right_rail)
+    assert table is app.universe_grid.widget
+    # Group by above Window: the order the two controls act in.
+    assert list(left.children).index(app.group_chips) < list(left.children).index(
+        app.window_chips
+    )
+    # Metric, Window, Lookback — the three facets of the z-score, in that order.
+    z_chips = [app.z_metric_chips, app.z_window_chips, app.z_lookback_chips]
+    assert [c for c in right.children if c in z_chips] == z_chips
+
+
+def test_no_control_row_sits_above_the_grid(app):
+    # #278 moved the grouping into the left rail and #279 the z-score ranking
+    # into the right one, which retired the row they shared.
+    assert not hasattr(app, "z_controls_row")
+
+
+def test_the_z_score_column_header_follows_the_chips(app):
+    app.z_metric_chips.value = "sortino"
+    app.z_window_chips.value = QUARTER_WINDOW
+    zcols = [c for c in app.universe_grid._display.columns if c.startswith("Z-Score")]
+    assert zcols == ["Z-Score Sortino 3M/1Y"]
+    app.z_metric_chips.value = "sharpe"
+    app.z_window_chips.value = MONTH_WINDOW
+
+
+def test_the_window_chips_cannot_hide_the_z_score_column(app):
+    # The z-score's own window is embedded in its label ("Sharpe 1M/1Y"), which
+    # `_window_of` deliberately does not match — a stats-window switch must not
+    # take the column with it (#279).
+    app.window_chips.value = "6M"
+    assert any(c.startswith("Z-Score") for c in app.universe_grid._display.columns)
+    app.window_chips.value = universe_grid_default_window()
 
 
 # --- the commentary block: leaderboard + switchable pane (#290) -------------
