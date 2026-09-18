@@ -119,12 +119,18 @@ class Color(StrEnum):
 #: row parked over the labels it belongs to.
 CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 
-#: How tall the Platform row stands: the catalog table's scroll cap, and the
-#: same cap on the control rails beside it, so the table and any open rail are
-#: **one height** rather than each sizing to its own content. Either one scrolls
-#: internally past it. One token because "the same height" is the requirement —
-#: written twice, the two would drift and the row would step.
-CATALOG_TABLE_MAX_HEIGHT: str = "360px"
+#: How tall the Platform row stands: the catalog table's box **and** the ranking
+#: rail beside it, both set to this exact value.
+#:
+#: A fixed height rather than a stretch, because stretching makes whichever box
+#: is taller set the row — so the table grew to the rail's content, or the rail
+#: to the table's, depending on the catalog. Fixing both to one number is the
+#: only arrangement where neither can push the other around.
+#:
+#: The table's internals fill it: the search row and the row-count readout take
+#: what they need and the row area scrolls in the remainder, so this is the one
+#: number to change and nothing has to be adjusted to match it.
+CATALOG_TABLE_HEIGHT: str = "460px"
 
 
 class Font(StrEnum):

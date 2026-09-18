@@ -256,27 +256,54 @@
   border: 1px solid {{border_color}};
   border-radius: 8px;
   padding: 10px 10px 6px 10px;
-  /* Level with the table: the row stretches its children, and this cap is the
-     table's own, so neither a rail nor the table can drive the row taller than
-     the other. A rail with more chips than fit scrolls, exactly as the table
-     does past the same height. */
-  max-height: {{table_max_height}};
+  /* Level with the table by STRETCHING, not by a cap. The row is
+     `align-items: stretch`, so the rail takes the row's height — which the
+     table sets — and that is the only way the two can agree: the table's own
+     `max-height` governs its scroll *cell*, while the widget is also carrying
+     the search row above it and the row-count readout below, so a rail capped
+     at the cell's height renders visibly SHORTER than the table beside it.
+     `min-height: 0` is what lets a stretched flex item scroll instead of
+     growing the row. */
+  min-height: 0;
   overflow-y: auto;
 }
-/* The dock strip: the two rail buttons, in one place on the left whichever
-   panels are open, so a user looking for a control never hunts for the
-   toggle. It stands the full row height for the same reason the rails do. */
-.bbg-app .bbg-rail-strip {
-  background: {{surface}};
-  border: 1px solid {{border_color}};
-  border-radius: 8px;
-  padding: 10px 8px 6px 8px;
-  margin: 0 8px 0 0;
+/* Chips keep their size. A flex item shrinks before its container scrolls, so
+   a rail holding more chips than fit squeezed every chip flat rather than
+   giving them a scrollbar — the squeeze looked like a styling bug and was
+   really the default `flex-shrink: 1`. */
+.bbg-app .bbg-chip,
+.bbg-app .bbg-rail-heading,
+.bbg-app .bbg-rail-title {
+  flex: 0 0 auto !important;
 }
-.bbg-app .bbg-dock-btn {
-  height: 30px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* The same rail turned on its side, for the controls that sit ABOVE the table.
+   It keeps `.bbg-rail`'s surface and border — only the direction changes — and
+   drops the height cap, which exists to keep a *column* level with the table. */
+.bbg-app .bbg-rail-bar {
+  overflow: visible;
+  padding: 8px 12px;
+  margin: 0 0 8px 0;
+}
+/* In the bar a title sits beside the sections rather than over them, with a
+   rule separating it from the first control. */
+.bbg-app .bbg-rail-bar .bbg-rail-title {
+  border-bottom: none;
+  border-right: 1px solid {{border_color}};
+  padding: 0 18px 0 0;
+  margin: 0 18px 0 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.bbg-app .bbg-rail-bar .bbg-rail-heading {
+  margin: 0 0 4px 0;
+}
+/* Chips in a row size to their text instead of filling a rail's width, and
+   wrap rather than squeezing when the bar runs out of room. */
+.bbg-app .bbg-chip-row .bbg-chip {
+  width: auto !important;
+  margin: 0 6px 0 0 !important;
+  padding: 0 12px;
 }
 .bbg-app .bbg-rail-title {
   color: {{accent}};
@@ -506,13 +533,38 @@ div.itables_anywidget.bbg-catalog table.dataTable {
 div.itables_anywidget .dt-layout-row.dt-layout-table {
   overflow: visible;
 }
-/* The scroll goes on the CELL, not the row. DataTables' own stylesheet already
-   gives `.dt-layout-cell` `overflow: auto`, which makes it the nearest
-   scrolling ancestor of the header — so a sticky `th` sticks to the cell
-   whatever the row does. Scrolling the row instead left the header scrolling
-   away with the body. */
+/* The table fills its fixed box (#298). The widget's height is set in
+   `UniverseGrid`; these rules pass that height down DataTables' own wrappers so
+   the search row and the row-count readout take what they need and the ROW AREA
+   gets the remainder. A `max-height` on the cell cannot do this — it is a
+   second number that has to be kept in step with the box by hand, and the two
+   drift the moment the chrome above or below the table changes.
+
+   `min-height: 0` at every level is what makes it work: a flex child refuses to
+   shrink below its content without it, so the body would push the box open
+   instead of scrolling inside it.
+
+   The scroll stays on the CELL, not the row. DataTables' own stylesheet gives
+   `.dt-layout-cell` `overflow: auto`, which makes it the nearest scrolling
+   ancestor of the header — so a sticky `th` sticks to the cell whatever the row
+   does. Scrolling the row instead left the header scrolling away with the
+   body. */
+div.itables_anywidget.bbg-catalog,
+div.itables_anywidget.bbg-catalog .dt-container {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+}
+div.itables_anywidget.bbg-catalog .dt-container {
+  flex: 1 1 auto !important;
+}
+div.itables_anywidget.bbg-catalog .dt-layout-row.dt-layout-table {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
 div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
-  max-height: {{table_max_height}};
+  height: 100%;
+  min-height: 0;
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs
