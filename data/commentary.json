@@ -1,0 +1,7 @@
+[
+  {
+    "title": "Replace this note",
+    "date": "2026-01-05",
+    "text": "This file is the QIS Bulletin's commentary. Each entry needs a title, an ISO-8601 date, and the text of the note.\n\nA blank line starts a new paragraph. The text is plain text, not HTML: anything that looks like a tag is shown as typed. Notes appear newest first, whatever order they are written in here."
+  }
+]

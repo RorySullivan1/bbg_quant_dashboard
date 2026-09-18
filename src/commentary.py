@@ -1,6 +1,8 @@
-"""All-catalog commentary: the ranked leaderboard and the New Launches cards.
+"""All-catalog commentary: the authored notes, the ranked leaderboard and the
+New Launches cards.
 
-Computes both from the already-fetched price frame and the catalog metadata —
+The notes are *read* (`data/commentary.json`); the other two are *computed*
+from the already-fetched price frame and the catalog metadata —
 no BQL call of its own. The leaderboard ranks the whole catalog over a trailing
 window on four metrics (return, Sharpe, Calmar, Sortino) and keeps the top and
 bottom few of each; launch cards pick out indices that went live within
@@ -20,14 +22,18 @@ metrics all live on in `src/stats/`; only the card builder went.
 
 from __future__ import annotations
 
+import json
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from .config import (
+    COMMENTARY_PATH,
     LAUNCH_CARD_META_FIELDS,
     LEADERBOARD_ROWS,
     LEADERBOARD_WINDOW_DAYS,
@@ -42,6 +48,103 @@ from .stats import (
     sortino_ratio,
 )
 from .style import Sentiment
+
+
+@dataclass(frozen=True)
+class CommentaryNote:
+    """One authored note in the QIS Bulletin (#304).
+
+    `text` is **plain text**, carried verbatim: the escaping and the
+    blank-line-to-paragraph split belong to the renderer, the way `LaunchCard`
+    leaves its em dash to `_fmt_since_return`. A note dates itself, so the
+    board no longer stamps every note with today.
+    """
+
+    title: str
+    date: date
+    text: str
+
+
+def _parse_note(raw: object) -> CommentaryNote | None:
+    """One entry to a `CommentaryNote`, or None if it is not one.
+
+    Unknown keys pass without comment, so a field added later cannot break an
+    older build reading a newer file.
+    """
+    if not isinstance(raw, dict):
+        return None
+    title, text, iso = raw.get("title"), raw.get("text"), raw.get("date")
+    if not isinstance(title, str) or not isinstance(text, str):
+        return None
+    if not isinstance(iso, str):
+        return None
+    try:
+        when = date.fromisoformat(iso)
+    except ValueError:
+        return None
+    return CommentaryNote(title=title, date=when, text=text)
+
+
+def load_commentary_notes(
+    path: Path | str = COMMENTARY_PATH,
+) -> list[CommentaryNote]:
+    """The authored notes, newest first, or `[]` if there are none to load.
+
+    Runs while the app is being built, so like `UserBenchmarkStore.load` it
+    must not raise for any reason: a missing file, an unreadable one, malformed
+    JSON and the wrong top-level shape all mean "no notes".
+
+    **A missing file is silent; anything else says so.** A catalog with no
+    commentary yet is an ordinary state, while a file that exists and cannot be
+    read is a mistake someone wants to hear about. A single malformed note is
+    skipped rather than voiding the file — one typo in an old note must not
+    take today's note off the screen — and the warning names it so it can be
+    fixed.
+
+    Ties keep file order: the sort is stable, so two notes dated the same day
+    read in the order they were written.
+    """
+    path = Path(path)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []  # no commentary yet — a normal state, not a fault
+    except Exception as exc:  # noqa: BLE001 — a bad read must not block startup
+        warnings.warn(
+            f"Could not read {path} ({exc}); the bulletin will show no notes.",
+            stacklevel=2,
+        )
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001 — malformed JSON is not fatal
+        warnings.warn(
+            f"{path} is not valid JSON ({exc}); the bulletin will show no notes.",
+            stacklevel=2,
+        )
+        return []
+
+    if not isinstance(parsed, list):
+        warnings.warn(
+            f"{path} does not hold a list of notes; the bulletin will show no notes.",
+            stacklevel=2,
+        )
+        return []
+
+    notes: list[CommentaryNote] = []
+    for position, entry in enumerate(parsed):
+        note = _parse_note(entry)
+        if note is None:
+            warnings.warn(
+                f"Skipping note {position} in {path}: a note needs a string "
+                '"title", a string "text", and an ISO-8601 "date".',
+                stacklevel=2,
+            )
+            continue
+        notes.append(note)
+
+    return sorted(notes, key=lambda note: note.date, reverse=True)
 
 
 @dataclass(frozen=True)

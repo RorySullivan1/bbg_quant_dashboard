@@ -72,6 +72,10 @@ RSI_WINDOW = 14  # Wilder RSI lookback in trading days
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "data" / "indexdb.json"
 WEEKLY_COMMENTARY_PATH = REPO_ROOT / "data" / "weekly_commentary.html"
+#: The QIS Bulletin's commentary notes (#304): a JSON list of
+#: `{"title", "date", "text"}`, newest rendered first. Replaces the single
+#: `weekly_commentary.html` blob, which stays until nothing reads it (#308).
+COMMENTARY_PATH = REPO_ROOT / "data" / "commentary.json"
 PERFORMANCE_DISCLAIMER_PATH = REPO_ROOT / "data" / "performance_disclaimer.html"
 LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
 TEMPLATES_DIR = REPO_ROOT / "data" / "templates"
