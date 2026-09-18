@@ -19,6 +19,7 @@ diverging red→green background to the Sharpe and Z-Score columns.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import ipywidgets as W
@@ -199,6 +200,11 @@ _TEXT_COL_MIN: int = 56
 _TEXT_COL_MAX: int = 340
 # Flat stat-column suffixes (a column is a "stat" if its name ends with one).
 _STAT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Sharpe", " Max DD")
+# The stat columns whose stored value is a fraction and whose rendered value is
+# a percentage. Read by both the catalog renderer and the numeric filter, so a
+# column cannot be rendered as a percentage and filtered as a fraction — which
+# would answer ">1" on a Return column with every row in the catalog.
+_PERCENT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Max DD")
 
 
 def _content_px(header: object, values: object) -> int:
@@ -216,6 +222,10 @@ def _content_px(header: object, values: object) -> int:
 
 def _is_stat_col(name: str) -> bool:
     return name.endswith(_STAT_SUFFIXES)
+
+
+def _is_percent_col(name: str) -> bool:
+    return name.endswith(_PERCENT_SUFFIXES)
 
 
 def _is_zscore_col(name: str) -> bool:
@@ -403,7 +413,7 @@ def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
             renderers[col] = color_swatch
         elif name.endswith(" Sharpe"):
             renderers[col] = sharpe_renderer
-        elif name.endswith((" Return", " Vol", " Max DD")):
+        elif _is_percent_col(name):
             renderers[col] = pct
         else:
             renderers[col] = text
@@ -659,29 +669,113 @@ def _window_of(name: str) -> str | None:
     return None
 
 
-def _filterable_positions(frame: pd.DataFrame, groups: list[str]) -> list[int]:
-    """Which columns get a filter input, by position in `frame` (#285).
+#: The numeric filter's grammar, as one JS function: `(raw, scale)` in, and a
+#: predicate over the column's raw value out — or `null` for an empty box (no
+#: filter) and `false` for text that is not a comparison at all. The three are
+#: distinct: only the last marks the input.
+#:
+#: A module constant rather than a fragment inlined into `_js_filter_row`
+#: because this is the part of the row with behaviour of its own: the tests run
+#: this function in a JS engine and assert what it accepts, which they cannot
+#: do to a parser welded into a 60-line DOM callback.
+_JS_NUMBER_PREDICATE: str = (
+    "function (raw, scale) {"
+    # Whitespace, thousands separators and a typed `%` are noise: the percent
+    # columns wear a `%`, so "5%" is what someone reading the screen types.
+    "  var text = String(raw).replace(/[\\s,%]/g, '');"
+    "  if (!text) { return null; }"
+    "  var test;"
+    "  var range = text.match(/^(-?\\d*\\.?\\d+)\\.\\.(-?\\d*\\.?\\d+)$/);"
+    "  if (range) {"
+    "    var lo = parseFloat(range[1]);"
+    "    var hi = parseFloat(range[2]);"
+    "    test = function (v) { return v >= lo && v <= hi; };"
+    "  } else {"
+    "    var parts = text.match(/^(>=|<=|>|<|=)?(-?\\d*\\.?\\d+)$/);"
+    "    if (!parts) { return false; }"
+    "    var n = parseFloat(parts[2]);"
+    "    var op = parts[1];"
+    "    if (op === '>') { test = function (v) { return v > n; }; }"
+    "    else if (op === '>=') { test = function (v) { return v >= n; }; }"
+    "    else if (op === '<') { test = function (v) { return v < n; }; }"
+    "    else if (op === '<=') { test = function (v) { return v <= n; }; }"
+    "    else {"
+    # A bare number (or an explicit `=`) matches at the precision typed: "1.2"
+    # is every value that rounds to 1.2, not the one that is exactly 1.2.
+    # Anything tighter, over a column rendered to two decimals, is a box that
+    # answers most of what is on screen with nothing.
+    "      var dot = parts[2].indexOf('.');"
+    "      var decimals = dot === -1 ? 0 : parts[2].length - dot - 1;"
+    # Inclusive at both ends, and with a hair of slack: the difference at an
+    # exact boundary is not exactly the tolerance in binary (|1.15 - 1.2| comes
+    # out at 0.050000000000000044), so a strict test drops the very value the
+    # band was drawn around. Two adjacent bands overlapping on their shared
+    # edge is the cheaper error.
+    "      var tolerance = 0.5 * Math.pow(10, -decimals) + 1e-9;"
+    "      test = function (v) { return Math.abs(v - n) <= tolerance; };"
+    "    }"
+    "  }"
+    # `scale` is the factor between the stored value and the rendered one, so
+    # the comparison happens in the units on screen. An empty cell is not a
+    # number and matches no comparison, so the dash rows drop out of a filtered
+    # column rather than riding along in it.
+    "  return function (value) {"
+    "    var v = parseFloat(value);"
+    "    if (isNaN(v)) { return false; }"
+    "    return test(v * scale);"
+    "  };"
+    "}"
+)
+
+
+#: What a numeric filter box offers, as its placeholder and its tooltip. The
+#: grammar has to be advertised somewhere — nothing about an empty box says it
+#: takes ">1" rather than the substring a text column takes — and a stat column
+#: is ~70px wide, so the placeholder carries one example and the tooltip the
+#: rest. Kept as ASCII with no apostrophes: both are interpolated into a
+#: single-quoted JS string literal.
+_NUMBER_FILTER_PLACEHOLDER: str = ">0"
+_NUMBER_FILTER_HINT: str = "Filter by number: 1.5, >1, <=2, 1..3"
+_PERCENT_FILTER_HINT: str = _NUMBER_FILTER_HINT + " (in %, as shown)"
+
+
+def _filter_kinds(frame: pd.DataFrame, groups: list[str]) -> dict[int, str]:
+    """Which columns get a filter input and of what kind, by position in
+    `frame` (#285, widened to the numbers in #297).
 
     Positions rather than names: the JS matches on `column().index()`, which is
     the *data* index and is stable under sorting, filtering and the hidden
     columns a window switch produces — a name match would have to survive
     DataTables wrapping the title in its own markup.
 
-    The Info block is text (or a date, where "2019" is a useful substring); the
-    stat and Z-Score columns are excluded because a substring filter over a
-    number is close to useless — "1.2" matches 1.23, 11.2 and -1.2 alike, and
-    those columns render through `_js_number_render`, which hands filtering the
-    raw value rather than the formatted one. Group columns are excluded because
-    they are hidden and come back as row-group headers.
+    Every column that is not a hidden group column gets an input. The Info
+    block is `"text"` — a substring match, where "2019" over a launch date is
+    useful. The stat and Z-Score columns are `"number"` / `"percent"` instead,
+    which is a **comparison** filter rather than a substring one, because a
+    substring over these columns would not merely be coarse ("1.2" matching
+    1.23, 11.2 and -1.2 alike) but wrong: they render through
+    `_js_number_render`, which hands filtering the raw value, so a cell reading
+    "5.23%" is searched as "0.0523" and typing what is on screen matches
+    nothing at all. `"percent"` is what carries that ×100 to the browser, so
+    the units the user types in are the units they can see.
+
+    Group columns get nothing: they are hidden, and come back as row-group
+    headers.
     """
-    return [
-        position
-        for position, name in enumerate(str(c) for c in frame.columns)
-        if name not in groups and not _is_zscore_col(name) and not _is_stat_col(name)
-    ]
+    kinds: dict[int, str] = {}
+    for position, name in enumerate(str(c) for c in frame.columns):
+        if name in groups:
+            continue
+        if _is_percent_col(name):
+            kinds[position] = "percent"
+        elif _is_zscore_col(name) or _is_stat_col(name):
+            kinds[position] = "number"
+        else:
+            kinds[position] = "text"
+    return kinds
 
 
-def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
+def _js_filter_row(kinds: dict[int, str]) -> JavascriptFunction:
     """A `drawCallback` that builds the per-column filter row, once per table.
 
     **Why `drawCallback` and not `initComplete`.** The itables widget
@@ -728,17 +822,60 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
     The guard below counts inputs rather than testing for the row, so if a
     future version of that pass empties them anyway the next draw rebuilds
     them, instead of the row sitting there blank forever.
+
+    **How a numeric column filters (#297).** Not by `column.search()`, which is
+    a substring over the raw value and so is answered in fractions for the
+    percent columns. It is `column.search.fixed()`, DataTables' own registered
+    per-column predicate (the same API its ColumnControl extension filters
+    numbers with), fed a comparison parsed from what the user typed:
+    `>1`, `>=1`, `<2`, `<=2`, `1..3`, or a bare number. A bare number matches
+    **at the precision typed** — "1.2" is every value that rounds to 1.2, not
+    the one that is exactly 1.2 — because a browse surface asks for the
+    neighbourhood of a number and exact float equality over a rendered 2dp
+    column is a box that stays empty. Text that parses as neither is not a
+    filter of zero rows: it leaves the column unfiltered and marks the input,
+    so a half-typed ">" shows everything rather than nothing.
+
+    `search.fixed` is probed rather than assumed. It is in this bundle (and
+    pinned by a test), but a future one without it would throw inside this
+    callback and take the *text* filters down with it; the probe degrades to
+    numeric columns with no input, which is where they were before #297.
     """
+    text_cols = sorted(position for position, kind in kinds.items() if kind == "text")
+    # Position -> the factor between the stored value and the rendered one, so
+    # the browser never has to re-derive which columns are percentages.
+    scales = {
+        str(position): (100 if kind == "percent" else 1)
+        for position, kind in sorted(kinds.items())
+        if kind != "text"
+    }
     return JavascriptFunction(
         "function (settings) {"
         "  var api = this.api();"
         "  var node = api.table().node();"
         "  var head = node.tHead;"
         "  if (!head) { return; }"
-        f"  var filterable = {list(filterable)!r};"
+        f"  var textCols = {text_cols!r};"
+        f"  var numberCols = {json.dumps(scales)};"
+        "  var numberOk = !!(api.columns().search && api.columns().search.fixed);"
+        "  var isNumber = function (index) {"
+        "    return numberOk && numberCols.hasOwnProperty(index);"
+        "  };"
+        "  var isFilterable = function (index) {"
+        "    return isNumber(index) || textCols.indexOf(index) !== -1;"
+        "  };"
+        f"  var parse = {_JS_NUMBER_PREDICATE};"
+        "  var applyTo = function (column, index, input) {"
+        "    if (!isNumber(index)) { column.search(input.value); return; }"
+        "    var test = parse(input.value, numberCols[index]);"
+        "    input.classList.toggle('bbg-filter-invalid', test === false);"
+        # `''` is how DataTables clears a fixed search — the same value its own
+        # ColumnControl writes for an empty box.
+        "    column.search.fixed('bbg', test ? test : '');"
+        "  };"
         "  var expected = 0;"
         "  api.columns(':visible').every(function () {"
-        "    if (filterable.indexOf(this.index()) !== -1) { expected++; }"
+        "    if (isFilterable(this.index())) { expected++; }"
         "  });"
         # Built once per table. Every later draw — a filter keystroke, a sort,
         # a regroup — finds the row intact and returns, so a focused input is
@@ -761,18 +898,26 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
         "    var cell = document.createElement('td');"
         "    cell.className = 'bbg-filter-cell';"
         "    var index = this.index();"
-        "    if (filterable.indexOf(index) !== -1) {"
+        "    if (isFilterable(index)) {"
         "      var column = this;"
         "      var input = document.createElement('input');"
         "      input.type = 'search';"
         "      input.className = 'bbg-filter-input';"
         "      input.value = saved[index] || '';"
+        "      if (isNumber(index)) {"
+        "        input.classList.add('bbg-filter-number');"
+        f"        input.placeholder = '{_NUMBER_FILTER_PLACEHOLDER}';"
+        f"        input.title = numberCols[index] === 100 ? '{_PERCENT_FILTER_HINT}'"
+        f"          : '{_NUMBER_FILTER_HINT}';"
+        "      }"
         "      input.addEventListener('click', function (e) { e.stopPropagation(); });"
+        "      var applied = input.value;"
         "      var apply = function () {"
         "        saved[index] = input.value;"
-        "        if (column.search() !== input.value) {"
-        "          column.search(input.value).draw();"
-        "        }"
+        "        if (input.value === applied) { return; }"
+        "        applied = input.value;"
+        "        applyTo(column, index, input);"
+        "        api.draw();"
         "      };"
         # `input` rather than `keyup`: a paste and the clear button of a
         # `type=search` box both change the value without a keystroke. `search`
@@ -781,7 +926,7 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
         "      input.addEventListener('input', apply);"
         "      input.addEventListener('search', apply);"
         "      cell.appendChild(input);"
-        "      if (saved[index]) { pending.push([column, saved[index]]); }"
+        "      if (saved[index]) { pending.push([column, index, input]); }"
         "    }"
         "    row.appendChild(cell);"
         "  });"
@@ -790,7 +935,7 @@ def _js_filter_row(filterable: list[int]) -> JavascriptFunction:
         # would re-enter the draw that is still running.
         "  if (pending.length) {"
         "    setTimeout(function () {"
-        "      pending.forEach(function (p) { p[0].search(p[1]); });"
+        "      pending.forEach(function (p) { applyTo(p[0], p[1], p[2]); });"
         "      api.draw();"
         "    }, 0);"
         "  }"
@@ -849,7 +994,7 @@ def _catalog_table_options(
                     "createdCell": _js_heat_cell(_SHARPE_HEAT_THRESHOLDS),
                 }
             )
-        elif name.endswith((" Return", " Vol", " Max DD")):
+        elif _is_percent_col(name):
             column_defs.append(
                 {"targets": [position], "render": _js_number_render(percent=True)}
             )
@@ -892,7 +1037,7 @@ def _catalog_table_options(
         # The per-column filter row (#285), built in the browser because the
         # inputs are not part of the frame. See `_js_filter_row` for why this
         # is a `drawCallback` and why the filter text lives on `window`.
-        "drawCallback": _js_filter_row(_filterable_positions(frame, groups)),
+        "drawCallback": _js_filter_row(_filter_kinds(frame, groups)),
         # itables downsamples a table over ~64KB of JSON, keeping the head and
         # tail and dropping the middle. For a browse surface whose job is to
         # show the whole catalog that is a silent data loss, and the row a user

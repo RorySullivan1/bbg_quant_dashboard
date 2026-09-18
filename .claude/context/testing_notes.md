@@ -17,6 +17,20 @@ regardless of its base branch, and on pushes to `main` and to epic integration
 branches (`v*`). The `pull_request` trigger is deliberately unfiltered — see
 the comment in that file and #202.
 
+## The one test that runs JavaScript (#297)
+
+`tests/test_catalog_grid.py` runs the catalog's numeric-filter grammar —
+`_JS_NUMBER_PREDICATE`, the function behind `>1`, `1..3` and a bare number — in
+**node**, and skips if node is not on PATH (it is on CI's `ubuntu-latest`
+runner). Nothing else in the suite leaves Python.
+
+It earns the exception because the grammar is the substance of that filter and
+every alternative is a fiction: asserting substrings of the generated JS proves
+the text was written, not that `>1` keeps the right rows. That is exactly the
+gap #285 fell into. The parser is a module constant rather than a fragment
+inlined into `_js_filter_row` so it can be executed with no DOM and no
+DataTables around it — the rest of the row still needs the rendered pass below.
+
 ## User-benchmark isolation (#194)
 
 `conftest.py` carries a suite-wide **autouse** fixture redirecting
@@ -309,7 +323,9 @@ untitled `thead th` a tick after the callback creates it (#285, and see
 `conventions.md`). It was then driven in a headless Chromium against the real
 widget bundle, the real `_dt_args` and the app's own CSS: the row, the two-row
 sticky header, per-column filtering, composition with the global search, the
-window switch and the click-through were all confirmed there. What that harness
+window switch and the click-through were all confirmed there — and again for
+the numeric boxes in #297, including the percent scaling, the invalid-input
+outline, and the filters surviving a window switch. What that harness
 cannot judge is anything about *fit* — real fonts, the rails, the viewport —
 so the width items below are still unrendered, and reading the bundle is still
 not evidence that something draws.
@@ -342,10 +358,17 @@ The control bar and the ranking rail:
 The table surface:
 
 - A **filter row sits directly beneath the header labels**, and the labels are
-  still there. Text columns have an input; the stat and Z-Score columns do not;
-  a column hidden by the Window chips leaves **no** orphaned input. (Verified
-  in the harness; re-check it on the terminal, because this is the item that
-  passed every Python assertion while rendering blank.)
+  still there. **Every** visible column has an input (#297); a column hidden by
+  the Window chips leaves **no** orphaned input. (Verified in the harness;
+  re-check it on the terminal, because this is the item that passed every
+  Python assertion while rendering blank.)
+- The stat and Z-Score boxes are the **numeric** kind: mono, right-aligned,
+  placeholder `>0`, and a tooltip spelling the grammar out. They take `>1`,
+  `<=2`, `1..3` or a bare number — and a percent column takes the number **as
+  shown**, so `>10` on a Return column means 10%, not the stored 10.0. A
+  half-typed `>` outlines the box in red and leaves the rows alone. Verified in
+  the harness; what it cannot judge is whether a box that narrow still reads as
+  an input at the terminal's fonts.
 - The **sticky header pins both rows** as the body scrolls, with the filter row
   sitting clear of the labels rather than over them. The offset is a hard-coded
   `CATALOG_HEADER_ROW_HEIGHT`, so this is where a font or padding change would
@@ -355,8 +378,11 @@ The table surface:
   path — the table is torn down and rebuilt on every options change, and only
   the browser-side store puts the filters back.
 - Typing in a column input filters that column alone; the global search still
-  filters across all of them; the two compose. Clicking into an input does
-  **not** re-sort, and sorting still works from the label row.
+  filters across all of them; a text box, a numeric box and the global search
+  all compose. Clicking into an input does **not** re-sort, and sorting still
+  works from the label row.
+- A numeric filter **drops the dash rows**: a blank cell is not a number and
+  matches no comparison.
 - Clicking a **filtered** row still opens the right strategy in Single
   Strategy — the row indices are data indices, not display positions.
 - The search box renders **top-left**, in the dark chrome, with its placeholder

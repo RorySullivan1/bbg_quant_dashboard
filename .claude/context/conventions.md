@@ -236,7 +236,8 @@ CSS, style tokens — live in `style.md`.)
     contiguity above — the two want the row order for different things. The
     user drives row order through the grouping instead (#264, closed
     not-planned). Filtering is the top-left global search box plus the
-    per-column filter row beneath the header labels (v0.9.21 #283, #285).
+    per-column filter row beneath the header labels (v0.9.21 #283, #285) —
+    one box per column since #297, the numeric ones taking a comparison.
   - **Changing the window hides columns; it never drops them.** Every stats
     window stays in the frame and all but one are hidden through `columnDefs`,
     so switching is a visibility change: the grouping, the row order and the
@@ -279,6 +280,24 @@ CSS, style tokens — live in `style.md`.)
   built-once guard counts inputs rather than testing for the row, so a future
   version of that pass degrades to a rebuild on the next draw rather than to a
   blank row that never comes back.
+
+- **A number column filters by comparison, not by substring (v0.9.21 #297)**:
+  every column in the catalog table carries a filter box, but the stat and
+  Z-Score columns take `>1`, `<=2`, `1..3` or a bare number rather than text.
+  This is not a refinement of a substring filter — a substring filter over
+  them is *wrong*. `_js_number_render` returns the raw value for every
+  non-display request, so DataTables searches a Return column that reads
+  "5.23%" as `0.0523`: typing what is on the screen matches nothing. The
+  comparison is registered with `column.search.fixed()`, DataTables' own
+  per-column predicate hook (the same one its ColumnControl extension filters
+  numbers with), and `_filter_kinds` marks the percent columns so the browser
+  compares in the units the cell shows. One consequence worth keeping: the
+  renderer's ×100 and the filter's ×100 read the **same** `_is_percent_col`,
+  because a column rendered as a percentage and filtered as a fraction answers
+  `>1` with the whole catalog. A bare number matches at the precision typed
+  ("1.2" is [1.15, 1.25]), and text that is not a comparison — the `>` that
+  every `>1` passes through — leaves the column unfiltered and marks the box,
+  rather than emptying the table under the user's hands mid-keystroke.
 
 - **The catalog scrolls in CSS, not through `scrollY` (v0.9.18 #272)**:
   DataTables' `scrollY` renders the header in a second table and sizes both
