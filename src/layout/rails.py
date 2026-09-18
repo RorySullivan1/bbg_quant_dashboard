@@ -223,14 +223,32 @@ def _rail_title(text: str) -> W.HTML:
     return title
 
 
-def _section_title(text: str) -> W.HTML:
-    """A section's heading line, in the catalog table's own type.
+def _section_title(text: str, note: str | None = None) -> W.HTML:
+    """A section's heading line, in the catalog table's own type, with an
+    optional muted `note` beside it on the same baseline.
 
-    `grid_header` is what "All-catalog performance" is drawn with, so a section
-    titled this way reads as a sibling of the table rather than as a new kind
-    of thing.
+    The title's weight, size and margin deliberately mirror `grid_header` —
+    what "All-catalog performance" is drawn with — so a section titled this way
+    reads as a sibling of the table rather than as a new kind of thing. They
+    are a separate template rather than a slot on that one because
+    `_substitute` only replaces the keys it is handed: a `{{note}}` added to
+    `grid_header` would render literally at its seven other call sites.
+    **If `grid_header`'s type changes, change `section_title` with it.**
+
+    The note is a *caption*, not a second title: lighter, smaller and muted, so
+    it qualifies the heading rather than competing with it. It carries what a
+    reader needs to interpret the section but would not think to ask for — the
+    Leaderboard's ranking basis, say, which is otherwise only discoverable by
+    noticing that the score and the value disagree about order.
     """
-    return W.HTML(render_template("grid_header", **STYLE_CTX, text=html.escape(text)))
+    return W.HTML(
+        render_template(
+            "section_title",
+            **STYLE_CTX,
+            text=html.escape(text),
+            note=html.escape(note or ""),
+        )
+    )
 
 
 def control_rail(
@@ -299,6 +317,7 @@ def section_panel(
     body: W.Widget,
     *,
     height: str,
+    note: str | None = None,
 ) -> W.VBox:
     """A titled section: a heading line, a row of controls, then a boxed body.
 
@@ -316,6 +335,9 @@ def section_panel(
     `bar` arrives already built — `control_bar` brings its own bordered surface
     and its own bottom margin, so this adds nothing around it.
 
+    `note` is an optional muted caption beside the title, for a section whose
+    heading alone does not say enough to read it by.
+
     **`height` is required.** The component owns the shape; the caller owns the
     size. A default sized for the commentary block would quietly impose that
     number on a Platform caller, which wants `CATALOG_TABLE_HEIGHT` instead.
@@ -331,6 +353,6 @@ def section_panel(
     )
     box.add_class("bbg-section-box")
     return W.VBox(
-        [_section_title(title), bar, box],
+        [_section_title(title, note), bar, box],
         layout=W.Layout(width="100%", min_width="0"),
     )

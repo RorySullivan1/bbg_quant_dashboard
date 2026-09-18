@@ -8,6 +8,8 @@ that a chip group presents the `W.Dropdown` surface — `value`, `label`,
 
 from __future__ import annotations
 
+import re
+
 import ipywidgets as W
 import pytest
 from src.layout.chrome import _make_chip, _style_chip
@@ -24,6 +26,7 @@ from src.style import (
     COMMENTARY_BOX_HEIGHT,
     COMMENTARY_BULLETIN_SHARE,
     COMMENTARY_LEADERBOARD_SHARE,
+    Color,
 )
 
 WINDOWS = ["1M", "6M", "1Y"]
@@ -226,20 +229,73 @@ def test_a_panel_is_a_title_a_bar_and_a_boxed_body_in_that_order():
 
 
 def test_a_panel_titles_itself_the_way_the_catalog_table_does():
-    """`grid_header`, not `_rail_title`.
+    """The catalog table's type, not `_rail_title`'s.
 
     The rail's title is the accent, uppercase, underlined type that belongs
     *inside* a rail. Using it here would put two competing title treatments on
     one screen, which is the drift this component exists to prevent.
+
+    `section_title` is a separate template from `grid_header` only because
+    `_substitute` leaves an unfilled `{{note}}` on screen, so the slot could
+    not be added to the template seven other call sites share. The *type* must
+    still match, and this is what says so: the title's weight and size are read
+    out of `grid_header` rather than spelled here, so a change to one that is
+    not made to the other fails.
     """
     panel = _panel()
     title = panel.children[0]
 
     assert "bbg-rail-title" not in _classes(title)
     assert not any("bbg-rail-title" in _classes(c) for c in panel.children)
-    assert title.value == render_template(
-        "grid_header", **STYLE_CTX, text="Leaderboard"
+    assert "Leaderboard" in title.value
+
+    header = render_template("grid_header", **STYLE_CTX, text="x")
+    for declaration in ("font-weight:600", "font-size:"):
+        assert declaration in header
+    # The size token the header uses, whatever it is, is the one the title uses.
+    (size,) = re.findall(r"font-size:([^;]+);", header)
+    assert f"font-weight:600;font-size:{size};" in title.value
+
+
+def test_a_panel_takes_an_optional_note_beside_its_title():
+    """A caption, not a second title — it qualifies the heading rather than
+    competing with it, so it is lighter, smaller and muted."""
+    panel = _panel()  # no note
+    plain = panel.children[0].value
+
+    noted = section_panel(
+        "Leaderboard",
+        control_bar(RailSection("Window", ChipGroup(WINDOWS))),
+        W.HTML("body"),
+        height="300px",
+        note="(Ranked By Normalized 5Y Z-Score)",
+    ).children[0]
+
+    assert "(Ranked By Normalized 5Y Z-Score)" in noted.value
+    assert "Leaderboard" in noted.value
+    # Absent by default, and an empty note leaves nothing visible behind —
+    # the span is still emitted, so it must render as no text at all.
+    assert "Ranked By" not in plain
+    (empty,) = re.findall(r"color:[^']*'>([^<]*)</span>", plain)
+    assert empty == ""
+
+    # The note is weaker type than the title it sits beside.
+    assert "font-weight:400" in noted.value
+    assert str(Color.TEXT_MUTED) in noted.value
+
+
+def test_a_note_is_escaped_like_any_other_dynamic_text():
+    panel = section_panel(
+        "T",
+        control_bar(RailSection("W", ChipGroup(WINDOWS))),
+        W.HTML("body"),
+        height="300px",
+        note="<script>& 5Y",
     )
+
+    value = panel.children[0].value
+    assert "<script>" not in value
+    assert "&lt;script&gt;&amp; 5Y" in value
 
 
 def test_the_box_is_typed_and_holds_the_height_it_was_given():

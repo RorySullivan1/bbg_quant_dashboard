@@ -92,7 +92,9 @@ the viewport rather than the below-the-fold page is exactly right.)
 
 **Both sections are one component.** The Leaderboard and the QIS Bulletin are
 each a `section_panel` (`rails.py`): a title line in the `grid_header`
-treatment, the section's `control_bar` of chips, then a `.bbg-section-box` —
+treatment — optionally followed on the same baseline by a **muted caption**,
+lighter and smaller so it qualifies the heading rather than competing with it
+— the section's `control_bar` of chips, then a `.bbg-section-box` —
 the same `{{chrome_bg}}` surface, 1px border and 6px radius the Platform
 table's box wears — at a fixed `COMMENTARY_BOX_HEIGHT` (300px), scrolling its
 body inside that height rather than growing the row. The height is a **token
