@@ -16,6 +16,7 @@ from src.layout.grids import (
     _build_universe_frame,
     _calendar_renderers,
     _perf_renderers,
+    zscore_column_name,
 )
 
 _CAL_MONTHS = [
@@ -110,16 +111,20 @@ def _up(tickers) -> pd.DataFrame:
     return pd.DataFrame(data, index=pd.Index(tickers, name="ticker"), columns=cols)
 
 
+# The ranking column's real header (#324), built rather than spelled.
+_Z_NAME = zscore_column_name("Sharpe", "1Y")
+
+
 def test_build_universe_frame_zscore_after_info_and_sorted():
     meta = _meta()
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": 0.5, "BBB Index": 2.0, "CCC Index": -1.0})
-    frame, z_key = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
+    frame, z_key = _build_universe_frame(meta, up, zcol=zcol, zname=_Z_NAME)
 
     # Flat single-index columns; the Z-Score column sits right after the Info
     # block and immediately before the first stat column.
     cols = list(frame.columns)
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    z_name = _Z_NAME
     # Headers and their order both come from the schema (#212): the info block
     # is `CATALOG_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
     # carries its schema label ("Launch Date", not the raw feed's "Live Date").
@@ -150,7 +155,7 @@ def test_build_universe_frame_nan_z_sinks_within_its_group():
     meta = _meta()
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": np.nan, "BBB Index": 1.0, "CCC Index": 0.0})
-    frame, _z_key = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
+    frame, _z_key = _build_universe_frame(meta, up, zcol=zcol, zname=_Z_NAME)
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
     assert list(frame["Solution"]) == ["ARP", "ARP", "Smart Beta"]
 
@@ -164,9 +169,7 @@ def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
     # Info block then flat stat columns; no z-score column at all.
     assert cols[0] == "Name"
     assert "1Y Return" in cols and "5Y Sharpe" in cols
-    assert not any(
-        c == ZSCORE_SUPERCOL or c.startswith(ZSCORE_SUPERCOL + " ") for c in cols
-    )
+    assert not any(ZSCORE_SUPERCOL in str(c) for c in cols)
     # No sort applied → original metadata order preserved.
     assert list(frame.index) == list(meta["ticker"])
 
@@ -187,7 +190,7 @@ def _bg_expr(renderer) -> str:
 def test_perf_renderers_heatmap_scopes_sharpe_and_zscore():
     # The ranking column is named by its caller, not recognised from its label
     # (#323) — so the renderer is told which column it is.
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    z_name = _Z_NAME
     cols = pd.Index(["1Y Sharpe", "1Y Return", z_name])
     on = _perf_renderers(cols, sharpe_heatmap=True, zscore_col=z_name)
     # Heatmap on: Sharpe column + Z-Score column get the diverging ramp.
@@ -220,7 +223,7 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     # `text_value` expr, since ipydatagrid's `missing` trait never fires for a
     # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
     # is true for any non-numeric string and would blank every cell.
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    z_name = _Z_NAME
     cols = pd.Index([PERF_COLOR_COLUMN_NAME, "Name", "1Y Return", "1Y Sharpe", z_name])
     r = _perf_renderers(cols, sharpe_heatmap=True, zscore_col=z_name)
     dash = "isNaN(cell.value) ? '-' : ''"

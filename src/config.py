@@ -42,11 +42,35 @@ PERF_TABLE_YEARS = (1, 3, 5)
 #: toggle moves it live; this is only the default.
 LEADERBOARD_WINDOW_DAYS = 21
 
-#: How long a sample the leaderboard's score is standardized against: five
-#: years of the metric's own rolling history. `score_history_years()` sizes the
-#: fetch so this is available even at the 1Y window, where the rolling series
-#: only starts after its first 252 observations (#310, #311).
-LEADERBOARD_SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+#: How long a sample **every** score is standardized against: `LOOKBACK_YEARS`
+#: of the metric's own rolling history. `score_history_years()` sizes the fetch
+#: so this is available at the deepest window either board offers (#310, #311).
+#:
+#: One quantity, not two that agree: the leaderboard's columns and the catalog
+#: table's ranking column are the same kind of number, and #324 made the
+#: catalog's sample fixed precisely so a reader can compare them. Two constants
+#: would have been free to drift apart with nothing to catch it.
+#: (Named `LEADERBOARD_SCORE_SAMPLE_DAYS` until #324, when it stopped being
+#: only the leaderboard's.)
+SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+
+#: Below this many rolling observations the catalog's ranking column renders a
+#: dash instead of a score, and sorts to the bottom with the other blanks.
+#:
+#: Half the target sample. The header says `5Y Z-Score`, so an index that can
+#: only offer two years should say nothing rather than quietly standardize
+#: against two and be read as five — the same reasoning that has
+#: `_has_enough_history` blank a whole performance block. Half is the point
+#: where a sample stops being a short five years and starts being a different
+#: statistic; it is a judgement, and it is one number to move.
+#:
+#: Expected effect, not a regression: at the `5Y` window an index needs about
+#: 7.5 years of history to score at all.
+#:
+#: The leaderboard deliberately does not take this floor — it already drops
+#: NaN and infinite readings before ranking, and changing what its board shows
+#: was out of scope for #324.
+CATALOG_SCORE_MIN_SAMPLE_DAYS = SCORE_SAMPLE_DAYS // 2
 
 #: How many indices each leaderboard column lists at the top and at the
 #: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again

@@ -25,7 +25,7 @@ from src.commentary import (
 )
 from src.config import (
     LEADERBOARD_ROWS,
-    LEADERBOARD_SCORE_SAMPLE_DAYS,
+    SCORE_SAMPLE_DAYS,
     TRADING_DAYS_PER_YEAR,
 )
 from src.stats import (
@@ -189,7 +189,7 @@ def _expected_order(metric: str, prices, returns, window_days: int) -> list[str]
         prices,
         metric=metric,
         window=window_days,
-        zscore_window=LEADERBOARD_SCORE_SAMPLE_DAYS,
+        zscore_window=SCORE_SAMPLE_DAYS,
         returns=returns,
     )
     ranked = scores.dropna().sort_index().sort_values(ascending=False, kind="stable")

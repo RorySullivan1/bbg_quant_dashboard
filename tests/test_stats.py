@@ -477,6 +477,41 @@ def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
         assert z.name == f"{metric}_zscore"
 
 
+def test_rolling_metric_zscore_min_sample_blanks_a_short_history(multiyear_prices):
+    """A young index scores NaN rather than being standardized against the
+    handful of observations it has (#324).
+
+    Without the floor there is nothing on screen to distinguish a z built from
+    five years from one built from three months — which matters once the
+    column's header *names* the sample it claims.
+    """
+    prices = multiyear_prices.copy()
+    # BBB only starts trading two-thirds of the way through.
+    young = prices.columns[1]
+    prices.loc[prices.index[: int(len(prices) * 0.66)], young] = np.nan
+
+    kwargs = dict(metric="sharpe", window=63, zscore_window=252)
+    unfloored = stats.rolling_metric_zscore(prices, **kwargs)
+    floored = stats.rolling_metric_zscore(prices, min_sample=200, **kwargs)
+
+    # It scores without the floor — that is the problem the floor solves.
+    assert not np.isnan(unfloored[young])
+    assert np.isnan(floored[young])
+    # And every index with the full sample is untouched by the floor.
+    full = [c for c in prices.columns if c != young]
+    pd.testing.assert_series_equal(unfloored[full], floored[full])
+
+
+def test_rolling_metric_zscore_has_no_floor_by_default(multiyear_prices):
+    """Off unless asked for: the leaderboard and the sunburst keep scoring on
+    whatever history exists, and #324 changed neither."""
+    kwargs = dict(metric="sharpe", window=63, zscore_window=252)
+    pd.testing.assert_series_equal(
+        stats.rolling_metric_zscore(multiyear_prices, **kwargs),
+        stats.rolling_metric_zscore(multiyear_prices, min_sample=None, **kwargs),
+    )
+
+
 def test_rolling_metric_zscore_returns_arg_matches_prices(multiyear_prices):
     # v0.9.13 #166: passing a precomputed returns frame (the shared
     # universe_rets) is identical to letting the function derive it from prices —

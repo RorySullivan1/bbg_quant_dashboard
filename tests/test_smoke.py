@@ -59,12 +59,12 @@ def test_build_app_renders_expected_tree():
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
-    # v0.7.0 Workstream A: Z-Score ranking (Metric/Window/Lookback) defaulting
-    # to z(1M Sharpe, 1Y) — three chip groups in a rail (#279), and since the
-    # rails redesign the rail stands down the LEFT of the table rather than to
-    # its right. The three analytics charts live in one boxed
-    # "Platform analytics" card with inner pill-tabs sharing the lookback
-    # toggle (sunburst default tab).
+    # The catalog's ranking, defaulting to Sharpe over the table's own window.
+    # It was Metric/Window/Lookback in a rail (#279); #324 fixed the sample at
+    # five years and handed the window to the table bar, leaving the Metric as
+    # the only chip group the rail still holds. The three analytics charts live
+    # in one boxed "Platform analytics" card with inner pill-tabs sharing the
+    # lookback toggle (sunburst default tab).
     import plotly.graph_objects as go
     from src.layout.rails import ChipGroup
 
@@ -75,7 +75,15 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     universe_header, table_bar, grid_row, analytics_card = platform_panel.children
     ranking_rail = grid_row.children[0]
     z_chips = [c for c in ranking_rail.children if isinstance(c, ChipGroup)]
-    assert [c.label for c in z_chips] == ["Sharpe", "1M", "1Y"]
+    assert [c.label for c in z_chips] == ["Sharpe"]
+    # The window the score is measured over is the table's, in the bar above it.
+    bar_chips = [
+        chips
+        for block in table_bar.children
+        for chips in getattr(block, "children", ())
+        if isinstance(chips, ChipGroup)
+    ]
+    assert [c.label for c in bar_chips] == ["1Y"]
 
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].

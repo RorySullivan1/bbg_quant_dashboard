@@ -38,6 +38,7 @@ from itables.widget import ITable
 
 from ..config import (
     CATALOG_GRID_FIELDS,
+    LOOKBACK_YEARS,
     PERF_GRID_FIELDS,
     field_label,
     stat_windows,
@@ -267,17 +268,44 @@ def _perf_column_widths(
     return widths
 
 
-# The stem `_build_universe_frame` builds the ranking column's name from, and
-# the diverging-heatmap thresholds for the conditional-formatted columns.
+# The words the ranking column's name is built from (see
+# `zscore_column_name`), and the diverging-heatmap thresholds for the
+# conditional-formatted columns.
 #
-# It *builds* the name; nothing reads it back off a header to decide what a
+# The name is *built* here; nothing reads it back off a header to decide what a
 # column is. That distinction is the whole of #323 — the renderers, the widths,
 # the filter kinds and the column defs are handed the key the builder returned.
 ZSCORE_SUPERCOL: str = "Z-Score"
+ZSCORE_COLUMN_PREFIX: str = "Normalized"
 # Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
 _SHARPE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-0.5, 0.0, 0.5, 1.0)
 # Z-Score column: already centered at 0, so the bands are symmetric.
 _ZSCORE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-1.5, -0.5, 0.5, 1.5)
+
+
+def zscore_column_name(metric_label: str, window_label: str) -> str:
+    """The ranking column's header, e.g. `Normalized 1Y Sharpe (5Y Z-Score)`.
+
+    Four facts in the order a reader needs them: that the number is
+    standardized, over what window it was measured, which metric it is, and
+    what it was standardized against. It replaced `Z-Score Sharpe 1M/1Y`
+    (#324), which compressed a window *over a lookback* into a notation nobody
+    reads off a screen — and whose lookback was a control the user could move,
+    so the same column meant three things.
+
+    The `5Y` is `LOOKBACK_YEARS`, not a literal, for the reason the
+    Leaderboard's title note is (#309): the sample and the number naming it
+    must not be free to drift apart.
+
+    Built in one place and never parsed back — `_window_of` has to keep
+    returning None for this string even though a window label sits inside it,
+    and every consumer that cares which column this is receives the name
+    rather than recognising it (#323).
+    """
+    return (
+        f"{ZSCORE_COLUMN_PREFIX} {window_label} {metric_label} "
+        f"({LOOKBACK_YEARS}Y {ZSCORE_SUPERCOL})"
+    )
 
 
 def _zebra_expr() -> str:
@@ -1169,10 +1197,10 @@ class UniverseGrid:
         up: pd.DataFrame,
         *,
         zcol: pd.Series | None = None,
-        zlabel: str | None = None,
+        zname: str | None = None,
     ) -> None:
         combined, zscore_col = _build_universe_frame(
-            meta, up, zcol=zcol, zlabel=zlabel, group_fields=self.group_fields
+            meta, up, zcol=zcol, zname=zname, group_fields=self.group_fields
         )
         self._set_data(combined, zscore_col=zscore_col)
 
@@ -1206,17 +1234,23 @@ class UniverseGrid:
         )
 
     def set_window(self, window: str) -> None:
-        """Show exactly one stats window, without rebuilding the table.
+        """Record which stats window is visible. **The caller re-renders.**
 
-        The options are re-sent with no dataframe, so DataTables only changes
-        column visibility. That is the difference between a radio and a reload:
-        the grouping and the selected row both survive it, and nothing
-        recomputes — every window was computed once, up front.
+        A sibling of `set_group_fields`, and for the same reason. Until #324
+        this *was* the window change: the options were re-sent with no
+        dataframe, so DataTables only toggled column visibility, and the
+        grouping and the selected row both survived it. The window now also
+        measures the Z-Score, so a change renames the ranking column and
+        re-sorts the frame — including the per-level group ranks, which are
+        taken from it — and the table is rebuilt either way. Re-sending options
+        here as well would be a discarded round trip through the browser.
+
+        What has *not* changed is the performance columns: every window is
+        still computed once, up front, and `_catalog_table_options` still hides
+        the ones not on show rather than dropping them. It is the frame that is
+        rebuilt, not the statistics.
         """
         self.window = window
-        if getattr(self, "_display", None) is None or self._display.empty:
-            return
-        self.widget.update(**self.table_options())
 
     def set_group_fields(self, fields: tuple[str, ...]) -> None:
         """Change which fields the grid groups by.
@@ -1237,18 +1271,23 @@ def _build_universe_frame(
     up: pd.DataFrame,
     *,
     zcol: pd.Series | None = None,
-    zlabel: str | None = None,
+    zname: str | None = None,
     group_fields: tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, str | None]:
     """Assemble the all-catalog grid's DataFrame (pure — no grid side effects),
     **and the name of the ranking column it inserted** (None when it did not).
 
-    Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y, as flat
-    single-index labels ("1Y Return", …). When a `zcol` (per-ticker z-score
-    Series) + `zlabel` are given, a `"Z-Score <zlabel>"` column is inserted
-    right after the Info block — it's the headline ranking column, so it sits
-    next to the names — and the whole frame is sorted by it descending
+    Column order is Info → the ranking column (when supplied) → 1Y → 3Y → 5Y,
+    as flat single-index labels ("1Y Return", …). When a `zcol` (per-ticker
+    z-score Series) + `zname` are given, a column called exactly `zname` is
+    inserted right after the Info block — it's the headline ranking column, so
+    it sits next to the names — and the whole frame is sorted by it descending
     (insufficient-history tickers, NaN z, sink to the bottom).
+
+    `zname` is the **whole** header, built by `zscore_column_name`. It was a
+    suffix under a fixed `"Z-Score "` stem until #324; the parameter was
+    renamed with the meaning so a caller passing the old thing gets an error
+    rather than a column called `Normalized Normalized 1Y Sharpe …`.
 
     The key travels back with the frame rather than being re-derived from the
     column names downstream: this function is the only place that decides both
@@ -1261,8 +1300,8 @@ def _build_universe_frame(
 
     blocks = [info]
     z_key: str | None = None
-    if zcol is not None and zlabel is not None:
-        z_key = f"{ZSCORE_SUPERCOL} {zlabel}"
+    if zcol is not None and zname is not None:
+        z_key = zname
         blocks.append(pd.DataFrame({z_key: zcol.reindex(info.index)}))
 
     if not up.empty:

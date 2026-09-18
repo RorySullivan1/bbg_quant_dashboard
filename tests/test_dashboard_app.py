@@ -18,7 +18,6 @@ from src.config import (
     LOOKBACK_YEARS,
     MONTH_WINDOW,
     NEW_LAUNCH_DAYS,
-    QUARTER_WINDOW,
     REGIME_TICKERS,
     universe_grid_default_window,
 )
@@ -272,11 +271,18 @@ def test_the_window_chips_offer_what_the_history_supports(app):
     assert app.window_chips.value == universe_grid_default_window()
 
 
+# The `app` fixture is module-scoped, and since #324 the window is not just a
+# column-visibility toggle — it renames the ranking column and re-sorts the
+# table. A test that leaves it moved now leaks into every test after it, so
+# these put it back.
+
+
 def test_picking_a_window_moves_the_grid(app):
     app.window_chips.value = "5Y"
     assert app.universe_grid.window == "5Y"
     app.window_chips.value = "6M"
     assert app.universe_grid.window == "6M"
+    app.window_chips.value = universe_grid_default_window()
 
 
 def test_clicking_a_window_chip_moves_the_grid(app):
@@ -287,6 +293,7 @@ def test_clicking_a_window_chip_moves_the_grid(app):
     ]
     chip.click()
     assert app.universe_grid.window == "5Y"
+    app.window_chips.value = universe_grid_default_window()
 
 
 def test_the_platform_shell_is_a_bar_above_and_a_rail_beside_the_table(app):
@@ -385,21 +392,119 @@ def test_no_control_row_sits_above_the_grid(app):
     assert not hasattr(app, "z_controls_row")
 
 
-def test_the_z_score_column_header_follows_the_chips(app):
+def _ranking_columns(app) -> list[str]:
+    from src.layout.grids import ZSCORE_SUPERCOL
+
+    return [c for c in app.universe_grid._display.columns if ZSCORE_SUPERCOL in str(c)]
+
+
+def test_the_ranking_header_says_all_four_facts(app):
+    """`Normalized 1Y Sharpe (5Y Z-Score)` — standardized, over what window,
+    which metric, against what (#324). It replaced `Z-Score Sharpe 1M/1Y`,
+    which compressed a window over a *movable* lookback into six characters."""
+    from src.config import LOOKBACK_YEARS
+
+    app.window_chips.value = "1Y"
+    assert _ranking_columns(app) == [
+        f"Normalized 1Y Sharpe ({LOOKBACK_YEARS}Y Z-Score)"
+    ]
+
     app.z_metric_chips.value = "sortino"
-    app.z_window_chips.value = QUARTER_WINDOW
-    zcols = [c for c in app.universe_grid._display.columns if c.startswith("Z-Score")]
-    assert zcols == ["Z-Score Sortino 3M/1Y"]
+    assert _ranking_columns(app) == [
+        f"Normalized 1Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"
+    ]
+
+    app.window_chips.value = "3Y"
+    assert _ranking_columns(app) == [
+        f"Normalized 3Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"
+    ]
+
     app.z_metric_chips.value = "sharpe"
-    app.z_window_chips.value = MONTH_WINDOW
+    app.window_chips.value = universe_grid_default_window()
 
 
-def test_the_window_chips_cannot_hide_the_z_score_column(app):
-    # The z-score's own window is embedded in its label ("Sharpe 1M/1Y"), which
+def test_the_catalog_has_no_lookback_and_no_second_window(app):
+    """The score's sample is fixed, so there is nothing left to choose (#324).
+
+    Two chip groups went with it. What is asserted is the absence of the
+    *controls*, not of the concept: the sample is still five years, it is just
+    no longer negotiable.
+    """
+    assert not hasattr(app, "z_lookback_chips")
+    assert not hasattr(app, "z_window_chips")
+    assert not hasattr(app.analytics, "z_lookback_chips")
+    assert not hasattr(app.analytics, "z_window_chips")
+    # The rail is down to the one control that is left.
+    from src.layout.rails import ChipGroup
+
+    rail_chips = [c for c in app.ranking_rail.children if isinstance(c, ChipGroup)]
+    assert rail_chips == [app.z_metric_chips]
+
+
+def test_the_ranking_column_is_scored_over_a_fixed_five_year_sample(app, monkeypatch):
+    """The window the table shows is the window the score is measured over, and
+    the sample behind it does not move with it (#324)."""
+    import src.layout.platform as platform_mod
+    from src.config import (
+        CATALOG_SCORE_MIN_SAMPLE_DAYS,
+        SCORE_SAMPLE_DAYS,
+        TRADING_DAYS_PER_YEAR,
+    )
+
+    seen: list[dict] = []
+    real = platform_mod.rolling_metric_zscore
+
+    def spy(prices, **kwargs):
+        seen.append(kwargs)
+        return real(prices, **kwargs)
+
+    monkeypatch.setattr(platform_mod, "rolling_metric_zscore", spy)
+
+    for label, years in (("6M", 0.5), ("1Y", 1), ("3Y", 3), ("5Y", 5)):
+        seen.clear()
+        app.window_chips.value = label
+        assert seen, f"{label} should have re-scored the column"
+        call = seen[-1]
+        assert call["window"] == round(years * TRADING_DAYS_PER_YEAR)
+        # The sample is the same five years at every window — which is what
+        # makes the column comparable to itself, and to the Leaderboard.
+        assert call["zscore_window"] == SCORE_SAMPLE_DAYS
+        assert call["min_sample"] == CATALOG_SCORE_MIN_SAMPLE_DAYS
+
+    app.window_chips.value = universe_grid_default_window()
+
+
+def test_the_window_rebuilds_and_reranks_the_table(app):
+    """The window does two jobs now (#324): it swaps the visible performance
+    columns *and* re-measures the score, so the table is rebuilt and re-sorted
+    the way a grouping change rebuilds it.
+
+    This retires the old invariant that a window change could not disturb the
+    grouping or the row order. The statistics still do not recompute — every
+    window is in the frame, and the ones not on show are hidden.
+    """
+    columns_before = list(app.universe_grid._display.columns)
+
+    app.window_chips.value = "5Y"
+
+    after = list(app.universe_grid._display.columns)
+    # The ranking column was renamed, so the column set is not the old one...
+    assert after != columns_before
+    # ...but every performance window is still there, hidden rather than dropped.
+    for window in ("6M", "1Y", "3Y", "5Y"):
+        assert f"{window} Sharpe" in after
+    # And the grid knows which one is on show.
+    assert app.universe_grid.window == "5Y"
+
+    app.window_chips.value = universe_grid_default_window()
+
+
+def test_the_window_chips_cannot_hide_the_ranking_column(app):
+    # The header embeds a window label ("Normalized 1Y Sharpe …"), which
     # `_window_of` deliberately does not match — a stats-window switch must not
-    # take the column with it (#279).
+    # take the ranking column with it (#279, and more easily broken since #324).
     app.window_chips.value = "6M"
-    assert any(c.startswith("Z-Score") for c in app.universe_grid._display.columns)
+    assert len(_ranking_columns(app)) == 1
     app.window_chips.value = universe_grid_default_window()
 
 
@@ -581,18 +686,18 @@ def test_the_leaderboard_title_says_what_the_board_is_ranked_by(app):
     the order comes from the former — so the section title does.
 
     The years are read from `LOOKBACK_YEARS`, which is what
-    `LEADERBOARD_SCORE_SAMPLE_DAYS` is derived from. A literal `5Y` in the
+    `SCORE_SAMPLE_DAYS` is derived from. A literal `5Y` in the
     caption would be free to drift from the sample the scorer standardizes
     over, and a caption that misstates the basis is worse than none.
     """
-    from src.config import LEADERBOARD_SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
+    from src.config import SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
 
     (panel,) = app.commentary_box.children[1].children[0].children
     title = panel.children[0].value
 
     assert f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)" in title
     # The caption is only true while the sample really is that many years.
-    assert LEADERBOARD_SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+    assert SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
 
     # The Bulletin has no basis to explain, so it carries no caption.
     bulletin = app.commentary_box.children[1].children[1].children[0]
@@ -734,7 +839,6 @@ def test_a_longer_fetch_moves_no_leaderboard_score():
     it either. `rolling_metric_zscore` tails to `window + sample`, so both
     frames hand it the same rows."""
     from src.commentary import build_leaderboard, window_returns
-    from src.config import MONTH_WINDOW
     from src.stats import daily_returns
 
     decade = _decade_of_prices()

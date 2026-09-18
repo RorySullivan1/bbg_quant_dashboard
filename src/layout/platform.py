@@ -28,13 +28,16 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ..config import (
+    CATALOG_SCORE_MIN_SAMPLE_DAYS,
     HALF_YEAR_WINDOW,
     REGIME_SPECS,
+    SCORE_SAMPLE_DAYS,
     SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
     WEEK_WINDOW,
     LevelRegime,
     TercileRegime,
+    stat_window_years,
     sunburst_levels,
 )
 from ..stats import (
@@ -53,6 +56,7 @@ from ..stats import (
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
 from .chrome import _make_tab_button, _style_tab_button
 from .filters import _section_label
+from .grids import zscore_column_name
 from .html import STYLE_CTX, render_template
 from .rails import ChipGroup
 from .theme import _chart_layout, _short_ticker
@@ -522,6 +526,18 @@ def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
     return [(label, key) for label, key in spec.bucket_labels]
 
 
+def _window_days(label: str) -> int:
+    """A stats-window label (`"6M"`, `"1Y"`) as a trading-day count.
+
+    The table's Window chips carry labels, because that is what decides which
+    performance columns are visible; the scorer wants a count of rows. One
+    conversion, here, rather than the same product spelled at the call site and
+    again in whatever reads it next — and `stat_window_years` is what keeps
+    `"6M"` half a year instead of six (#324).
+    """
+    return round(stat_window_years(label) * TRADING_DAYS_PER_YEAR)
+
+
 class PlatformAnalytics:
     """The Platform tab's analytics card: three charts behind three pill-tabs.
 
@@ -548,19 +564,22 @@ class PlatformAnalytics:
         state: DashboardState,
         *,
         z_metric_chips: ChipGroup,
-        z_window_chips: ChipGroup,
-        z_lookback_chips: ChipGroup,
+        window_chips: ChipGroup,
     ) -> None:
         self.state = state
-        # The all-catalog grid's Z-Score ranking sits in the rail beside the
-        # table, not in the card, but drives `render_universe_grid` — so it is
-        # passed in, not built. The chips replaced three `W.Dropdown`s in #279
-        # and this injection survived the swap unchanged, because `ChipGroup`
-        # carries the same `.value` / `.label` / `.observe` surface a dropdown
-        # does — `.label` in particular, which titles the z column below.
+        # The all-catalog grid's ranking controls live with the table, not in
+        # the card, but drive `render_universe_grid` — so they are passed in,
+        # not built. The injection has survived two restyles unchanged
+        # (dropdowns → chips in #279, rail → table bar in #325), because
+        # `ChipGroup` carries the same `.value` / `.label` / `.observe` surface
+        # a dropdown does — `.label` in particular, which names the z column.
+        #
+        # `window_chips` is the **table's** Window, the one that also decides
+        # which performance columns are visible. Since #324 there is no second
+        # window and no lookback: the score is measured over the period the row
+        # is being read at, against a fixed `SCORE_SAMPLE_DAYS` sample.
         self.z_metric_chips = z_metric_chips
-        self.z_window_chips = z_window_chips
-        self.z_lookback_chips = z_lookback_chips
+        self.window_chips = window_chips
 
         # Shared 6M/1Y/3Y/5Y lookback — drives all three tabs. Value is a
         # trading-day count, like z_lookback_chips; the factor scatter converts it
@@ -705,27 +724,38 @@ class PlatformAnalytics:
     # --- per-chart renders ----------------------------------------------------
 
     def render_universe_grid(self, meta: pd.DataFrame) -> None:
-        """Render the all-catalog grid with the dynamic z-score column from the
-        current Metric/Window/Lookback chips. Reads the cached perf table
-        (``state.universe_up``) and computes only the z-score column live from
-        the already-fetched ``arp_universe_prices`` — no BQL, no recompute."""
+        """Render the all-catalog grid with the ranking column the current
+        Metric and Window chips describe.
+
+        The score is the selected metric over the selected window, standardized
+        against `SCORE_SAMPLE_DAYS` of that metric's own rolling history — a
+        fixed sample, so the column is comparable to itself across windows and
+        to the Leaderboard beside it (#324). A ticker that cannot supply
+        `CATALOG_SCORE_MIN_SAMPLE_DAYS` of that sample scores NaN and renders a
+        dash rather than being standardized against the little it has.
+
+        Reads the cached perf table (``state.universe_up``) and computes only
+        the ranking column live from the already-fetched
+        ``arp_universe_prices`` — no BQL, no recompute.
+        """
         state = self.state
         if state.arp_universe_prices.empty:
             return
         with _guard_render(state, "all-catalog grid z-score render"):
+            window_label = self.window_chips.value
             zcol = rolling_metric_zscore(
                 state.arp_universe_prices,
                 metric=self.z_metric_chips.value,
-                window=self.z_window_chips.value,
-                zscore_window=self.z_lookback_chips.value,
+                window=_window_days(window_label),
+                zscore_window=SCORE_SAMPLE_DAYS,
+                min_sample=CATALOG_SCORE_MIN_SAMPLE_DAYS,
                 returns=state.universe_rets,
             )
-            zlabel = (
-                f"{self.z_metric_chips.label} "
-                f"{self.z_window_chips.label}/{self.z_lookback_chips.label}"
-            )
             state.universe_grid.update(
-                meta, state.universe_up, zcol=zcol, zlabel=zlabel
+                meta,
+                state.universe_up,
+                zcol=zcol,
+                zname=zscore_column_name(self.z_metric_chips.label, window_label),
             )
 
     def render_factor_scatter(self, meta: pd.DataFrame) -> None:
@@ -906,9 +936,9 @@ class PlatformAnalytics:
     # --- wiring ---------------------------------------------------------------
 
     def wire(self, current_meta: Callable[[], pd.DataFrame]) -> None:
-        """Wire every observer: the z-score-column controls, the three tab
-        pills, the regime dropdowns, the shared lookback, and the sunburst's own
-        controls. Each re-renders live from the cache, no BQL.
+        """Wire every observer: the ranking Metric, the three tab pills, the
+        regime dropdowns, the shared lookback, and the sunburst's own controls.
+        Each re-renders live from the cache, no BQL.
 
         Takes a **callable**, not a frame (#242). `build_app` re-points its
         `meta` to the recent-performance-pruned catalog after every load, so an
@@ -917,14 +947,12 @@ class PlatformAnalytics:
         into the grid. Resolving it at fire time makes that impossible, and
         needs nothing remembered at the prune sites.
         """
-        for chips in (
-            self.z_metric_chips,
-            self.z_window_chips,
-            self.z_lookback_chips,
-        ):
-            chips.observe(
-                lambda _c: self.render_universe_grid(current_meta()), names="value"
-            )
+        # Only the Metric is wired here. The Window has a second job — which
+        # performance columns are visible — so `DashboardApp._on_window_change`
+        # owns it and does both, the way it owns the grouping chips (#324).
+        self.z_metric_chips.observe(
+            lambda _c: self.render_universe_grid(current_meta()), names="value"
+        )
 
         self.sunburst_pill.on_click(
             lambda _b: self.activate(current_meta(), "sunburst")

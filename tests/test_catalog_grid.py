@@ -31,10 +31,11 @@ from src.layout.grids import (
     _catalog_table_options,
     _js_heat_cell,
     _js_number_render,
+    zscore_column_name,
 )
 
-_Z_LABEL = "Sharpe 1M/1Y"
-_Z_NAME = f"Z-Score {_Z_LABEL}"
+# The ranking column's real header, built the way the app builds it (#324).
+_Z_NAME = zscore_column_name("Sharpe", "1Y")
 
 
 def _catalog() -> pd.DataFrame:
@@ -89,7 +90,7 @@ def _frame(meta: pd.DataFrame, zcol: pd.Series | None) -> pd.DataFrame:
         meta,
         pd.DataFrame(),
         zcol=zcol,
-        zlabel=_Z_LABEL if zcol is not None else None,
+        zname=_Z_NAME if zcol is not None else None,
     )
     return frame
 
@@ -225,7 +226,7 @@ def test_the_hierarchy_order_is_the_config_knob(monkeypatch):
         meta,
         pd.DataFrame(),
         zcol=zcol,
-        zlabel=_Z_LABEL,
+        zname=_Z_NAME,
         group_fields=("solution", "category", "family"),
     )
     _display, groups = _catalog_display_frame(
@@ -288,7 +289,7 @@ def test_numeric_renderers_are_scoped_to_the_numeric_columns():
         meta,
         _up(meta["ticker"]),
         zcol=_zcol(meta),
-        zlabel=_Z_LABEL,
+        zname=_Z_NAME,
     )
     display, groups = _catalog_display_frame(frame, _catalog_group_labels())
     options = _catalog_table_options(display, groups, zscore_col=z_key)
@@ -371,7 +372,7 @@ def _grid_with(picked: list[str]):
 
     meta = _catalog()
     grid = UniverseGrid(on_pick=picked.append)
-    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zname=_Z_NAME)
     return grid
 
 
@@ -414,7 +415,7 @@ def test_a_grid_with_no_callback_still_accepts_clicks():
 
     grid = UniverseGrid()
     meta = _catalog()
-    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    grid.update(meta, pd.DataFrame(), zcol=_zcol(meta), zname=_Z_NAME)
     grid.widget.selected_rows = [0]  # must not raise
 
 
@@ -426,7 +427,7 @@ def test_the_row_to_ticker_map_follows_the_rendered_frame():
     grid = _grid_with(picked)
     first = grid._tickers
     smaller = _catalog().head(4)
-    grid.update(smaller, pd.DataFrame(), zcol=_zcol(smaller), zlabel=_Z_LABEL)
+    grid.update(smaller, pd.DataFrame(), zcol=_zcol(smaller), zname=_Z_NAME)
     assert len(grid._tickers) == 4
     assert grid._tickers != first
     grid.widget.selected_rows = [2]
@@ -515,7 +516,7 @@ def _populated_grid(group_fields: tuple[str, ...] | None = None):
     grid = UniverseGrid()
     if group_fields is not None:
         grid.set_group_fields(group_fields)
-    grid.update(meta, _up(meta["ticker"]), zcol=_zcol(meta), zlabel=_Z_LABEL)
+    grid.update(meta, _up(meta["ticker"]), zcol=_zcol(meta), zname=_Z_NAME)
     return grid
 
 
@@ -605,9 +606,10 @@ def test_changing_the_window_swaps_exactly_four_columns():
 
 
 def test_hidden_windows_stay_in_the_frame():
-    # Dropping them would rebuild the table, resetting the grouping and the
-    # selected row. Hiding is what makes the radio a radio rather than a
-    # reload — and every window was computed up front, so nothing recomputes.
+    # The statistics do not move with the window: every one was computed up
+    # front and the ones not on show are hidden, not dropped. That half of the
+    # old invariant survives #324 — what changed is that the *ranking* column
+    # moves with the window, so the app re-renders around this.
     grid = _populated_grid()
     columns_before = list(grid._display.columns)
     grid.set_window("6M")
@@ -615,13 +617,25 @@ def test_hidden_windows_stay_in_the_frame():
     assert list(grid._display.columns) == columns_before
 
 
-def test_changing_the_window_does_not_touch_the_row_to_ticker_map():
-    # The map is what routes a click (#265). If a window change rebuilt the
-    # frame this would drift and clicks would open the wrong strategy.
+def test_set_window_records_without_redrawing():
+    """`set_window` is a recorder, like `set_group_fields` (#324).
+
+    It used to *be* the window change — options re-sent, columns toggled,
+    nothing else moved. The window now also measures the score, so the caller
+    re-renders and this would otherwise be a discarded round trip. The
+    row-to-ticker map is untouched here precisely because nothing was
+    rebuilt; `test_the_window_rebuilds_and_reranks_the_table` is where the
+    user-visible behaviour is pinned.
+    """
     grid = _populated_grid()
     before = grid._tickers
+    display_before = grid._display
+
     grid.set_window("5Y")
+
+    assert grid.window == "5Y"
     assert grid._tickers == before
+    assert grid._display is display_before
 
 
 def test_window_columns_are_recognised_by_their_prefix_only():
@@ -638,10 +652,10 @@ def test_window_columns_are_recognised_by_their_prefix_only():
     assert _window_of("Name") is None
 
 
-# The header #324 gives the ranking column: it starts with neither "Z-Score"
-# nor a window label, which is exactly what the old `startswith` test could not
-# survive.
-_FUTURE_Z_NAME = "Normalized 1Y Sharpe (5Y Z-Score)"
+# An arbitrary header, matching no pattern any helper here knows. #324 already
+# moved the real one off the `Z-Score ` stem; this is what proves the column is
+# found by the key it was inserted under and not by its text at all.
+_RELABELLED_Z_NAME = "Ranking"
 
 
 def test_the_ranking_column_is_found_by_key_not_by_its_header():
@@ -656,17 +670,17 @@ def test_the_ranking_column_is_found_by_key_not_by_its_header():
 
     meta = _catalog()
     frame, z_key = _build_universe_frame(
-        meta, _up(meta["ticker"]), zcol=_zcol(meta), zlabel=_Z_LABEL
+        meta, _up(meta["ticker"]), zcol=_zcol(meta), zname=_Z_NAME
     )
-    renamed = frame.rename(columns={z_key: _FUTURE_Z_NAME})
+    renamed = frame.rename(columns={z_key: _RELABELLED_Z_NAME})
     display, groups = _catalog_display_frame(renamed, _catalog_group_labels())
-    position = list(display.columns).index(_FUTURE_Z_NAME)
+    position = list(display.columns).index(_RELABELLED_Z_NAME)
 
     # 1. A comparison filter, not a substring one.
-    kinds = _filter_kinds(display, groups, zscore_col=_FUTURE_Z_NAME)
+    kinds = _filter_kinds(display, groups, zscore_col=_RELABELLED_Z_NAME)
     assert kinds[position] == "number"
 
-    options = _catalog_table_options(display, groups, zscore_col=_FUTURE_Z_NAME)
+    options = _catalog_table_options(display, groups, zscore_col=_RELABELLED_Z_NAME)
     spec = next(d for d in options["columnDefs"] if d.get("targets") == [position])
     # 2. Rendered as a plain 2dp number — not ×100, which is the percent path.
     assert "* 100" not in str(spec["render"])
@@ -675,14 +689,65 @@ def test_the_ranking_column_is_found_by_key_not_by_its_header():
     assert str(spec["createdCell"]) == str(_js_heat_cell(_ZSCORE_HEAT_THRESHOLDS))
 
     # 4. Still out of the window chips' reach.
-    assert _window_of(_FUTURE_Z_NAME) is None
+    assert _window_of(_RELABELLED_Z_NAME) is None
+
+
+def test_the_header_names_the_sample_it_claims():
+    """`Normalized <window> <metric> (<n>Y Z-Score)`, with the `n` derived.
+
+    The header is a promise about what was standardized, so the number in it
+    and the sample behind it have to come from the same place. Both are read
+    off `LOOKBACK_YEARS`: the label here, and `SCORE_SAMPLE_DAYS` — which
+    `render_universe_grid` passes as the z-window — there. A literal `5Y` typed
+    into the header would be free to outlive a config change.
+    """
+    from src.config import LOOKBACK_YEARS, SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
+    from src.layout.grids import zscore_column_name
+
+    assert zscore_column_name("Sharpe", "1Y") == "Normalized 1Y Sharpe (5Y Z-Score)"
+    assert zscore_column_name("Calmar", "6M") == "Normalized 6M Calmar (5Y Z-Score)"
+
+    # The `5Y` is that constant, not a coincidence...
+    assert zscore_column_name("Sharpe", "1Y").endswith(f"({LOOKBACK_YEARS}Y Z-Score)")
+    # ...and it is the same constant the sample itself is sized from.
+    assert SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+
+
+def test_a_window_or_metric_change_keeps_every_group_contiguous():
+    """RowGroup only gathers adjacent rows, so re-ranking must not fragment a
+    group (#273). The window re-ranks now (#324), which is a second way in.
+    """
+    meta = _catalog()
+    up = _up(meta["ticker"])
+    ranked = _zcol(meta)
+    # A different metric at a different window puts the catalog in a different
+    # order — which is the case that could fragment a group.
+    reranked = pd.Series(
+        dict(zip(meta["ticker"], list(ranked)[::-1], strict=True)),
+    )
+
+    grid = _populated_grid(("solution", "category"))
+    for zcol, zname in (
+        (ranked, _Z_NAME),
+        (reranked, zscore_column_name("Sortino", "5Y")),
+    ):
+        grid.update(meta, up, zcol=zcol, zname=zname)
+        labels = _catalog_group_labels(("solution", "category"))
+        for depth in range(1, len(labels) + 1):
+            # Contiguity is per *path*, not per label: a category name may
+            # legitimately recur under a different solution.
+            path = list(
+                zip(*(grid._display[label] for label in labels[:depth]), strict=True)
+            )
+            runs = _runs(path)
+            assert len(runs) == len(set(runs)), f"{zname} fragments at {depth}"
 
 
 def test_the_builder_names_the_column_it_inserted():
     """The key travels with the frame, so no consumer re-derives it."""
     meta = _catalog()
     frame, z_key = _build_universe_frame(
-        meta, _up(meta["ticker"]), zcol=_zcol(meta), zlabel=_Z_LABEL
+        meta, _up(meta["ticker"]), zcol=_zcol(meta), zname=_Z_NAME
     )
     assert z_key == _Z_NAME
     assert z_key in frame.columns
@@ -935,7 +1000,7 @@ def test_every_column_gets_a_filter_and_the_numbers_get_a_comparison():
     # which hands filtering the raw value, so "5.23" over a cell reading
     # "5.23%" would be searched against 0.0523 and match nothing.
     assert kinds["1Y Sharpe"] == "number"
-    assert kinds[f"Z-Score {_Z_LABEL}"] == "number"
+    assert kinds[_Z_NAME] == "number"
     assert kinds["1Y Return"] == "percent"
     assert kinds["1Y Vol"] == "percent" and kinds["1Y Max DD"] == "percent"
     # Grouped columns are hidden and come back as row-group headers.
