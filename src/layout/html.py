@@ -12,13 +12,15 @@ in; the substitution itself does not escape.
 from __future__ import annotations
 
 import html
+import re
+from collections.abc import Sequence
 from datetime import date
 from functools import cache
 from pathlib import Path
 
 import pandas as pd
 
-from ..commentary import LaunchCard
+from ..commentary import CommentaryNote, LaunchCard
 from ..config import (
     NEW_LAUNCH_DAYS,
     PROFILE_CARD_FIELDS,
@@ -136,6 +138,71 @@ def _render_weekly_commentary(body_html: str, as_of: date) -> str:
     )
 
 
+def _render_empty_card(message: str) -> str:
+    """The dashed "there is nothing here" box both bulletin boards fall back to.
+
+    One template (`empty_card`, named `launch_empty` until #307) because the box
+    has never had anything launch-specific in it, and a board reached by a
+    deliberate click must say it is empty rather than render blank — which is
+    equally true of the notes and of the launches.
+    """
+    return render_template("empty_card", **STYLE_CTX, message=html.escape(message))
+
+
+#: Splits a note's text into paragraphs. A blank line — with any trailing
+#: whitespace on it — separates them; a single newline does not, so a wrapped
+#: sentence stays one paragraph.
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+
+
+def _render_note_paragraphs(text: str) -> str:
+    """A note's plain text as `<p>`s, escaped.
+
+    **Escape first, then split.** The note is plain text by contract (#304), so
+    a `<b>` in it is shown as typed rather than interpreted — the notes are
+    authored data, and a board that renders data as markup is a board that
+    renders whatever the data says. Escaping after the split would work equally
+    well; escaping first makes it impossible to add a branch later that forgets.
+
+    Blank chunks are dropped, so a stray run of blank lines does not emit an
+    empty paragraph.
+    """
+    escaped = html.escape(text)
+    chunks = (chunk.strip() for chunk in _PARAGRAPH_BREAK.split(escaped))
+    return "".join(f"<p>{chunk}</p>" for chunk in chunks if chunk)
+
+
+def _render_commentary_notes(notes: Sequence[CommentaryNote]) -> str:
+    """The Commentary board: one card per note, in the order given.
+
+    The order is the loader's — `load_commentary_notes` sorts newest first —
+    and is not re-imposed here: two places deciding what "newest" means is how
+    they come to disagree.
+
+    Each note dates itself, which is why nothing here takes a `today`: the
+    board used to stamp one date across the whole thing (#304).
+    """
+    if not notes:
+        return render_template(
+            "notes_board",
+            **STYLE_CTX,
+            cards=_render_empty_card(
+                "No commentary yet — add a note to data/commentary.json."
+            ),
+        )
+    cards = "".join(
+        render_template(
+            "commentary_card",
+            **STYLE_CTX,
+            title=html.escape(note.title),
+            date=html.escape(note.date.isoformat()),
+            paragraphs=_render_note_paragraphs(note.text),
+        )
+        for note in notes
+    )
+    return render_template("notes_board", **STYLE_CTX, cards=cards)
+
+
 def _fmt_since_return(value: float | None) -> str:
     """A launch card's since-launch return, or an em dash when there isn't one.
 
@@ -147,10 +214,8 @@ def _fmt_since_return(value: float | None) -> str:
 
 def _render_launch_cards(cards: list[LaunchCard]) -> str:
     if not cards:
-        return render_template(
-            "launch_empty",
-            **STYLE_CTX,
-            message=html.escape("No new launches in the past 30 days."),
+        return _render_empty_card(
+            f"No new launches in the past {NEW_LAUNCH_DAYS} days."
         )
     return "".join(
         render_template(
@@ -177,14 +242,17 @@ def _render_launches(cards: list[LaunchCard]) -> str:
     empty board must say there is nothing rather than leave the pane blank.
     `_render_launch_cards` supplies that message.
 
-    The subtitle reads `NEW_LAUNCH_DAYS` rather than re-spelling the window, so
-    widening the launch window retitles the board on its own.
+    **No `<h3>New Launches</h3>` since #307:** the section is titled "QIS
+    Bulletin" and the chip that opened this board is still lit, so a heading
+    here would be the third thing naming it. The muted caption stays — it is
+    the only place the launch window is stated, and it reads `NEW_LAUNCH_DAYS`
+    rather than re-spelling it, so widening the window re-captions the board on
+    its own.
     """
     return render_template(
         "launches_board",
         **STYLE_CTX,
-        title=html.escape("New Launches"),
-        subtitle=html.escape(f"· live in the past {NEW_LAUNCH_DAYS} days"),
+        subtitle=html.escape(f"Live in the past {NEW_LAUNCH_DAYS} days"),
         cards=_render_launch_cards(cards),
     )
 
