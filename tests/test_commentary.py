@@ -18,14 +18,14 @@ import pandas as pd
 import pytest
 from src import commentary
 from src.commentary import (
-    LEADERBOARD_METRICS,
     LaunchCard,
     LeaderboardColumn,
     LeaderboardRow,
 )
 from src.config import (
     LEADERBOARD_ROWS,
-    LEADERBOARD_SCORE_SAMPLE_DAYS,
+    RANKABLE_METRICS,
+    SCORE_SAMPLE_DAYS,
     TRADING_DAYS_PER_YEAR,
 )
 from src.stats import (
@@ -189,7 +189,7 @@ def _expected_order(metric: str, prices, returns, window_days: int) -> list[str]
         prices,
         metric=metric,
         window=window_days,
-        zscore_window=LEADERBOARD_SCORE_SAMPLE_DAYS,
+        zscore_window=SCORE_SAMPLE_DAYS,
         returns=returns,
     )
     ranked = scores.dropna().sort_index().sort_values(ascending=False, kind="stable")
@@ -241,7 +241,7 @@ def _build(bdays, drifts=SIX_DRIFTS, **kw):
 def test_leaderboard_columns_in_declared_order_with_bounded_rows(bdays):
     columns = _build(bdays)
 
-    assert [(c.metric, c.label) for c in columns] == list(LEADERBOARD_METRICS)
+    assert [(c.metric, c.label) for c in columns] == list(RANKABLE_METRICS)
     for col in columns:
         assert isinstance(col, LeaderboardColumn)
         assert len(col.top) <= LEADERBOARD_ROWS

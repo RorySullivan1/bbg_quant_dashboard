@@ -146,15 +146,18 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
     assert calls["n"] == after_refresh
 
 
-def test_a_z_score_change_rerenders_the_column_without_refetching(monkeypatch):
-    """The Z-Score rail re-slices the cache; it never issues a fetch (#279).
+def test_a_ranking_change_rerenders_the_column_without_refetching(monkeypatch):
+    """The ranking controls re-slice the cache; they never issue a fetch (#279).
 
-    The controls became chips in a rail beside the table, which is a chrome
-    change — but they drive `render_universe_grid`, so the guarantee that a
-    metric/window/lookback change costs no BQL is worth holding onto through
-    the swap.
+    They have been a row of dropdowns, a rail of chips, and since #324 a Metric
+    beside the table's own Window — restyles and rewirings, all of them, and the
+    guarantee that changing either costs no BQL has to survive every one. The
+    window is the sharper case now: it re-scores the whole catalog on a click,
+    and a recompute is exactly what could tempt a refetch.
     """
+    from src.config import LOOKBACK_YEARS
     from src.layout.app import DashboardApp
+    from src.layout.grids import ZSCORE_SUPERCOL
 
     calls = _patch_fetch_counter(monkeypatch)
     app = DashboardApp(verbose=False)
@@ -163,17 +166,20 @@ def test_a_z_score_change_rerenders_the_column_without_refetching(monkeypatch):
 
     def _z_columns():
         return [
-            c for c in app.universe_grid._display.columns if c.startswith("Z-Score")
+            c for c in app.universe_grid._display.columns if ZSCORE_SUPERCOL in str(c)
         ]
 
-    assert _z_columns() == ["Z-Score Sharpe 1M/1Y"]
+    assert _z_columns() == [f"Normalized 1Y Sharpe ({LOOKBACK_YEARS}Y Z-Score)"]
 
     # Click, rather than set the trait: the handler wiring is half of what is
     # being asserted.
-    sortino = dict(
-        zip(app.z_metric_chips.labels, app.z_metric_chips.children, strict=True)
-    )["Sortino"]
-    sortino.click()
+    def _click(chips, label):
+        dict(zip(chips.labels, chips.children, strict=True))[label].click()
 
-    assert _z_columns() == ["Z-Score Sortino 1M/1Y"]
+    _click(app.z_metric_chips, "Sortino")
+    assert _z_columns() == [f"Normalized 1Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"]
+    assert calls["n"] == after_load
+
+    _click(app.window_chips, "3Y")
+    assert _z_columns() == [f"Normalized 3Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"]
     assert calls["n"] == after_load

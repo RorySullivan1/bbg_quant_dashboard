@@ -16,25 +16,20 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 "premium" is a total-return *spread*, not a true excess-of-risk-free premium.
 """
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 #: How far back the app **analyses**: every chart window, every `5Y` label, and
 #: the slice `DashboardApp._analytics_window_start` hands each consumer.
 LOOKBACK_YEARS = 5
 
-#: How far back the app **fetches** (v0.9.22 #311). Longer than it analyses,
-#: because the leaderboard's score z-scores a metric against its own rolling
-#: history: at the 1Y window that is 252 (window) + 1260 (5y sample) = 1512
-#: trading days, about six calendar years. Widening `LOOKBACK_YEARS` instead
-#: would have turned every whole-lookback analytic on two other tabs into a
-#: 6-year figure.
-#:
-#: The pair only means anything together, and the boundary between them is
+#: (How far back the app **fetches** is `score_history_years()`, further down
+#: beside `stat_windows()` — the window set it is derived from. The pair only
+#: means anything together, and the boundary between them is
 #: `_analytics_window_start()`: everything reads the sliced frame except the
-#: leaderboard's scorer, which is the one deliberate exception.
-SCORE_HISTORY_YEARS = 6
+#: scorers, which are the deliberate exceptions.)
 
 NEW_LAUNCH_DAYS = 30
 SHARPE_WINDOW = 252
@@ -47,11 +42,78 @@ PERF_TABLE_YEARS = (1, 3, 5)
 #: toggle moves it live; this is only the default.
 LEADERBOARD_WINDOW_DAYS = 21
 
-#: How long a sample the leaderboard's score is standardized against: five
-#: years of the metric's own rolling history. `SCORE_HISTORY_YEARS` sizes the
-#: fetch so this is available even at the 1Y window, where the rolling series
-#: only starts after its first 252 observations (#310, #311).
-LEADERBOARD_SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+#: How long a sample **every** score is standardized against: `LOOKBACK_YEARS`
+#: of the metric's own rolling history. `score_history_years()` sizes the fetch
+#: so this is available at the deepest window either board offers (#310, #311).
+#:
+#: One quantity, not two that agree: the leaderboard's columns and the catalog
+#: table's ranking column are the same kind of number, and #324 made the
+#: catalog's sample fixed precisely so a reader can compare them. Two constants
+#: would have been free to drift apart with nothing to catch it.
+#: (Named `LEADERBOARD_SCORE_SAMPLE_DAYS` until #324, when it stopped being
+#: only the leaderboard's.)
+SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+
+#: Below this many rolling observations the catalog's ranking column renders a
+#: dash instead of a score, and sorts to the bottom with the other blanks.
+#:
+#: Half the target sample. The header says `5Y Z-Score`, so an index that can
+#: only offer two years should say nothing rather than quietly standardize
+#: against two and be read as five — the same reasoning that has
+#: `_has_enough_history` blank a whole performance block. Half is the point
+#: where a sample stops being a short five years and starts being a different
+#: statistic; it is a judgement, and it is one number to move.
+#:
+#: Expected effect, not a regression: at the `5Y` window an index needs about
+#: 7.5 years of history to score at all.
+#:
+#: The leaderboard deliberately does not take this floor — it already drops
+#: NaN and infinite readings before ranking, and changing what its board shows
+#: was out of scope for #324.
+CATALOG_SCORE_MIN_SAMPLE_DAYS = SCORE_SAMPLE_DAYS // 2
+
+#: The metrics the app ranks by, in display order, as (metric key, display
+#: label). One set for both boards (#328): the Leaderboard's four columns and
+#: the catalog table's ranking column are the same kind of number — a metric
+#: z-scored against `SCORE_SAMPLE_DAYS` of its own rolling history — so a
+#: reader should be able to carry a reading from one to the other.
+#:
+#: The catalog's chips used to offer Sharpe / Sortino / Return / **Vol**, which
+#: was not just a different set. The ranking column is painted on a symmetric
+#: diverging ramp — red below zero, green above — and sorted descending, and
+#: both say *higher is better*. That is true of these four and false of
+#: volatility: an index two standard deviations above its own vol history
+#: rendered bright green at the top of the table, which reads as a
+#: commendation. Vol is still available to the sunburst and the Quantitative
+#: filter, where nothing claims a direction for it.
+#:
+#: **Bounded by what can be scored.** Every key here needs a rolling series in
+#: `stats.rolling._ROLLING_METRICS` or `rolling_metric_zscore` raises — a fifth
+#: metric added here without one fails in CI rather than on a user's click.
+#: (Lived in `commentary.py` as `LEADERBOARD_METRICS` until #328, where only
+#: the board could reach it.)
+RANKABLE_METRICS: tuple[tuple[str, str], ...] = (
+    ("return", "Return"),
+    ("sharpe", "Sharpe"),
+    ("calmar", "Calmar"),
+    ("sortino", "Sortino"),
+)
+
+#: The metric the catalog's ranking column is scored on before anyone touches
+#: a chip. One of `RANKABLE_METRICS`, validated by `rankable_metric_chips`.
+DEFAULT_RANKING_METRIC: str = "sharpe"
+
+
+def rankable_metric_chips() -> list[tuple[str, Any]]:
+    """`RANKABLE_METRICS` as a `ChipGroup`/`Dropdown` options list.
+
+    The declaration is (key, label), which is the order a *builder* wants; a
+    widget wants (label, value). Flipping it here rather than at the widget
+    keeps the flip from being respelled the next time something offers this
+    choice.
+    """
+    return [(label, key) for key, label in RANKABLE_METRICS]
+
 
 #: How many indices each leaderboard column lists at the top and at the
 #: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again
@@ -300,6 +362,34 @@ def stat_windows() -> tuple[tuple[str, float], ...]:
     return tuple(
         (label, years) for label, years in STAT_WINDOWS if years <= LOOKBACK_YEARS
     )
+
+
+def score_history_years() -> int:
+    """How far back the app **fetches**, in years — always further than it
+    analyses.
+
+    Sized for the deepest score the app will ask for. The catalog's ranking
+    column is about to standardize a metric against `LOOKBACK_YEARS` of that
+    metric's *own rolling history*, at whichever window the table is showing
+    (#324), so the deepest case needs the longest offered window **plus** the
+    sample behind it: at `5Y` that is 5 + 5 = 10 calendar years. Fetch only
+    `LOOKBACK_YEARS` and the `5Y` window's sample is a single observation long,
+    which `rolling_metric_zscore` standardizes against without saying so.
+
+    Derived rather than typed, and for the reason the accessors above are:
+    #311 wrote `6` — `1Y window + 5Y sample`, the leaderboard's deepest case —
+    as a literal that nothing checked against the windows on offer. A second
+    consumer with a deeper window would have been a second literal. The
+    relationship is the fact worth storing, so widening `LOOKBACK_YEARS` or
+    adding a window to `STAT_WINDOWS` carries the fetch with it instead of
+    leaving a quietly truncated sample behind.
+
+    `stat_windows()` is itself capped by `LOOKBACK_YEARS`, so the two can never
+    disagree: the offered set never outruns the lookback, and the fetch never
+    outruns what the offered set needs. Rounded up because a window may be a
+    fraction of a year (`6M`) while `pd.DateOffset(years=...)` takes an int.
+    """
+    return math.ceil(LOOKBACK_YEARS + max(years for _, years in stat_windows()))
 
 
 def stat_window_years(label: str) -> float:

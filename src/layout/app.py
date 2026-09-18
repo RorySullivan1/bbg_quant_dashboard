@@ -36,22 +36,21 @@ from ..bql_client import _DEFAULT_CACHE, TickersUnresolved, fetch_prices
 from ..commentary import build_launch_cards, build_leaderboard, window_returns
 from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
+    DEFAULT_RANKING_METRIC,
     FACTOR_TICKERS,
-    HALF_YEAR_WINDOW,
     LEADERBOARD_WINDOW_DAYS,
     LEADERBOARD_WINDOW_OPTIONS,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
     MAX_SELECTED_STRATEGIES,
-    MONTH_WINDOW,
     PERFORMANCE_DISCLAIMER_PATH,
-    QUARTER_WINDOW,
     REGIME_TICKERS,
-    SCORE_HISTORY_YEARS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     field_label,
+    rankable_metric_chips,
+    score_history_years,
     stat_windows,
     universe_grid_default_window,
     universe_grid_group_fields,
@@ -403,32 +402,24 @@ class DashboardApp:
         self.universe_grid = UniverseGrid(on_pick=self._show_in_single_strategy)
 
     def _build_universe_section(self) -> None:
-        """The all-catalog grid and its Z-Score ranking chips."""
+        """The all-catalog grid and the Metric chips its ranking column reads.
+
+        There is no Window and no Lookback here any more (#324). The score is
+        measured over the table's own Window — the one that also decides which
+        performance columns are visible — against a fixed five-year sample, so
+        the only thing left to choose is which metric.
+        """
+        # The same four the Leaderboard's columns read, from one declaration
+        # (#328) — the two boards rank the same catalog by the same kind of
+        # number, so a reader should be able to carry a reading between them.
         self.z_metric_chips = ChipGroup(
-            [
-                ("Sharpe", "sharpe"),
-                ("Sortino", "sortino"),
-                ("Return", "return"),
-                ("Vol", "vol"),
-            ],
-            value="sharpe",
+            rankable_metric_chips(),
+            value=DEFAULT_RANKING_METRIC,
         )
-        self.z_window_chips = ChipGroup(
-            [
-                ("1M", MONTH_WINDOW),
-                ("3M", QUARTER_WINDOW),
-                ("6M", HALF_YEAR_WINDOW),
-            ],
-            value=MONTH_WINDOW,
-        )
-        self.z_lookback_chips = ChipGroup(
-            [
-                ("1Y", TRADING_DAYS_PER_YEAR),
-                ("3Y", TRADING_DAYS_PER_YEAR * 3),
-                ("5Y", TRADING_DAYS_PER_YEAR * 5),
-            ],
-            value=TRADING_DAYS_PER_YEAR,
-        )
+        # Built here rather than inside `_build_table_bar`, which runs after
+        # `PlatformAnalytics` is constructed: since #324 the Window is a
+        # ranking control too, and the analytics object is handed it.
+        self._build_window_chips()
 
         self.pane_left = _make_analysis_pane("left", registry=self.benchmarks)
         self.pane_right = _make_analysis_pane("right", registry=self.benchmarks)
@@ -455,26 +446,21 @@ class DashboardApp:
         """
         return control_bar(
             RailSection("Group by", self._build_group_chips()),
-            RailSection("Window", self._build_window_chips()),
+            RailSection("Window", self.window_chips),
             title=TABLE_BAR_TITLE,
         )
 
     def _build_ranking_rail(self) -> W.VBox:
-        """The Z-Score ranking, beside the table rather than above it (#279).
+        """What is left of the Z-Score ranking rail: the Metric alone.
 
-        Three facets of one control, so the rail is titled and the sections
-        are named for the facets — spelling "Z-Score" into each heading would
-        say it three times to say it once.
-
-        Chips rather than the three `W.Dropdown`s this was: a dropdown hides
-        its options, so the user could not see that the column they are reading
-        is one of four metrics without opening it. Ten chips is the whole
-        choice, visible.
+        Its Window and Lookback went in #324 — the score is measured over the
+        table's Window against a fixed five-year sample, so neither had a
+        choice left to offer. The Metric moves into the table bar in #325 and
+        this rail goes with #326; a rail for one chip group is a rail for
+        nothing.
         """
         return control_rail(
             RailSection("Metric", self.z_metric_chips),
-            RailSection("Window", self.z_window_chips),
-            RailSection("Lookback", self.z_lookback_chips),
             title=RANKING_RAIL_TITLE,
             height=CATALOG_TABLE_HEIGHT,
         )
@@ -506,7 +492,9 @@ class DashboardApp:
 
         Only those are offered (`stat_windows`): a longer window has nothing to
         measure and would render a full column of dashes, which reads as a
-        broken dashboard rather than as a pending feature.
+        broken dashboard rather than as a pending feature. Since #324 that cuts
+        twice — the window is also what the ranking column is measured over, so
+        an unservable window would blank the score as well as the statistics.
 
         A `ChipGroup` rather than the `W.RadioButtons` this was (#277): every
         other choice in the app is a `.bbg-pill`, and the group keeps the
@@ -523,10 +511,20 @@ class DashboardApp:
         return self.window_chips
 
     def _on_window_change(self, _change=None) -> None:
-        """Switch the grid to one window. No recompute — every window was
-        computed up front, so this is a column-visibility change and the
-        grouping and selected row survive it."""
+        """Switch the window, which now does two jobs (#324).
+
+        It still chooses which performance columns are visible, and those are
+        still hidden rather than dropped — nothing in `universe_up`
+        recomputes. But it is also the window the ranking column is measured
+        over, so the score's header and the row order both move with it, and
+        the table is rebuilt exactly as a grouping change rebuilds it.
+
+        That is why this reads like `_on_grouping_change`: record on the grid,
+        then re-render. The selected row does not survive, which is inherent —
+        the rows moved.
+        """
         self.universe_grid.set_window(self.window_chips.value)
+        self.analytics.render_universe_grid(self.meta)
 
     def _on_grouping_change(self, _change=None) -> None:
         """Regroup the catalog grid from the chips.
@@ -587,7 +585,7 @@ class DashboardApp:
                     # carry a score and a raw value, and nothing on screen
                     # otherwise says the order comes from the former. Reads
                     # `LOOKBACK_YEARS` because that is what
-                    # `LEADERBOARD_SCORE_SAMPLE_DAYS` is derived from — a
+                    # `SCORE_SAMPLE_DAYS` is derived from — a
                     # literal "5Y" here would be free to drift from the sample
                     # the scorer actually standardizes over.
                     note=f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)",
@@ -630,8 +628,7 @@ class DashboardApp:
         self.analytics = PlatformAnalytics(
             self.state,
             z_metric_chips=self.z_metric_chips,
-            z_window_chips=self.z_window_chips,
-            z_lookback_chips=self.z_lookback_chips,
+            window_chips=self.window_chips,
         )
         # A callable, so the observers always see the *current* catalog —
         # `self.meta` is re-pointed to the pruned one after each load (#242).
@@ -725,16 +722,17 @@ class DashboardApp:
 
     def _wire_fetch_window(self) -> None:
         """The startup fetch window and the benchmark registry's callbacks."""
-        # Single BQL fetch at app-load time, bounded by SCORE_HISTORY_YEARS — a
-        # year longer than the app analyses, so the leaderboard's score has its
-        # 5-year sample at the 1Y window (#311). A wider fetch still (e.g. back
-        # to oldest live date) is too slow on the terminal.
+        # Single BQL fetch at app-load time, bounded by `score_history_years()`
+        # — the longest window the catalog offers plus the sample standardized
+        # behind it, so a score is never measured against a truncated history
+        # (#322). A wider fetch still (e.g. back to oldest live date) is too
+        # slow on the terminal.
         #
-        # Everything except that scorer reads `_analytics_window_start()`
-        # instead. The two are different numbers now, so a consumer that skips
-        # the slice is a six-year statistic under a `5Y` label.
+        # Everything except the scorers reads `_analytics_window_start()`
+        # instead. The two are years apart, so a consumer that skips the slice
+        # is a ten-year statistic under a `5Y` label.
         self.universe_start = (
-            pd.Timestamp(self.today) - pd.DateOffset(years=SCORE_HISTORY_YEARS)
+            pd.Timestamp(self.today) - pd.DateOffset(years=score_history_years())
         ).date()
 
         # Everything the startup fetch pulls (see `config.py` for the ride-along

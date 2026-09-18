@@ -16,6 +16,7 @@ from src.layout.grids import (
     _build_universe_frame,
     _calendar_renderers,
     _perf_renderers,
+    zscore_column_name,
 )
 
 _CAL_MONTHS = [
@@ -110,16 +111,20 @@ def _up(tickers) -> pd.DataFrame:
     return pd.DataFrame(data, index=pd.Index(tickers, name="ticker"), columns=cols)
 
 
+# The ranking column's real header (#324), built rather than spelled.
+_Z_NAME = zscore_column_name("Sharpe", "1Y")
+
+
 def test_build_universe_frame_zscore_after_info_and_sorted():
     meta = _meta()
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": 0.5, "BBB Index": 2.0, "CCC Index": -1.0})
-    frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
+    frame, z_key = _build_universe_frame(meta, up, zcol=zcol, zname=_Z_NAME)
 
     # Flat single-index columns; the Z-Score column sits right after the Info
     # block and immediately before the first stat column.
     cols = list(frame.columns)
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    z_name = _Z_NAME
     # Headers and their order both come from the schema (#212): the info block
     # is `CATALOG_GRID_FIELDS`, so the tiers read broadest-first and `live_date`
     # carries its schema label ("Launch Date", not the raw feed's "Live Date").
@@ -135,6 +140,8 @@ def test_build_universe_frame_zscore_after_info_and_sorted():
     ]
     assert cols[: len(info_cols)] == info_cols
     assert cols[len(info_cols)] == z_name
+    # And the builder hands that name back, so nothing downstream re-derives it.
+    assert z_key == z_name
     assert cols[len(info_cols) + 1] == "1Y Return"
     # Sorted by z descending: BBB (2.0) > AAA (0.5) > CCC (-1.0).
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
@@ -148,7 +155,7 @@ def test_build_universe_frame_nan_z_sinks_within_its_group():
     meta = _meta()
     up = _up(meta["ticker"])
     zcol = pd.Series({"AAA Index": np.nan, "BBB Index": 1.0, "CCC Index": 0.0})
-    frame = _build_universe_frame(meta, up, zcol=zcol, zlabel="Sharpe 1M/1Y")
+    frame, _z_key = _build_universe_frame(meta, up, zcol=zcol, zname=_Z_NAME)
     assert list(frame.index) == ["BBB Index", "AAA Index", "CCC Index"]
     assert list(frame["Solution"]) == ["ARP", "ARP", "Smart Beta"]
 
@@ -156,20 +163,21 @@ def test_build_universe_frame_nan_z_sinks_within_its_group():
 def test_build_universe_frame_without_zcol_is_unsorted_no_zcol():
     meta = _meta()
     up = _up(meta["ticker"])
-    frame = _build_universe_frame(meta, up)
+    frame, z_key = _build_universe_frame(meta, up)
+    assert z_key is None
     cols = list(frame.columns)
     # Info block then flat stat columns; no z-score column at all.
     assert cols[0] == "Name"
     assert "1Y Return" in cols and "5Y Sharpe" in cols
-    assert not any(
-        c == ZSCORE_SUPERCOL or c.startswith(ZSCORE_SUPERCOL + " ") for c in cols
-    )
+    assert not any(ZSCORE_SUPERCOL in str(c) for c in cols)
     # No sort applied → original metadata order preserved.
     assert list(frame.index) == list(meta["ticker"])
 
 
 def test_build_universe_frame_empty_meta():
-    assert _build_universe_frame(pd.DataFrame(), pd.DataFrame()).empty
+    empty, z_key = _build_universe_frame(pd.DataFrame(), pd.DataFrame())
+    assert empty.empty
+    assert z_key is None
 
 
 def _bg_expr(renderer) -> str:
@@ -180,9 +188,11 @@ def _bg_expr(renderer) -> str:
 
 
 def test_perf_renderers_heatmap_scopes_sharpe_and_zscore():
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    # The ranking column is named by its caller, not recognised from its label
+    # (#323) — so the renderer is told which column it is.
+    z_name = _Z_NAME
     cols = pd.Index(["1Y Sharpe", "1Y Return", z_name])
-    on = _perf_renderers(cols, sharpe_heatmap=True)
+    on = _perf_renderers(cols, sharpe_heatmap=True, zscore_col=z_name)
     # Heatmap on: Sharpe column + Z-Score column get the diverging ramp.
     assert "cell.value <" in _bg_expr(on["1Y Sharpe"])
     assert "cell.value <" in _bg_expr(on[z_name])
@@ -213,9 +223,9 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     # `text_value` expr, since ipydatagrid's `missing` trait never fires for a
     # pandas NaN. Text columns and the color swatch must NOT carry it — `isNaN`
     # is true for any non-numeric string and would blank every cell.
-    z_name = f"{ZSCORE_SUPERCOL} Sharpe 1M/1Y"
+    z_name = _Z_NAME
     cols = pd.Index([PERF_COLOR_COLUMN_NAME, "Name", "1Y Return", "1Y Sharpe", z_name])
-    r = _perf_renderers(cols, sharpe_heatmap=True)
+    r = _perf_renderers(cols, sharpe_heatmap=True, zscore_col=z_name)
     dash = "isNaN(cell.value) ? '-' : ''"
     assert _text_value_expr(r["1Y Return"]) == dash
     assert _text_value_expr(r["1Y Sharpe"]) == dash
@@ -223,6 +233,29 @@ def test_perf_renderers_dash_on_numeric_not_text_or_swatch():
     # Text + swatch stay plain.
     assert _text_value_expr(r["Name"]) == ""
     assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""
+
+
+def test_the_perf_grid_finds_the_ranking_column_by_key_too():
+    """The ipydatagrid half of #323's guarantee.
+
+    `PerfGrid` carries no ranking column today, but it reads the same two
+    helpers the catalog's ramp is defined by — so they must follow the key as
+    well, under a header that starts with neither "Z-Score" nor a window.
+    """
+    from src.layout.grids import _STAT_COL_WIDTH, _perf_column_widths
+
+    future = "Normalized 1Y Sharpe (5Y Z-Score)"
+    cols = pd.Index(["1Y Sharpe", "1Y Return", future])
+    renderers = _perf_renderers(cols, sharpe_heatmap=True, zscore_col=future)
+    # The symmetric z ramp, not the Sharpe bands and not the plain 2dp default.
+    assert "cell.value <" in _bg_expr(renderers[future])
+    assert _bg_expr(renderers[future]) != _bg_expr(renderers["1Y Sharpe"])
+
+    frame = pd.DataFrame([[1.0, 0.1, 2.0]], columns=cols)
+    widths = _perf_column_widths(frame, zscore_col=future)
+    # Content-fit to its long header, not squeezed into the uniform stat width.
+    assert widths[future] != _STAT_COL_WIDTH
+    assert widths["1Y Sharpe"] == _STAT_COL_WIDTH
 
 
 def test_perf_renderers_dash_on_numeric_without_heatmap():
@@ -256,7 +289,7 @@ def test_the_two_grids_read_different_field_tuples():
     assert perf_cols[1:6] == ["Name", "Asset Class", "Solution", "Category", "Family"]
     assert "Return Type" not in perf_cols  # PerfGrid never carried it
 
-    catalog_cols = list(_build_universe_frame(meta, _up(meta["ticker"])).columns)
+    catalog_cols = list(_build_universe_frame(meta, _up(meta["ticker"]))[0].columns)
     assert "Return Type" not in catalog_cols
     assert "Launch Date" in catalog_cols  # the other Info column stays
 

@@ -144,6 +144,7 @@ def rolling_metric_zscore(
     metric: str = "sharpe",
     window: int = SHARPE_WINDOW,
     zscore_window: int = SHARPE_ZSCORE_WINDOW,
+    min_sample: int | None = None,
     returns: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Scalar z-score per ticker of the latest rolling ``metric`` vs its trailing
@@ -159,6 +160,14 @@ def rolling_metric_zscore(
     to skip re-deriving ``daily_returns`` here; the result is identical either
     way, since the tail of the rolling series depends only on the tail of the
     returns.
+
+    ``min_sample`` is a per-ticker floor on how much of that ``zscore_window``
+    a ticker actually supplied: below it the ticker scores NaN rather than
+    being standardized against the handful of observations it has. A young
+    index is otherwise indistinguishable on screen from one with the full
+    sample, which matters once the column's header *names* the sample it
+    claims (#324). Off by default — the leaderboard and the sunburst keep
+    scoring on whatever history exists.
     """
     try:
         metric_fn = _ROLLING_METRICS[metric]
@@ -176,7 +185,13 @@ def rolling_metric_zscore(
     mean = tail.mean()
     std = tail.std().replace(0, np.nan)
     current = series.ffill().iloc[-1]
-    return ((current - mean) / std).rename(f"{metric}_zscore")
+    z = ((current - mean) / std).rename(f"{metric}_zscore")
+    if min_sample is not None:
+        # `count()` is per column and skips NaN, so this is each ticker's own
+        # coverage of the sample — a rolling series is NaN until its window
+        # fills, and NaN wherever the ticker had no price.
+        z = z.where(tail.count() >= min_sample)
+    return z
 
 
 def sharpe_zscore(

@@ -36,9 +36,10 @@ from .config import (
     COMMENTARY_PATH,
     LAUNCH_CARD_META_FIELDS,
     LEADERBOARD_ROWS,
-    LEADERBOARD_SCORE_SAMPLE_DAYS,
     LEADERBOARD_WINDOW_DAYS,
     NEW_LAUNCH_DAYS,
+    RANKABLE_METRICS,
+    SCORE_SAMPLE_DAYS,
     TRADING_DAYS_PER_YEAR,
 )
 from .stats import (
@@ -211,17 +212,6 @@ class LeaderboardColumn:
     bottom: tuple[LeaderboardRow, ...]
 
 
-#: The leaderboard's columns in display order, as (metric key, display label).
-#: Declared once, here, so the widget titles its columns from the data it is
-#: handed rather than respelling the labels.
-LEADERBOARD_METRICS: tuple[tuple[str, str], ...] = (
-    ("return", "Return"),
-    ("sharpe", "Sharpe"),
-    ("calmar", "Calmar"),
-    ("sortino", "Sortino"),
-)
-
-
 def _sign_sentiment(value: float) -> Sentiment:
     if value > 0:
         return Sentiment.POSITIVE
@@ -300,7 +290,7 @@ def build_leaderboard(
     columns agree on what "past month" means. Those raw values are what a row
     displays; what it is **ranked** by is `rolling_metric_zscore` of the same
     metric at the same window, standardized over
-    ``LEADERBOARD_SCORE_SAMPLE_DAYS`` of that metric's own rolling history.
+    ``SCORE_SAMPLE_DAYS`` of that metric's own rolling history.
 
     ``prices`` is the **whole fetched frame**, not a window of it: the score's
     sample needs the depth, and the raw metrics are unaffected because every
@@ -346,7 +336,7 @@ def build_leaderboard(
                 prices,
                 metric=metric,
                 window=window_days,
-                zscore_window=LEADERBOARD_SCORE_SAMPLE_DAYS,
+                zscore_window=SCORE_SAMPLE_DAYS,
                 returns=history_returns,
             )
         except (IndexError, ValueError):
@@ -362,7 +352,7 @@ def build_leaderboard(
             name_of=name_of,
             rows=rows,
         )
-        for metric, label in LEADERBOARD_METRICS
+        for metric, label in RANKABLE_METRICS
     )
 
 

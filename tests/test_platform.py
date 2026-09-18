@@ -404,8 +404,9 @@ def _analytics() -> PlatformAnalytics:
     return PlatformAnalytics(
         state,
         z_metric_chips=chips(),
-        z_window_chips=chips(),
-        z_lookback_chips=chips(),
+        # The table's own Window, carrying stats-window labels since #324 — the
+        # score is measured over whichever window the table is showing.
+        window_chips=ChipGroup(["1Y", "3Y"], value="1Y"),
     )
 
 
