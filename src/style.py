@@ -130,7 +130,9 @@ CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 #: The table's internals fill it: the search row and the row-count readout take
 #: what they need and the row area scrolls in the remainder, so this is the one
 #: number to change and nothing has to be adjusted to match it.
-CATALOG_TABLE_HEIGHT: str = "460px"
+#: Raised 10% from 460px: at the old height the rail's three chip sections and
+#: the table's rows both read as squeezed.
+CATALOG_TABLE_HEIGHT: str = "506px"
 
 
 class Font(StrEnum):
