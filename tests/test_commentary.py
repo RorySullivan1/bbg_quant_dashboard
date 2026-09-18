@@ -23,12 +23,17 @@ from src.commentary import (
     LeaderboardColumn,
     LeaderboardRow,
 )
-from src.config import LEADERBOARD_ROWS, TRADING_DAYS_PER_YEAR
+from src.config import (
+    LEADERBOARD_ROWS,
+    LEADERBOARD_SCORE_SAMPLE_DAYS,
+    TRADING_DAYS_PER_YEAR,
+)
 from src.stats import (
     ann_sharpe,
     calmar_ratio,
     daily_returns,
     period_return,
+    rolling_metric_zscore,
     sortino_ratio,
 )
 from src.style import Sentiment
@@ -173,16 +178,33 @@ def _leaderboard_prices(bdays, drifts: dict[str, float], n: int = 40) -> pd.Data
 
 
 def _expected_order(metric: str, prices, returns, window_days: int) -> list[str]:
-    """The metric recomputed from `src.stats`, ranked descending, ties by ticker."""
+    """The board's order, recomputed from `src.stats`.
+
+    It is the **score** — the metric z-scored against its own rolling history —
+    that decides the order since #310, not the raw value the row displays. The
+    raw metric is still recomputed by `_expected_values` below, for the numbers
+    themselves.
+    """
+    scores = rolling_metric_zscore(
+        prices,
+        metric=metric,
+        window=window_days,
+        zscore_window=LEADERBOARD_SCORE_SAMPLE_DAYS,
+        returns=returns,
+    )
+    ranked = scores.dropna().sort_index().sort_values(ascending=False, kind="stable")
+    return list(ranked.index)
+
+
+def _expected_values(metric: str, prices, returns, window_days: int):
+    """The raw metric recomputed from `src.stats` — what a row displays."""
     years = window_days / TRADING_DAYS_PER_YEAR
-    series = {
+    return {
         "return": lambda: period_return(prices, window_days=window_days),
         "sharpe": lambda: ann_sharpe(returns, prices, years),
         "calmar": lambda: calmar_ratio(prices, years),
         "sortino": lambda: sortino_ratio(returns, prices, years),
     }[metric]()
-    ranked = series.dropna().sort_index().sort_values(ascending=False, kind="stable")
-    return list(ranked.index)
 
 
 def _leaderboard_meta(tickers) -> pd.DataFrame:
@@ -227,11 +249,17 @@ def test_leaderboard_columns_in_declared_order_with_bounded_rows(bdays):
         assert all(isinstance(r, LeaderboardRow) for r in col.top + col.bottom)
 
 
-def test_leaderboard_rank_agrees_with_the_displayed_value(bdays):
-    """Rank 1 is the largest raw value, the last bottom row the smallest, and
-    the ranks are true catalog positions — six tickers, so the bottom block is
-    ranks 4-6. The order is checked against the metric recomputed from
-    `src.stats`, so the board cannot drift from the numbers it shows."""
+def test_leaderboard_rank_agrees_with_the_score_it_leads_with(bdays):
+    """Rank 1 is the highest **score**, the last bottom row the lowest.
+
+    #310 moved ranking off the raw value, so the invariant #286 protected —
+    rank and the number beside it agreeing — now holds against the score, which
+    is the number the row leads with. Both are checked against `src.stats`
+    recomputed independently, so the board cannot drift from either.
+
+    The ranks are true catalog positions: six tickers, so the bottom block is
+    ranks 4-6.
+    """
     prices = _leaderboard_prices(bdays, SIX_DRIFTS)
     returns = daily_returns(prices)
     columns = commentary.build_leaderboard(
@@ -239,15 +267,42 @@ def test_leaderboard_rank_agrees_with_the_displayed_value(bdays):
     )
     for col in columns:
         rows = col.top + col.bottom
-        values = [r.value for r in rows]
-        assert values == sorted(values, reverse=True)
+        scores = [r.score for r in rows]
+        assert scores == sorted(scores, reverse=True)
         assert [r.rank for r in col.top] == [1, 2, 3]
         assert [r.rank for r in col.bottom] == [4, 5, 6]
         assert len({r.ticker for r in rows}) == 6  # no overlap
         assert [r.ticker for r in rows] == _expected_order(
             col.metric, prices, returns, 21
         )
+        # The value each row carries is still that row's raw metric, unchanged
+        # by the score deciding where the row sits.
+        expected = _expected_values(col.metric, prices, returns, 21)
+        for r in rows:
+            assert r.value == pytest.approx(float(expected.loc[r.ticker]))
+            assert r.score_text == f"{r.score:+.2f}"
         assert all(r.name == f"Name {r.ticker.split()[0]}" for r in rows)
+
+
+def test_ranking_by_score_is_not_ranking_by_value(bdays):
+    """The test that would fail if the score were cosmetic.
+
+    A catalog where the biggest raw number is not the most unusual one: the
+    board must lead with the latter. Without this, a `score` that were merely
+    stored and ignored would pass every other assertion here.
+    """
+    prices = _leaderboard_prices(bdays, SIX_DRIFTS)
+    returns = daily_returns(prices)
+    columns = commentary.build_leaderboard(
+        _leaderboard_meta(SIX_DRIFTS), prices, returns, window_days=21
+    )
+
+    differs = []
+    for col in columns:
+        rows = col.top + col.bottom
+        by_value = [r.ticker for r in sorted(rows, key=lambda r: -r.value)]
+        differs.append([r.ticker for r in rows] != by_value)
+    assert any(differs), "fixture no longer separates score order from value order"
 
 
 def test_leaderboard_excludes_nan_and_ties_by_ticker(bdays):
@@ -297,10 +352,13 @@ def test_leaderboard_text_format_and_sentiment_follow_the_metric(bdays):
         col = by_metric[metric]
         for r in col.top + col.bottom:
             assert r.text == f"{r.value:.2f}"
+            # Sentiment follows the **score** since #310 — it is what the row
+            # is ranked and read by, so a row can show a negative raw Sharpe in
+            # green when that reading is unusually good for that index.
             expected = (
                 Sentiment.POSITIVE
-                if r.value > 0
-                else Sentiment.NEGATIVE if r.value < 0 else Sentiment.NEUTRAL
+                if r.score > 0
+                else Sentiment.NEGATIVE if r.score < 0 else Sentiment.NEUTRAL
             )
             assert r.sentiment is expected
 
@@ -323,8 +381,21 @@ def test_leaderboard_uses_the_window_it_is_given(bdays):
 
     short = commentary.build_leaderboard(meta, prices, returns, window_days=5)
     long = commentary.build_leaderboard(meta, prices, returns, window_days=30)
-    assert short[0].top[0].ticker == "BBB Index"
-    assert long[0].top[0].ticker == "AAA Index"
+
+    # The window reaches both halves of a row. The raw return still flips its
+    # leader as it always did — BBB over the last five days, AAA over thirty —
+    # and the score moves with it.
+    def leader_by_value(columns):
+        rows = columns[0].top + columns[0].bottom
+        return max(rows, key=lambda r: r.value).ticker
+
+    assert leader_by_value(short) == "BBB Index"
+    assert leader_by_value(long) == "AAA Index"
+    assert short[0].top[0].score != long[0].top[0].score
+
+    # Not the row order, though: 40 days is far too short a sample for the
+    # score to separate two indices, and the board says so by leaving them in
+    # the same order rather than inventing a distinction.
 
 
 def test_leaderboard_empty_inputs():
@@ -371,3 +442,64 @@ def test_the_window_returns_tail_gives_the_same_board_as_full_history(bdays):
             meta, prices, short, window_days=window_days
         )
         assert full == sliced, f"window_days={window_days}"
+
+
+def test_a_longer_frame_does_not_move_the_raw_values(bdays):
+    """The board takes the whole fetched book since #310, for the score's sake.
+
+    The raw values must not notice: every one of them slices internally —
+    `period_return` tails by count, the ratios go through `_slice_last_years` —
+    so handing `build_leaderboard` a year more history can only change what the
+    score is standardized against, never what a row displays.
+    """
+    idx = bdays(1512)
+    rng = np.random.default_rng(7)
+    tickers = [f"T{i} Index" for i in range(6)]
+    full = pd.DataFrame(
+        100 * np.cumprod(1 + rng.normal(0.0004, 0.01, (len(idx), 6)), axis=0),
+        index=idx,
+        columns=tickers,
+    )
+    shorter = full.tail(1260)
+    meta = _leaderboard_meta(tickers)
+
+    for window_days in (5, 21, 63, 126, 252):
+        long_board = commentary.build_leaderboard(
+            meta, full, daily_returns(full), window_days=window_days
+        )
+        short_board = commentary.build_leaderboard(
+            meta, shorter, daily_returns(shorter), window_days=window_days
+        )
+        for long_col, short_col in zip(long_board, short_board, strict=True):
+            long_values = {r.ticker: r.value for r in long_col.top + long_col.bottom}
+            short_values = {r.ticker: r.value for r in short_col.top + short_col.bottom}
+            shared = set(long_values) & set(short_values)
+            assert shared, f"no overlap at {window_days}d on {long_col.metric}"
+            for ticker in shared:
+                assert long_values[ticker] == pytest.approx(short_values[ticker])
+
+
+def test_an_index_without_both_numbers_does_not_reach_the_board(bdays):
+    # A row needs a score and a value: a flat index has no drawdown (NaN Calmar)
+    # and no variance to standardize against, so it drops out rather than
+    # rendering half a row.
+    idx = bdays(400)
+    rng = np.random.default_rng(2)
+    prices = pd.DataFrame(
+        {
+            "AAA Index": 100 * np.cumprod(1 + rng.normal(0.0005, 0.01, len(idx))),
+            "BBB Index": 100 * np.cumprod(1 + rng.normal(0.0002, 0.01, len(idx))),
+            "FLAT Index": np.full(len(idx), 100.0),
+        },
+        index=idx,
+    )
+    meta = _leaderboard_meta(prices.columns)
+
+    columns = commentary.build_leaderboard(
+        meta, prices, daily_returns(prices), window_days=21
+    )
+
+    for col in columns:
+        tickers = [r.ticker for r in col.top + col.bottom]
+        assert "FLAT Index" not in tickers
+        assert all(np.isfinite(r.score) and np.isfinite(r.value) for r in col.top)

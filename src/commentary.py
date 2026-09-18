@@ -36,6 +36,7 @@ from .config import (
     COMMENTARY_PATH,
     LAUNCH_CARD_META_FIELDS,
     LEADERBOARD_ROWS,
+    LEADERBOARD_SCORE_SAMPLE_DAYS,
     LEADERBOARD_WINDOW_DAYS,
     NEW_LAUNCH_DAYS,
     TRADING_DAYS_PER_YEAR,
@@ -45,6 +46,7 @@ from .stats import (
     calmar_ratio,
     daily_returns,
     period_return,
+    rolling_metric_zscore,
     sortino_ratio,
 )
 from .style import Sentiment
@@ -170,14 +172,25 @@ class LeaderboardRow:
 
     `rank` is the index's true 1-based position across the whole catalog for
     that metric, so a bottom row reads e.g. "52" of 54 rather than "3rd from
-    last". `value` is the raw metric; `text` is its formatted form (percent for
-    the window return, two decimals for the ratios), because the formatter
-    differs per column and the widget should not re-derive it.
+    last".
+
+    The row carries **two** numbers (#310). `score` is the metric z-scored
+    against its own rolling history, and it is what the column is ranked by —
+    a column of raw numbers lists whoever is biggest, not who is unusual, and a
+    6M Sharpe of 1.8 means different things for a vol-carry index and a trend
+    index. `value` is that raw metric, kept so the row can show what the score
+    was computed from. Each has its own formatter here, because they differ per
+    column (percent for the window return, two decimals for the ratios) and the
+    widget should not re-derive either.
+
+    `sentiment` follows the **score**: it is what the row is ranked and read by.
     """
 
     rank: int
     ticker: str
     name: str
+    score: float
+    score_text: str
     value: float
     text: str
     sentiment: Sentiment
@@ -220,34 +233,45 @@ def _sign_sentiment(value: float) -> Sentiment:
 def _rank_column(
     metric: str,
     label: str,
-    series: pd.Series,
+    scores: pd.Series,
+    values: pd.Series,
     *,
     fmt: Callable[[float], str],
     name_of: Callable[[str], str],
     rows: int,
 ) -> LeaderboardColumn:
-    """Rank `series` descending and keep its first and last `rows` entries.
+    """Rank by `scores` and keep the first and last `rows` entries.
 
-    The rank is by the **raw** value — the number the row displays — so rank 1
-    always carries the largest figure. NaN and infinite values (a ratio whose
-    denominator degenerated) are excluded before ranking, and ties resolve by
-    ticker so the board is deterministic run to run.
+    The rank is by the **score** — the z-score against the metric's own
+    history, and the number the row leads with — so rank 1 is the most unusual
+    reading rather than merely the biggest (#310, superseding #286's raw-value
+    ranking). `values` rides along for display and never decides an order.
+
+    An index needs both numbers to appear: NaN and infinite values on either
+    side (a ratio whose denominator degenerated, a sample too short or too flat
+    to standardize against) are excluded before ranking. Ties resolve by ticker
+    so the board is deterministic run to run.
     """
-    s = series.replace([np.inf, -np.inf], np.nan).dropna().astype(float)
-    # Sort by ticker first, then a stable sort by value, so equal values keep
+    clean = scores.replace([np.inf, -np.inf], np.nan).dropna().astype(float)
+    raw = values.replace([np.inf, -np.inf], np.nan).dropna().astype(float)
+    clean = clean.loc[clean.index.intersection(raw.index)]
+    # Sort by ticker first, then a stable sort by score, so equal scores keep
     # ticker order — the tie-break — without a second sort key.
-    ranked = s.sort_index().sort_values(ascending=False, kind="stable")
+    ranked = clean.sort_index().sort_values(ascending=False, kind="stable")
 
     def row(position: int) -> LeaderboardRow:
         ticker = str(ranked.index[position])
-        value = float(ranked.iloc[position])
+        score = float(ranked.iloc[position])
+        value = float(raw.loc[ticker])
         return LeaderboardRow(
             rank=position + 1,
             ticker=ticker,
             name=name_of(ticker),
+            score=score,
+            score_text=f"{score:+.2f}",
             value=value,
             text=fmt(value),
-            sentiment=_sign_sentiment(value),
+            sentiment=_sign_sentiment(score),
         )
 
     n = len(ranked)
@@ -265,16 +289,28 @@ def build_leaderboard(
     *,
     window_days: int = LEADERBOARD_WINDOW_DAYS,
     rows: int = LEADERBOARD_ROWS,
+    history_returns: pd.DataFrame | None = None,
 ) -> tuple[LeaderboardColumn, ...]:
-    """Whole-catalog top / bottom `rows` on return, Sharpe, Calmar and Sortino.
+    """Whole-catalog top / bottom `rows` on return, Sharpe, Calmar and Sortino,
+    each **ranked by its z-score against its own history** (#310).
 
     Every column is scoped to the trailing ``window_days``: the return is the
     simple window return (``period_return``, not annualized), and the three
     ratios take ``years = window_days / TRADING_DAYS_PER_YEAR``, so all four
-    columns agree on what "past month" means. ``returns`` is expected to be the
-    ``window_returns`` tail of ``prices``. Computed from the fetched frames
-    only, no BQL. An empty catalog yields an empty tuple; a metric that is NaN
-    for every index yields a column with no rows.
+    columns agree on what "past month" means. Those raw values are what a row
+    displays; what it is **ranked** by is `rolling_metric_zscore` of the same
+    metric at the same window, standardized over
+    ``LEADERBOARD_SCORE_SAMPLE_DAYS`` of that metric's own rolling history.
+
+    ``prices`` is the **whole fetched frame**, not a window of it: the score's
+    sample needs the depth, and the raw metrics are unaffected because every
+    one of them slices internally (``period_return`` tails by count, the ratios
+    go through ``_slice_last_years``). ``returns`` is the ``window_returns``
+    tail of it, for the ratios; pass ``history_returns`` — the catalog's full
+    daily returns — so the four scorers do not each re-derive them.
+
+    Computed from the fetched frames only, no BQL. An empty catalog yields an
+    empty tuple; a metric with no scorable index yields a column with no rows.
     """
     if prices.empty or returns.empty:
         return ()
@@ -297,10 +333,30 @@ def build_leaderboard(
         "calmar": (calmar_ratio(prices, years), num2),
         "sortino": (sortino_ratio(returns, prices, years), num2),
     }
+
+    def score_for(metric: str) -> pd.Series:
+        """The metric at this window, z-scored against its own history.
+
+        A frame too short to yield a rolling series at all scores nothing
+        rather than raising — the board then has no rows, which is the same
+        outcome as a metric that is NaN everywhere.
+        """
+        try:
+            return rolling_metric_zscore(
+                prices,
+                metric=metric,
+                window=window_days,
+                zscore_window=LEADERBOARD_SCORE_SAMPLE_DAYS,
+                returns=history_returns,
+            )
+        except (IndexError, ValueError):
+            return pd.Series(np.nan, index=prices.columns, dtype=float)
+
     return tuple(
         _rank_column(
             metric,
             label,
+            score_for(metric),
             series_by_metric[metric][0],
             fmt=series_by_metric[metric][1],
             name_of=name_of,

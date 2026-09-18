@@ -1136,18 +1136,24 @@ class DashboardApp:
             self.commentary_pane.update_launches(self.highlights_cache["launches"])
             columns = self.highlights_cache.get(window_days)
             if columns is None:
-                universe_window = universe.loc[
-                    universe.index >= self._analytics_window_start()
-                ]
-                if universe_window.empty:
-                    self.leaderboard.clear()
-                    return
+                # The one consumer that reads the **unsliced** frame, and the
+                # exception `_analytics_window_start` names: the score
+                # standardizes a metric against five years of its own rolling
+                # history, which is what the fetch was widened for (#311). The
+                # raw values are unaffected — every one of them slices
+                # internally to `window_days`.
+                #
                 # Only the trailing window feeds the returns-based metrics, so
                 # derive daily_returns over just the span they need rather than
-                # over the whole 5-year slice.
-                window_rets = window_returns(universe_window, window_days=window_days)
+                # over the whole book; the scorer gets the shared full-history
+                # returns instead of re-deriving them four times.
+                window_rets = window_returns(universe, window_days=window_days)
                 columns = build_leaderboard(
-                    self.meta, universe_window, window_rets, window_days=window_days
+                    self.meta,
+                    universe,
+                    window_rets,
+                    history_returns=self.state.universe_rets,
+                    window_days=window_days,
                 )
                 self.highlights_cache[window_days] = columns
             self.leaderboard.update(

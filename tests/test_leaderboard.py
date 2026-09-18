@@ -19,11 +19,23 @@ from src.layout.leaderboard import Leaderboard
 from src.style import Color, Sentiment
 
 
-def _row(rank: int, ticker: str, value: float, sentiment: Sentiment) -> LeaderboardRow:
+def _row(
+    rank: int,
+    ticker: str,
+    value: float,
+    sentiment: Sentiment,
+    score: float | None = None,
+) -> LeaderboardRow:
+    # A row carries both numbers since #310: the score it is ranked by and the
+    # raw metric that score was computed from. These widget tests are about the
+    # slots and the click routing, so the score defaults to tracking the value.
+    score = value if score is None else score
     return LeaderboardRow(
         rank=rank,
         ticker=ticker,
         name=f"Name {ticker.split()[0]}",
+        score=score,
+        score_text=f"{score:+.2f}",
         value=value,
         text=f"{value:+.2f}",
         sentiment=sentiment,

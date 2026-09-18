@@ -47,6 +47,12 @@ PERF_TABLE_YEARS = (1, 3, 5)
 #: toggle moves it live; this is only the default.
 LEADERBOARD_WINDOW_DAYS = 21
 
+#: How long a sample the leaderboard's score is standardized against: five
+#: years of the metric's own rolling history. `SCORE_HISTORY_YEARS` sizes the
+#: fetch so this is available even at the 1Y window, where the rolling series
+#: only starts after its first 252 observations (#310, #311).
+LEADERBOARD_SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+
 #: How many indices each leaderboard column lists at the top and at the
 #: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again
 #: in the widget that draws the slots.

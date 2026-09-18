@@ -442,6 +442,7 @@ def test_rolling_helpers_shape_and_warmup(multiyear_prices):
         stats.rolling_volatility,
         stats.rolling_sharpe,
         stats.rolling_sortino,
+        stats.rolling_calmar,
     ):
         out = fn(rets, window=63)
         assert out.shape == rets.shape
@@ -468,7 +469,7 @@ def test_rolling_metric_zscore_matches_sharpe_zscore(multiyear_prices):
 
 
 def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
-    for metric in ("sharpe", "sortino", "return", "vol"):
+    for metric in ("sharpe", "sortino", "return", "vol", "calmar"):
         z = stats.rolling_metric_zscore(
             multiyear_prices, metric=metric, window=63, zscore_window=126
         )
@@ -481,7 +482,7 @@ def test_rolling_metric_zscore_returns_arg_matches_prices(multiyear_prices):
     # universe_rets) is identical to letting the function derive it from prices —
     # both slice to the same trailing window before the rolling compute.
     rets = stats.daily_returns(multiyear_prices)
-    for metric in ("sharpe", "sortino", "return", "vol"):
+    for metric in ("sharpe", "sortino", "return", "vol", "calmar"):
         via_prices = stats.rolling_metric_zscore(
             multiyear_prices, metric=metric, window=63, zscore_window=126
         )
@@ -1340,3 +1341,123 @@ def test_calendar_summary_columns_per_kind():
     assert stats.calendar_summary_columns("correlation") == ("Correlation",)
     with pytest.raises(ValueError, match="unknown kind"):
         stats.calendar_summary_columns("bogus")
+
+
+# --- rolling Calmar (#310) -------------------------------------------------
+#
+# The one metric in the family whose scalar twin is built on prices rather than
+# returns, so it is also the one whose rolling form had to be derived rather
+# than lifted.
+
+
+def test_rolling_max_drawdown_matches_the_scalar_over_the_same_span(bdays):
+    """The exact oracle: the last rolling window is that window's max drawdown.
+
+    This is what caught the off-by-one it was written for. `w` returns span
+    `w + 1` price levels, and the level the window opens at is a peak
+    candidate — dropping it makes a window whose high is its first day measure
+    a shallower drawdown than `max_drawdown` does over the same prices.
+    """
+    from src.stats.rolling import _rolling_max_drawdown
+
+    rng = np.random.default_rng(11)
+    idx = bdays(800)
+    prices = pd.DataFrame(
+        100 * np.cumprod(1 + rng.normal(0.0003, 0.011, (len(idx), 4)), axis=0),
+        index=idx,
+        columns=[f"{c} Index" for c in "ABCD"],
+    )
+    window = 252
+
+    rolling = _rolling_max_drawdown(stats.daily_returns(prices), window).iloc[-1]
+    scalar = stats.max_drawdown(prices.tail(window + 1), years=99)
+
+    pd.testing.assert_series_equal(rolling, scalar, check_names=False)
+
+
+def test_the_rolling_drawdown_peak_is_inside_the_window(bdays):
+    """A crash *before* the window must not follow the window around.
+
+    This is what keeps `rolling_metric_zscore`'s tail slicing honest: a value
+    depends only on the last `window` returns, so handing the function a tail
+    cannot change it. A drawdown measured from an all-time peak would depend on
+    history the tail has already dropped.
+    """
+    from src.stats.rolling import _rolling_max_drawdown
+
+    idx = bdays(400)
+    # -60% over the first 100 days, then a steady climb for the rest.
+    level = np.r_[np.linspace(100.0, 40.0, 100), np.linspace(40.0, 60.0, 300)]
+    prices = pd.DataFrame({"X Index": level}, index=idx)
+
+    rolling = _rolling_max_drawdown(stats.daily_returns(prices), 100)
+
+    assert rolling.iloc[-1, 0] == pytest.approx(0.0)  # the window only rose
+    assert stats.max_drawdown(prices, years=99).iloc[0] == pytest.approx(-0.6)
+
+
+def test_rolling_calmar_is_the_rolling_return_over_that_drawdown(bdays):
+    from src.stats.rolling import _rolling_max_drawdown
+
+    rng = np.random.default_rng(5)
+    idx = bdays(600)
+    prices = pd.DataFrame(
+        100 * np.cumprod(1 + rng.normal(0.0004, 0.01, (len(idx), 3)), axis=0),
+        index=idx,
+        columns=["A Index", "B Index", "C Index"],
+    )
+    rets = stats.daily_returns(prices)
+    window = 126
+
+    expected = stats.rolling_return(rets, window).divide(
+        _rolling_max_drawdown(rets, window).abs().replace(0, np.nan)
+    )
+
+    pd.testing.assert_frame_equal(stats.rolling_calmar(rets, window), expected)
+
+
+def test_rolling_calmar_of_a_series_that_only_rose_is_nan_not_inf(bdays):
+    # `calmar_ratio`'s own convention: a zero drawdown is not a denominator.
+    idx = bdays(400)
+    prices = pd.DataFrame({"U Index": 100.0 * 1.001 ** np.arange(len(idx))}, index=idx)
+
+    calmar = stats.rolling_calmar(stats.daily_returns(prices), 100)
+
+    assert calmar.iloc[-1].isna().all()
+    assert not np.isinf(calmar.to_numpy(dtype=float)).any()
+
+
+def test_rolling_calmar_differs_from_its_scalar_twin_only_in_the_numerator(bdays):
+    """Documenting a gap rather than asserting it away.
+
+    `rolling_return` is arithmetic (mean × 252) while scalar `ann_return` is
+    geometric, so rolling and scalar Calmar do not coincide. The denominators
+    do — which is the half a reader is likely to doubt.
+    """
+    from src.stats.rolling import _rolling_max_drawdown
+
+    rng = np.random.default_rng(11)
+    idx = bdays(800)
+    prices = pd.DataFrame(
+        100 * np.cumprod(1 + rng.normal(0.0003, 0.011, (len(idx), 3)), axis=0),
+        index=idx,
+        columns=["A Index", "B Index", "C Index"],
+    )
+    rets = stats.daily_returns(prices)
+    window = 252
+    span = prices.tail(window + 1)
+
+    rolling = stats.rolling_calmar(rets, window).iloc[-1]
+    scalar = stats.calmar_ratio(span, years=window / 252)
+
+    # Same sign, same denominator, different numerator.
+    assert np.sign(rolling.to_numpy()).tolist() == np.sign(scalar.to_numpy()).tolist()
+    pd.testing.assert_series_equal(
+        _rolling_max_drawdown(rets, window).iloc[-1],
+        stats.max_drawdown(span, years=99),
+        check_names=False,
+    )
+    expected_ratio = stats.rolling_return(rets, window).iloc[-1] / stats.ann_return(
+        span, years=window / 252
+    )
+    pd.testing.assert_series_equal(rolling / scalar, expected_ratio, check_names=False)
