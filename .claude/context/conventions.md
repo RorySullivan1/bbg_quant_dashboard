@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.22`.
+- **Current version**: `v0.9.23`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -199,20 +199,23 @@ CSS, style tokens — live in `style.md`.)
   `tests/` and `data/` for the five retired weekly-commentary names and asserts
   the file is gone from disk. It caught two doc-comments still spelling the
   dead filename in prose on its first run.
-- **One control component, two directions (v0.9.21).** The Platform controls
-  above the table and the ranking rail beside it are the same `.bbg-rail`
-  chrome through `control_bar` / `control_rail`, and a `ChipGroup` lays its
-  chips across or down on a `row=` flag. A second container idiom for the
-  horizontal case is the duplication the component exists to prevent — the
-  direction is a parameter, not a new widget.
+- **One control component (v0.9.21; one direction since v0.9.23 #326).** Every
+  bar in the app — the catalog's *Table view*, the Leaderboard's Window, the
+  Bulletin's board switch — is the same `.bbg-rail` chrome through
+  `control_bar`. There was a column flavour too, for the rail beside the
+  catalog table, and it went when the rail did. A second container idiom is the
+  duplication the component exists to prevent: reach for the existing one and
+  give it sections, rather than assembling a near-identical box at the call
+  site.
 - **A control is a widget, not a row of buttons (v0.9.21 #277).** `ChipGroup`
   presents a `W.Dropdown`'s surface — `value`, `label`,
   `observe(..., names="value")` — so a call site reading a dropdown does not
   care that the widget underneath is `.bbg-pill` buttons. That is what let the
-  Z-Score controls move into a rail as a *restyle*: `PlatformAnalytics` takes
-  them by constructor injection and reads `.value` to compute, **`.label`** to
-  title the z column and `.observe` to re-render, and `.label` is a Dropdown
-  API a bare `W.Button` row does not have. Build a control the app *reads* on
+  ranking controls change containers twice — dropdowns into a rail (#279), then
+  the rail's contents into the bar (#324, #325) — as *restyles*:
+  `PlatformAnalytics` takes them by constructor injection and reads `.value` to
+  compute, **`.label`** to name the ranking column and `.observe` to re-render,
+  and `.label` is a Dropdown API a bare `W.Button` row does not have. Build a control the app *reads* on
   this primitive rather than on loose buttons, or the read sites get rewritten
   to match the widget.
 - **A multi-select reports membership, never click order (v0.9.21 #278).**
@@ -238,6 +241,17 @@ CSS, style tokens — live in `style.md`.)
   forwarded untouched, and registered in `keys_to_be_evaluated`. Assert both
   when adding a callback: "it never ran" and "it ran and did nothing" look
   identical from Python.
+- **A catalog control re-slices and re-ranks; it never fetches (v0.9.23 #324).**
+  Both chips on the *Table view* bar recompute the ranking column from
+  `state.arp_universe_prices` — the already-fetched cache — through
+  `rolling_metric_zscore`. Nothing else recomputes: the performance table is
+  measured once at load for **every** window, and a window change hides the
+  columns it is not showing rather than dropping them. Only **Refresh**
+  invalidates the prices. The trap the window opens is the opposite one: it is
+  also the window the score is measured over, so it must go through
+  `render_universe_grid` (a rebuild) rather than `set_window` alone (a
+  re-send of options) — the column's name and the row order both move with it,
+  and `set_window` is a recorder like `set_group_fields`, not a redraw.
 - **A compute failure keeps the last good board.** `_render_leaderboard`
   appends its traceback to `errors_w` rather than writing it over the board. A
   board that is merely stale beats no board at all, and the chip that caused
@@ -489,17 +503,23 @@ CSS, style tokens — live in `style.md`.)
   replaced the earlier 2-level MultiIndex layout with comma-joined
   `"<level0>,<level1>"` width keys and a two-row header — flattened in
   v0.9.11.)
-- **Fetching and analysing are two horizons (v0.9.22 #311).** The app
-  **analyses** `LOOKBACK_YEARS = 5` back — every chart window, every `5Y`
-  label — but **fetches** `SCORE_HISTORY_YEARS = 6`, because the leaderboard's
-  score z-scores a metric against its own rolling history and the 1Y window
-  needs 252 + 1260 ≈ 1512 trading days of it. The boundary is
+- **Fetching and analysing are two horizons (v0.9.22 #311, widened v0.9.23
+  #322).** The app **analyses** `LOOKBACK_YEARS = 5` back — every chart window,
+  every `5Y` label — but **fetches** `score_history_years()`, which is
+  **derived**, not typed: `LOOKBACK_YEARS + the longest window stat_windows()
+  offers`, ten years today. Both boards score a metric against
+  `SCORE_SAMPLE_DAYS` of its own rolling history, so the deepest case needs the
+  longest window *plus* that sample — `5Y + 5Y` for the catalog table, `1Y + 5Y`
+  for the leaderboard. #311 wrote the leaderboard's case as the literal `6`,
+  which nothing checked against the windows on offer; deriving it means widening
+  `LOOKBACK_YEARS`, or adding a window within it, carries the fetch along
+  instead of leaving a quietly truncated sample behind. The boundary is
   `DashboardApp._analytics_window_start()`, and **every consumer goes through
   it**: with the two numbers equal a missed slice was harmless, and now it is a
-  six-year figure under a `5Y` label. The leaderboard's scorer is the one
-  documented exception that reads the unsliced frame. Three consumers had never
-  sliced at all — `since_inception_perf`, `calendar_return_table` and the
-  benchmark short-history caveat — because until #311 they never had to.
+  ten-year figure under a `5Y` label. The two scorers are the documented
+  exceptions that read the unsliced frame. Three consumers had never sliced at
+  all — `since_inception_perf`, `calendar_return_table` and the benchmark
+  short-history caveat — because until #311 they never had to.
   The rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
 - **Plotly auto-fits y-axis** on data replacement, so the bqplot-era

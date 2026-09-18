@@ -18,8 +18,8 @@ block** (two sections at 60:40 — a ranked **Leaderboard** of four metric
 columns with clickable rows, beside the **QIS Bulletin**, which switches
 between authored Commentary notes and New Launches) → a
 **top-level pill-button tab bar** with three
-tabs — **Platform** (a control bar over the all-catalog performance grid and a
-ranking rail down its left + a Platform-analytics card of Sunburst / Regime /
+tabs — **Platform** (one control bar over a full-width all-catalog performance
+grid + a Platform-analytics card of Sunburst / Regime /
 Factor-exposure charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
@@ -76,13 +76,18 @@ DataTables' RowGroup draws the classification tiers as **nested group headers**
 instead of three body columns repeating the same strings on every row. Which
 levels group is the user's choice (`UNIVERSE_GRID_GROUPABLE_FIELDS`, four
 chips) but the *nesting order is always the hierarchy's*, never the order
-they ticked; the grid shows **one stats window at a time**, chosen in the left
-rail and offering only what `LOOKBACK_YEARS` can serve. Clicking a
+they ticked; the grid shows **one stats window at a time**, chosen in the bar
+above it and offering only what `LOOKBACK_YEARS` can serve. Clicking a
 row opens that strategy in Single Strategy. Two rules hold underneath: **row
 contiguity at every grouping level is a correctness requirement**, because
-RowGroup only gathers adjacent rows, and **changing the window hides columns
-rather than dropping them**, so it cannot disturb the grouping or the
-selection. See `.claude/context/conventions.md`.
+RowGroup only gathers adjacent rows, and **the performance columns are hidden
+rather than dropped** when the window changes, so none of them recomputes —
+every window is measured once, up front. What a window change *does* disturb
+is the ranking: since v0.9.23 (#324) it is also the window the score is
+measured over, so the ranking column is renamed and the frame re-sorted, and
+the table is rebuilt the way a grouping change rebuilds it. The selected row
+does not survive that, which is inherent — the rows moved.
+See `.claude/context/conventions.md`.
 
 The commentary block is **two sections at 60:40** (epic #303, v0.9.22): the
 **Leaderboard** and the **QIS Bulletin**, each built from the same
@@ -101,8 +106,10 @@ reach the two controls built from `SHORT_WINDOW_OPTIONS`). **Ranking is by the
 score** (#310), which the section title says out loud
 (`(Ranked By Normalized 5Y Z-Score)`, built from `LOOKBACK_YEARS` rather than
 spelled) — each metric standardized against its *own* trailing history,
-which is why the app fetches `SCORE_HISTORY_YEARS = 6` while analytics stay at
-`LOOKBACK_YEARS = 5`; the raw value rides behind it in parentheses so a reader
+which is why the app **fetches** `score_history_years()` — the longest window
+the catalog offers plus the sample standardized behind it, ten years today —
+while analytics stay at `LOOKBACK_YEARS = 5`; the raw value rides behind it in
+parentheses so a reader
 can see what was standardized, and the sentiment colour sits on the score, which
 is what the row is read by. The asset-class-demeaned z-score is a different
 figure and stays where it belongs, on the Platform sunburst and the Z-Score
@@ -124,27 +131,28 @@ init error; and **Refresh invalidates while a chip re-slices** — neither the
 window chips nor the board chips issue BQL. This replaced the v0.8.x 16-card
 Market Superlatives board (#291); its metrics all live on in `src/stats/`.
 
-The Platform tab is **one composed surface** (epic #276, v0.9.21). Its controls
-sit in two containers of the same chrome, differing only in direction: a
-**horizontal bar above the table** (*Table view* — Group by + Window, the two
-controls that shape the rows) and a **rail down its left side** (*Z-Score
-ranking* — Metric / Window / Lookback). Both are built from one component
-(`control_bar` / `control_rail`, `src/layout/rails.py`) and carry `ChipGroup`
-chips. The table's box and the rail are **one fixed height** (`CATALOG_TABLE_HEIGHT`),
-set from the same token. Stretching was tried first and is wrong here: it makes
-whichever box holds more content set the row, so the table grew to the rail on a
-small catalog and the rail to the table on a large one. The table's internals
-fill that box — the search row and the row-count readout take what they need,
-the row area scrolls in the remainder — so the height is one number to tune with
-nothing to keep in step with it. Chips are pinned `flex: 0 0 auto`: a flex item
-shrinks before its container scrolls, so a rail with more chips than fit squeezed
-them flat instead of scrolling. A chip group is a **widget, not a row of buttons**: it presents a
-`W.Dropdown`'s `value` / `label` / `observe` surface, which is what let the
-z-score controls move into a rail as a restyle rather than a rewrite of
-everything that reads them, and its multi-select flavour reports **membership**
-so a tick order cannot reach the grouping. The table beside the rail takes
-the remaining width (`flex: 1 1 0%` **and** `min-width: 0`, or a wide column
-set pushes the rail off instead of scrolling inside the table), leads with a
+The Platform tab is **one composed surface** (epic #276, v0.9.21; finished in
+epic #321, v0.9.23). Every control the catalog table has sits in **one
+horizontal bar above it** (*Table view*): **Group by · Metric · Window**, in
+the order they act in — what the rows are gathered into, what is measured, over
+how long. The bar is `control_bar` (`src/layout/rails.py`) carrying `ChipGroup`
+chips. A second container — a fixed-width **rail down the table's left side**,
+holding the ranking's Metric / Window / Lookback — stood there until #324 fixed
+the score's sample and handed the window to the bar, #325 moved the Metric in
+after it, and #326 removed the emptied column and the component that built it.
+`.bbg-rail` is still the surface a bar is drawn on, which is why the class and
+the helper names read as they do; `src/layout/rails.py` carries that history.
+
+The table stands at a fixed `CATALOG_TABLE_HEIGHT` and runs the **full width**.
+Its internals fill that box — the search row and the row-count readout take what
+they need, the row area scrolls in the remainder — so the height is one number
+to tune with nothing to keep in step with it. Chips are pinned `flex: 0 0 auto`:
+a flex item shrinks before its container gives way, so a bar with more chips than
+fit squeezed them flat instead of wrapping. A chip group is a **widget, not a row
+of buttons**: it presents a `W.Dropdown`'s `value` / `label` / `observe` surface,
+which is what let the ranking controls change containers twice as restyles rather
+than rewrites of everything that reads them, and its multi-select flavour reports
+**membership** so a tick order cannot reach the grouping. The table leads with a
 top-left search box, draws its tiers as stepped cyan bands, and carries a
 **per-column filter row** beneath its header labels — one box per column, and
 the stat columns' boxes take a **comparison** (`>1`, `1..3`) rather than a
@@ -155,9 +163,26 @@ because every options change destroys and rebuilds the table and no traitlet
 carries typed text to the kernel. See `.claude/context/style.md` and
 `conventions.md`.
 
+The table's ranking column is **one honest number** (epic #321, v0.9.23). It is
+the selected **Metric** — Return / Sharpe / Calmar / Sortino, the Leaderboard's
+own set from `RANKABLE_METRICS`, so a reading carries between the two boards —
+over the selected **Window**, standardized against a fixed `SCORE_SAMPLE_DAYS`
+of that metric's own rolling history. The header says all four facts:
+**`Normalized 1Y Sharpe (5Y Z-Score)`**, with the `5Y` built from
+`LOOKBACK_YEARS` rather than typed. Three rules hold underneath. The column is
+**found by the key its builder returned**, never by parsing its header — five
+behaviours hang off knowing which column it is (width, ramp, DataTables kind,
+number renderer, filter units) and all five failed silently on a relabel (#323).
+A sample too short to be a five-year sample **renders a dash** rather than
+standardizing against the little it has (`CATALOG_SCORE_MIN_SAMPLE_DAYS`), so
+at the `5Y` window an index needs roughly 7.5 years of history to be ranked.
+And **Vol is not rankable here**: the ramp and the sort both say *higher is
+better*, which volatility is not — it stays on the sunburst and the
+Quantitative filter, where nothing claims a direction for it.
+
 ## Current version
 
-`v0.9.22` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.23` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
