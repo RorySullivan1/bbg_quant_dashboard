@@ -261,6 +261,10 @@ but not that the two sections *look* like one pair at a terminal's fonts.
 
 **The Leaderboard**
 
+- The section title reads `Leaderboard (Ranked By Normalized 5Y Z-Score)`, the
+  caption muted and smaller so it reads as a qualifier rather than a second
+  heading, and on the same baseline as the title rather than wrapping under it
+  at a narrow width.
 - Four columns — **Return / Sharpe / Calmar / Sortino** — each with a top block
   and a bottom block separated by a divider, and **centred** column titles.
 - Every row reads `rank · ticker · score (value)`: the score carries the

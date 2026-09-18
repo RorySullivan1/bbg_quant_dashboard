@@ -98,7 +98,9 @@ listing the catalog's top three and bottom three as
 **`rank · ticker · score (value)`** over the window its Window chips select
 (1W–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year does not
 reach the two controls built from `SHORT_WINDOW_OPTIONS`). **Ranking is by the
-score** (#310) — each metric standardized against its *own* trailing history,
+score** (#310), which the section title says out loud
+(`(Ranked By Normalized 5Y Z-Score)`, built from `LOOKBACK_YEARS` rather than
+spelled) — each metric standardized against its *own* trailing history,
 which is why the app fetches `SCORE_HISTORY_YEARS = 6` while analytics stay at
 `LOOKBACK_YEARS = 5`; the raw value rides behind it in parentheses so a reader
 can see what was standardized, and the sentiment colour sits on the score, which

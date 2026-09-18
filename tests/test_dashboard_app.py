@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 from src.config import (
     FACTOR_TICKERS,
+    LOOKBACK_YEARS,
     MONTH_WINDOW,
     NEW_LAUNCH_DAYS,
     QUARTER_WINDOW,
@@ -569,6 +570,29 @@ def test_the_pane_carries_the_launch_cards_built_from_the_catalog(app):
     assert "launches" in app.highlights_cache
     assert f"past {NEW_LAUNCH_DAYS} days" in app.commentary_pane.launches_w.value
     assert app.commentary_pane.active == "commentary"  # opens on the commentary
+
+
+def test_the_leaderboard_title_says_what_the_board_is_ranked_by(app):
+    """The rows carry a score and a raw value, and nothing else on screen says
+    the order comes from the former — so the section title does.
+
+    The years are read from `LOOKBACK_YEARS`, which is what
+    `LEADERBOARD_SCORE_SAMPLE_DAYS` is derived from. A literal `5Y` in the
+    caption would be free to drift from the sample the scorer standardizes
+    over, and a caption that misstates the basis is worse than none.
+    """
+    from src.config import LEADERBOARD_SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
+
+    (panel,) = app.commentary_box.children[1].children[0].children
+    title = panel.children[0].value
+
+    assert f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)" in title
+    # The caption is only true while the sample really is that many years.
+    assert LEADERBOARD_SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+
+    # The Bulletin has no basis to explain, so it carries no caption.
+    bulletin = app.commentary_box.children[1].children[1].children[0]
+    assert "Ranked By" not in bulletin.children[0].value
 
 
 def test_the_block_is_two_sections_at_sixty_forty(app):

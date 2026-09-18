@@ -583,6 +583,14 @@ class DashboardApp:
                     self.ranking_window_bar,
                     self.leaderboard.root,
                     height=COMMENTARY_BOX_HEIGHT,
+                    # The ranking basis, which the board cannot show: the rows
+                    # carry a score and a raw value, and nothing on screen
+                    # otherwise says the order comes from the former. Reads
+                    # `LOOKBACK_YEARS` because that is what
+                    # `LEADERBOARD_SCORE_SAMPLE_DAYS` is derived from — a
+                    # literal "5Y" here would be free to drift from the sample
+                    # the scorer actually standardizes over.
+                    note=f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)",
                 )
             ],
             layout=W.Layout(flex=f"1 1 {COMMENTARY_LEADERBOARD_SHARE}", min_width="0"),
