@@ -522,3 +522,88 @@ def test_the_block_is_a_fixed_leaderboard_beside_an_absorbing_pane(app):
     # The toggle sits above the board it re-ranks, inside the same column.
     assert board_col.children == (app.ranking_window_row, app.leaderboard.root)
     assert pane_col.children == (app.commentary_pane.root,)
+
+
+# --- two horizons: fetch six years, analyse five (#311) --------------------
+#
+# The fetch reaches a year further back than the app analyses, so the leaderboard's
+# score has its 5-year sample at the 1Y window (#310). That makes a missed slice a
+# six-year statistic under a `5Y` label — which is why the boundary is one helper
+# and why these tests exist.
+
+
+def test_the_fetch_reaches_further_back_than_the_analysis(app):
+    from src.config import LOOKBACK_YEARS, SCORE_HISTORY_YEARS
+
+    fetch_start = pd.Timestamp(app.universe_start)
+    analytics_start = app._analytics_window_start()
+
+    assert fetch_start == pd.Timestamp(app.today) - pd.DateOffset(
+        years=SCORE_HISTORY_YEARS
+    )
+    assert analytics_start == pd.Timestamp(app.today) - pd.DateOffset(
+        years=LOOKBACK_YEARS
+    )
+    assert fetch_start < analytics_start
+
+
+def test_no_call_site_computes_the_analytics_window_for_itself():
+    """The rule that stops a fifth consumer opting out by omission.
+
+    Four sites each carried their own copy of this expression. While the fetch
+    and the analysis window were the same number a missed slice was harmless;
+    now it is a year of extra history under a `5Y` label.
+    """
+    from pathlib import Path
+
+    import src.layout as layout
+
+    offset = "DateOffset(years=LOOKBACK_YEARS)"
+    hits = [
+        path.name
+        for path in Path(layout.__file__).parent.glob("*.py")
+        if offset in path.read_text(encoding="utf-8")
+    ]
+    # Only the helper itself, which is where the expression belongs.
+    assert hits == ["app.py"]
+    source = (Path(layout.__file__).parent / "app.py").read_text(encoding="utf-8")
+    assert source.count(offset) == 1
+    assert "def _analytics_window_start" in source
+
+
+def test_a_benchmark_with_a_full_analysis_window_draws_no_caveat(app):
+    """The caveat is about covering the *analysis*, not the fetch.
+
+    Measured against the six-year fetch start, a benchmark carrying a full five
+    years of history looks ~365 days late and would trip a warning it does not
+    deserve.
+    """
+    analytics_start = app._analytics_window_start()
+    full = pd.Series(
+        1.0, index=pd.bdate_range(analytics_start, pd.Timestamp(app.today))
+    )
+
+    assert app._benchmark_window_note(full) == ""
+
+    short = pd.Series(
+        1.0,
+        index=pd.bdate_range(
+            analytics_start + pd.Timedelta(days=400), pd.Timestamp(app.today)
+        ),
+    )
+    assert "History starts" in app._benchmark_window_note(short)
+
+
+def test_the_disclaimer_states_the_period_the_numbers_cover(app):
+    # It is the one place the window is asserted to the reader in prose, so it
+    # tracks the analytics window rather than the fetch.
+    analytics_start = app._analytics_window_start().date().isoformat()
+    disclaimers = [
+        child.value
+        for child in app.root.children
+        if getattr(child, "value", None) and "performance" in str(child.value).lower()
+    ]
+
+    assert disclaimers, "no performance disclaimer on the app root"
+    assert any(analytics_start in text for text in disclaimers)
+    assert not any(app.universe_start.isoformat() in text for text in disclaimers)

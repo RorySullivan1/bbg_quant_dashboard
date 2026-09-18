@@ -20,7 +20,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+#: How far back the app **analyses**: every chart window, every `5Y` label, and
+#: the slice `DashboardApp._analytics_window_start` hands each consumer.
 LOOKBACK_YEARS = 5
+
+#: How far back the app **fetches** (v0.9.22 #311). Longer than it analyses,
+#: because the leaderboard's score z-scores a metric against its own rolling
+#: history: at the 1Y window that is 252 (window) + 1260 (5y sample) = 1512
+#: trading days, about six calendar years. Widening `LOOKBACK_YEARS` instead
+#: would have turned every whole-lookback analytic on two other tabs into a
+#: 6-year figure.
+#:
+#: The pair only means anything together, and the boundary between them is
+#: `_analytics_window_start()`: everything reads the sliced frame except the
+#: leaderboard's scorer, which is the one deliberate exception.
+SCORE_HISTORY_YEARS = 6
+
 NEW_LAUNCH_DAYS = 30
 SHARPE_WINDOW = 252
 SHARPE_ZSCORE_WINDOW = 252
