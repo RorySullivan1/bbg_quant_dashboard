@@ -922,3 +922,45 @@ def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
     assert f"height: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
     assert f"top: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
     assert ".bbg-filter-input" in css
+
+
+# --- the table claims the width between the rails (#280) -------------------
+#
+# What is assertable here is that the rules exist and compose: the flex share,
+# the `min-width: 0` that lets the item shrink, and the width rules inside the
+# cell. Whether the result fits a real BQuant viewport is a measurement, and
+# it is on the manual checklist rather than here.
+
+
+def test_the_table_widget_takes_the_remaining_width_and_can_shrink():
+    from src.layout.grids import UniverseGrid
+
+    layout = UniverseGrid().widget.layout
+    assert layout.flex == "1 1 0%"
+    # The load-bearing half. A flex item's default `min-width: auto` refuses to
+    # shrink below its content, so a wide column set would push the rails off
+    # the row instead of scrolling inside the table.
+    assert layout.min_width == "0"
+
+
+def test_the_table_fills_its_cell_from_the_inside_too():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    rule = css.split("div.itables_anywidget.bbg-catalog,")[1].split("}")[0]
+    # The widget, DataTables' own wrapper, and the table itself. Widening the
+    # outer widget alone moves the dead space rather than removing it.
+    assert ".dt-container" in rule and "table.dataTable" in rule
+    assert "width: 100% !important" in rule
+
+
+def test_a_too_wide_column_set_scrolls_inside_the_table():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    # The same cell that makes the header sticky is the scroll container, so
+    # the overflow stays inside the table and the rails keep their place.
+    cell = css.split(".dt-layout-row.dt-layout-table .dt-layout-cell {")[1].split("}")[
+        0
+    ]
+    assert "overflow: auto" in cell

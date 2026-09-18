@@ -898,6 +898,13 @@ class UniverseGrid:
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
         self.widget.add_class(CATALOG_TABLE_CLASS)
+        # The table takes the width the two rails leave (#280). `min_width` is
+        # the load-bearing half: a flex item's default `min-width: auto`
+        # refuses to shrink below its content, so a wide column set pushes the
+        # rails off the row instead of scrolling inside the table. The layout
+        # looks correct without it until the columns grow, which is why it is
+        # set here rather than discovered later.
+        self.widget.layout = W.Layout(flex="1 1 0%", min_width="0", width="auto")
         #: Row position -> ticker for the frame currently rendered. The widget
         #: reports a clicked row by position, and the grid is the only object
         #: that knows which ticker that was, so the translation lives here

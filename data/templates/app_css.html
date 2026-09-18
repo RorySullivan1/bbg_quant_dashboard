@@ -457,6 +457,24 @@ div.itables_anywidget.bbg-catalog {
   border-radius: 6px;
   overflow: hidden;
 }
+/* The catalog table fills the width the two rails leave (#280). The flex
+   share and `min-width: 0` are set on the widget in `UniverseGrid`, because
+   they belong to the ipywidgets layout of the HBox child rather than to page
+   CSS. What is needed HERE is the inside of that cell: DataTables sizes the
+   table to its content, so without these the flex cell stretches and the
+   table sits in the left of it, still surrounded by dead space.
+
+   `.dt-container` is included because it is the element DataTables wraps its
+   own layout rows in — widening the outer widget and the table while leaving
+   the wrapper at content width moves the dead space rather than removing it.
+   The scroll on a too-wide column set stays INSIDE the table: the layout cell
+   already carries `overflow: auto` (see the sticky-header rules below), so
+   the rails keep their place instead of being pushed off the row. */
+div.itables_anywidget.bbg-catalog,
+div.itables_anywidget.bbg-catalog .dt-container,
+div.itables_anywidget.bbg-catalog table.dataTable {
+  width: 100% !important;
+}
 /* The catalog scrolls here rather than through DataTables' `scrollY`.
    `scrollY` renders the header in a second table and sizes the two once, at
    init; when the container settles to its real width afterwards — or when the
