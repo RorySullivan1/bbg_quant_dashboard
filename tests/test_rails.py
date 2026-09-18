@@ -8,10 +8,23 @@ that a chip group presents the `W.Dropdown` surface — `value`, `label`,
 
 from __future__ import annotations
 
+import ipywidgets as W
 import pytest
 from src.layout.chrome import _make_chip, _style_chip
 from src.layout.html import STYLE_CTX, render_template
-from src.layout.rails import ChipGroup, MultiChipGroup, RailSection, control_rail
+from src.layout.rails import (
+    ChipGroup,
+    MultiChipGroup,
+    RailSection,
+    control_bar,
+    control_rail,
+    section_panel,
+)
+from src.style import (
+    COMMENTARY_BOX_HEIGHT,
+    COMMENTARY_BULLETIN_SHARE,
+    COMMENTARY_LEADERBOARD_SHARE,
+)
 
 WINDOWS = ["1M", "6M", "1Y"]
 TIERS = [("Solution", "solution"), ("Category", "category"), ("Family", "family")]
@@ -19,6 +32,17 @@ TIERS = [("Solution", "solution"), ("Category", "category"), ("Family", "family"
 
 def _classes(widget) -> list[str]:
     return list(widget._dom_classes)
+
+
+def _declarations(css: str, selector: str) -> list[str]:
+    """The declaration lines of one rule, for per-property assertions."""
+    block = css.split(selector + " {", 1)[1].split("}", 1)[0]
+    return [line.strip() for line in block.splitlines() if line.strip()]
+
+
+def _panel(title: str = "Leaderboard", height: str = COMMENTARY_BOX_HEIGHT):
+    bar = control_bar(RailSection("Window", ChipGroup(WINDOWS)))
+    return section_panel(title, bar, W.HTML("body"), height=height)
 
 
 # --- chips: the state is a class, never inline colour ----------------------
@@ -181,3 +205,83 @@ def test_a_rail_without_a_title_renders_none():
     rail = control_rail(RailSection("Window", ChipGroup(WINDOWS)))
     assert not any("bbg-rail-title" in _classes(c) for c in rail.children)
     assert "bbg-rail-title" in render_template("app_css", **STYLE_CTX)
+
+
+# --- section_panel: the shape the Platform tab already had (#305) ----------
+#
+# The commentary block's two sections and the Platform tab's table surface all
+# read as title line -> chip row -> boxed body. These pin the shell so the
+# three cannot drift; #306 and #307 put the two sections into it.
+
+
+def test_a_panel_is_a_title_a_bar_and_a_boxed_body_in_that_order():
+    bar = control_bar(RailSection("Window", ChipGroup(WINDOWS)))
+    body = W.HTML("body")
+    panel = section_panel("Leaderboard", bar, body, height="300px")
+
+    title, mounted_bar, box = panel.children
+    assert mounted_bar is bar
+    assert list(box.children) == [body]
+    assert "Leaderboard" in title.value
+
+
+def test_a_panel_titles_itself_the_way_the_catalog_table_does():
+    """`grid_header`, not `_rail_title`.
+
+    The rail's title is the accent, uppercase, underlined type that belongs
+    *inside* a rail. Using it here would put two competing title treatments on
+    one screen, which is the drift this component exists to prevent.
+    """
+    panel = _panel()
+    title = panel.children[0]
+
+    assert "bbg-rail-title" not in _classes(title)
+    assert not any("bbg-rail-title" in _classes(c) for c in panel.children)
+    assert title.value == render_template(
+        "grid_header", **STYLE_CTX, text="Leaderboard"
+    )
+
+
+def test_the_box_is_typed_and_holds_the_height_it_was_given():
+    box = _panel(height="360px").children[2]
+
+    assert "bbg-section-box" in _classes(box)
+    assert box.layout.height == "360px"
+    # The load-bearing half: a flex child refuses to shrink below its content,
+    # so without this the box grows instead of scrolling inside its height.
+    assert box.layout.min_height == "0"
+
+
+def test_two_panels_built_from_one_token_stand_at_one_height():
+    # What #308's 60:40 row relies on: neither section can set the row for the
+    # other. Asserted here, where the component is, and not only where it is used.
+    left, right = _panel("Leaderboard"), _panel("QIS Bulletin")
+
+    assert left.children[2].layout.height == right.children[2].layout.height
+    assert left.children[2].layout.height == COMMENTARY_BOX_HEIGHT
+
+
+def test_the_box_wears_the_catalog_table_s_chrome_and_not_a_card_s():
+    css = render_template("app_css", **STYLE_CTX)
+    box = _declarations(css, ".bbg-app .bbg-section-box")
+
+    # The table's radius, not `.bbg-card`'s 8px — the two are a pixel apart on
+    # screen and a section that took the card's would read as a different kind
+    # of container standing beside the table.
+    assert "border-radius: 6px;" in box
+    assert "border-radius: 6px;" in _declarations(
+        css, "div.itables_anywidget.bbg-catalog"
+    )
+    assert "border-radius: 8px;" in _declarations(css, ".bbg-app .bbg-card")
+    # It scrolls the way a rail does, and for the same reason.
+    assert "min-height: 0;" in box
+    assert "overflow-y: auto;" in box
+    assert "min-height: 0;" in _declarations(css, ".bbg-app .bbg-rail")
+
+
+def test_the_two_shares_are_one_ratio():
+    left = int(COMMENTARY_LEADERBOARD_SHARE.rstrip("%"))
+    right = int(COMMENTARY_BULLETIN_SHARE.rstrip("%"))
+
+    assert (left, right) == (60, 40)
+    assert left + right == 100

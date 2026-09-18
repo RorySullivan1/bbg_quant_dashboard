@@ -135,6 +135,28 @@ CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 CATALOG_TABLE_HEIGHT: str = "506px"
 
 
+#: How tall a `section_panel`'s container stands in the commentary block — the
+#: Leaderboard's and the QIS Bulletin's, both from this one token, so neither
+#: can set the row for the other (the `CATALOG_TABLE_HEIGHT` argument, one
+#: block up).
+#:
+#: Sized from the leaderboard, the taller of the two: a column is its title
+#: plus six 22px rows plus the divider, ~180px with the board's own padding.
+#: 300px clears that and leaves the bulletin about five launch cards before it
+#: scrolls. It is one number for both sections, so it is one edit to tune once
+#: it has been seen at a terminal's fonts — which is where it should be tuned.
+COMMENTARY_BOX_HEIGHT: str = "300px"
+
+#: The commentary block's 60:40 split, as flex bases rather than pixels: the
+#: leaderboard's four columns have to stay readable at a terminal width, and a
+#: pixel basis would hold its width while the pane beside it took whatever was
+#: left (which is what #303 replaced — 620px reads as 60% at 1030px wide and
+#: 43% at 1440px). Declared here as a pair so the ratio is one fact, not two
+#: literals at a call site that could drift to 65:40.
+COMMENTARY_LEADERBOARD_SHARE: str = "60%"
+COMMENTARY_BULLETIN_SHARE: str = "40%"
+
+
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""
 

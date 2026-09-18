@@ -1,4 +1,5 @@
-"""Control rails and the chip groups they carry (v0.9.21, #277).
+"""Control rails, the chip groups they carry, and the section shell they sit in
+(v0.9.21 #277, v0.9.22 #305).
 
 A rail is the stylized side panel the Platform tab hangs its controls off:
 a fixed-width stack of headed sections, each section a heading plus one chip
@@ -31,6 +32,7 @@ import ipywidgets as W
 import traitlets as T
 
 from .chrome import _make_chip, _style_chip
+from .html import STYLE_CTX, render_template
 
 #: The fixed flex basis every rail is built at. The rails do not flex: the
 #: table between them absorbs the remaining width (#276, #280), so a rail that
@@ -221,6 +223,16 @@ def _rail_title(text: str) -> W.HTML:
     return title
 
 
+def _section_title(text: str) -> W.HTML:
+    """A section's heading line, in the catalog table's own type.
+
+    `grid_header` is what "All-catalog performance" is drawn with, so a section
+    titled this way reads as a sibling of the table rather than as a new kind
+    of thing.
+    """
+    return W.HTML(render_template("grid_header", **STYLE_CTX, text=html.escape(text)))
+
+
 def control_rail(
     *sections: RailSection,
     title: str | None = None,
@@ -279,3 +291,46 @@ def control_bar(*sections: RailSection, title: str | None = None) -> W.HBox:
     bar.add_class("bbg-rail")
     bar.add_class("bbg-rail-bar")
     return bar
+
+
+def section_panel(
+    title: str,
+    bar: W.Widget,
+    body: W.Widget,
+    *,
+    height: str,
+) -> W.VBox:
+    """A titled section: a heading line, a row of controls, then a boxed body.
+
+    Not a new idiom — the Platform tab is already assembled this way
+    (`universe_header` / `table_bar` / the bordered table), and the commentary
+    block's two sections have to match it and each other. Naming the
+    arrangement is what stops three copies of it drifting apart, the same
+    argument that gave `control_rail` and `control_bar` one component.
+
+    The title is the `grid_header` treatment the catalog table wears, not
+    `_rail_title`: that one is the accent, uppercase, underlined type that
+    belongs *inside* a rail, and using it here would put two competing title
+    styles on one screen.
+
+    `bar` arrives already built — `control_bar` brings its own bordered surface
+    and its own bottom margin, so this adds nothing around it.
+
+    **`height` is required.** The component owns the shape; the caller owns the
+    size. A default sized for the commentary block would quietly impose that
+    number on a Platform caller, which wants `CATALOG_TABLE_HEIGHT` instead.
+    The body scrolls inside that height rather than growing the row, which is
+    what `min_height="0"` buys: a flex child otherwise refuses to shrink below
+    its content, and the box grows instead of scrolling. (`.bbg-rail` scrolls
+    on exactly this pair; the catalog table needs a second, inner element only
+    because its header has to stay sticky against the scroller.)
+    """
+    box = W.Box(
+        [body],
+        layout=W.Layout(width="100%", height=height, min_height="0"),
+    )
+    box.add_class("bbg-section-box")
+    return W.VBox(
+        [_section_title(title), bar, box],
+        layout=W.Layout(width="100%", min_width="0"),
+    )
