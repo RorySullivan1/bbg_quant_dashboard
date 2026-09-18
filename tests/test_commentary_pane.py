@@ -16,8 +16,6 @@ from src.commentary import LaunchCard
 from src.config import NEW_LAUNCH_DAYS
 from src.layout.commentary_pane import CommentaryPane
 
-AS_OF = date(2026, 9, 17)
-
 
 def _launch(ticker: str, *, days_ago: int = 5) -> LaunchCard:
     return LaunchCard(
@@ -41,8 +39,8 @@ def _pane(notes_path: str | None = None) -> CommentaryPane:
         # A path that does not exist → the loader's "no notes yet" state, which
         # is what every test not about the notes wants: no dependency on
         # whatever `data/commentary.json` happens to hold.
-        return CommentaryPane(as_of=AS_OF, notes_path="does/not/exist.json")
-    return CommentaryPane(as_of=AS_OF, notes_path=notes_path)
+        return CommentaryPane(notes_path="does/not/exist.json")
+    return CommentaryPane(notes_path=notes_path)
 
 
 def _showing(pane: CommentaryPane):
@@ -292,3 +290,50 @@ def test_a_refresh_while_the_launches_board_is_open_leaves_it_open():
 
     assert _showing(pane) is pane.launches_w
     assert "AAA Index" in pane.launches_w.value
+
+
+# ---- the retirement (#308) -------------------------------------------------
+
+
+def test_nothing_reads_the_weekly_commentary_plumbing_any_more():
+    """The single author-written HTML blob is gone, and so is everything that
+    served it: its path constant, its loader, its renderer, its two templates
+    and the stylesheet block that made arbitrary author markup legible.
+
+    A grep rather than an import check, because what these leave behind when
+    half-retired is a name nothing calls — which no import of the survivors
+    would notice. `data/` is swept too: a `weekly_commentary.html` left on disk
+    is a file someone will keep editing and wonder why it never shows.
+    """
+    from pathlib import Path
+
+    import src
+
+    root = Path(src.__file__).resolve().parent.parent
+    retired = (
+        "WEEKLY_COMMENTARY_PATH",
+        "_load_weekly_commentary",
+        "_render_weekly_commentary",
+        "weekly_commentary",
+        "bbg-commentary-body",
+    )
+    searched = [
+        path
+        for folder in ("src", "tests", "data")
+        for path in (root / folder).rglob("*")
+        if path.is_file()
+        and path.suffix in {".py", ".html", ".json"}
+        and "__pycache__" not in path.parts
+    ]
+    assert len(searched) > 20  # the sweep is not vacuous
+
+    hits = {
+        f"{path.relative_to(root)}:{name}"
+        for path in searched
+        for name in retired
+        if name in path.read_text(encoding="utf-8")
+    }
+    # This file names them, which is the one place they are allowed to appear.
+    hits = {hit for hit in hits if not hit.startswith("tests/test_commentary_pane.py")}
+    assert hits == set()
+    assert not (root / "data" / "weekly_commentary.html").exists()

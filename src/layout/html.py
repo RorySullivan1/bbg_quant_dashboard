@@ -14,7 +14,6 @@ from __future__ import annotations
 import html
 import re
 from collections.abc import Sequence
-from datetime import date
 from functools import cache
 from pathlib import Path
 
@@ -25,7 +24,6 @@ from ..config import (
     NEW_LAUNCH_DAYS,
     PROFILE_CARD_FIELDS,
     TEMPLATES_DIR,
-    WEEKLY_COMMENTARY_PATH,
     catalog_field,
     field_label,
 )
@@ -121,21 +119,6 @@ def _load_disclaimer(path: Path, **placeholders: str) -> str:
     if not path.exists():
         return ""
     return _substitute(path.read_text(encoding="utf-8"), placeholders)
-
-
-def _load_weekly_commentary() -> str:
-    if not WEEKLY_COMMENTARY_PATH.exists():
-        return render_template("weekly_commentary_fallback", **STYLE_CTX)
-    return WEEKLY_COMMENTARY_PATH.read_text(encoding="utf-8")
-
-
-def _render_weekly_commentary(body_html: str, as_of: date) -> str:
-    return render_template(
-        "weekly_commentary",
-        **STYLE_CTX,
-        as_of=as_of.isoformat(),
-        body_html=body_html,
-    )
 
 
 def _render_empty_card(message: str) -> str:
