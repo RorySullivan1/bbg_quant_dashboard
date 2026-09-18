@@ -106,10 +106,13 @@ sit in two containers of the same chrome, differing only in direction: a
 controls that shape the rows) and a **rail down its left side** (*Z-Score
 ranking* — Metric / Window / Lookback). Both are built from one component
 (`control_bar` / `control_rail`, `src/layout/rails.py`) and carry `ChipGroup`
-chips. The rail is stretched to the table's full height and capped at the
-table's own scroll height (`CATALOG_TABLE_MAX_HEIGHT`), so the two stand level
-whichever is taller; the bar drops that cap, since a cap exists to keep a
-*column* level. A chip group is a **widget, not a row of buttons**: it presents a
+chips. The rail is levelled with the table by being **stretched** by the row, never by
+sharing a height constant: `CATALOG_SCROLL_MAX_HEIGHT` bounds the table's scroll
+*cell*, while the widget also carries the search row and the row-count readout,
+so a rail capped at that value renders visibly short (it did, on the first
+render). Chips are pinned `flex: 0 0 auto` for the same family of reason — a
+flex item shrinks before its container scrolls, so a rail with more chips than
+fit squeezed them flat instead of scrolling. A chip group is a **widget, not a row of buttons**: it presents a
 `W.Dropdown`'s `value` / `label` / `observe` surface, which is what let the
 z-score controls move into a rail as a restyle rather than a rewrite of
 everything that reads them, and its multi-select flavour reports **membership**

@@ -167,13 +167,22 @@ code.
   active. `text-align` alone does **not** left-align a Jupyter button — the
   widget renders a flex container, so `justify-content` is set with it.
 
-**The rail stands the table's height.** `.bbg-rail` caps at
-`CATALOG_TABLE_MAX_HEIGHT` — the same token as the catalog table's own scroll
-cell — and the row is `align_items: stretch`, so the rail and the table stand
-level instead of each sizing to its content, and either one scrolls internally
-past it. Written as two values they would drift and the row would step. The
-bar overrides the cap to `none`: it is not a column, and nothing is level
-with it.
+**The rail stands the table's height by stretching, never by a cap.** The row
+is `align_items: stretch`, so the rail takes the height the table sets, and
+`.bbg-rail` carries `min-height: 0` + `overflow-y: auto` — which is what lets a
+stretched flex item scroll rather than grow the row.
+
+Two mistakes here are worth keeping written down, because both shipped and both
+looked like styling bugs:
+
+- **Do not size the rail from `CATALOG_SCROLL_MAX_HEIGHT`.** That token bounds
+  the table's scroll *cell*; the widget is also carrying the search row above
+  it and the row-count readout below, roughly 70px more. A rail capped at the
+  cell's height renders visibly **shorter** than the table beside it.
+- **Chips must not shrink.** A flex item shrinks before its container scrolls,
+  so a rail holding more chips than fit squeezed every chip flat instead of
+  showing a scrollbar. `.bbg-chip`, `.bbg-rail-heading` and `.bbg-rail-title`
+  are pinned `flex: 0 0 auto`.
 
 **The active state is a class, never inline `.style`.** `_make_chip` /
 `_style_chip` (`chrome.py`) toggle `is-active`, exactly as the tab-button pair

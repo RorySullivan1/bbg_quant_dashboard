@@ -119,12 +119,15 @@ class Color(StrEnum):
 #: row parked over the labels it belongs to.
 CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 
-#: How tall the Platform row stands: the catalog table's scroll cap, and the
-#: same cap on the control rails beside it, so the table and any open rail are
-#: **one height** rather than each sizing to its own content. Either one scrolls
-#: internally past it. One token because "the same height" is the requirement —
-#: written twice, the two would drift and the row would step.
-CATALOG_TABLE_MAX_HEIGHT: str = "360px"
+#: How tall the catalog table's **scroll cell** may grow before the rows scroll
+#: inside it.
+#:
+#: Not the height of the table *widget*, which is this plus the search row above
+#: and the row-count readout below — roughly 70px more. Sizing anything beside
+#: the table to this value therefore renders it visibly SHORT, which is exactly
+#: how the ranking rail was first built: it is level with the table by being
+#: stretched by the row, never by sharing this number.
+CATALOG_SCROLL_MAX_HEIGHT: str = "360px"
 
 
 class Font(StrEnum):

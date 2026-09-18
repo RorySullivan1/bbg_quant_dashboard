@@ -29,7 +29,7 @@ from ..config import (
 )
 from ..style import (
     CATALOG_HEADER_ROW_HEIGHT,
-    CATALOG_TABLE_MAX_HEIGHT,
+    CATALOG_SCROLL_MAX_HEIGHT,
     Color,
     Font,
     FontSize,
@@ -80,9 +80,9 @@ STYLE_CTX = {
     # of the filter row beneath it (#285) — one value, used by both rules, so
     # they cannot drift apart and leave the filter row covering the labels.
     "filter_row_top": CATALOG_HEADER_ROW_HEIGHT,
-    # The Platform row's height: the table's scroll cap and the rails' cap are
-    # the same value, so the three containers stand level.
-    "table_max_height": CATALOG_TABLE_MAX_HEIGHT,
+    # The catalog table's scroll cap — its cell only. Nothing beside the table
+    # is sized from it; the rail is levelled by stretching (see `.bbg-rail`).
+    "scroll_max_height": CATALOG_SCROLL_MAX_HEIGHT,
     "red": Color.RED_600,
     "green": Color.GREEN_600,
 }

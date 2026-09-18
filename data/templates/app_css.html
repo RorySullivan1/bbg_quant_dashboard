@@ -256,18 +256,30 @@
   border: 1px solid {{border_color}};
   border-radius: 8px;
   padding: 10px 10px 6px 10px;
-  /* Level with the table: the row stretches its children, and this cap is the
-     table's own, so neither a rail nor the table can drive the row taller than
-     the other. A rail with more chips than fit scrolls, exactly as the table
-     does past the same height. */
-  max-height: {{table_max_height}};
+  /* Level with the table by STRETCHING, not by a cap. The row is
+     `align-items: stretch`, so the rail takes the row's height — which the
+     table sets — and that is the only way the two can agree: the table's own
+     `max-height` governs its scroll *cell*, while the widget is also carrying
+     the search row above it and the row-count readout below, so a rail capped
+     at the cell's height renders visibly SHORTER than the table beside it.
+     `min-height: 0` is what lets a stretched flex item scroll instead of
+     growing the row. */
+  min-height: 0;
   overflow-y: auto;
+}
+/* Chips keep their size. A flex item shrinks before its container scrolls, so
+   a rail holding more chips than fit squeezed every chip flat rather than
+   giving them a scrollbar — the squeeze looked like a styling bug and was
+   really the default `flex-shrink: 1`. */
+.bbg-app .bbg-chip,
+.bbg-app .bbg-rail-heading,
+.bbg-app .bbg-rail-title {
+  flex: 0 0 auto !important;
 }
 /* The same rail turned on its side, for the controls that sit ABOVE the table.
    It keeps `.bbg-rail`'s surface and border — only the direction changes — and
    drops the height cap, which exists to keep a *column* level with the table. */
 .bbg-app .bbg-rail-bar {
-  max-height: none;
   overflow: visible;
   padding: 8px 12px;
   margin: 0 0 8px 0;
@@ -527,7 +539,7 @@ div.itables_anywidget .dt-layout-row.dt-layout-table {
    whatever the row does. Scrolling the row instead left the header scrolling
    away with the body. */
 div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
-  max-height: {{table_max_height}};
+  max-height: {{scroll_max_height}};
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs

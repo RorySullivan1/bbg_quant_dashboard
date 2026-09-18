@@ -311,20 +311,42 @@ def test_the_bar_lays_its_sections_across(app):
         assert "bbg-chip-row" in chips._dom_classes
 
 
-def test_the_ranking_rail_stands_the_table_s_height(app):
-    from src.layout.html import STYLE_CTX, render_template
-    from src.style import CATALOG_TABLE_MAX_HEIGHT
+def _declarations(css: str, selector: str) -> list[str]:
+    """The property declarations of one rule, with comment text left out."""
+    body = css.split(selector + " {")[1].split("}")[0]
+    lines = [line.strip() for line in body.splitlines()]
+    return [line for line in lines if line.endswith(";") and ":" in line]
 
-    # Stretched by the row, and capped at the table's own scroll height, so the
-    # two stand level whichever is taller.
+
+def test_the_ranking_rail_is_levelled_by_stretching_not_by_a_cap(app):
+    from src.layout.html import STYLE_CTX, render_template
+
+    # The row stretches its children, and the rail takes the height the table
+    # sets. A cap cannot do this job: `CATALOG_SCROLL_MAX_HEIGHT` bounds the
+    # table's scroll CELL, while the widget also carries the search row above
+    # and the row-count readout below — so a rail capped at the cell's height
+    # renders visibly shorter than the table it sits beside.
     assert app.universe_grid_row.layout.align_items == "stretch"
     assert app.ranking_rail.layout.flex == f"0 0 {RAIL_WIDTH}"
+
     css = render_template("app_css", **STYLE_CTX)
-    rail = css.split(".bbg-app .bbg-rail {")[1].split("}")[0]
-    assert f"max-height: {CATALOG_TABLE_MAX_HEIGHT}" in rail
-    # ...but the bar above is not a column, so the cap does not apply to it.
-    bar = css.split(".bbg-app .bbg-rail-bar {")[1].split("}")[0]
-    assert "max-height: none" in bar
+    rail = _declarations(css, ".bbg-app .bbg-rail")
+    assert not any(d.startswith("max-height") for d in rail)
+    # What lets a stretched flex item scroll rather than grow the row.
+    assert "min-height: 0;" in rail
+    assert "overflow-y: auto;" in rail
+
+
+def test_the_chips_never_shrink_to_fit(app):
+    from src.layout.html import STYLE_CTX, render_template
+
+    # A flex item shrinks before its container scrolls, so a rail holding more
+    # chips than fit squeezed every chip flat instead of giving them a
+    # scrollbar. That read as a styling bug and was the default `flex-shrink`.
+    css = render_template("app_css", **STYLE_CTX)
+    rule = ".bbg-app .bbg-chip,\n.bbg-app .bbg-rail-heading,\n.bbg-app .bbg-rail-title"
+    assert rule in css
+    assert "flex: 0 0 auto !important;" in _declarations(css, rule)
 
 
 def test_both_containers_carry_a_title(app):
