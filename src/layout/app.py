@@ -111,7 +111,14 @@ from .multi_strategy import (
 )
 from .panes import SingleAnalysisPane, _make_analysis_pane
 from .platform import PlatformAnalytics
-from .rails import ChipGroup, MultiChipGroup, RailSection, control_rail
+from .rails import (
+    ChipGroup,
+    DockEntry,
+    MultiChipGroup,
+    RailDock,
+    RailSection,
+    control_rail,
+)
 from .selection import SelectionSlice
 from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
 from .state import DashboardState
@@ -126,6 +133,12 @@ from .state import DashboardState
 # while Refresh must thread its blocking work and hold the overlay visible for
 # at least this long, or an instant refetch hides it in the same frame.
 _OVERLAY_PAINT_DELAY_S = 0.35
+
+#: The two Platform rails' titles. Each names its rail *and* the dock button
+#: that opens it, so the button a user pressed and the panel that appears say
+#: the same word — spelled once here rather than at both call sites.
+LEFT_RAIL_TITLE = "Table view"
+RIGHT_RAIL_TITLE = "Z-Score ranking"
 
 
 class DashboardApp:
@@ -427,10 +440,16 @@ class DashboardApp:
         is measured across them. They were in different places and different
         idioms before — checkboxes above the table, a radio beside it — and
         nothing said they belonged together.
+
+        Titled, like the Z-Score rail: two rails that sit either side of the
+        same table and are opened from the same strip should read the same way,
+        and one of them wearing a title while the other went bare was the only
+        thing telling them apart.
         """
         return control_rail(
             RailSection("Group by", self._build_group_chips()),
             RailSection("Window", self._build_window_chips()),
+            title=LEFT_RAIL_TITLE,
         )
 
     def _build_right_rail(self) -> W.VBox:
@@ -449,7 +468,7 @@ class DashboardApp:
             RailSection("Metric", self.z_metric_chips),
             RailSection("Window", self.z_window_chips),
             RailSection("Lookback", self.z_lookback_chips),
-            title="Z-Score ranking",
+            title=RIGHT_RAIL_TITLE,
         )
 
     def _build_group_chips(self) -> MultiChipGroup:
@@ -573,15 +592,23 @@ class DashboardApp:
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
-        # The three-column Platform shell (#278, #279): a control rail on each
-        # side of the table, so the controls read as the table's own axes
-        # rather than as another row of widgets above it (#273). Nothing sits
-        # between the header and the table any more.
+        # The Platform shell: both rails behind one left-docked strip of
+        # toggle buttons, then the table. #278/#279 put a fixed rail on each
+        # side and #276 settled collapsible rails as out of scope; this
+        # reverses that deliberately — the rails hold width the table wants,
+        # and a closed panel hands it straight back because the row is flex.
+        #
+        # `stretch`, not `flex-start`: the strip, an open panel and the table
+        # stand the same height instead of each sizing to its own content.
         self.left_rail = self._build_left_rail()
         self.right_rail = self._build_right_rail()
+        self.rail_dock = RailDock(
+            DockEntry(LEFT_RAIL_TITLE, self.left_rail),
+            DockEntry(RIGHT_RAIL_TITLE, self.right_rail),
+        )
         self.universe_grid_row = W.HBox(
-            [self.left_rail, self.universe_grid.widget, self.right_rail],
-            layout=W.Layout(width="100%", align_items="flex-start"),
+            [self.rail_dock.root, self.universe_grid.widget],
+            layout=W.Layout(width="100%", align_items="stretch"),
         )
         platform_panel = W.VBox(
             [

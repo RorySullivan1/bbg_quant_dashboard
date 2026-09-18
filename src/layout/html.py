@@ -27,7 +27,14 @@ from ..config import (
     catalog_field,
     field_label,
 )
-from ..style import CATALOG_HEADER_ROW_HEIGHT, Color, Font, FontSize, StatusTone
+from ..style import (
+    CATALOG_HEADER_ROW_HEIGHT,
+    CATALOG_TABLE_MAX_HEIGHT,
+    Color,
+    Font,
+    FontSize,
+    StatusTone,
+)
 
 # Shared style-token vocabulary spread into every template's context, so the
 # `data/templates/*.html` files carry placeholders ({{navy}}, {{label_size}},
@@ -73,6 +80,9 @@ STYLE_CTX = {
     # of the filter row beneath it (#285) — one value, used by both rules, so
     # they cannot drift apart and leave the filter row covering the labels.
     "filter_row_top": CATALOG_HEADER_ROW_HEIGHT,
+    # The Platform row's height: the table's scroll cap and the rails' cap are
+    # the same value, so the three containers stand level.
+    "table_max_height": CATALOG_TABLE_MAX_HEIGHT,
     "red": Color.RED_600,
     "green": Color.GREEN_600,
 }
