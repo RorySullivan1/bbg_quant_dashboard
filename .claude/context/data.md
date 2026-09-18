@@ -85,6 +85,40 @@ excluded) — as `meta_all`, then **prunes indices with no recent price movement
 `stats.active_columns`) into the displayed `meta`. `meta_all` still drives the
 single fetch, so a resumed ticker can re-enter on a later Refresh.
 
+## Data contract — `data/commentary.json` (v0.9.22 #304)
+
+The QIS Bulletin's authored notes: a JSON **list**, one object per note, read by
+`load_commentary_notes` (`src/commentary.py`). It replaced the single
+`weekly_commentary.html` blob, whose "as of" date came from the app rather than
+from the content — so a note written last week was dated today, and there could
+only ever be one.
+
+```json
+[
+  {
+    "title": "Rates carry leads the week",
+    "date": "2026-09-15",
+    "text": "Carry strategies added 1.2%.\n\nMomentum lagged on the reversal."
+  }
+]
+```
+
+- **`text` is plain text, not HTML.** The loader carries it verbatim and the
+  renderer escapes it, so a `<` or an `&` in a note shows as typed. A blank line
+  starts a paragraph; that is the whole formatting vocabulary.
+- **A note dates itself.** Notes render **newest first** by `date`; two notes on
+  one day keep file order (the sort is stable).
+- **Unknown keys are ignored**, so a field added later cannot break an older
+  build reading a newer file.
+- **Nothing here may raise** — the loader runs while the app is being built. A
+  **missing file is silent** (a catalog with no commentary yet is an ordinary
+  state, and a warning on every build is how a real warning gets tuned out).
+  Anything else **warns and degrades**: an unreadable file, invalid JSON or a
+  non-list payload yield no notes, and a single malformed note is **skipped by
+  name** rather than voiding the file — one typo in an old note must not take
+  today's note off the screen. Same shape as `UserBenchmarkStore.load`, which
+  likewise filters bad members out of a good list.
+
 ## BQL contract
 
 The BQL request shape, ticker-suffix rules, case-insensitive column
