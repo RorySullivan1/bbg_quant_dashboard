@@ -19,7 +19,7 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 #: How far back the app **analyses**: every chart window, every `5Y` label, and
 #: the slice `DashboardApp._analytics_window_start` hands each consumer.
@@ -71,6 +71,49 @@ SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
 #: NaN and infinite readings before ranking, and changing what its board shows
 #: was out of scope for #324.
 CATALOG_SCORE_MIN_SAMPLE_DAYS = SCORE_SAMPLE_DAYS // 2
+
+#: The metrics the app ranks by, in display order, as (metric key, display
+#: label). One set for both boards (#328): the Leaderboard's four columns and
+#: the catalog table's ranking column are the same kind of number — a metric
+#: z-scored against `SCORE_SAMPLE_DAYS` of its own rolling history — so a
+#: reader should be able to carry a reading from one to the other.
+#:
+#: The catalog's chips used to offer Sharpe / Sortino / Return / **Vol**, which
+#: was not just a different set. The ranking column is painted on a symmetric
+#: diverging ramp — red below zero, green above — and sorted descending, and
+#: both say *higher is better*. That is true of these four and false of
+#: volatility: an index two standard deviations above its own vol history
+#: rendered bright green at the top of the table, which reads as a
+#: commendation. Vol is still available to the sunburst and the Quantitative
+#: filter, where nothing claims a direction for it.
+#:
+#: **Bounded by what can be scored.** Every key here needs a rolling series in
+#: `stats.rolling._ROLLING_METRICS` or `rolling_metric_zscore` raises — a fifth
+#: metric added here without one fails in CI rather than on a user's click.
+#: (Lived in `commentary.py` as `LEADERBOARD_METRICS` until #328, where only
+#: the board could reach it.)
+RANKABLE_METRICS: tuple[tuple[str, str], ...] = (
+    ("return", "Return"),
+    ("sharpe", "Sharpe"),
+    ("calmar", "Calmar"),
+    ("sortino", "Sortino"),
+)
+
+#: The metric the catalog's ranking column is scored on before anyone touches
+#: a chip. One of `RANKABLE_METRICS`, validated by `rankable_metric_chips`.
+DEFAULT_RANKING_METRIC: str = "sharpe"
+
+
+def rankable_metric_chips() -> list[tuple[str, Any]]:
+    """`RANKABLE_METRICS` as a `ChipGroup`/`Dropdown` options list.
+
+    The declaration is (key, label), which is the order a *builder* wants; a
+    widget wants (label, value). Flipping it here rather than at the widget
+    keeps the flip from being respelled the next time something offers this
+    choice.
+    """
+    return [(label, key) for key, label in RANKABLE_METRICS]
+
 
 #: How many indices each leaderboard column lists at the top and at the
 #: bottom, so "top 3 / bottom 3" is spelled once, not in the builder and again

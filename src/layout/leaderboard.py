@@ -1,6 +1,6 @@
 """The commentary block's ranked leaderboard (v0.9.20, #288).
 
-Four columns — one per `LEADERBOARD_METRICS` entry — each listing the catalog's
+Four columns — one per `RANKABLE_METRICS` entry — each listing the catalog's
 top and bottom few indices as `rank · ticker · value` rows over the window the
 board is titled with. Clicking a row hands its ticker to `on_pick`, the same
 contract `UniverseGrid` uses to open a strategy in the Single Strategy tab: a
@@ -35,8 +35,8 @@ from collections.abc import Callable
 
 import ipywidgets as W
 
-from ..commentary import LEADERBOARD_METRICS, LeaderboardColumn, LeaderboardRow
-from ..config import LEADERBOARD_ROWS
+from ..commentary import LeaderboardColumn, LeaderboardRow
+from ..config import LEADERBOARD_ROWS, RANKABLE_METRICS
 from ..style import Color, Sentiment
 from .html import STYLE_CTX, render_template
 
@@ -220,12 +220,12 @@ class Leaderboard:
         # No title of its own since #306: `section_panel` heads the section and
         # the Window chips beside it say which window is on screen, so a
         # `Ranking · Past Month` line here would be the third thing saying so.
-        # Keyed by metric, in `LEADERBOARD_METRICS` order, so `update` can match
+        # Keyed by metric, in `RANKABLE_METRICS` order, so `update` can match
         # the columns it is handed by key rather than by position and the titles
         # are never re-spelled here.
         self.columns: dict[str, _MetricColumn] = {
             metric: _MetricColumn(metric, label, rows=rows, notify=self._pick)
-            for metric, label in LEADERBOARD_METRICS
+            for metric, label in RANKABLE_METRICS
         }
         self.body = W.HBox(
             [column.root for column in self.columns.values()],

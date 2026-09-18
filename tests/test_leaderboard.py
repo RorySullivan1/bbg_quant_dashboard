@@ -13,8 +13,8 @@ descriptions, tooltips, the value colour and each row's visibility.
 from __future__ import annotations
 
 import pytest
-from src.commentary import LEADERBOARD_METRICS, LeaderboardColumn, LeaderboardRow
-from src.config import LEADERBOARD_ROWS
+from src.commentary import LeaderboardColumn, LeaderboardRow
+from src.config import LEADERBOARD_ROWS, RANKABLE_METRICS
 from src.layout.leaderboard import Leaderboard
 from src.style import Color, Sentiment
 
@@ -55,7 +55,7 @@ def _column(metric: str, label: str, *, top: int = 3, bottom: int = 3):
 
 
 def _full_board(**kw) -> tuple[LeaderboardColumn, ...]:
-    return tuple(_column(metric, label, **kw) for metric, label in LEADERBOARD_METRICS)
+    return tuple(_column(metric, label, **kw) for metric, label in RANKABLE_METRICS)
 
 
 def _visible(slot) -> bool:
@@ -68,9 +68,9 @@ def _visible(slot) -> bool:
 def test_board_has_a_column_per_metric_with_fixed_slots():
     board = Leaderboard()
 
-    assert list(board.columns) == [metric for metric, _ in LEADERBOARD_METRICS]
+    assert list(board.columns) == [metric for metric, _ in RANKABLE_METRICS]
     for (metric, label), column in zip(
-        LEADERBOARD_METRICS, board.columns.values(), strict=True
+        RANKABLE_METRICS, board.columns.values(), strict=True
     ):
         assert column.metric == metric
         # The title is rendered from the declared label, not re-spelled here.

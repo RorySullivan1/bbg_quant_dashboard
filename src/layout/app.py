@@ -36,6 +36,7 @@ from ..bql_client import _DEFAULT_CACHE, TickersUnresolved, fetch_prices
 from ..commentary import build_launch_cards, build_leaderboard, window_returns
 from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
+    DEFAULT_RANKING_METRIC,
     FACTOR_TICKERS,
     LEADERBOARD_WINDOW_DAYS,
     LEADERBOARD_WINDOW_OPTIONS,
@@ -48,6 +49,7 @@ from ..config import (
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     field_label,
+    rankable_metric_chips,
     score_history_years,
     stat_windows,
     universe_grid_default_window,
@@ -407,14 +409,12 @@ class DashboardApp:
         performance columns are visible — against a fixed five-year sample, so
         the only thing left to choose is which metric.
         """
+        # The same four the Leaderboard's columns read, from one declaration
+        # (#328) — the two boards rank the same catalog by the same kind of
+        # number, so a reader should be able to carry a reading between them.
         self.z_metric_chips = ChipGroup(
-            [
-                ("Sharpe", "sharpe"),
-                ("Sortino", "sortino"),
-                ("Return", "return"),
-                ("Vol", "vol"),
-            ],
-            value="sharpe",
+            rankable_metric_chips(),
+            value=DEFAULT_RANKING_METRIC,
         )
         # Built here rather than inside `_build_table_bar`, which runs after
         # `PlatformAnalytics` is constructed: since #324 the Window is a

@@ -423,6 +423,70 @@ def test_the_ranking_header_says_all_four_facts(app):
     app.window_chips.value = universe_grid_default_window()
 
 
+def test_the_catalog_and_the_leaderboard_rank_by_the_same_metrics(app):
+    """One set, one declaration (#328).
+
+    The two boards rank the same catalog by the same kind of number, so a
+    reader should be able to carry a reading from one to the other. They were
+    Return/Sharpe/Calmar/Sortino on the board and Sharpe/Sortino/Return/Vol on
+    the table, spelled in two places.
+    """
+    from src.config import RANKABLE_METRICS
+
+    assert RANKABLE_METRICS == (
+        ("return", "Return"),
+        ("sharpe", "Sharpe"),
+        ("calmar", "Calmar"),
+        ("sortino", "Sortino"),
+    )
+    # The table's chips, in the same order...
+    assert list(app.z_metric_chips.labels) == [label for _, label in RANKABLE_METRICS]
+    # ...and the board's columns.
+    assert list(app.leaderboard.columns) == [key for key, _ in RANKABLE_METRICS]
+
+
+def test_the_catalog_cannot_rank_by_volatility(app):
+    """Vol is not merely off the list — the column could not have meant it.
+
+    The ranking column is painted on a symmetric red→green ramp and sorted
+    descending, and both say *higher is better*. An index two standard
+    deviations above its own vol history rendered bright green at the top of
+    the table (#328).
+    """
+    from src.config import RANKABLE_METRICS
+
+    assert "vol" not in [key for key, _ in RANKABLE_METRICS]
+    assert "Vol" not in app.z_metric_chips.labels
+    with pytest.raises(ValueError):
+        app.z_metric_chips.value = "vol"
+
+
+def test_ranking_by_calmar_rescores_the_table(app):
+    from src.config import LOOKBACK_YEARS
+
+    app.z_metric_chips.value = "calmar"
+    assert _ranking_columns(app) == [
+        f"Normalized 1Y Calmar ({LOOKBACK_YEARS}Y Z-Score)"
+    ]
+    app.z_metric_chips.value = "sharpe"
+
+
+def test_the_sunburst_keeps_its_own_metric_list(app):
+    """#328 changed the catalog's chips, not every metric control in the app.
+
+    The sunburst colours its arcs on the same diverging scale and so carries
+    the same latent reading for Vol — but it is a different control on a
+    different surface, and #321 holds it out of scope deliberately rather than
+    fixing it quietly here.
+    """
+    assert [label for label, _ in app.analytics.sb_metric_dd.options] == [
+        "Sharpe",
+        "Sortino",
+        "Return",
+        "Vol",
+    ]
+
+
 def test_the_catalog_has_no_lookback_and_no_second_window(app):
     """The score's sample is fixed, so there is nothing left to choose (#324).
 

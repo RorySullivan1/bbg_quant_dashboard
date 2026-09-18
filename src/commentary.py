@@ -38,6 +38,7 @@ from .config import (
     LEADERBOARD_ROWS,
     LEADERBOARD_WINDOW_DAYS,
     NEW_LAUNCH_DAYS,
+    RANKABLE_METRICS,
     SCORE_SAMPLE_DAYS,
     TRADING_DAYS_PER_YEAR,
 )
@@ -211,17 +212,6 @@ class LeaderboardColumn:
     bottom: tuple[LeaderboardRow, ...]
 
 
-#: The leaderboard's columns in display order, as (metric key, display label).
-#: Declared once, here, so the widget titles its columns from the data it is
-#: handed rather than respelling the labels.
-LEADERBOARD_METRICS: tuple[tuple[str, str], ...] = (
-    ("return", "Return"),
-    ("sharpe", "Sharpe"),
-    ("calmar", "Calmar"),
-    ("sortino", "Sortino"),
-)
-
-
 def _sign_sentiment(value: float) -> Sentiment:
     if value > 0:
         return Sentiment.POSITIVE
@@ -362,7 +352,7 @@ def build_leaderboard(
             name_of=name_of,
             rows=rows,
         )
-        for metric, label in LEADERBOARD_METRICS
+        for metric, label in RANKABLE_METRICS
     )
 
 

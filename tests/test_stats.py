@@ -477,6 +477,28 @@ def test_rolling_metric_zscore_dispatches_each_metric(multiyear_prices):
         assert z.name == f"{metric}_zscore"
 
 
+def test_every_rankable_metric_has_a_rolling_series(multiyear_prices):
+    """A metric the config offers must be one the scorer can serve (#328).
+
+    `rolling_metric_zscore` raises on an unknown key, so a fifth entry added to
+    `RANKABLE_METRICS` without its rolling factory would fail on a user's click
+    — a chip that blanks the column. This is the CI failure instead.
+    """
+    from src.config import RANKABLE_METRICS
+    from src.stats.rolling import _ROLLING_METRICS
+
+    keys = [key for key, _ in RANKABLE_METRICS]
+    assert set(keys) <= set(
+        _ROLLING_METRICS
+    ), f"unscorable: {sorted(set(keys) - set(_ROLLING_METRICS))}"
+    # And they really do score, rather than merely being present in the map.
+    for key in keys:
+        z = stats.rolling_metric_zscore(
+            multiyear_prices, metric=key, window=63, zscore_window=126
+        )
+        assert list(z.index) == list(multiyear_prices.columns)
+
+
 def test_rolling_metric_zscore_min_sample_blanks_a_short_history(multiyear_prices):
     """A young index scores NaN rather than being standardized against the
     handful of observations it has (#324).
