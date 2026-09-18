@@ -60,21 +60,28 @@ def test_build_app_renders_expected_tree():
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # v0.7.0 Workstream A: Z-Score ranking (Metric/Window/Lookback) defaulting
-    # to z(1M Sharpe, 1Y) — since #279 three chip groups in the rail to the
-    # RIGHT of the grid rather than a control row above it. The three analytics
-    # charts live in one boxed "Platform analytics" card with inner pill-tabs
-    # sharing the lookback toggle (sunburst default tab).
+    # to z(1M Sharpe, 1Y) — three chip groups in a rail (#279), and since the
+    # rails dock the rail opens from a button on the left rather than standing
+    # open beside the table. The three analytics charts live in one boxed
+    # "Platform analytics" card with inner pill-tabs sharing the lookback
+    # toggle (sunburst default tab).
     import plotly.graph_objects as go
     from src.layout.rails import ChipGroup
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    # Header, then the three-column grid row, then the analytics card.
+    # Header, then the grid row (dock + table), then the analytics card.
     universe_header, grid_row, analytics_card = platform_panel.children
-    right_rail = grid_row.children[-1]
-    z_chips = [c for c in right_rail.children if isinstance(c, ChipGroup)]
-    assert [c.label for c in z_chips] == ["Sharpe", "1M", "1Y"]
+    dock = grid_row.children[0]
+    z_chips = [
+        c
+        for rail in dock.children[1:]
+        for c in rail.children
+        if isinstance(c, ChipGroup)
+    ]
+    # Group by / Window from the left rail, then the z-score's three.
+    assert [c.label for c in z_chips][-3:] == ["Sharpe", "1M", "1Y"]
 
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].

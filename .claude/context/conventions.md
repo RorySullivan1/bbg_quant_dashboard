@@ -154,6 +154,12 @@ CSS, style tokens — live in `style.md`.)
   already computed is returned by identity, which is what makes the toggle feel
   live. The corollary: anything that changes the underlying prices must go
   through `_recompute`, because nothing else drops the cache.
+- **Hiding a panel is `display: none`, never dropping the child (v0.9.21).**
+  `RailDock` toggles `rail.layout.display`, so a closed rail keeps its chips,
+  its values and its observers — reopening it shows the state the user left,
+  and nothing has to be rebuilt or re-wired. The flex row gives the width to
+  the table either way. Rebuilding `children` to hide something is the version
+  of this that loses state silently.
 - **A control is a widget, not a row of buttons (v0.9.21 #277).** `ChipGroup`
   presents a `W.Dropdown`'s surface — `value`, `label`,
   `observe(..., names="value")` — so a call site reading a dropdown does not

@@ -153,11 +153,19 @@ the call site — the rails differ by content, not by code.
   sections are facets of one control (the Z-Score rail's Metric / Window /
   Lookback). Group by / Window stand on their own and pass no title.
 - **`.bbg-rail-heading`** — a section heading: uppercase, letterspaced, muted.
+- **`.bbg-rail-strip` / `.bbg-dock-btn`** — the dock: a narrow panel of
+  uppercase toggle buttons at the left of the Platform row, one per rail.
 - **`.bbg-chip`** — a chip, in the `.bbg-pill` family so the base, hover,
   active and focus colours are the tab band's and these rules only refine them:
   full-rail width, left-aligned, with an accent bar down the leading edge when
   active. `text-align` alone does **not** left-align a Jupyter button — the
   widget renders a flex container, so `justify-content` is set with it.
+
+**One height for the row.** `.bbg-rail` caps at `CATALOG_TABLE_MAX_HEIGHT` —
+the same token as the catalog table's own scroll cell — and the row is
+`align_items: stretch`, so the strip, an open rail and the table stand level
+instead of each sizing to its content, and either one scrolls internally past
+it. Written as two values they would drift and the row would step.
 
 **The active state is a class, never inline `.style`.** `_make_chip` /
 `_style_chip` (`chrome.py`) toggle `is-active`, exactly as the tab-button pair

@@ -119,6 +119,13 @@ class Color(StrEnum):
 #: row parked over the labels it belongs to.
 CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 
+#: How tall the Platform row stands: the catalog table's scroll cap, and the
+#: same cap on the control rails beside it, so the table and any open rail are
+#: **one height** rather than each sizing to its own content. Either one scrolls
+#: internally past it. One token because "the same height" is the requirement —
+#: written twice, the two would drift and the row would step.
+CATALOG_TABLE_MAX_HEIGHT: str = "360px"
+
 
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""

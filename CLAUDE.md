@@ -17,9 +17,9 @@ organized as: masthead banner → an always-visible **all-catalog commentary
 block** (a ranked **leaderboard** of four metric columns with clickable rows,
 beside a pane that switches between Weekly Commentary and New Launches) → a
 **top-level pill-button tab bar** with three
-tabs — **Platform** (a control rail either side of the all-catalog performance
-grid + a Platform-analytics card of Sunburst / Regime / Factor-exposure
-charts), **Multi-Strategy**
+tabs — **Platform** (a dock of hidable control rails beside the all-catalog
+performance grid + a Platform-analytics card of Sunburst / Regime /
+Factor-exposure charts), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
 live-narrowing filter accordion, a profile card + cumulative chart, a
@@ -100,11 +100,17 @@ error; and **Refresh invalidates while a toggle re-slices** — the window toggl
 and the pane switch never issue BQL. This replaced the v0.8.x 16-card Market
 Superlatives board (#291); its metrics all live on in `src/stats/`.
 
-The Platform tab is **one composed surface** (epic #276, v0.9.21): a stylized
-control rail on each side of the catalog table and nothing above it. Both rails
-are built from **one component** (`control_rail`, `src/layout/rails.py`) and
-carry `ChipGroup` chips — Group by + Window on the left, Z-Score ranking on the
-right. A chip group is a **widget, not a row of buttons**: it presents a
+The Platform tab is **one composed surface** (epic #276, v0.9.21): stylized
+control rails beside the catalog table and nothing above it. Both rails are
+built from **one component** (`control_rail`, `src/layout/rails.py`) and carry
+`ChipGroup` chips — *Table view* (Group by + Window) and *Z-Score ranking*.
+They are **hidable**: a `RailDock` strip of toggle buttons sits at the left of
+the row, each button opening its rail as a panel and closing it again, both
+independent, both closed on load. (#276 had settled collapsible rails as out of
+scope; that was reversed on request — the width a rail holds is worth reclaiming
+when it is not in use, and a closed panel is `display: none`, so the flex row
+hands it straight back.) The strip, an open panel and the table all stand
+**one height** (`CATALOG_TABLE_MAX_HEIGHT`), each scrolling internally past it. A chip group is a **widget, not a row of buttons**: it presents a
 `W.Dropdown`'s `value` / `label` / `observe` surface, which is what let the
 z-score controls move into a rail as a restyle rather than a rewrite of
 everything that reads them, and its multi-select flavour reports **membership**

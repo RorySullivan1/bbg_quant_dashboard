@@ -256,6 +256,27 @@
   border: 1px solid {{border_color}};
   border-radius: 8px;
   padding: 10px 10px 6px 10px;
+  /* Level with the table: the row stretches its children, and this cap is the
+     table's own, so neither a rail nor the table can drive the row taller than
+     the other. A rail with more chips than fit scrolls, exactly as the table
+     does past the same height. */
+  max-height: {{table_max_height}};
+  overflow-y: auto;
+}
+/* The dock strip: the two rail buttons, in one place on the left whichever
+   panels are open, so a user looking for a control never hunts for the
+   toggle. It stands the full row height for the same reason the rails do. */
+.bbg-app .bbg-rail-strip {
+  background: {{surface}};
+  border: 1px solid {{border_color}};
+  border-radius: 8px;
+  padding: 10px 8px 6px 8px;
+  margin: 0 8px 0 0;
+}
+.bbg-app .bbg-dock-btn {
+  height: 30px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .bbg-app .bbg-rail-title {
   color: {{accent}};
@@ -491,7 +512,7 @@ div.itables_anywidget .dt-layout-row.dt-layout-table {
    whatever the row does. Scrolling the row instead left the header scrolling
    away with the body. */
 div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
-  max-height: 360px;
+  max-height: {{table_max_height}};
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs

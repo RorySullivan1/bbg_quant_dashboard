@@ -37,6 +37,10 @@ from .chrome import _make_chip, _style_chip
 #: grew with its content would take that width back invisibly.
 RAIL_WIDTH = "210px"
 
+#: The dock strip: wide enough for its buttons to read as labels rather than
+#: icons, narrow enough that leaving it always visible costs little.
+DOCK_WIDTH = "150px"
+
 #: One option, normalized: the text a chip shows and the value it carries.
 OptionPair = tuple[str, Any]
 
@@ -194,15 +198,86 @@ def _rail_heading(text: str) -> W.HTML:
 def _rail_title(text: str) -> W.HTML:
     """A rail's own title, above its sections.
 
-    A rail whose sections are each one facet of a single control — Metric /
-    Window / Lookback, all of them the z-score's (#279) — needs to say what
-    they are facets *of*, and it cannot say it in the section headings without
-    spelling "Z-Score" three times. A rail whose sections stand on their own
-    (#278's Group by / Window) passes no title and renders without one.
+    It names what the rail's sections belong to — the Z-Score rail's Metric /
+    Window / Lookback are three facets of one control, and saying so in each
+    heading would spell "Z-Score" three times. Both Platform rails carry one,
+    so the two read identically; it stays optional because a rail with a single
+    self-explanatory section does not need the line.
     """
     title = W.HTML(html.escape(text))
     title.add_class("bbg-rail-title")
     return title
+
+
+class DockEntry(NamedTuple):
+    """One dockable rail: the button's label, and the rail it opens."""
+
+    label: str
+    rail: W.VBox
+
+
+class RailDock:
+    """Rails behind a strip of toggle buttons, docked to the left of the table.
+
+    The rails were fixed panels through #278/#279, and #276 settled collapsible
+    ones as out of scope. This reverses that on request: the width they hold is
+    worth reclaiming when they are not in use, and the table takes it back the
+    moment a panel closes, because the row is flex and a hidden panel is
+    `display: none` rather than an empty box.
+
+    **Both buttons live in one strip, on the left**, rather than each rail
+    carrying its own toggle on its own edge — a user looking for a control
+    looks in one place, and the buttons do not move as panels open and close.
+    The panels are independent: opening one does not close the other, so a user
+    comparing grouping against the z-score ranking can have both.
+
+    Open state is held here rather than read back off the widgets, and the
+    buttons' active state is the `is-active` class the rest of the chrome uses
+    (`_style_chip`), never an inline colour — the same rule chips follow, for
+    the same reason.
+    """
+
+    def __init__(self, *entries: DockEntry) -> None:
+        if not entries:
+            raise ValueError("a rail dock needs at least one rail")
+        self.entries = entries
+        self.open: set[str] = set()
+        self.buttons: dict[str, W.Button] = {}
+        for entry in entries:
+            button = _make_chip(entry.label, active=False)
+            button.add_class("bbg-dock-btn")
+            button.on_click(lambda _btn, label=entry.label: self.toggle(label))
+            self.buttons[entry.label] = button
+        self.strip = W.VBox(
+            list(self.buttons.values()),
+            layout=W.Layout(width=DOCK_WIDTH, flex=f"0 0 {DOCK_WIDTH}"),
+        )
+        self.strip.add_class("bbg-rail-strip")
+        self.root = W.HBox(
+            [self.strip, *(entry.rail for entry in entries)],
+            # `stretch`, so the strip and any open panel stand the same height
+            # as the table beside them rather than each sizing to its content.
+            layout=W.Layout(flex="0 0 auto", align_items="stretch"),
+        )
+        self.root.add_class("bbg-rail-dock")
+        self._sync()
+
+    def toggle(self, label: str) -> None:
+        """Open a closed rail, close an open one."""
+        self.open.symmetric_difference_update({label})
+        self._sync()
+
+    def is_open(self, label: str) -> bool:
+        return label in self.open
+
+    def _sync(self) -> None:
+        for entry in self.entries:
+            opened = entry.label in self.open
+            _style_chip(self.buttons[entry.label], active=opened)
+            # `display: none` rather than dropping the child: the widget keeps
+            # its state and its observers, and the flex row gives the width
+            # straight back to the table.
+            entry.rail.layout.display = None if opened else "none"
 
 
 def control_rail(
