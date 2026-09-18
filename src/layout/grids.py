@@ -15,6 +15,14 @@ reapplies them after a data swap, which otherwise resets the frontend's style.
 `_perf_column_widths`) rather than by the frontend's autofit. **Formatting** —
 renderers centre numeric cells, show missing values as a dash, and apply the
 diverging red→green background to the Sharpe and Z-Score columns.
+
+A column's *kind* is read off its name — `" Sharpe"`, `" Return"` — because
+those suffixes are built by `_flatten_perf_columns` from a fixed metric set and
+cannot drift. The catalog's **ranking column is the exception**: its header is
+free text, so it is passed down as `zscore_col`, the key `_build_universe_frame`
+returned along with the frame (v0.9.23 #323). Recognising it by prefix instead
+made a relabel silently cost it its ramp, its width, its number renderer and
+its filter's units — four wrong-looking columns and no error anywhere.
 """
 
 from __future__ import annotations
@@ -228,10 +236,6 @@ def _is_percent_col(name: str) -> bool:
     return name.endswith(_PERCENT_SUFFIXES)
 
 
-def _is_zscore_col(name: str) -> bool:
-    return name == ZSCORE_SUPERCOL or name.startswith(ZSCORE_SUPERCOL + " ")
-
-
 def _flatten_perf_columns(columns: pd.Index) -> list[str]:
     """Flatten (period, metric) column tuples to single-index labels, e.g.
     ``("1Y", "Return") -> "1Y Return"``. Non-tuple names pass through."""
@@ -240,16 +244,21 @@ def _flatten_perf_columns(columns: pd.Index) -> list[str]:
     ]
 
 
-def _perf_column_widths(frame: pd.DataFrame) -> dict[str, int]:
+def _perf_column_widths(
+    frame: pd.DataFrame, *, zscore_col: str | None = None
+) -> dict[str, int]:
     """Per-column pixel widths for a flat perf / catalog grid: a tiny color
     swatch, uniform stat columns, and content-fit descriptive / z-score
-    columns (fit to the header + the actual cell strings)."""
+    columns (fit to the header + the actual cell strings).
+
+    `zscore_col` is the ranking column's name as the frame's builder spelled
+    it, not something to recognise — see `_catalog_table_options`."""
     widths: dict[str, int] = {}
     for col in frame.columns:
         name = str(col)
         if name == PERF_COLOR_COLUMN_NAME:
             widths[name] = _COLOR_COL_WIDTH
-        elif _is_zscore_col(name):
+        elif name == zscore_col:
             widths[name] = _content_px(name, frame[col].tolist())
         elif _is_stat_col(name):
             widths[name] = _STAT_COL_WIDTH
@@ -258,8 +267,12 @@ def _perf_column_widths(frame: pd.DataFrame) -> dict[str, int]:
     return widths
 
 
-# The all-catalog grid's dynamic z-score column name, and the diverging-heatmap
-# thresholds for its conditional-formatted columns.
+# The stem `_build_universe_frame` builds the ranking column's name from, and
+# the diverging-heatmap thresholds for the conditional-formatted columns.
+#
+# It *builds* the name; nothing reads it back off a header to decide what a
+# column is. That distinction is the whole of #323 — the renderers, the widths,
+# the filter kinds and the column defs are handed the key the builder returned.
 ZSCORE_SUPERCOL: str = "Z-Score"
 # Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
 _SHARPE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-0.5, 0.0, 0.5, 1.0)
@@ -368,7 +381,12 @@ def _build_info_block(
     return info.rename(columns={key: field_label(key) for key in fields})
 
 
-def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
+def _perf_renderers(
+    columns: pd.Index,
+    *,
+    sharpe_heatmap: bool = False,
+    zscore_col: str | None = None,
+) -> dict:
     # No background_color, so the `grid_style` zebra shows through.
     # `sharpe_heatmap` swaps the plain 2dp renderer for a diverging-background
     # one on the Sharpe and Z-Score columns. NaN numeric cells show "-" via a
@@ -405,9 +423,9 @@ def _perf_renderers(columns: pd.Index, *, sharpe_heatmap: bool = False) -> dict:
     renderers: dict = {}
     for col in columns:
         name = str(col)
-        # Z-Score first: its name (e.g. "Z-Score 1M Sharpe") also ends in
-        # " Sharpe", so it must win over the Sharpe branch below.
-        if _is_zscore_col(name):
+        # Z-Score first: its name ends in " Sharpe" whenever Sharpe is the
+        # metric being ranked, so it must win over the Sharpe branch below.
+        if name == zscore_col:
             renderers[col] = zscore_renderer
         elif name == PERF_COLOR_COLUMN_NAME:
             renderers[col] = color_swatch
@@ -425,6 +443,7 @@ def _apply_grid_styling(
     frame: pd.DataFrame,
     *,
     sharpe_heatmap: bool = False,
+    zscore_col: str | None = None,
 ) -> None:
     """Wire the shared per-column renderers (text / pct / 2dp / color-swatch)
     onto a grid, plus the flat single-index column widths (tiny color swatch,
@@ -436,8 +455,10 @@ def _apply_grid_styling(
     expresses the same ramp as a DataTables `createdCell` (`_js_heat_cell`).
     The two must stay visually identical, so they read their bands from the
     same `_SHARPE_HEAT_THRESHOLDS` / `_ZSCORE_HEAT_THRESHOLDS` tuples."""
-    grid.renderers = _perf_renderers(frame.columns, sharpe_heatmap=sharpe_heatmap)
-    grid.column_widths = _perf_column_widths(frame)
+    grid.renderers = _perf_renderers(
+        frame.columns, sharpe_heatmap=sharpe_heatmap, zscore_col=zscore_col
+    )
+    grid.column_widths = _perf_column_widths(frame, zscore_col=zscore_col)
     grid.base_row_header_size = _content_px(
         frame.index.name or "", frame.index.tolist()
     )
@@ -739,7 +760,9 @@ _NUMBER_FILTER_HINT: str = "Filter by number: 1.5, >1, <=2, 1..3"
 _PERCENT_FILTER_HINT: str = _NUMBER_FILTER_HINT + " (in %, as shown)"
 
 
-def _filter_kinds(frame: pd.DataFrame, groups: list[str]) -> dict[int, str]:
+def _filter_kinds(
+    frame: pd.DataFrame, groups: list[str], *, zscore_col: str | None = None
+) -> dict[int, str]:
     """Which columns get a filter input and of what kind, by position in
     `frame` (#285, widened to the numbers in #297).
 
@@ -768,7 +791,7 @@ def _filter_kinds(frame: pd.DataFrame, groups: list[str]) -> dict[int, str]:
             continue
         if _is_percent_col(name):
             kinds[position] = "percent"
-        elif _is_zscore_col(name) or _is_stat_col(name):
+        elif name == zscore_col or _is_stat_col(name):
             kinds[position] = "number"
         else:
             kinds[position] = "text"
@@ -947,6 +970,8 @@ def _catalog_table_options(
     frame: pd.DataFrame,
     groups: list[str],
     window: str | None = None,
+    *,
+    zscore_col: str | None = None,
 ) -> dict:
     """DataTable options for the catalog: hidden group columns surfaced as
     nested row-group headers, numeric renderers, and the Sharpe / Z-Score heat.
@@ -961,6 +986,14 @@ def _catalog_table_options(
     the selected row all survive it, and nothing recomputes. Dropping the
     columns from the frame instead would reset all three, including the
     row-to-ticker map that routes a click (#265).
+
+    `zscore_col` is the ranking column's name **as the frame's builder spelled
+    it** (`_build_universe_frame` returns it), not something recognised here.
+    It used to be re-derived from the string by a `startswith("Z-Score ")`
+    test, with five behaviours hanging off it — this column's width, its
+    diverging ramp, its DataTables kind, its number renderer and the units its
+    filter compares in. All five failed *silently* on a relabel, which is a
+    poor way to hold a header still (#323).
     """
     if window is None:
         window = universe_grid_default_window()
@@ -978,7 +1011,7 @@ def _catalog_table_options(
     for position, name in enumerate(str(c) for c in frame.columns):
         if name in groups:
             continue
-        if _is_zscore_col(name):
+        if name == zscore_col:
             column_defs.append(
                 {
                     "targets": [position],
@@ -1037,7 +1070,9 @@ def _catalog_table_options(
         # The per-column filter row (#285), built in the browser because the
         # inputs are not part of the frame. See `_js_filter_row` for why this
         # is a `drawCallback` and why the filter text lives on `window`.
-        "drawCallback": _js_filter_row(_filter_kinds(frame, groups)),
+        "drawCallback": _js_filter_row(
+            _filter_kinds(frame, groups, zscore_col=zscore_col)
+        ),
         # itables downsamples a table over ~64KB of JSON, keeping the head and
         # tail and dropping the middle. For a browse surface whose job is to
         # show the whole catalog that is a silent data loss, and the row a user
@@ -1103,6 +1138,10 @@ class UniverseGrid:
         #: re-send options without rebuilding it.
         self._display: pd.DataFrame | None = None
         self._groups: list[str] = []
+        #: The ranking column's name in the frame currently rendered, as
+        #: `_build_universe_frame` spelled it — the grid is told, it never
+        #: reads it back off the header (#323).
+        self._zscore_col: str | None = None
         self._on_pick = on_pick
         self.widget.observe(self._forward_pick, names="selected_rows")
 
@@ -1132,25 +1171,38 @@ class UniverseGrid:
         zcol: pd.Series | None = None,
         zlabel: str | None = None,
     ) -> None:
-        combined = _build_universe_frame(
+        combined, zscore_col = _build_universe_frame(
             meta, up, zcol=zcol, zlabel=zlabel, group_fields=self.group_fields
         )
-        self._set_data(combined)
+        self._set_data(combined, zscore_col=zscore_col)
 
-    def _set_data(self, frame: pd.DataFrame) -> None:
+    def _set_data(self, frame: pd.DataFrame, *, zscore_col: str | None = None) -> None:
         """The single write path. Options are rebuilt on every write because
         they are keyed to column *positions*, and the Z-Score column's name —
-        and so the column set — changes with the Metric/Window dropdowns."""
+        and so the column set — changes with the ranking controls."""
         # Recorded from the index before `_catalog_display_frame` moves the
         # ticker into a column: that function reorders columns only, so row
         # positions line up with the frame the widget is about to render.
         self._tickers = tuple(str(t) for t in frame.index)
+        self._zscore_col = zscore_col
         self._display, self._groups = _catalog_display_frame(
             frame, _catalog_group_labels(self.group_fields)
         )
-        self.widget.update(
-            self._display,
-            **_catalog_table_options(self._display, self._groups, self.window),
+        self.widget.update(self._display, **self.table_options())
+
+    def table_options(self) -> dict:
+        """The DataTable options for the frame currently rendered.
+
+        The three things the options are keyed to — the group columns, the
+        visible window and the ranking column's name — are all held here, so
+        reading them together is this method rather than three attribute reads
+        repeated at each call site (there are two: a write, and a window
+        switch that re-sends options with no data)."""
+        return _catalog_table_options(
+            self._display if self._display is not None else pd.DataFrame(),
+            self._groups,
+            self.window,
+            zscore_col=self._zscore_col,
         )
 
     def set_window(self, window: str) -> None:
@@ -1164,9 +1216,7 @@ class UniverseGrid:
         self.window = window
         if getattr(self, "_display", None) is None or self._display.empty:
             return
-        self.widget.update(
-            **_catalog_table_options(self._display, self._groups, self.window)
-        )
+        self.widget.update(**self.table_options())
 
     def set_group_fields(self, fields: tuple[str, ...]) -> None:
         """Change which fields the grid groups by.
@@ -1189,17 +1239,24 @@ def _build_universe_frame(
     zcol: pd.Series | None = None,
     zlabel: str | None = None,
     group_fields: tuple[str, ...] | None = None,
-) -> pd.DataFrame:
-    """Assemble the all-catalog grid's DataFrame (pure — no grid side effects).
+) -> tuple[pd.DataFrame, str | None]:
+    """Assemble the all-catalog grid's DataFrame (pure — no grid side effects),
+    **and the name of the ranking column it inserted** (None when it did not).
 
     Column order is Info → Z-Score (when supplied) → 1Y → 3Y → 5Y, as flat
     single-index labels ("1Y Return", …). When a `zcol` (per-ticker z-score
     Series) + `zlabel` are given, a `"Z-Score <zlabel>"` column is inserted
     right after the Info block — it's the headline ranking column, so it sits
     next to the names — and the whole frame is sorted by it descending
-    (insufficient-history tickers, NaN z, sink to the bottom)."""
+    (insufficient-history tickers, NaN z, sink to the bottom).
+
+    The key travels back with the frame rather than being re-derived from the
+    column names downstream: this function is the only place that decides both
+    *whether* there is a ranking column and *what it is called*, and a
+    consumer re-deciding either from the string gets it wrong the moment the
+    header is relabelled (#323)."""
     if meta.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
     info = _build_info_block(meta, None, CATALOG_GRID_FIELDS, date_cols=("live_date",))
 
     blocks = [info]
@@ -1222,7 +1279,7 @@ def _build_universe_frame(
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
     combined = _group_ordered(combined, _catalog_group_labels(group_fields), z_key)
     combined.index.name = "Ticker"
-    return combined
+    return combined, z_key
 
 
 #: Temporary per-level ranking columns used to order groups; dropped before the
