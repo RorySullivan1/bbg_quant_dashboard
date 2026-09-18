@@ -1140,21 +1140,24 @@ class UniverseGrid:
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
         self.widget.add_class(CATALOG_TABLE_CLASS)
-        # The table takes the width the two rails leave (#280). `min_width` is
-        # the load-bearing half: a flex item's default `min-width: auto`
-        # refuses to shrink below its content, so a wide column set pushes the
-        # rails off the row instead of scrolling inside the table. The layout
-        # looks correct without it until the columns grow, which is why it is
-        # set here rather than discovered later.
-        # A fixed height, matched by the ranking rail beside it (#298): with
-        # both boxes stretched instead, whichever held more content set the
-        # row, so the table grew to the rail on a small catalog and the rail to
-        # the table on a large one. The internals fill this box — see the
-        # `.bbg-catalog` flex rules in app_css.html.
+        # Full width since #326, where the rail beside it was removed: the
+        # table is a child of the Platform column now, not of a row it had to
+        # share. The `flex: 1 1 0%` that gave it the remaining width went with
+        # the rail — in a *column* that basis applies to the height, so it
+        # would fight the fixed box below rather than do nothing.
+        #
+        # `min_width` stays. With no sibling to push off it is no longer what
+        # keeps a wide column set inside the table — the `.dt-layout-cell`
+        # scroll does that — but it is the guard that made the row work, and
+        # putting the table back in a row without it is how #280 happened.
+        #
+        # The height is fixed (#298) and the internals fill it: the search row
+        # and the row-count readout take what they need and the row area
+        # scrolls in the remainder. See the `.bbg-catalog` flex rules in
+        # app_css.html.
         self.widget.layout = W.Layout(
-            flex="1 1 0%",
+            width="100%",
             min_width="0",
-            width="auto",
             height=CATALOG_TABLE_HEIGHT,
         )
         #: Row position -> ticker for the frame currently rendered. The widget

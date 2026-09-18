@@ -134,6 +134,16 @@ Project-specific hooks:
   and `bql_client.fetch_prices` only orchestrates between one of them and a
   `PriceCache`.
 
+- **The request spans `score_history_years()`** — ten years today, derived as
+  `LOOKBACK_YEARS + the longest window stat_windows() offers` (v0.9.23 #322,
+  widening #311's six). It is longer than the app **analyses** on purpose: both
+  boards score a metric against `SCORE_SAMPLE_DAYS` of its own rolling history,
+  so the deepest case needs the longest window plus that sample.
+  `DashboardApp._analytics_window_start()` is the single boundary, and every
+  consumer but the two scorers slices to it. A cost worth knowing before
+  widening the window set again: the span is per-ticker rows out of BQL, and
+  the first load after a widening fetches the whole extension (later runs pay
+  only the delta — see the two-tier cache in `conventions.md`).
 - The case-insensitive column resolver is `_pick_column`.
 - The mock path is `MockPriceSource.fetch`. If you change the BQL query, update
   it in lockstep so live and mock paths return the same shape.

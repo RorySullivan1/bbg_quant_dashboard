@@ -174,35 +174,45 @@ so it stayed legible on the navy surface without the author thinking about the
 theme. #308 retired the blob, and the block with it: none of that markup can
 arise from plain text split into paragraphs.)*
 
-## Control rails and chips (v0.9.21, epic #276)
+## Control bars and chips (v0.9.21, epic #276; v0.9.23, epic #321)
 
-The Platform tab's controls sit in two containers of the same chrome, built by
-`control_bar` / `control_rail` (`src/layout/rails.py`) rather than assembled at
-the call site: a **bar above** the table (Group by + Window) and a **rail down
-its left** (Z-Score ranking). They differ by direction and content, not by
-code.
+Every bar in the app is the same chrome, built by `control_bar`
+(`src/layout/rails.py`) rather than assembled at the call site: the catalog's
+**Table view** (Group by · Metric · Window), the Leaderboard's Window, and the
+QIS Bulletin's board switch.
 
-- **`.bbg-rail`** — the raised panel: `surface` fill, border, 8px radius, at a
-  fixed 210px basis (`RAIL_WIDTH`). It does **not** flex; the table between the
-  rails absorbs the remaining width (#280).
-- **`.bbg-rail-title`** — the rail's own accent heading, used only when its
-  sections are facets of one control (the Z-Score rail's Metric / Window /
-  Lookback). Group by / Window stand on their own and pass no title.
+*The class names say `rail` because these were rails first — fixed-width
+columns of stacked sections, with the bar added as the same panel turned on its
+side. The catalog's rail lost its contents in #324/#325 and was removed with its
+builder in #326; the surface it defined is what stayed.*
+
+- **`.bbg-rail`** — the raised panel: `surface` fill, border, 8px radius. Every
+  consumer now carries `.bbg-rail-bar` with it. (The stacked-column rules lived
+  here and went in #326: a `min-height: 0` / `overflow-y: auto` pair that let a
+  stretched column scroll instead of growing its row, and a first-child heading
+  reset that could only ever match a heading *directly* inside a rail — a bar's
+  sit inside `.bbg-rail-block`.)
+- **`.bbg-rail-title`** — the bar's own accent heading, used when its sections
+  are facets of one thing (the catalog's Group by / Metric / Window are three
+  facets of the table view). The Leaderboard's Window and the Bulletin's board
+  switch stand on their own and pass no title.
 - **`.bbg-rail-heading`** — a section heading: uppercase, letterspaced, muted.
-- **`.bbg-rail-bar`** — the same rail turned on its side, for the controls
-  **above** the table: `.bbg-rail`'s surface and border, sections laid across,
-  the title beside them behind a vertical rule, and **no height cap** (a cap
-  exists to keep a column level with the table).
+- **`.bbg-rail-bar`** — the bar proper: `.bbg-rail`'s surface and border,
+  sections laid across, the title beside them behind a vertical rule.
 - **`.bbg-chip-row`** — chips laid across: they size to their text instead of
-  filling a rail's width, and wrap rather than squeeze when the bar runs out.
+  filling their container's width, and wrap rather than squeeze when the bar
+  runs out. Every chip group in the app is one.
 - **`.bbg-chip`** — a chip, in the `.bbg-pill` family so the base, hover,
   active and focus colours are the tab band's and these rules only refine them:
-  full-rail width, left-aligned, with an accent bar down the leading edge when
-  active. `text-align` alone does **not** left-align a Jupyter button — the
-  widget renders a flex container, so `justify-content` is set with it.
+  full-width and left-aligned by default, with an accent bar down the leading
+  edge when active. `text-align` alone does **not** left-align a Jupyter
+  button — the widget renders a flex container, so `justify-content` is set
+  with it. (The full-width default is the stacked shape; `.bbg-chip-row`
+  overrides it, and `ChipGroup(row=False)` is still a supported widget shape.)
 
-**The table's box and the rail are one fixed height**, `CATALOG_TABLE_HEIGHT`,
-set on both from the same token. The table's internals then fill that box: the
+**The table stands at a fixed `CATALOG_TABLE_HEIGHT` and takes the full width.**
+It was the number the table and the rail beside it *shared*, until #326 left
+only one box reading it. The table's internals then fill that box: the
 `.bbg-catalog` flex chain passes the height down DataTables' wrappers so the
 search row and the row-count readout take what they need and the row area
 scrolls in the remainder. `min-height: 0` appears at every level of that chain —
@@ -215,14 +225,16 @@ plausible-looking layout bugs:
 - **A cell cap instead of a box height.** Capping the table's scroll cell
   leaves the widget taller than the cap by its search row and readout (~70px),
   so anything sized to the cap stands short beside it.
-- **Stretching both boxes.** `align-items: stretch` makes whichever box holds
-  more content set the row — the table grew to the rail on a small catalog, the
-  rail to the table on a large one. Fixing both to one number is the only
-  arrangement where neither pushes the other.
-- **Letting chips shrink.** A flex item shrinks before its container scrolls,
-  so a rail holding more chips than fit squeezed every chip flat instead of
-  showing a scrollbar. `.bbg-chip`, `.bbg-rail-heading` and `.bbg-rail-title`
-  are pinned `flex: 0 0 auto`.
+- **Stretching two boxes to level them.** `align-items: stretch` makes
+  whichever box holds more content set the row — the table grew to the rail on
+  a small catalog, the rail to the table on a large one. Fixing both to one
+  number was the only arrangement where neither pushed the other. (Moot since
+  #326 removed the second box, and recorded because the next pair of boxes
+  meant to stand level will meet it again.)
+- **Letting chips shrink.** A flex item shrinks before its container gives way,
+  so a container holding more chips than fit squeezed every chip flat instead
+  of wrapping. `.bbg-chip`, `.bbg-rail-heading` and `.bbg-rail-title` are
+  pinned `flex: 0 0 auto`.
 
 **The active state is a class, never inline `.style`.** `_make_chip` /
 `_style_chip` (`chrome.py`) toggle `is-active`, exactly as the tab-button pair

@@ -372,30 +372,43 @@ cannot judge is anything about *fit* — real fonts, the rails, the viewport —
 so the width items below are still unrendered, and reading the bundle is still
 not evidence that something draws.
 
-The control bar and the ranking rail:
+The control bar (v0.9.23: there is no longer a rail beside the table):
 
-- A **bar above the table** carries TABLE VIEW, then Group by and Window laid
-  **across**, chips sized to their text. It is one line of chips tall, not a
-  rail lying down.
-- The **ranking rail** runs down the **left** of the table, stacked, titled
-  Z-SCORE RANKING, and its top and bottom line up with the table's — check at a
-  short catalog (table shorter than the rail) and a long one (table scrolling),
-  since the two are level for different reasons in each case. Both boxes are a
-  fixed `CATALOG_TABLE_HEIGHT`, so this should hold at **any** catalog size —
-  and the table must not grow past it: the rows scroll inside the box, with the
-  search row and the row-count readout still visible above and below them.
-- **No chip is squeezed.** Every chip is the same height in the rail as in the
-  bar, whatever the rail's content adds up to. A rail too full to fit scrolls;
-  it must not compress its chips to make them fit.
-- Both containers wear the same surface, border and radius; only the direction
-  differs.
+- A **bar above the table** carries TABLE VIEW, then **Group by · Metric ·
+  Window** laid **across**, chips sized to their text. It is one line of chips
+  tall per section, not a rail lying down.
+- **Nothing stands beside the table.** It runs the full width of the panel, and
+  must not grow past `CATALOG_TABLE_HEIGHT`: the rows scroll inside the box,
+  with the search row and the row-count readout still visible above and below
+  them. Check at a short catalog and a long one.
+- **No chip is squeezed.** Every chip is the same height whatever the bar's
+  content adds up to.
 - Narrow the window until the bar runs out of room: the chips **wrap** onto a
   second line rather than squeezing or clipping.
 - The chips read like the top tab band, not like native checkboxes and radios:
   hover lights them, the selected one carries the accent bar, and keyboard
   focus draws a visible ring.
-- The rail holds its 210px width as the window is resized; it must not shrink
-  to let the table grow.
+- With 210px more width than before, look at the **column widths**: the
+  content-fit descriptive columns and the per-column filter row have more room,
+  and `CATALOG_TABLE_HEIGHT` is worth re-reading at a terminal's fonts now that
+  the table is wider.
+
+The ranking column (epic #321):
+
+- The header reads **`Normalized <window> <metric> (5Y Z-Score)`** — e.g.
+  `Normalized 1Y Sharpe (5Y Z-Score)` — and follows **both** chips.
+- Click each **Metric**: Return / Sharpe / Calmar / Sortino, and no Vol. The
+  column re-scores, re-sorts and renames with no visible reload and **no BQL**
+  (the toast does not reappear).
+- Click each **Window**: the performance columns swap to that window **and**
+  the ranking re-scores over it. The grouping stays intact — every tier is one
+  contiguous run, not repeated headers — and the table re-sorts.
+- At the **5Y** window, young indices legitimately show a **dash** rather than
+  a score and sink to the bottom. Expected (`CATALOG_SCORE_MIN_SAMPLE_DAYS`),
+  not a bug — but count them: if nearly the whole catalog blanks, the floor is
+  set wrong for this data.
+- The column keeps its red→green ramp, its two-decimal numbers, and a filter
+  box that takes a **comparison** (`>1`, `1..3`) rather than a substring.
 
 The table surface:
 

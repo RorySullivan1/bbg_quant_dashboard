@@ -1,19 +1,26 @@
-"""Control rails, the chip groups they carry, and the section shell they sit in
+"""Control bars, the chip groups they carry, and the section shell they sit in
 (v0.9.21 #277, v0.9.22 #305).
 
-A rail is the stylized side panel the Platform tab hangs its controls off:
-a fixed-width stack of headed sections, each section a heading plus one chip
-group. Both of the tab's rails (#278, #279) are built from `control_rail`
-rather than assembled at the call site, because two near-identical `W.VBox`es
-reconciled after the fact is the duplication this component exists to remove.
+A bar is the stylized strip a surface hangs its controls off: a row of headed
+sections, each section a heading plus one chip group. Declared, not assembled
+at the call site — three of them exist (the catalog's Table view, the
+Leaderboard's Window, the Bulletin's board switch), and near-identical
+containers reconciled after the fact is the duplication this component removes.
+
+It was a *rail* first: the same sections stacked down a fixed-width column
+beside the catalog table (#278, #279), with `control_bar` added as "the same
+rail turned on its side". The rail outlived its contents — #324 fixed the
+z-score's sample and window, #325 moved its last chip group into the bar, and
+#326 removed the column and `control_rail` with it. `.bbg-rail` survives as the
+bar's own chrome, which is why the class and these names still read as they do.
 
 **A chip group is a widget, not a row of buttons.** The controls these replace
-are read for their state, not just clicked: `PlatformAnalytics` takes three of
-them by constructor injection and reads `.value` to compute, `.label` to title
-the z-score column, and `.observe` to re-render (#279). `ChipGroup` therefore
-presents the `W.Dropdown` surface those call sites already use — `value`,
-`label`, `observe(..., names="value")` — so swapping the widget is a chrome
-change and an annotation, not a rewrite.
+are read for their state, not just clicked: `PlatformAnalytics` takes two of
+them by constructor injection and reads `.value` to compute, `.label` to name
+the ranking column, and `.observe` to re-render (#279, #324). `ChipGroup`
+therefore presents the `W.Dropdown` surface those call sites already use —
+`value`, `label`, `observe(..., names="value")` — so swapping the widget is a
+chrome change and an annotation, not a rewrite.
 
 `MultiChipGroup` is the multi-select flavour, and it reports **membership**:
 its `value` is always in options order, whatever order the chips were clicked.
@@ -33,11 +40,6 @@ import traitlets as T
 
 from .chrome import _make_chip, _style_chip
 from .html import STYLE_CTX, render_template
-
-#: The fixed flex basis every rail is built at. The rails do not flex: the
-#: table between them absorbs the remaining width (#276, #280), so a rail that
-#: grew with its content would take that width back invisibly.
-RAIL_WIDTH = "210px"
 
 #: One option, normalized: the text a chip shows and the value it carries.
 OptionPair = tuple[str, Any]
@@ -192,17 +194,17 @@ class MultiChipGroup(_ChipStack):
 
 
 class RailSection(NamedTuple):
-    """One headed block of a rail: what it is called, and the control itself."""
+    """One headed block of a bar: what it is called, and the control itself."""
 
     heading: str
     control: W.Widget
 
 
 def _rail_heading(text: str) -> W.HTML:
-    """A rail's section header — uppercase and letterspaced, styled by class.
+    """A section's header — uppercase and letterspaced, styled by class.
 
     The type is `.bbg-rail-heading` in app_css.html rather than inline style,
-    so the rails follow a token change the way the rest of the chrome does.
+    so the bars follow a token change the way the rest of the chrome does.
     """
     heading = W.HTML(html.escape(text))
     heading.add_class("bbg-rail-heading")
@@ -210,13 +212,13 @@ def _rail_heading(text: str) -> W.HTML:
 
 
 def _rail_title(text: str) -> W.HTML:
-    """A rail's own title, above its sections.
+    """A bar's own title, beside its sections.
 
-    It names what the rail's sections belong to — the Z-Score rail's Metric /
-    Window / Lookback are three facets of one control, and saying so in each
-    heading would spell "Z-Score" three times. Both Platform rails carry one,
-    so the two read identically; it stays optional because a rail with a single
-    self-explanatory section does not need the line.
+    It names what the sections belong to — the catalog's Group by / Metric /
+    Window are three facets of one table view, and saying so in each heading
+    would spell it three times. Optional, because a bar with a single
+    self-explanatory section does not need the line: the Leaderboard's Window
+    and the Bulletin's board switch carry none.
     """
     title = W.HTML(html.escape(text))
     title.add_class("bbg-rail-title")
@@ -251,49 +253,17 @@ def _section_title(text: str, note: str | None = None) -> W.HTML:
     )
 
 
-def control_rail(
-    *sections: RailSection,
-    title: str | None = None,
-    width: str = RAIL_WIDTH,
-    height: str | None = None,
-) -> W.VBox:
-    """A rail: its sections stacked in the order given, under an optional title.
-
-    Declared, not assembled — the caller says what the rail contains and this
-    owns the frame, the fixed basis and the heading treatment, so the two
-    Platform rails cannot drift apart.
-    """
-    children: list[W.Widget] = []
-    if title is not None:
-        children.append(_rail_title(title))
-    for section in sections:
-        children.append(_rail_heading(section.heading))
-        children.append(section.control)
-    rail = W.VBox(
-        children,
-        layout=W.Layout(
-            width=width,
-            flex=f"0 0 {width}",
-            align_items="stretch",
-            margin="0 8px 0 0",
-            # A caller that stands a rail beside the table passes the table's
-            # height, so the two are one number rather than two that agree
-            # today (#298).
-            height=height,
-        ),
-    )
-    rail.add_class("bbg-rail")
-    return rail
-
-
 def control_bar(*sections: RailSection, title: str | None = None) -> W.HBox:
-    """The same rail, laid out across instead of down.
+    """A bar: its sections laid across in the order given, under an optional
+    title.
 
-    Controls that shape the table's *rows* sit above it, where the eye starts,
+    Controls that shape a table's *rows* sit above it, where the eye starts,
     and a stack of chips there would cost vertical space the table wants. Each
-    section keeps its heading over its own chips, so a bar reads as the same
-    component turned on its side rather than as a second control idiom — it
-    carries `.bbg-rail`, and only the direction differs.
+    section keeps its heading over its own chips.
+
+    (Until #326 this was documented as "the same rail turned on its side", and
+    `control_rail` built the column version. The column is gone; the surface
+    and border it defined are still `.bbg-rail`, which this carries.)
     """
     blocks: list[W.Widget] = []
     if title is not None:
@@ -325,12 +295,12 @@ def section_panel(
     (`universe_header` / `table_bar` / the bordered table), and the commentary
     block's two sections have to match it and each other. Naming the
     arrangement is what stops three copies of it drifting apart, the same
-    argument that gave `control_rail` and `control_bar` one component.
+    argument that gave `control_bar` its one component.
 
     The title is the `grid_header` treatment the catalog table wears, not
     `_rail_title`: that one is the accent, uppercase, underlined type that
-    belongs *inside* a rail, and using it here would put two competing title
-    styles on one screen.
+    belongs *inside* a control bar, and using it here would put two competing
+    title styles on one screen.
 
     `bar` arrives already built — `control_bar` brings its own bordered surface
     and its own bottom margin, so this adds nothing around it.
@@ -343,9 +313,9 @@ def section_panel(
     number on a Platform caller, which wants `CATALOG_TABLE_HEIGHT` instead.
     The body scrolls inside that height rather than growing the row, which is
     what `min_height="0"` buys: a flex child otherwise refuses to shrink below
-    its content, and the box grows instead of scrolling. (`.bbg-rail` scrolls
-    on exactly this pair; the catalog table needs a second, inner element only
-    because its header has to stay sticky against the scroller.)
+    its content, and the box grows instead of scrolling. (The catalog table
+    needs a second, inner element only because its header has to stay sticky
+    against the scroller.)
     """
     box = W.Box(
         [body],

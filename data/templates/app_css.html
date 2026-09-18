@@ -243,42 +243,38 @@
   outline-offset: 1px;
 }
 
-/* ---- Control rails + chips (#277) ------------------------------------
-   The Platform tab's side rails: a raised panel one step off the page, with
-   an uppercase headed section per control group, matching the `.bbg-card` /
-   `.bbg-tabband` treatment. A chip is a `.bbg-pill` reshaped for a stacked
-   rail — full width and left-aligned, so a rail reads as a list of choices
-   rather than as a row of buttons that happens to wrap. The pill family
-   supplies the base/hover/active/focus colours; the rules here only refine
-   them, which is why a chip cannot drift away from the tab band's palette. */
+/* ---- Control bars + chips (#277, #326) --------------------------------
+   The surface a control bar is drawn on: a raised panel one step off the page,
+   with an uppercase headed section per control group, matching the
+   `.bbg-card` / `.bbg-tabband` treatment. The pill family supplies the
+   base/hover/active/focus colours; the rules here only refine them, which is
+   why a chip cannot drift away from the tab band's palette.
+
+   `.bbg-rail` is the name because these were *rails* first — fixed-width
+   columns beside the catalog table, with the bar added as the same panel
+   turned on its side. #326 removed the last rail; the surface it defined is
+   what stayed, and every consumer now carries `.bbg-rail-bar` with it.
+   (The stacked-column rules went with the rail: a `min-height: 0` /
+   `overflow-y: auto` pair that let a *column* scroll instead of growing its
+   row, and a first-child heading reset that only ever matched a heading
+   directly inside a rail. A bar's headings sit inside `.bbg-rail-block`.) */
 .bbg-app .bbg-rail {
   background: {{surface}};
   border: 1px solid {{border_color}};
   border-radius: 8px;
   padding: 10px 10px 6px 10px;
-  /* Level with the table by STRETCHING, not by a cap. The row is
-     `align-items: stretch`, so the rail takes the row's height — which the
-     table sets — and that is the only way the two can agree: the table's own
-     `max-height` governs its scroll *cell*, while the widget is also carrying
-     the search row above it and the row-count readout below, so a rail capped
-     at the cell's height renders visibly SHORTER than the table beside it.
-     `min-height: 0` is what lets a stretched flex item scroll instead of
-     growing the row. */
-  min-height: 0;
-  overflow-y: auto;
 }
-/* Chips keep their size. A flex item shrinks before its container scrolls, so
-   a rail holding more chips than fit squeezed every chip flat rather than
-   giving them a scrollbar — the squeeze looked like a styling bug and was
-   really the default `flex-shrink: 1`. */
+/* Chips keep their size. A flex item shrinks before its container gives way,
+   so a bar holding more chips than fit squeezed every chip flat rather than
+   wrapping — the squeeze looked like a styling bug and was really the default
+   `flex-shrink: 1`. */
 .bbg-app .bbg-chip,
 .bbg-app .bbg-rail-heading,
 .bbg-app .bbg-rail-title {
   flex: 0 0 auto !important;
 }
-/* The same rail turned on its side, for the controls that sit ABOVE the table.
-   It keeps `.bbg-rail`'s surface and border — only the direction changes — and
-   drops the height cap, which exists to keep a *column* level with the table. */
+/* The bar proper: `.bbg-rail`'s surface and border, laid out across, with its
+   own padding and the margin that separates it from what it controls. */
 .bbg-app .bbg-rail-bar {
   overflow: visible;
   padding: 8px 12px;
@@ -313,10 +309,13 @@
    is the table's 6px and NOT `.bbg-card`'s 8px, and the background is
    `chrome_bg`, the table body's field, not the `surface` a card sits on.
 
-   It scrolls the way `.bbg-rail` does: a fixed height from the widget's
+   It scrolls on three things together: a fixed height from the widget's
    layout, `min-height: 0` so a flex child may shrink below its content, and
-   `overflow-y: auto`. The table needs a second, inner scroller only because
-   its header has to stay sticky against it; nothing here is sticky. */
+   `overflow-y: auto`. Miss the middle one and the body pushes the box open
+   instead of scrolling inside it. (`.bbg-rail` carried the same trio until
+   #326, for the same reason — it was a stretched column then.) The catalog
+   table needs a second, inner scroller only because its header has to stay
+   sticky against it; nothing here is sticky. */
 .bbg-app .bbg-section-box {
   background: {{chrome_bg}};
   border: 1px solid {{border_color}};
@@ -346,9 +345,6 @@
   letter-spacing: 0.08em;
   margin: 10px 0 4px 0;
 }
-/* The first heading sits flush with the rail's own padding; only the ones
-   below it need air separating them from the section above. */
-.bbg-app .bbg-rail > .bbg-rail-heading:first-child { margin-top: 0; }
 .bbg-app .bbg-chip-group { width: 100%; }
 /* `text-align` alone does not left-align a Jupyter button: the widget renders
    a flex container, so the text is centred by `justify-content` regardless.
@@ -528,19 +524,19 @@ div.itables_anywidget.bbg-catalog {
   border-radius: 6px;
   overflow: hidden;
 }
-/* The catalog table fills the width the two rails leave (#280). The flex
-   share and `min-width: 0` are set on the widget in `UniverseGrid`, because
-   they belong to the ipywidgets layout of the HBox child rather than to page
-   CSS. What is needed HERE is the inside of that cell: DataTables sizes the
-   table to its content, so without these the flex cell stretches and the
-   table sits in the left of it, still surrounded by dead space.
+/* The catalog table fills its width (#280; the whole panel width since #326,
+   when the rail beside it went). The widget's own width is set in
+   `UniverseGrid`, because it belongs to the ipywidgets layout rather than to
+   page CSS. What is needed HERE is the inside: DataTables sizes the table to
+   its content, so without these the widget stretches and the table sits in
+   the left of it, still surrounded by dead space.
 
    `.dt-container` is included because it is the element DataTables wraps its
    own layout rows in — widening the outer widget and the table while leaving
    the wrapper at content width moves the dead space rather than removing it.
    The scroll on a too-wide column set stays INSIDE the table: the layout cell
    already carries `overflow: auto` (see the sticky-header rules below), so
-   the rails keep their place instead of being pushed off the row. */
+   the page never grows a horizontal scrollbar of its own. */
 div.itables_anywidget.bbg-catalog,
 div.itables_anywidget.bbg-catalog .dt-container,
 div.itables_anywidget.bbg-catalog table.dataTable {

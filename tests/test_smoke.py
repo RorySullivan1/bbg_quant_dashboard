@@ -63,17 +63,21 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # then the ranking Metric (Sharpe by default), then the Window the score is
     # measured over. It was Metric/Window/Lookback in a rail (#279); #324 fixed
     # the sample at five years and handed the window to the bar, #325 moved the
-    # Metric in after it, and the rail is empty until #326 removes it. The three
-    # analytics charts live in one boxed "Platform analytics" card with inner
-    # pill-tabs sharing the lookback toggle (sunburst default tab).
+    # Metric in after it, and #326 removed the emptied rail — so the table now
+    # runs the full width. The three analytics charts live in one boxed
+    # "Platform analytics" card with inner pill-tabs sharing the lookback
+    # toggle (sunburst default tab).
     import plotly.graph_objects as go
+    from itables.widget import ITable
     from src.layout.rails import ChipGroup, MultiChipGroup
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    # Header, the control bar, the grid row (rail + table), the card.
-    universe_header, table_bar, grid_row, analytics_card = platform_panel.children
+    # Header, the control bar, the table itself, the card — no row between.
+    universe_header, table_bar, table, analytics_card = platform_panel.children
+    assert isinstance(table, ITable)
+    assert table.layout.width == "100%"
     bar_chips = [
         chips
         for block in table_bar.children
@@ -81,11 +85,6 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
         if isinstance(chips, ChipGroup | MultiChipGroup)
     ]
     assert [c.label for c in bar_chips if isinstance(c, ChipGroup)] == ["Sharpe", "1Y"]
-    # Nothing is left beside the table.
-    ranking_rail = grid_row.children[0]
-    assert not [
-        c for c in ranking_rail.children if isinstance(c, ChipGroup | MultiChipGroup)
-    ]
 
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].

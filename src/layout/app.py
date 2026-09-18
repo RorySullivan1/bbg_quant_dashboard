@@ -65,7 +65,6 @@ from ..stats import (
     universe_perf,
 )
 from ..style import (
-    CATALOG_TABLE_HEIGHT,
     COMMENTARY_BOX_HEIGHT,
     COMMENTARY_BULLETIN_SHARE,
     COMMENTARY_LEADERBOARD_SHARE,
@@ -119,7 +118,6 @@ from .rails import (
     MultiChipGroup,
     RailSection,
     control_bar,
-    control_rail,
     section_panel,
 )
 from .selection import SelectionSlice
@@ -140,7 +138,6 @@ _OVERLAY_PAINT_DELAY_S = 0.35
 #: The two Platform control containers' titles — the bar above the table and
 #: the rail beside it. Spelled once so the docs, the tests and the screen agree.
 TABLE_BAR_TITLE = "Table view"
-RANKING_RAIL_TITLE = "Z-Score ranking"
 
 
 class DashboardApp:
@@ -459,20 +456,6 @@ class DashboardApp:
             title=TABLE_BAR_TITLE,
         )
 
-    def _build_ranking_rail(self) -> W.VBox:
-        """An empty rail, kept only until #326 removes it and its component.
-
-        Its Lookback and Window went in #324 and its Metric in #325, so there
-        is nothing left for it to hold. It stays for one sub-issue so the
-        deletion of `control_rail`, `RAIL_WIDTH` and the rail's CSS is a change
-        that can be reviewed on its own rather than riding in with a control
-        move.
-        """
-        return control_rail(
-            title=RANKING_RAIL_TITLE,
-            height=CATALOG_TABLE_HEIGHT,
-        )
-
     def _build_group_chips(self) -> MultiChipGroup:
         """One chip per groupable field, in hierarchy order.
 
@@ -642,24 +625,16 @@ class DashboardApp:
         # `self.meta` is re-pointed to the pruned one after each load (#242).
         self.analytics.wire(lambda: self.meta)
 
-        # The Platform shell: the row-shaping controls in a bar above the
-        # table, the Z-Score ranking in a rail down its left side. The two
-        # containers wear the same chrome and differ only in direction.
-        #
-        # `stretch`, not `flex-start`: the rail stands the table's full height
-        # rather than sizing to its own chips, which is the whole reason it
-        # reads as the table's axis instead of as a box parked beside it.
+        # The Platform shell: one bar of controls, then the table at full
+        # width, then the analytics card. The rail that stood down the table's
+        # left side went in #326, once #324 and #325 had emptied it — it was
+        # holding 210px for chips that now sit in the bar above.
         self.table_bar = self._build_table_bar()
-        self.ranking_rail = self._build_ranking_rail()
-        self.universe_grid_row = W.HBox(
-            [self.ranking_rail, self.universe_grid.widget],
-            layout=W.Layout(width="100%", align_items="stretch"),
-        )
         platform_panel = W.VBox(
             [
                 self.universe_header,
                 self.table_bar,
-                self.universe_grid_row,
+                self.universe_grid.widget,
                 self.analytics.card,
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),

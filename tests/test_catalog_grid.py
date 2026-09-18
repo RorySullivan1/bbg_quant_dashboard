@@ -1313,14 +1313,20 @@ def test_a_numeric_filter_box_reads_as_one_and_flags_what_it_cannot_parse():
 # it is on the manual checklist rather than here.
 
 
-def test_the_table_widget_takes_the_remaining_width_and_can_shrink():
+def test_the_table_widget_takes_the_whole_width_and_can_shrink():
     from src.layout.grids import UniverseGrid
 
     layout = UniverseGrid().widget.layout
-    assert layout.flex == "1 1 0%"
-    # The load-bearing half. A flex item's default `min-width: auto` refuses to
-    # shrink below its content, so a wide column set would push the rails off
-    # the row instead of scrolling inside the table.
+    assert layout.width == "100%"
+    # The flex share that gave it "whatever the rail leaves" went with the rail
+    # (#326). Keeping it would be worse than useless: the Platform panel is a
+    # column, so a `0%` basis applies to the HEIGHT and would fight the fixed
+    # box below.
+    assert layout.flex is None
+    # `min_width` stays. It is no longer what keeps a wide column set inside
+    # the table — `.dt-layout-cell`'s own `overflow: auto` does that — but it
+    # is the guard that made the row work, and a flex item's default
+    # `min-width: auto` refusing to shrink below its content is #280.
     assert layout.min_width == "0"
 
 
