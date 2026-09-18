@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.21`.
+- **Current version**: `v0.9.22`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -146,14 +146,59 @@ CSS, style tokens — live in `style.md`.)
   only — that's the user's focus area. The commentary block's builders
   (`build_leaderboard` / `build_launch_cards`) compute over the
   whole catalog (`arp_universe_prices`), never the selection.
-- **Refresh invalidates; a toggle re-slices (v0.9.20 #290).** The commentary
+- **Refresh invalidates; a chip re-slices (v0.9.20 #290).** The commentary
   block's `highlights_cache` on `DashboardApp` is keyed by window, with one
   extra `"launches"` entry. `_recompute` clears it — a fresh fetch makes every
-  ranking stale — while the Ranking-window toggle and the Commentary /
-  New Launches pill only *read* it, so neither issues a BQL call. A window
-  already computed is returned by identity, which is what makes the toggle feel
-  live. The corollary: anything that changes the underlying prices must go
-  through `_recompute`, because nothing else drops the cache.
+  ranking stale — while the Leaderboard's Window chips and the Bulletin's
+  Commentary / New Launches chips only *read* it, so neither issues a BQL call.
+  A window already computed is returned by identity, which is what makes the
+  chips feel live. The corollary: anything that changes the underlying prices
+  must go through `_recompute`, because nothing else drops the cache.
+- **A section's shell is a component, not a shape three places copy
+  (v0.9.22 #305).** The Platform table, the Leaderboard and the QIS Bulletin
+  are all title → control bar → boxed body, so `section_panel(title, bar, body,
+  *, height)` in `rails.py` is that arrangement named once. `height` is
+  **required**: the component owns the shape and the caller owns the size, and
+  a default sized for one caller quietly imposes that number on the next.
+- **A split is shares with `min-width: 0`, never a pixel basis (v0.9.22
+  #308).** The commentary block's 60:40 is `flex: 1 1 <share>` on both columns
+  from the `COMMENTARY_*_SHARE` tokens. A `0 0 620px` basis is not a ratio: it
+  read as 60% at 1030px wide and 43% at 1440px. And `min-width: 0` is
+  load-bearing rather than tidiness — a flex item's automatic minimum is its
+  content, so without it the wider section refuses to narrow and pushes its
+  neighbour off the row instead of both shrinking.
+- **Only one thing on screen names a thing (v0.9.22 #306, #307).** When a
+  `section_panel` heads a section and a lit chip names the view, the widget
+  inside must not also title itself. This is why `Leaderboard` lost `title_w`
+  and both bulletin boards lost their in-HTML `<h3>`s — and why neither caps
+  its own height, since the box already does. The same reasoning retires a
+  constant: `WINDOW_LABELS` existed only to caption the board, and a day → label
+  map nothing reads is one more thing to keep in step with a window list.
+- **A shared option list is shared; widen a copy, not the original (v0.9.22
+  #306).** The leaderboard's windows gained `1Y` as a new
+  `LEADERBOARD_WINDOW_OPTIONS` built *from* `SHORT_WINDOW_OPTIONS`, because
+  that constant also drives the Platform sunburst's z-control and the
+  Quantitative Z-Score window — neither of which asked for a year. A test pins
+  both at four options, so the one-line edit to the shared list is caught.
+- **Rank by the number you show (v0.9.22 #310).** The leaderboard ranks by the
+  **score** and displays `score (value)`, with the sentiment colour on the
+  score. The invariant is that a row's position and the figure it is read by
+  agree; when they were the raw metric that was automatic, and now it is the
+  score, the display had to follow. Note that this z-score is against an
+  index's **own** trailing history — a different figure from the
+  **asset-class-demeaned** z-score on the Platform sunburst and the catalog
+  column, which compares an index to its peers.
+- **Authored data is data, so render it as data (v0.9.22 #307).** A note's
+  `text` is escaped *and then* split into paragraphs. Escaping first makes it
+  impossible to later add a branch that forgets, and a board that renders
+  authored content as markup is a board that renders whatever that content
+  says.
+- **Retire a name with a grep, not a sweep (v0.9.22 #308).** What a
+  half-retirement leaves behind is a name nothing calls, which importing the
+  survivors would never notice. `test_commentary_pane.py` greps `src/`,
+  `tests/` and `data/` for the five retired weekly-commentary names and asserts
+  the file is gone from disk. It caught two doc-comments still spelling the
+  dead filename in prose on its first run.
 - **One control component, two directions (v0.9.21).** The Platform controls
   above the table and the ranking rail beside it are the same `.bbg-rail`
   chrome through `control_bar` / `control_rail`, and a `ChipGroup` lays its
@@ -195,9 +240,9 @@ CSS, style tokens — live in `style.md`.)
   identical from Python.
 - **A compute failure keeps the last good board.** `_render_leaderboard`
   appends its traceback to `errors_w` rather than writing it over the board. A
-  board that is merely stale beats no board at all, and the toggle that caused
+  board that is merely stale beats no board at all, and the chip that caused
   the failure is one click from a window that works. `errors_w` is a sibling of
-  the block's two panes, never inside one, so no live control can wipe it.
+  the block's two sections, never inside one, so no live control can wipe it.
 - **Per-pane charts are pre-allocated, populated lazily (v0.6.9
   Workstream D)**: each `AnalysisPane` owns one fresh `Chart` per analysis type
   (unique instances, so the two panes never share a figure). Each chart builds
@@ -400,15 +445,22 @@ CSS, style tokens — live in `style.md`.)
   (`src/layout/app.py`: `_set_date_bounds`, `_on_range_box`).
 - **Inline HTML lives in `data/templates/`, not Python.** Every HTML
   snippet the UI builds (banner, status banner, section labels, quant-row
-  labels, the commentary block's cards and boards (`launch_card`,
-  `launch_empty`, `launches_board`, `leaderboard_column_title`), error box,
-  weekly-commentary wrapper + fallback, grid headers) is a `*.html` file
+  labels, the commentary block's cards and boards (`launch_card` /
+  `launches_board`, `commentary_card` / `notes_board`, the shared `empty_card`
+  both boards fall back to, `leaderboard_column_title`), error box,
+  grid headers) is a `*.html` file
   rendered via
   `render_template(name, /, **ctx)` in `src/layout/html.py`. Templates carry
   `{{placeholders}}` for **both** style tokens (spread from the shared
   `STYLE_CTX` — `{{navy}}`, `{{label_size}}`, …, so a `src/style.py` token
-  change still propagates) and dynamic data (`html.escape`'d by the caller
-  before substitution; `body_html` from the weekly file stays raw). Size
+  change still propagates) and dynamic data — **`html.escape`'d by the caller
+  before substitution, with no exception.** There was one until v0.9.22 #308:
+  the weekly-commentary wrapper took its `body_html` raw, because that board
+  was an author-written HTML file. Authored content is now *plain text*
+  (`data/commentary.json`), and `_render_note_paragraphs` escapes it **and
+  then** splits it into paragraphs — the inverse invariant, and the safer one,
+  since a renderer that never passes raw markup cannot later grow a branch
+  that forgets. Size
   placeholders end in `_size` so they never collide with a dynamic key like a
   card's `{{label}}`. Substitution is one pass per key in insertion order
   (style first, dynamic last) so escaped text is never re-scanned. Edit the
