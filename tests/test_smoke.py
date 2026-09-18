@@ -364,6 +364,8 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     # the ranked leaderboard on the left under its window toggle, the
     # Commentary / New Launches pane on the right. The 16-card Market
     # 16-card board it replaced must be nowhere on screen.
+    from src.layout.rails import ChipGroup
+
     app = build_app(verbose=False)
     commentary_box = app.children[3]
     widgets = list(_walk(commentary_box))
@@ -375,17 +377,20 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     assert len(boards) == 1
     assert len(panes) == 1
 
-    # The window toggle lives with the leaderboard, labelled for what it now
-    # ranks rather than for the board it replaced.
-    toggle = next(
+    # The window control lives with the leaderboard, as chips in the section's
+    # bar since #306 — the same idiom as the Platform tab rather than a third
+    # one. It gained 1Y when the board started scoring against five years of
+    # history (#310).
+    chips = next(
         w
         for w in widgets
-        if isinstance(w, W.ToggleButtons)
-        and [o[0] for o in w.options] == ["1W", "1M", "3M", "6M"]
+        if isinstance(w, ChipGroup)
+        and [label for label, _ in w.options] == ["1W", "1M", "3M", "6M", "1Y"]
     )
     labels = [w.value for w in widgets if isinstance(w, W.HTML)]
-    assert any("Ranking window" in (v or "") for v in labels)
-    assert toggle.value == 21  # MONTH_WINDOW, the default
+    assert any("Leaderboard" in (v or "") for v in labels)
+    assert any("Window" in (v or "") for v in labels)
+    assert chips.value == 21  # MONTH_WINDOW, the default
 
     # No trace of the retired board survives anywhere in the app — #291 took
     # the cards, the two templates and the stylesheet rule with it.

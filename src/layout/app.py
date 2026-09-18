@@ -39,6 +39,7 @@ from ..config import (
     FACTOR_TICKERS,
     HALF_YEAR_WINDOW,
     LEADERBOARD_WINDOW_DAYS,
+    LEADERBOARD_WINDOW_OPTIONS,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
     MAX_SELECTED_STRATEGIES,
@@ -47,11 +48,9 @@ from ..config import (
     QUARTER_WINDOW,
     REGIME_TICKERS,
     SCORE_HISTORY_YEARS,
-    SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
-    WINDOW_LABELS,
     field_label,
     stat_windows,
     universe_grid_default_window,
@@ -68,6 +67,7 @@ from ..stats import (
 )
 from ..style import (
     CATALOG_TABLE_HEIGHT,
+    COMMENTARY_BOX_HEIGHT,
     Color,
     StatusTone,
 )
@@ -119,6 +119,7 @@ from .rails import (
     RailSection,
     control_bar,
     control_rail,
+    section_panel,
 )
 from .selection import SelectionSlice
 from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
@@ -380,14 +381,18 @@ class DashboardApp:
     def _build_commentary(self) -> None:
         """The all-catalog commentary block: the ranking window toggle, the
         leaderboard, and the switchable Commentary / New Launches pane."""
-        self.ranking_window = W.ToggleButtons(
-            options=SHORT_WINDOW_OPTIONS,
+        # Chips rather than the `ToggleButtons` this was, so the commentary
+        # block reads like the Platform tab instead of like a third control
+        # idiom (#306). `ChipGroup` keeps the `.value` / `.observe` surface, so
+        # everything that reads this is untouched — the same swap
+        # `_build_window_chips` made for the catalog's window.
+        self.ranking_window = ChipGroup(
+            LEADERBOARD_WINDOW_OPTIONS,
             value=LEADERBOARD_WINDOW_DAYS,
-            layout=W.Layout(width="auto"),
+            row=True,
         )
-        self.ranking_window_row = W.HBox(
-            [_section_label("Ranking window"), self.ranking_window],
-            layout=W.Layout(width="100%", align_items="center", padding="2px 0"),
+        self.ranking_window_bar = control_bar(
+            RailSection("Window", self.ranking_window)
         )
         # A leaderboard row and a catalog row route the same way, through the one
         # method, so the two entry points into Single Strategy cannot diverge.
@@ -560,8 +565,15 @@ class DashboardApp:
         # The leaderboard takes a fixed basis wide enough for its four columns
         # and the pane absorbs the remainder (#276's rail idiom), so the split
         # holds at any viewport width without a pixel constant for the pane.
-        leaderboard_col = W.VBox(
-            [self.ranking_window_row, self.leaderboard.root],
+        leaderboard_col = W.Box(
+            [
+                section_panel(
+                    "Leaderboard",
+                    self.ranking_window_bar,
+                    self.leaderboard.root,
+                    height=COMMENTARY_BOX_HEIGHT,
+                )
+            ],
             layout=W.Layout(flex="0 0 620px", min_width="0"),
         )
         pane_col = W.Box(
@@ -1156,10 +1168,7 @@ class DashboardApp:
                     window_days=window_days,
                 )
                 self.highlights_cache[window_days] = columns
-            self.leaderboard.update(
-                columns,
-                window_label=WINDOW_LABELS.get(window_days, "Past Month"),
-            )
+            self.leaderboard.update(columns)
         except Exception:
             self.state.errors_w.value += _render_error(traceback.format_exc())
 
