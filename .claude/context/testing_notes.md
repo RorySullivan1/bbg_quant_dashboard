@@ -300,14 +300,19 @@ Run alongside the mock-price checklist above:
 
 ### Manual checklist — the Platform rails and table surface (v0.9.21, epic #276)
 
-**Read this section before running it.** Every item below was built in a
-container with **no display**, so none of it has ever been rendered. The DOM
-decisions behind the filter row and the two-row sticky header were derived by
-reading the bundled `widget.js` and confirmed kernel-side where they could be —
-which is exactly the class of evidence the section above says is not enough.
-The three marked **(never rendered)** are the ones to run first, and they must
-pass before #280's width criteria are judged: a filter row that lands wrong
-changes what "does it fit" means.
+**Read this section before running it.** Most of it was built in a container
+with no display and has never been rendered. The **filter row is the
+exception** — and the reason to distrust the rest. Its DOM decisions were
+derived by reading the bundled `widget.js`, every Python-side assertion passed,
+and the row still rendered blank on a terminal, because itables empties an
+untitled `thead th` a tick after the callback creates it (#285, and see
+`conventions.md`). It was then driven in a headless Chromium against the real
+widget bundle, the real `_dt_args` and the app's own CSS: the row, the two-row
+sticky header, per-column filtering, composition with the global search, the
+window switch and the click-through were all confirmed there. What that harness
+cannot judge is anything about *fit* — real fonts, the rails, the viewport —
+so the width items below are still unrendered, and reading the bundle is still
+not evidence that something draws.
 
 The rails and their dock:
 
@@ -332,18 +337,19 @@ The rails and their dock:
 
 The table surface:
 
-- **(never rendered)** A **filter row sits directly beneath the header
-  labels**, and the labels are still there. Text columns have an input; the
-  stat and Z-Score columns do not; a column hidden by the Window chips leaves
-  **no** orphaned input.
-- **(never rendered)** The **sticky header pins both rows** as the body
-  scrolls, with the filter row sitting clear of the labels rather than over
-  them. The offset is a hard-coded `CATALOG_HEADER_ROW_HEIGHT`, so this is
-  where a font or padding change would show up first.
-- **(never rendered)** Type a filter, then **switch the stats window**: the
-  filter text, the grouping and the selected row all survive. This is the
-  destroy-and-rebuild path — the table is torn down and rebuilt on every
-  options change, and only the browser-side store puts the filters back.
+- A **filter row sits directly beneath the header labels**, and the labels are
+  still there. Text columns have an input; the stat and Z-Score columns do not;
+  a column hidden by the Window chips leaves **no** orphaned input. (Verified
+  in the harness; re-check it on the terminal, because this is the item that
+  passed every Python assertion while rendering blank.)
+- The **sticky header pins both rows** as the body scrolls, with the filter row
+  sitting clear of the labels rather than over them. The offset is a hard-coded
+  `CATALOG_HEADER_ROW_HEIGHT`, so this is where a font or padding change would
+  show up first — and the terminal's fonts are not the harness's.
+- Type a filter, then **switch the stats window**: the filter text, the
+  grouping and the selected row all survive. This is the destroy-and-rebuild
+  path — the table is torn down and rebuilt on every options change, and only
+  the browser-side store puts the filters back.
 - Typing in a column input filters that column alone; the global search still
   filters across all of them; the two compose. Clicking into an input does
   **not** re-sort, and sorting still works from the label row.
