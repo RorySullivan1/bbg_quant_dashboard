@@ -87,6 +87,7 @@ from .risk import (
 )
 from .rolling import (
     rolling_beta,
+    rolling_calmar,
     rolling_correlation,
     rolling_metric_zscore,
     rolling_return,
@@ -154,6 +155,7 @@ __all__ = [
     "rolling_return",
     "rolling_volatility",
     "rolling_sharpe",
+    "rolling_calmar",
     "rolling_sortino",
     "rolling_metric_zscore",
     "sharpe_zscore",
