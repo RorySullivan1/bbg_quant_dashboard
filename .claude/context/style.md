@@ -167,19 +167,25 @@ code.
   active. `text-align` alone does **not** left-align a Jupyter button — the
   widget renders a flex container, so `justify-content` is set with it.
 
-**The rail stands the table's height by stretching, never by a cap.** The row
-is `align_items: stretch`, so the rail takes the height the table sets, and
-`.bbg-rail` carries `min-height: 0` + `overflow-y: auto` — which is what lets a
-stretched flex item scroll rather than grow the row.
+**The table's box and the rail are one fixed height**, `CATALOG_TABLE_HEIGHT`,
+set on both from the same token. The table's internals then fill that box: the
+`.bbg-catalog` flex chain passes the height down DataTables' wrappers so the
+search row and the row-count readout take what they need and the row area
+scrolls in the remainder. `min-height: 0` appears at every level of that chain —
+without it a flex child refuses to shrink below its content, and the body pushes
+the box open instead of scrolling inside it.
 
-Two mistakes here are worth keeping written down, because both shipped and both
-looked like styling bugs:
+Three things were tried here that did not work, all of which rendered as
+plausible-looking layout bugs:
 
-- **Do not size the rail from `CATALOG_SCROLL_MAX_HEIGHT`.** That token bounds
-  the table's scroll *cell*; the widget is also carrying the search row above
-  it and the row-count readout below, roughly 70px more. A rail capped at the
-  cell's height renders visibly **shorter** than the table beside it.
-- **Chips must not shrink.** A flex item shrinks before its container scrolls,
+- **A cell cap instead of a box height.** Capping the table's scroll cell
+  leaves the widget taller than the cap by its search row and readout (~70px),
+  so anything sized to the cap stands short beside it.
+- **Stretching both boxes.** `align-items: stretch` makes whichever box holds
+  more content set the row — the table grew to the rail on a small catalog, the
+  rail to the table on a large one. Fixing both to one number is the only
+  arrangement where neither pushes the other.
+- **Letting chips shrink.** A flex item shrinks before its container scrolls,
   so a rail holding more chips than fit squeezed every chip flat instead of
   showing a scrollbar. `.bbg-chip`, `.bbg-rail-heading` and `.bbg-rail-title`
   are pinned `flex: 0 0 auto`.

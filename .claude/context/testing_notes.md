@@ -322,9 +322,10 @@ The control bar and the ranking rail:
 - The **ranking rail** runs down the **left** of the table, stacked, titled
   Z-SCORE RANKING, and its top and bottom line up with the table's — check at a
   short catalog (table shorter than the rail) and a long one (table scrolling),
-  since the two are level for different reasons in each case. Both failed on
-  the first render: the rail was capped at the table's *scroll cell* height and
-  so stood ~70px short of the widget.
+  since the two are level for different reasons in each case. Both boxes are a
+  fixed `CATALOG_TABLE_HEIGHT`, so this should hold at **any** catalog size —
+  and the table must not grow past it: the rows scroll inside the box, with the
+  search row and the row-count readout still visible above and below them.
 - **No chip is squeezed.** Every chip is the same height in the rail as in the
   bar, whatever the rail's content adds up to. A rail too full to fit scrolls;
   it must not compress its chips to make them fit.

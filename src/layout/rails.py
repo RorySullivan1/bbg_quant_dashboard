@@ -222,7 +222,10 @@ def _rail_title(text: str) -> W.HTML:
 
 
 def control_rail(
-    *sections: RailSection, title: str | None = None, width: str = RAIL_WIDTH
+    *sections: RailSection,
+    title: str | None = None,
+    width: str = RAIL_WIDTH,
+    height: str | None = None,
 ) -> W.VBox:
     """A rail: its sections stacked in the order given, under an optional title.
 
@@ -243,6 +246,10 @@ def control_rail(
             flex=f"0 0 {width}",
             align_items="stretch",
             margin="0 8px 0 0",
+            # A caller that stands a rail beside the table passes the table's
+            # height, so the two are one number rather than two that agree
+            # today (#298).
+            height=height,
         ),
     )
     rail.add_class("bbg-rail")

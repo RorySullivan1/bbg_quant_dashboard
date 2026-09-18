@@ -66,6 +66,7 @@ from ..stats import (
     universe_perf,
 )
 from ..style import (
+    CATALOG_TABLE_HEIGHT,
     Color,
     StatusTone,
 )
@@ -467,6 +468,7 @@ class DashboardApp:
             RailSection("Window", self.z_window_chips),
             RailSection("Lookback", self.z_lookback_chips),
             title=RANKING_RAIL_TITLE,
+            height=CATALOG_TABLE_HEIGHT,
         )
 
     def _build_group_chips(self) -> MultiChipGroup:

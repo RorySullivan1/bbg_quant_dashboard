@@ -533,13 +533,38 @@ div.itables_anywidget.bbg-catalog table.dataTable {
 div.itables_anywidget .dt-layout-row.dt-layout-table {
   overflow: visible;
 }
-/* The scroll goes on the CELL, not the row. DataTables' own stylesheet already
-   gives `.dt-layout-cell` `overflow: auto`, which makes it the nearest
-   scrolling ancestor of the header — so a sticky `th` sticks to the cell
-   whatever the row does. Scrolling the row instead left the header scrolling
-   away with the body. */
+/* The table fills its fixed box (#298). The widget's height is set in
+   `UniverseGrid`; these rules pass that height down DataTables' own wrappers so
+   the search row and the row-count readout take what they need and the ROW AREA
+   gets the remainder. A `max-height` on the cell cannot do this — it is a
+   second number that has to be kept in step with the box by hand, and the two
+   drift the moment the chrome above or below the table changes.
+
+   `min-height: 0` at every level is what makes it work: a flex child refuses to
+   shrink below its content without it, so the body would push the box open
+   instead of scrolling inside it.
+
+   The scroll stays on the CELL, not the row. DataTables' own stylesheet gives
+   `.dt-layout-cell` `overflow: auto`, which makes it the nearest scrolling
+   ancestor of the header — so a sticky `th` sticks to the cell whatever the row
+   does. Scrolling the row instead left the header scrolling away with the
+   body. */
+div.itables_anywidget.bbg-catalog,
+div.itables_anywidget.bbg-catalog .dt-container {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+}
+div.itables_anywidget.bbg-catalog .dt-container {
+  flex: 1 1 auto !important;
+}
+div.itables_anywidget.bbg-catalog .dt-layout-row.dt-layout-table {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
 div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
-  max-height: {{scroll_max_height}};
+  height: 100%;
+  min-height: 0;
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs

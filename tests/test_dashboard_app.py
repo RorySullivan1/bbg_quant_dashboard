@@ -318,23 +318,37 @@ def _declarations(css: str, selector: str) -> list[str]:
     return [line for line in lines if line.endswith(";") and ":" in line]
 
 
-def test_the_ranking_rail_is_levelled_by_stretching_not_by_a_cap(app):
-    from src.layout.html import STYLE_CTX, render_template
+def test_the_table_and_the_rail_are_one_fixed_height(app):
+    from src.style import CATALOG_TABLE_HEIGHT
 
-    # The row stretches its children, and the rail takes the height the table
-    # sets. A cap cannot do this job: `CATALOG_SCROLL_MAX_HEIGHT` bounds the
-    # table's scroll CELL, while the widget also carries the search row above
-    # and the row-count readout below — so a rail capped at the cell's height
-    # renders visibly shorter than the table it sits beside.
-    assert app.universe_grid_row.layout.align_items == "stretch"
+    # Both boxes take the SAME constant, from the same token. Stretching was
+    # tried and is wrong here: it makes whichever box holds more content set
+    # the row, so the table grew to the rail on a small catalog and the rail to
+    # the table on a large one.
+    assert app.universe_grid.widget.layout.height == CATALOG_TABLE_HEIGHT
+    assert app.ranking_rail.layout.height == CATALOG_TABLE_HEIGHT
     assert app.ranking_rail.layout.flex == f"0 0 {RAIL_WIDTH}"
 
+
+def test_the_table_s_internals_fill_its_box_rather_than_capping_a_cell(app):
+    from src.layout.html import STYLE_CTX, render_template
+
     css = render_template("app_css", **STYLE_CTX)
-    rail = _declarations(css, ".bbg-app .bbg-rail")
-    assert not any(d.startswith("max-height") for d in rail)
-    # What lets a stretched flex item scroll rather than grow the row.
-    assert "min-height: 0;" in rail
-    assert "overflow-y: auto;" in rail
+    # No second height to keep in step with the box by hand: the row area takes
+    # what the search row and the readout leave.
+    cell = _declarations(
+        css, "div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell"
+    )
+    assert not any(d.startswith("max-height") for d in cell)
+    assert "height: 100%;" in cell
+    # `min-height: 0` at every level, or a flex child refuses to shrink below
+    # its content and the body pushes the box open instead of scrolling.
+    for selector in (
+        "div.itables_anywidget.bbg-catalog .dt-container",
+        "div.itables_anywidget.bbg-catalog .dt-layout-row.dt-layout-table",
+    ):
+        assert any(d.startswith("min-height: 0") for d in _declarations(css, selector))
+    assert "overflow: auto;" in cell
 
 
 def test_the_chips_never_shrink_to_fit(app):

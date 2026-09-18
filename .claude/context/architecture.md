@@ -87,9 +87,9 @@ arrangement, whose left board was 16 Market Superlative cards. Retired in #291.)
 - **Platform** (v0.9.21, epic #276) — a **control bar over the grid and a
   ranking rail down its left**. Both are `ChipGroup` chips in the same chrome
   (`src/layout/rails.py`): `control_bar` lays its sections across, `control_rail`
-  stacks them at a fixed 210px basis. The rail is levelled with the table by
-  being **stretched** by the row (not by a shared height constant — see
-  `style.md`); the table takes the width the rail leaves.
+  stacks them at a fixed 210px basis. The rail and the table's box are one
+  fixed height (`CATALOG_TABLE_HEIGHT`, see `style.md`); the table takes the
+  width the rail leaves.
   - **The bar — *Table view*: Group by + Window.** Which classification levels the table
     nests by (`UNIVERSE_GRID_GROUPABLE_FIELDS`, membership only — the nesting
     order is always the hierarchy's, never the tick order) above which single

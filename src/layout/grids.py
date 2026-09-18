@@ -35,7 +35,7 @@ from ..config import (
     universe_grid_default_window,
     universe_grid_group_fields,
 )
-from ..style import Color
+from ..style import CATALOG_TABLE_HEIGHT, Color
 from .theme import _palette_color
 
 
@@ -938,7 +938,17 @@ class UniverseGrid:
         # rails off the row instead of scrolling inside the table. The layout
         # looks correct without it until the columns grow, which is why it is
         # set here rather than discovered later.
-        self.widget.layout = W.Layout(flex="1 1 0%", min_width="0", width="auto")
+        # A fixed height, matched by the ranking rail beside it (#298): with
+        # both boxes stretched instead, whichever held more content set the
+        # row, so the table grew to the rail on a small catalog and the rail to
+        # the table on a large one. The internals fill this box — see the
+        # `.bbg-catalog` flex rules in app_css.html.
+        self.widget.layout = W.Layout(
+            flex="1 1 0%",
+            min_width="0",
+            width="auto",
+            height=CATALOG_TABLE_HEIGHT,
+        )
         #: Row position -> ticker for the frame currently rendered. The widget
         #: reports a clicked row by position, and the grid is the only object
         #: that knows which ticker that was, so the translation lives here
