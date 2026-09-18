@@ -437,8 +437,18 @@ CSS, style tokens — live in `style.md`.)
   replaced the earlier 2-level MultiIndex layout with comma-joined
   `"<level0>,<level1>"` width keys and a two-row header — flattened in
   v0.9.11.)
-- **Lookback is fixed** at `LOOKBACK_YEARS = 5` in `src/config.py`. The
-  rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
+- **Fetching and analysing are two horizons (v0.9.22 #311).** The app
+  **analyses** `LOOKBACK_YEARS = 5` back — every chart window, every `5Y`
+  label — but **fetches** `SCORE_HISTORY_YEARS = 6`, because the leaderboard's
+  score z-scores a metric against its own rolling history and the 1Y window
+  needs 252 + 1260 ≈ 1512 trading days of it. The boundary is
+  `DashboardApp._analytics_window_start()`, and **every consumer goes through
+  it**: with the two numbers equal a missed slice was harmless, and now it is a
+  six-year figure under a `5Y` label. The leaderboard's scorer is the one
+  documented exception that reads the unsliced frame. Three consumers had never
+  sliced at all — `since_inception_perf`, `calendar_return_table` and the
+  benchmark short-history caveat — because until #311 they never had to.
+  The rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
 - **Plotly auto-fits y-axis** on data replacement, so the bqplot-era
   manual scale-rebinding is no longer needed. Line / drawdown / sharpe-z

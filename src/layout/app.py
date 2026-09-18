@@ -46,6 +46,7 @@ from ..config import (
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
     REGIME_TICKERS,
+    SCORE_HISTORY_YEARS,
     SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
@@ -666,13 +667,32 @@ class DashboardApp:
         self._wire_observers()
         self._assemble_app()
 
+    def _analytics_window_start(self) -> pd.Timestamp:
+        """The start of the window every analytic is computed over.
+
+        `LOOKBACK_YEARS` back from today — *not* the fetch start, which reaches
+        a year further for the leaderboard's score (#311). One helper rather
+        than the four inline copies this replaced: with the two horizons equal,
+        a missed slice was harmless; now it is a six-year figure under a `5Y`
+        label, and a fifth call site would opt out by omission.
+
+        The scorer in `_render_leaderboard` is the one deliberate exception and
+        says so where it reads the unsliced frame.
+        """
+        return pd.Timestamp(self.today) - pd.DateOffset(years=LOOKBACK_YEARS)
+
     def _wire_fetch_window(self) -> None:
         """The startup fetch window and the benchmark registry's callbacks."""
-        # Single BQL fetch at app-load time, bounded by LOOKBACK_YEARS. A wider
-        # fetch (e.g. back to oldest live date) is too slow on the terminal, so the
-        # all-catalog grid's windows are likewise bounded by this lookback.
+        # Single BQL fetch at app-load time, bounded by SCORE_HISTORY_YEARS — a
+        # year longer than the app analyses, so the leaderboard's score has its
+        # 5-year sample at the 1Y window (#311). A wider fetch still (e.g. back
+        # to oldest live date) is too slow on the terminal.
+        #
+        # Everything except that scorer reads `_analytics_window_start()`
+        # instead. The two are different numbers now, so a consumer that skips
+        # the slice is a six-year statistic under a `5Y` label.
         self.universe_start = (
-            pd.Timestamp(self.today) - pd.DateOffset(years=LOOKBACK_YEARS)
+            pd.Timestamp(self.today) - pd.DateOffset(years=SCORE_HISTORY_YEARS)
         ).date()
 
         # Everything the startup fetch pulls (see `config.py` for the ride-along
@@ -738,9 +758,12 @@ class DashboardApp:
     def _assemble_app(self) -> None:
         """Assemble the app container and run the initial load."""
         perf_disclaimer_w = W.HTML(
+            # The period the disclaimer states is the one the numbers cover —
+            # the analytics window, not the fetch, which reaches a year further
+            # for the leaderboard's score (#311).
             _load_disclaimer(
                 PERFORMANCE_DISCLAIMER_PATH,
-                start_date=self.universe_start.isoformat(),
+                start_date=self._analytics_window_start().date().isoformat(),
                 end_date=self.today.isoformat(),
             ),
             layout=W.Layout(width="100%", padding="0 16px"),
@@ -978,10 +1001,13 @@ class DashboardApp:
         first = series.first_valid_index()
         if first is None:
             return ""
-        start = pd.Timestamp(self.universe_start)
+        # Measured against the analytics window, not the fetch: the fetch
+        # reaches a year further for the leaderboard's score (#311), and a
+        # benchmark with a full five years of history covers everything shown.
+        start = self._analytics_window_start()
         if first <= start + pd.Timedelta(days=BENCHMARK_SHORT_HISTORY_DAYS):
             return ""
-        return f" History starts {first.date()}, not {self.universe_start}."
+        return f" History starts {first.date()}, not {start.date()}."
 
     def _resolve_new_benchmark(self, ticker: str) -> bool:
         """Fetch a benchmark the user typed; report what happened.
@@ -1110,10 +1136,9 @@ class DashboardApp:
             self.commentary_pane.update_launches(self.highlights_cache["launches"])
             columns = self.highlights_cache.get(window_days)
             if columns is None:
-                window_start = pd.Timestamp(self.today) - pd.DateOffset(
-                    years=LOOKBACK_YEARS
-                )
-                universe_window = universe.loc[universe.index >= window_start]
+                universe_window = universe.loc[
+                    universe.index >= self._analytics_window_start()
+                ]
                 if universe_window.empty:
                     self.leaderboard.clear()
                     return
@@ -1151,10 +1176,8 @@ class DashboardApp:
         # re-renders it live (no BQL) through the same method.
         self._render_leaderboard(self.ranking_window.value)
 
-        # 5Y bound for the selected-set slice below.
-        universe_window_start = pd.Timestamp(self.today) - pd.DateOffset(
-            years=LOOKBACK_YEARS
-        )
+        # The analytics bound for the selected-set slice below.
+        universe_window_start = self._analytics_window_start()
         pane_errors: list[str] = []
         self._render_selection(universe_window_start, pane_errors)
 
@@ -1328,8 +1351,7 @@ class DashboardApp:
         # the end there instead.
         if getattr(self.single_strategy, "_suspend", False):
             return
-        window_start = pd.Timestamp(self.today) - pd.DateOffset(years=LOOKBACK_YEARS)
-        self.single_strategy.render(self.meta, window_start)
+        self.single_strategy.render(self.meta, self._analytics_window_start())
 
     def _refresh_prices(self, _btn=None):
         # The overlay is already in the tree, so re-render its value visible and
@@ -1400,10 +1422,9 @@ class DashboardApp:
 
     def _make_pane_render_handler(self, pane: SingleAnalysisPane):
         def _handler(_change=None) -> None:
-            window_start = pd.Timestamp(self.today) - pd.DateOffset(
-                years=LOOKBACK_YEARS
+            self.single_strategy.render_analysis_pane(
+                pane, self.meta, self._analytics_window_start()
             )
-            self.single_strategy.render_analysis_pane(pane, self.meta, window_start)
 
         return _handler
 

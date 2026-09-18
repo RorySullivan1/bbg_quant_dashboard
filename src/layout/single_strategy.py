@@ -103,6 +103,11 @@ class SingleStrategyPanel:
         registry: BenchmarkRegistry | None = None,
     ) -> None:
         self.state = state
+        #: The analytics window the panel last rendered at, kept for
+        #: `render_calendar`, which takes no arguments and must slice the
+        #: fetched frame like every other consumer (#311). None until the first
+        #: `render`, which is also before any strategy is picked.
+        self._window_start: pd.Timestamp | None = None
         self._build(meta, registry=registry)
 
     def _build(self, meta: pd.DataFrame, *, registry: BenchmarkRegistry | None) -> None:
@@ -256,7 +261,12 @@ class SingleStrategyPanel:
         card, the cumulative chart (rebased to 100, with the benchmark overlaid when
         the toggle is on), and the compact 1/3/5Y + since-inception perf table. A
         missing ticker / empty cache clears the chart and grid without raising.
+
+        The window is held on the panel because `render_calendar` takes no
+        arguments and needs it too: the fetched frame reaches a year further
+        back than the app analyses (#311), so every consumer here has to slice.
         """
+        self._window_start = window_start
         ticker = self.picker.value
         prices = self.state.universe_prices
         row = (
@@ -284,8 +294,19 @@ class SingleStrategyPanel:
         window = prices.loc[prices.index >= window_start, cols]
         self.line.update(cum_perf(window))
 
+        # `perf_table` slices per window internally, so it takes the full frame
+        # and its 5Y row benefits from the extra year of history the fetch now
+        # carries. `since_inception_perf` reads whatever it is given end to end
+        # — handed the full frame it would quietly become a six-year figure, so
+        # it gets the analytics window and keeps meaning what it meant (#311).
         full = prices[[ticker]]
-        pt = pd.concat([perf_table(full), since_inception_perf(full)], axis=1)
+        pt = pd.concat(
+            [
+                perf_table(full),
+                since_inception_perf(full.loc[full.index >= window_start]),
+            ],
+            axis=1,
+        )
         self.perf_grid.update(pt, meta)
 
         self.render_calendar()
@@ -313,9 +334,17 @@ class SingleStrategyPanel:
             or prices is None
             or prices.empty
             or ticker not in prices.columns
+            # No window yet means `render` has not run, which is also before a
+            # strategy is picked — there is nothing to draw either way, and
+            # drawing it unsliced would be a six-year calendar (#311).
+            or self._window_start is None
         ):
             self.cal_grid.clear()
             return
+        # The fetch reaches a year further back than the app analyses, and
+        # `calendar_return_table` pivots every month it is given — unsliced it
+        # would grow an extra year row and restate the oldest year's summary.
+        prices = prices.loc[prices.index >= self._window_start]
         benchmark = None
         if kind in _CALENDAR_BENCHMARK_KINDS:
             bench = self.bench_dd.value

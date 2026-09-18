@@ -149,6 +149,11 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
     ss.picker.value = "AAA Index"
 
     ss.state = state
+    # The panel slices the fetched frame to the analytics window before drawing
+    # (#311) — the fetch reaches a year further back than the app analyses, and
+    # an unsliced calendar would grow an extra year row. `render` sets this;
+    # here the whole fixture is the window.
+    ss._window_start = universe.index.min()
     ss.render_calendar()
     data = ss.cal_grid.grid.data
     # Default kind is absolute → Return / Vol / Sharpe summary columns.
@@ -166,6 +171,7 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
     state = SimpleNamespace(universe_prices=universe)
     ss.picker.value = "AAA Index"
     ss.bench_dd.value = "SPXFP Index"
+    ss._window_start = universe.index.min()  # see the note above (#311)
 
     for kind in ("outperformance", "vol_adjusted", "beta", "correlation"):
         ss.set_calendar_kind(kind)
@@ -372,3 +378,96 @@ def test_set_calendar_kind_restyles_only_the_active_pill():
             if "is-active" in pill._dom_classes
         ]
         assert active == [kind]
+
+
+# --- the fetched frame is longer than the analysis window (#311) -----------
+#
+# The fetch reaches a year further back than the app analyses, so the panel has
+# to slice. Two of its consumers read whatever frame they are given end to end
+# — `since_inception_perf` and `calendar_return_table` — and neither sliced
+# before, because until #311 the two horizons were the same number. These pin
+# that a longer frame changes neither.
+
+
+def _panel_with(prices: pd.DataFrame) -> SingleStrategyPanel:
+    ss = SingleStrategyPanel(_meta(), None)
+    ss.state = SimpleNamespace(universe_prices=prices)
+    ss.picker.value = "AAA Index"
+    return ss
+
+
+def test_a_longer_fetch_does_not_move_the_since_inception_row(multiyear_prices):
+    """SI is whole-frame, so an extra year of history would silently deepen it.
+
+    It means "since the fetch start" already, for any index older than the
+    window; what must not happen is that meaning changing under the reader
+    because the fetch grew for the leaderboard's benefit.
+    """
+    window_start = multiyear_prices.index.min()
+    older = pd.DataFrame(
+        50.0,
+        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
+        columns=multiyear_prices.columns,
+    )
+    longer = pd.concat([older, multiyear_prices])
+
+    short_row = _panel_with(multiyear_prices)
+    short_row.render(_meta(), window_start)
+    long_row = _panel_with(longer)
+    long_row.render(_meta(), window_start)
+
+    si = [c for c in short_row.perf_grid.grid.data.columns if str(c).startswith("SI")]
+    assert si, "no since-inception columns on the perf grid"
+    pd.testing.assert_frame_equal(
+        short_row.perf_grid.grid.data[si], long_row.perf_grid.grid.data[si]
+    )
+
+
+def test_a_longer_fetch_fills_a_window_the_shorter_one_left_blank(multiyear_prices):
+    """The other half of the same decision, and a pre-existing bug it fixes.
+
+    `perf_table` keeps the **full** frame on purpose: it slices per window
+    internally, and it blanks a window whose first valid row is even a day
+    short of `years * 365.25`. The fetch start is a `DateOffset` and the first
+    trading row snaps forward off a weekend, so the two disagree — measured on
+    2026-09-18 the catalog's whole `5Y` column is blank, and it blanks on ~20%
+    of business days. The extra year the fetch now carries settles it.
+    """
+    window_start = multiyear_prices.index.min()
+    older = pd.DataFrame(
+        50.0,
+        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
+        columns=multiyear_prices.columns,
+    )
+    longer = pd.concat([older, multiyear_prices])
+
+    short_row = _panel_with(multiyear_prices)
+    short_row.render(_meta(), window_start)
+    long_row = _panel_with(longer)
+    long_row.render(_meta(), window_start)
+
+    # The fixture spans just under three years, so `3Y` is the window on the
+    # boundary: blank on the short frame, populated once the history reaches.
+    assert short_row.perf_grid.grid.data["3Y Return"].isna().all()
+    assert long_row.perf_grid.grid.data["3Y Return"].notna().all()
+
+
+def test_a_longer_fetch_does_not_grow_the_calendar(multiyear_prices):
+    # `calendar_return_table` pivots every month it is handed, so an unsliced
+    # frame would add a whole year row and restate the oldest year's summary.
+    window_start = multiyear_prices.index.min()
+    older = pd.DataFrame(
+        50.0,
+        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
+        columns=multiyear_prices.columns,
+    )
+    longer = pd.concat([older, multiyear_prices])
+
+    short_cal = _panel_with(multiyear_prices)
+    short_cal.render(_meta(), window_start)
+    long_cal = _panel_with(longer)
+    long_cal.render(_meta(), window_start)
+
+    pd.testing.assert_frame_equal(
+        short_cal.cal_grid.grid.data, long_cal.cal_grid.grid.data
+    )
