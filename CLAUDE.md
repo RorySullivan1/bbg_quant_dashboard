@@ -122,7 +122,10 @@ so a tick order cannot reach the grouping. The table beside the rail takes
 the remaining width (`flex: 1 1 0%` **and** `min-width: 0`, or a wide column
 set pushes the rail off instead of scrolling inside the table), leads with a
 top-left search box, draws its tiers as stepped cyan bands, and carries a
-**per-column filter row** beneath its header labels. One deliberate exception
+**per-column filter row** beneath its header labels — one box per column, and
+the stat columns' boxes take a **comparison** (`>1`, `1..3`) rather than a
+substring, in the units the cell shows, because those columns are searched on
+the raw value a `5.23%` cell stores as `0.0523`. One deliberate exception
 lives here: **the filter text is held in the browser, not on `UniverseGrid`**,
 because every options change destroys and rebuilds the table and no traitlet
 carries typed text to the kernel. See `.claude/context/style.md` and

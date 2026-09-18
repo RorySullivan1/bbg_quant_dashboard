@@ -834,29 +834,62 @@ def _draw_callback(grid) -> str:
     return str(options["drawCallback"])
 
 
-def test_only_the_text_columns_get_a_filter_input():
-    from src.layout.grids import _filterable_positions
+def test_every_column_gets_a_filter_and_the_numbers_get_a_comparison():
+    from src.layout.grids import _filter_kinds
 
     grid = _populated_grid(("solution",))
-    positions = _filterable_positions(grid._display, grid._groups)
-    named = [str(grid._display.columns[p]) for p in positions]
+    kinds = {
+        str(grid._display.columns[p]): kind
+        for p, kind in _filter_kinds(grid._display, grid._groups).items()
+    }
 
-    assert "Name" in named and "Asset Class" in named and "Launch Date" in named
-    # Numbers are excluded: a substring filter over them matches nonsense
-    # ("1.2" would match 1.23, 11.2 and -1.2 alike).
-    assert not any(n.startswith("Z-Score") for n in named)
-    assert not any(n.endswith((" Return", " Vol", " Sharpe", " Max DD")) for n in named)
+    assert kinds["Name"] == "text" and kinds["Asset Class"] == "text"
+    assert kinds["Launch Date"] == "text"
+    # The numbers filter by comparison, not by substring (#297). A substring
+    # over them is not merely coarse: they render through `_js_number_render`,
+    # which hands filtering the raw value, so "5.23" over a cell reading
+    # "5.23%" would be searched against 0.0523 and match nothing.
+    assert kinds["1Y Sharpe"] == "number"
+    assert kinds[f"Z-Score {_Z_LABEL}"] == "number"
+    assert kinds["1Y Return"] == "percent"
+    assert kinds["1Y Vol"] == "percent" and kinds["1Y Max DD"] == "percent"
     # Grouped columns are hidden and come back as row-group headers.
-    assert "Solution" not in named
+    assert "Solution" not in kinds
 
 
-def test_the_filterable_set_does_not_move_with_the_stats_window():
-    from src.layout.grids import _filterable_positions
+def test_the_renderer_and_the_filter_agree_on_which_columns_are_percentages():
+    """One predicate behind both, or the filter answers in the wrong units.
+
+    The renderer multiplies a Return by 100 to display it; the filter has to
+    scale the same columns by the same 100 to compare against what is on
+    screen. Written twice they would drift on the next stat metric, and the
+    symptom would be a `>1` that matches every row of a percent column.
+    """
+    from src.layout.grids import _catalog_table_options, _filter_kinds, _is_percent_col
 
     grid = _populated_grid()
-    first = _filterable_positions(grid._display, grid._groups)
+    kinds = _filter_kinds(grid._display, grid._groups)
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+
+    scaled_in_render = {
+        target
+        for spec in options["columnDefs"]
+        if "render" in spec and "* 100" in str(spec["render"])
+        for target in spec["targets"]
+    }
+    scaled_in_filter = {p for p, kind in kinds.items() if kind == "percent"}
+    assert scaled_in_render == scaled_in_filter
+    assert scaled_in_filter  # the frame has percent columns at all
+    assert all(_is_percent_col(str(grid._display.columns[p])) for p in scaled_in_filter)
+
+
+def test_the_kinds_do_not_move_with_the_stats_window():
+    from src.layout.grids import _filter_kinds
+
+    grid = _populated_grid()
+    first = _filter_kinds(grid._display, grid._groups)
     grid.set_window("6M")
-    assert _filterable_positions(grid._display, grid._groups) == first
+    assert _filter_kinds(grid._display, grid._groups) == first
 
 
 def test_the_filter_row_is_built_from_a_drawcallback_the_widget_forwards():
@@ -914,6 +947,14 @@ def test_the_callback_holds_the_invariants_the_row_depends_on():
     # `input`, not `keyup`: a paste and the clear button of a `type=search`
     # box both change the value with no keystroke behind it.
     assert "addEventListener('input'" in js
+    # A numeric column filters by DataTables' own registered predicate, not by
+    # `column.search()` — which is a substring over the raw value, so it reads
+    # a percent column in fractions (#297).
+    assert "column.search.fixed('bbg'" in js
+    # Probed, not assumed: a bundle without it would throw inside this callback
+    # and take the text filters down with it, so it degrades to numeric columns
+    # with no input — where they were before #297.
+    assert "api.columns().search.fixed" in js
 
 
 def test_the_filter_cells_are_td_so_itables_cannot_empty_them():
@@ -949,6 +990,138 @@ def test_the_itables_pass_that_forced_that_choice_is_still_there():
     assert "text_in_header_can_be_selected" in js
 
 
+def test_the_datatables_api_the_numeric_filter_calls_is_in_the_bundle():
+    """Grounds the numeric filter in the dependency rather than in the docs.
+
+    `column().search.fixed()` is how a column filters by predicate instead of
+    by substring — the same API DataTables' own ColumnControl extension filters
+    numbers with. The callback probes for it and degrades quietly, so an
+    upgrade that dropped it would show up as numeric boxes that stopped
+    appearing, with nothing failing. This fails instead.
+    """
+    from pathlib import Path
+
+    import itables.widget
+
+    bundle = Path(itables.widget.__file__).parent / "static" / "widget.js"
+    if not bundle.exists():  # pragma: no cover - a source layout we don't ship
+        pytest.skip("itables widget bundle not found")
+    assert "column().search.fixed()" in bundle.read_text(encoding="utf-8")
+
+
+# The grammar a numeric box accepts is JavaScript, and the only honest way to
+# assert what it accepts is to run it. `_JS_NUMBER_PREDICATE` is a module
+# constant precisely so that can happen without a browser: node evaluates the
+# one function, with no DOM and no DataTables around it. The rest of the row
+# still needs the rendered pass — see `testing_notes.md`.
+
+
+def _grammar(cases: list[tuple[str, float, object]]) -> list:
+    """Run `(expression, scale, value)` triples through the parser in node.
+
+    Returns `"empty"` for an expression that filters nothing, `"invalid"` for
+    one that does not parse, and the predicate's verdict otherwise — the three
+    outcomes the callback distinguishes.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from src.layout.grids import _JS_NUMBER_PREDICATE
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is present on CI's runner
+        pytest.skip("node is needed to run the filter grammar")
+    script = (
+        f"const parse = {_JS_NUMBER_PREDICATE};"
+        f"const cases = {json.dumps(cases)};"
+        "console.log(JSON.stringify(cases.map(function (c) {"
+        "  const test = parse(c[0], c[1]);"
+        "  if (test === null) { return 'empty'; }"
+        "  if (test === false) { return 'invalid'; }"
+        "  return test(c[2]);"
+        "})));"
+    )
+    done = subprocess.run(
+        [node, "-e", script], capture_output=True, text=True, check=True
+    )
+    return json.loads(done.stdout)
+
+
+def test_the_numeric_grammar_accepts_the_comparisons_it_advertises():
+    assert _grammar(
+        [
+            (">1", 1, 1.5),
+            (">1", 1, 1.0),
+            (">=1", 1, 1.0),
+            ("<0", 1, -0.2),
+            ("<0", 1, 0.1),
+            ("<=-0.5", 1, -0.5),
+            ("1..3", 1, 3.0),
+            ("1..3", 1, 3.01),
+            ("-1..-0.5", 1, -0.75),
+            # Whitespace and thousands separators are noise, not syntax.
+            (" > 1 ", 1, 2.0),
+            ("1,500", 1, 1500.0),
+        ]
+    ) == [True, False, True, True, False, True, True, False, True, True, True]
+
+
+def test_a_bare_number_matches_at_the_precision_typed():
+    """ "1.2" is the neighbourhood of 1.2, not the float that is exactly it.
+
+    A browse surface asks for "about 1.2", and the column renders to two
+    decimals — exact equality would be a box that stays empty for most of what
+    is on screen. So the digits typed set the band: 1.2 is [1.15, 1.25], 5 is
+    [4.5, 5.5].
+    """
+    assert _grammar(
+        [
+            ("1.2", 1, 1.24),
+            ("1.2", 1, 1.15),
+            ("1.2", 1, 1.26),
+            ("5", 1, 5.4),
+            ("5", 1, 5.6),
+            ("=1.23", 1, 1.23),
+            ("=1.23", 1, 1.3),
+        ]
+    ) == [True, True, False, True, False, True, False]
+
+
+def test_a_percent_column_is_filtered_in_the_units_it_renders():
+    # A Return cell holds 0.0523 and reads "5.23%". The user types what they
+    # can see, so the scale the renderer applies is the scale the filter
+    # compares in — without it `>5` would match every row in the catalog.
+    assert _grammar(
+        [
+            (">5", 100, 0.0523),
+            (">5", 100, 0.04),
+            ("5.23", 100, 0.0523),
+            # The `%` someone copies off the screen is stripped, not rejected.
+            (">5%", 100, 0.0523),
+        ]
+    ) == [True, False, True, True]
+
+
+def test_an_empty_box_a_half_typed_one_and_a_blank_cell_are_all_distinct():
+    # ">" alone is what every ">1" passes through on its way to being typed.
+    # Treating it as a filter of zero rows would empty the table under the
+    # user's hands mid-keystroke; it leaves the column alone and marks the box.
+    assert _grammar(
+        [
+            ("", 1, 1.0),
+            ("   ", 1, 1.0),
+            (">", 1, 1.0),
+            ("abc", 1, 1.0),
+            ("1..", 1, 1.0),
+            # A dash cell is not a number and matches no comparison, so the
+            # blanks drop out of a filtered column instead of riding along.
+            (">-999", 1, None),
+            ("<1", 1, ""),
+        ]
+    ) == ["empty", "empty", "invalid", "invalid", "invalid", False, False]
+
+
 def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
     from src.layout.html import STYLE_CTX, render_template
     from src.style import CATALOG_HEADER_ROW_HEIGHT
@@ -968,6 +1141,18 @@ def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
     assert cell in css
     assert "position: sticky" in block
     assert "background-color" in block
+
+
+def test_a_numeric_filter_box_reads_as_one_and_flags_what_it_cannot_parse():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    # The mono face and right alignment say "this column takes a number", which
+    # is the only hint besides the placeholder that it is not a substring box.
+    assert ".bbg-filter-input.bbg-filter-number" in css
+    # Half-typed text leaves the column unfiltered, so the box is the only
+    # place the user can see that nothing is being applied yet.
+    assert ".bbg-filter-input.bbg-filter-invalid" in css
 
 
 # --- the table claims the width between the rails (#280) -------------------
