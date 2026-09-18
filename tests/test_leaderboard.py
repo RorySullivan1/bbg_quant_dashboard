@@ -80,11 +80,13 @@ def test_board_has_a_column_per_metric_with_fixed_slots():
         assert len(column.root.children) == 2 * LEADERBOARD_ROWS + 2
 
 
-def test_a_new_board_is_blank_and_titled_without_a_window():
+def test_a_new_board_is_blank_and_titles_nothing_itself():
+    # Since #306 the board carries no title of its own: `section_panel` heads
+    # the section and the Window chips say which window is on screen, so a
+    # `Ranking · Past Month` line here would be a third voice saying it.
     board = Leaderboard()
 
-    assert "Ranking" in board.title_w.value
-    assert "·" not in board.title_w.value
+    assert not hasattr(board, "title_w")
     for column in board.columns.values():
         assert all(slot.shown is None for slot in column.slots)
         assert not any(_visible(slot) for slot in column.slots)
@@ -93,18 +95,22 @@ def test_a_new_board_is_blank_and_titled_without_a_window():
 # ---- update / clear --------------------------------------------------------
 
 
-def test_update_fills_every_slot_and_titles_the_window():
+def test_update_fills_every_slot():
     board = Leaderboard()
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
 
-    assert "Ranking · Past Month" in board.title_w.value
     for column in board.columns.values():
         assert all(_visible(slot) for slot in column.slots)
         top = column.slots[0]
         assert top.rank.description == "1"
         assert top.ticker.description == top.shown
-        assert top.value.description == "+5.00"
-        assert top.value.style.text_color == Sentiment.POSITIVE.value
+        # `Rank | Ticker | Score (value)` since #306: the score leads the
+        # numbers because it is what the column is ranked by, and the raw value
+        # it was computed from follows in parentheses.
+        assert top.score.description == "+5.00"
+        assert top.value.description == "(+5.00)"
+        assert top.score.style.text_color == Sentiment.POSITIVE.value
+        assert top.value.style.text_color is None  # muted by its class
         # Every cell carries the strategy name, so the hover works anywhere.
         assert all("Name" in cell.tooltip for cell in top.cells)
         # The bottom block keeps its true catalog ranks.
@@ -113,12 +119,11 @@ def test_update_fills_every_slot_and_titles_the_window():
         ]
 
 
-def test_clear_blanks_the_slots_and_drops_the_window_from_the_title():
+def test_clear_blanks_the_slots():
     board = Leaderboard()
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
     board.clear()
 
-    assert "Past Month" not in board.title_w.value
     for column in board.columns.values():
         for slot in column.slots:
             assert slot.shown is None
@@ -129,7 +134,7 @@ def test_clear_blanks_the_slots_and_drops_the_window_from_the_title():
 
 def test_a_short_column_hides_its_tail_slots_rather_than_dropping_them():
     board = Leaderboard()
-    board.update(_full_board(top=LEADERBOARD_ROWS, bottom=1), window_label="Past Week")
+    board.update(_full_board(top=LEADERBOARD_ROWS, bottom=1))
 
     for column in board.columns.values():
         assert len(column.slots) == 2 * LEADERBOARD_ROWS  # nothing removed
@@ -141,12 +146,11 @@ def test_a_short_column_hides_its_tail_slots_rather_than_dropping_them():
 
 def test_update_with_no_columns_blanks_a_filled_board():
     """An empty universe must not leave the previous window's rows on screen
-    under the new title."""
+    while the chips claim a different window."""
     board = Leaderboard()
-    board.update(_full_board(), window_label="Past Month")
-    board.update((), window_label="Past Week")
+    board.update(_full_board())
+    board.update(())
 
-    assert "Past Week" in board.title_w.value
     for column in board.columns.values():
         assert not any(_visible(slot) for slot in column.slots)
 
@@ -154,7 +158,7 @@ def test_update_with_no_columns_blanks_a_filled_board():
 def test_update_matches_columns_by_metric_not_by_position():
     board = Leaderboard()
     only_sortino = (_column("sortino", "Sortino"),)
-    board.update(only_sortino, window_label="Past Month")
+    board.update(only_sortino)
 
     for metric, column in board.columns.items():
         filled = any(_visible(slot) for slot in column.slots)
@@ -171,21 +175,24 @@ def test_neutral_values_take_the_bright_chrome_text_not_brand_navy():
         top=(_row(1, "AAA Index", 0.0, Sentiment.NEUTRAL),),
         bottom=(),
     )
-    board.update((neutral,), window_label="Past Month")
+    board.update((neutral,))
 
     slot = board.columns["sharpe"].slots[0]
-    assert slot.value.style.text_color == str(Color.TEXT)
+    # The colour sits on the score, not the value: #310 made sentiment follow
+    # the score, which is what the row is ranked and read by.
+    assert slot.score.style.text_color == str(Color.TEXT)
+    assert slot.value.style.text_color is None
     assert slot.value.style.text_color != str(Sentiment.NEUTRAL.value)
 
 
 # ---- the click contract ----------------------------------------------------
 
 
-@pytest.mark.parametrize("cell_name", ["rank", "ticker", "value"])
+@pytest.mark.parametrize("cell_name", ["rank", "ticker", "score", "value"])
 def test_clicking_any_cell_of_a_filled_row_picks_that_row_once(cell_name):
     picked: list[str] = []
     board = Leaderboard(on_pick=picked.append)
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
 
     slot = board.columns["calmar"].slots[0]
     getattr(slot, cell_name).click()
@@ -196,7 +203,7 @@ def test_clicking_any_cell_of_a_filled_row_picks_that_row_once(cell_name):
 def test_clicking_a_blank_slot_does_nothing():
     picked: list[str] = []
     board = Leaderboard(on_pick=picked.append)
-    board.update(_full_board(top=1, bottom=0), window_label="Past Month")
+    board.update(_full_board(top=1, bottom=0))
 
     blank = board.columns["return"].slots[-1]
     assert blank.shown is None
@@ -209,7 +216,7 @@ def test_clicking_a_blank_slot_does_nothing():
 def test_clicking_a_cleared_row_does_nothing():
     picked: list[str] = []
     board = Leaderboard(on_pick=picked.append)
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
     board.clear()
 
     board.columns["return"].slots[0].ticker.click()
@@ -219,7 +226,7 @@ def test_clicking_a_cleared_row_does_nothing():
 
 def test_a_board_with_no_on_pick_swallows_the_click():
     board = Leaderboard()
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
 
     board.columns["sharpe"].slots[0].ticker.click()  # must not raise
 
@@ -229,7 +236,7 @@ def test_a_refilled_row_picks_its_new_ticker():
     route a click to whatever the previous window showed."""
     picked: list[str] = []
     board = Leaderboard(on_pick=picked.append)
-    board.update(_full_board(), window_label="Past Month")
+    board.update(_full_board())
     first = board.columns["return"].slots[0].shown
 
     replacement = LeaderboardColumn(
@@ -238,7 +245,7 @@ def test_a_refilled_row_picks_its_new_ticker():
         top=(_row(1, "ZZZ Index", 9.0, Sentiment.POSITIVE),),
         bottom=(),
     )
-    board.update((replacement,), window_label="Past Week")
+    board.update((replacement,))
     board.columns["return"].slots[0].ticker.click()
 
     assert picked == ["ZZZ Index"]

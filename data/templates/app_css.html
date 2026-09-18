@@ -786,13 +786,13 @@ div.itables_anywidget .dt-search input::placeholder {
   margin: 8px 0;
 }
 
-/* ---- Leaderboard (v0.9.20, #288) --------------------------------------
-   Four ranked columns of `rank · ticker · value` rows. A row is three
+/* ---- Leaderboard (v0.9.20 #288, reshaped v0.9.22 #306) ----------------
+   Four ranked columns of `rank · ticker · score (value)` rows. A row is four
    buttons, because a `Button`'s description is one text node and therefore
-   one colour, while a row needs three treatments. They are drawn as one
+   one colour, while a row needs four treatments. They are drawn as one
    continuous strip: no per-button border or radius, and the hover comes off
-   the row container so all three light up together. Only the value's colour
-   is set per row (it is data); the rank and ticker colours live here. */
+   the row container so all four light up together. Only the score's colour
+   is set per row (it is data); every other colour lives here. */
 .bbg-app .bbg-leaderboard {
   padding: 8px 8px 10px 8px;
 }
@@ -820,18 +820,36 @@ div.itables_anywidget .dt-search input::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.bbg-app .bbg-lb-value {
+/* The score leads the numbers — it is what the column is ranked by (#310) —
+   and carries the per-row sentiment colour. The raw value behind it is muted
+   and lighter, so the pair reads as one reading and its source rather than as
+   two competing figures. */
+.bbg-app .bbg-lb-score {
   justify-content: flex-end;
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-/* Hover is on the row, not the cell, so the whole strip reads as one target. */
+.bbg-app .bbg-lb-value {
+  color: {{text_muted}};
+  justify-content: flex-end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  padding-left: 4px;
+}
+/* Hover is on the row, not the cell, so the whole strip reads as one target.
+   `!important` for the same reason the rest of this stylesheet uses it: the
+   widget framework injects its own `:hover` background per button at runtime,
+   and without this the cell under the cursor paints differently from its
+   siblings — which reads as the pieces of a row highlighting separately
+   rather than the row highlighting (#306). Focus stays its own state below:
+   a keyboard user needs to see *which* cell they are on. */
 .bbg-app .bbg-lb-row:hover .bbg-lb-cell {
-  background: {{surface2}};
+  background: {{surface2}} !important;
 }
 .bbg-app .bbg-lb-row:hover .bbg-lb-ticker {
-  color: {{accent2}};
+  color: {{accent2}} !important;
 }
 .bbg-app .bbg-lb-cell:focus-visible {
   outline: 2px solid {{accent}};

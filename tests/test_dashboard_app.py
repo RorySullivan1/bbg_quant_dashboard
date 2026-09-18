@@ -415,8 +415,10 @@ def test_the_leaderboard_is_populated_after_the_initial_load(app):
         # Ranks read top-down, and every filled row carries a formatted value.
         ranks = [s.rank.description for s in filled]
         assert ranks == sorted(ranks, key=int)
-        assert all(s.value.description for s in filled)
-    assert "Ranking · " in app.leaderboard.title_w.value
+        # Every filled row carries both numbers (#310, #306): the score it is
+        # ranked by, and the raw value in parentheses behind it.
+        assert all(s.score.description for s in filled)
+        assert all(s.value.description.startswith("(") for s in filled)
 
 
 def test_every_leaderboard_row_names_an_index_in_the_catalog(app):
@@ -445,7 +447,6 @@ def test_a_leaderboard_click_opens_that_strategy_in_single_strategy(app):
 def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch):
     from src.layout import app as app_mod
 
-    before_title = app.leaderboard.title_w.value
     before_rows = _board_tickers(app)
 
     calls = {"n": 0}
@@ -459,15 +460,76 @@ def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch)
     try:
         app.ranking_window.value = 5  # WEEK_WINDOW → fires the observer
         assert calls["n"] == 0  # re-ranked from the cache, no BQL
-        assert "Past Week" in app.leaderboard.title_w.value
-        assert app.leaderboard.title_w.value != before_title
-        # The board is genuinely re-ranked, not just retitled: a week's
-        # ordering differs from a month's on this catalog.
+        # The board is genuinely re-ranked: a week's ordering differs from a
+        # month's on this catalog. (The board no longer titles itself — the
+        # section heading and the chips say the window since #306 — so the
+        # rows are the only evidence that anything happened.)
         after_rows = _board_tickers(app)
         assert after_rows
         assert after_rows != before_rows
     finally:
         app.ranking_window.value = 21  # restore the module-scoped fixture
+
+
+def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app):
+    """#306 added 1Y to the board's chips. It is a list of its own, not an edit
+    to `SHORT_WINDOW_OPTIONS`, because that constant also drives the Platform
+    sunburst's Z-score control and the Multi-Strategy Quantitative Z-Score
+    window — neither of which was asked to grow a year. This is the test that
+    catches a future one-line edit to the shared list."""
+    from src.config import (
+        LEADERBOARD_WINDOW_OPTIONS,
+        SHORT_WINDOW_OPTIONS,
+        TRADING_DAYS_PER_YEAR,
+    )
+
+    assert [label for label, _ in LEADERBOARD_WINDOW_OPTIONS] == [
+        "1W",
+        "1M",
+        "3M",
+        "6M",
+        "1Y",
+    ]
+    assert LEADERBOARD_WINDOW_OPTIONS[-1] == ("1Y", TRADING_DAYS_PER_YEAR)
+    assert [label for label, _ in app.ranking_window.options] == [
+        label for label, _ in LEADERBOARD_WINDOW_OPTIONS
+    ]
+    # The shared list, and both controls built from it, stop at six months.
+    assert [label for label, _ in SHORT_WINDOW_OPTIONS] == ["1W", "1M", "3M", "6M"]
+    assert [label for label, _ in app.analytics.sb_window_dd.options] == [
+        "1W",
+        "1M",
+        "3M",
+        "6M",
+    ]
+    assert [label for label, _ in app.filter_panel.quant.z_window_dd.options] == [
+        "1W",
+        "1M",
+        "3M",
+        "6M",
+    ]
+
+
+def test_selecting_the_year_window_re_ranks_from_cache_without_fetching(
+    app, monkeypatch
+):
+    from src.config import TRADING_DAYS_PER_YEAR
+    from src.layout import app as app_mod
+
+    before_rows = _board_tickers(app)
+
+    def no_fetch(*a, **kw):  # pragma: no cover - the assert is that it is unused
+        raise AssertionError("a window change must not issue BQL")
+
+    monkeypatch.setattr(app_mod, "fetch_prices", no_fetch)
+    try:
+        app.ranking_window.value = TRADING_DAYS_PER_YEAR
+        assert TRADING_DAYS_PER_YEAR in app.highlights_cache
+        after_rows = _board_tickers(app)
+        assert after_rows
+        assert after_rows != before_rows
+    finally:
+        app.ranking_window.value = 21
 
 
 def test_re_toggling_a_window_is_a_cache_hit(app):
@@ -519,8 +581,13 @@ def test_the_block_is_a_fixed_leaderboard_beside_an_absorbing_pane(app):
     assert board_col.layout.min_width == "0"
     assert pane_col.layout.min_width == "0"
 
-    # The toggle sits above the board it re-ranks, inside the same column.
-    assert board_col.children == (app.ranking_window_row, app.leaderboard.root)
+    # The board sits in a `section_panel`: title line, the Window chip bar it
+    # is re-ranked by, then the boxed board (#305, #306).
+    (panel,) = board_col.children
+    title, bar, box = panel.children
+    assert "Leaderboard" in title.value
+    assert bar is app.ranking_window_bar
+    assert box.children == (app.leaderboard.root,)
     assert pane_col.children == (app.commentary_pane.root,)
 
 

@@ -70,21 +70,32 @@ MONTH_WINDOW = 21
 QUARTER_WINDOW = 63
 HALF_YEAR_WINDOW = 126
 
-#: Shared window options and day → label map, so the ranking-window toggle, the
-#: sunburst Z-score control, and the Quantitative Z-Score window agree without
-#: re-spelling the list at each widget.
+#: Shared window options, so the sunburst Z-score control and the Quantitative
+#: Z-Score window agree without re-spelling the list at each widget.
 SHORT_WINDOW_OPTIONS: list[tuple[str, int]] = [
     ("1W", WEEK_WINDOW),
     ("1M", MONTH_WINDOW),
     ("3M", QUARTER_WINDOW),
     ("6M", HALF_YEAR_WINDOW),
 ]
-WINDOW_LABELS: dict[int, str] = {
-    WEEK_WINDOW: "Past Week",
-    MONTH_WINDOW: "Past Month",
-    QUARTER_WINDOW: "Past Quarter",
-    HALF_YEAR_WINDOW: "Past 6 Months",
-}
+
+#: (`WINDOW_LABELS`, the day → "Past Month" map, lived here until #306. Its one
+#: reader captioned the leaderboard `Ranking · Past Month`; the section title
+#: and the Window chips say that now, and a label map nothing reads is one more
+#: thing to keep in step with a window list.)
+
+#: The leaderboard's own window options (#306). A superset of the shared list
+#: rather than an edit to it: `SHORT_WINDOW_OPTIONS` also drives the Platform
+#: sunburst's z-control and the Quantitative Z-Score window, and a year on
+#: those is a change nobody asked for.
+#:
+#: 1D was considered and dropped — Sharpe, Calmar and Sortino have no defined
+#: value over a single observation, so three of the four columns would blank
+#: whenever it was selected.
+LEADERBOARD_WINDOW_OPTIONS: list[tuple[str, int]] = [
+    *SHORT_WINDOW_OPTIONS,
+    ("1Y", TRADING_DAYS_PER_YEAR),
+]
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level

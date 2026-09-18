@@ -13,15 +13,19 @@ with a loose updater. It holds no catalog metadata: `update` takes the already
 built `LeaderboardColumn`s, so a re-pointed catalog cannot leave a stale frame
 behind an attribute (#242).
 
-**Why a row is three buttons and not one.** An ipywidgets `Button` renders its
+**Why a row is four buttons and not one.** An ipywidgets `Button` renders its
 `description` as a single text node, so the whole label takes one colour — but
-a row needs three treatments: a dimmed rank, the ticker in the primary text
-colour, and a right-aligned value coloured by its sentiment. A row is therefore
-an `HBox` of three buttons that CSS draws as one continuous strip, with the
-hover coming off the row container (`.bbg-lb-row:hover`) so the three light up
-together, and all three wired to the same handler so any part of the row
-navigates. Drawing the rank as a `W.HTML` instead would be one widget fewer and
-a dead strip inside a row whose whole point is that it is clickable.
+a row needs four treatments: a dimmed rank, the ticker in the primary text
+colour, the **score** coloured by its sentiment, and the raw value it was
+computed from, muted, in parentheses. A row is therefore an `HBox` of four
+buttons that CSS draws as one continuous strip, with the hover coming off the
+row container (`.bbg-lb-row:hover`) so all four light up together, and all four
+wired to the same handler so any part of the row navigates. Drawing the rank as
+a `W.HTML` instead would be one widget fewer and a dead strip inside a row
+whose whole point is that it is clickable.
+
+The score leads the numbers because it is what the column is ranked by (#310);
+the value rides behind it so a reader can see what was standardized.
 """
 
 from __future__ import annotations
@@ -58,10 +62,12 @@ def _value_color(sentiment: Sentiment) -> str:
     return str(sentiment.value)
 
 
-#: Cell widths. The ticker cell flexes; the rank and value cells are fixed so
-#: the four columns' numbers line up vertically regardless of ticker length.
+#: Cell widths. The ticker cell flexes; the rank, score and value cells are
+#: fixed so the four columns' numbers line up vertically regardless of ticker
+#: length.
 _RANK_WIDTH = "32px"
-_VALUE_WIDTH = "72px"
+_SCORE_WIDTH = "52px"
+_VALUE_WIDTH = "62px"
 _ROW_HEIGHT = "22px"
 
 
@@ -80,8 +86,9 @@ class _RowSlot:
         self.shown: str | None = None
         self.rank = self._cell("bbg-lb-rank", width=_RANK_WIDTH)
         self.ticker = self._cell("bbg-lb-ticker", width="auto", flex="1 1 auto")
+        self.score = self._cell("bbg-lb-score", width=_SCORE_WIDTH)
         self.value = self._cell("bbg-lb-value", width=_VALUE_WIDTH)
-        self.cells = (self.rank, self.ticker, self.value)
+        self.cells = (self.rank, self.ticker, self.score, self.value)
         self.root = W.HBox(
             list(self.cells),
             layout=W.Layout(width="100%", align_items="center"),
@@ -108,15 +115,21 @@ class _RowSlot:
         self.shown = row.ticker
         self.rank.description = str(row.rank)
         self.ticker.description = row.ticker
-        self.value.description = row.text
+        self.score.description = row.score_text
+        # Parenthesized so the two numbers cannot be misread as one figure and
+        # its change: the score is the reading, the value is what it was
+        # computed from.
+        self.value.description = f"({row.text})"
         tooltip = f"{row.name} ({row.ticker})"
         for cell in self.cells:
             cell.tooltip = tooltip
-        # The one per-row inline style: the value's colour is data, so it
-        # cannot come from the stylesheet the way the rank and ticker colours
-        # do. Neutral maps to bright chrome text, not the shared brand navy,
-        # which is illegible on the dark surface.
-        self.value.style.text_color = _value_color(row.sentiment)
+        # The one per-row inline style: the colour is data, so it cannot come
+        # from the stylesheet the way the rank and ticker colours do. It sits
+        # on the **score**, which is what the row is ranked and read by (#310),
+        # while the raw value stays muted by its own class. Neutral maps to
+        # bright chrome text, not the shared brand navy, which is illegible on
+        # the dark surface.
+        self.score.style.text_color = _value_color(row.sentiment)
         self.root.layout.visibility = "visible"
 
     def blank(self) -> None:
@@ -124,7 +137,7 @@ class _RowSlot:
         for cell in self.cells:
             cell.description = ""
             cell.tooltip = ""
-        self.value.style.text_color = None
+        self.score.style.text_color = None
         # Hidden, not undisplayed: an unused slot still occupies its row, so a
         # short column does not pull the divider and the rows below it upward.
         self.root.layout.visibility = "hidden"
@@ -204,7 +217,9 @@ class Leaderboard:
     ) -> None:
         self._on_pick = on_pick
         self.rows = rows
-        self.title_w = W.HTML()
+        # No title of its own since #306: `section_panel` heads the section and
+        # the Window chips beside it say which window is on screen, so a
+        # `Ranking · Past Month` line here would be the third thing saying so.
         # Keyed by metric, in `LEADERBOARD_METRICS` order, so `update` can match
         # the columns it is handed by key rather than by position and the titles
         # are never re-spelled here.
@@ -216,10 +231,9 @@ class Leaderboard:
             [column.root for column in self.columns.values()],
             layout=W.Layout(width="100%", align_items="flex-start"),
         )
-        self.root = W.VBox(
-            [self.title_w, self.body], layout=W.Layout(width="100%", min_width="0")
-        )
-        self.root.add_class("bbg-card")
+        self.root = W.VBox([self.body], layout=W.Layout(width="100%", min_width="0"))
+        # No `bbg-card`: the board sits inside `section_panel`'s box now, and
+        # two bordered surfaces nested would draw two frames (#306).
         self.root.add_class("bbg-leaderboard")
         self.clear()
 
@@ -227,28 +241,18 @@ class Leaderboard:
         if self._on_pick is not None:
             self._on_pick(ticker)
 
-    def _set_title(self, window_label: str | None) -> None:
-        text = "Ranking" if not window_label else f"Ranking · {window_label}"
-        self.title_w.value = render_template(
-            "grid_header", **STYLE_CTX, text=html.escape(text)
-        )
-
-    def update(
-        self, columns: tuple[LeaderboardColumn, ...], *, window_label: str = ""
-    ) -> None:
-        """Rewrite every slot from `columns` and retitle the board.
+    def update(self, columns: tuple[LeaderboardColumn, ...]) -> None:
+        """Rewrite every slot from `columns`.
 
         Columns are matched by `metric`, so a short or reordered tuple fills
         what it names and blanks the rest — an empty tuple (an empty universe)
         blanks the whole board rather than leaving the last window's rows on
-        screen under the new title.
+        screen while the chips claim a different one.
         """
-        self._set_title(window_label)
         by_metric = {column.metric: column for column in columns}
         for metric, column in self.columns.items():
             column.fill(by_metric.get(metric))
 
     def clear(self) -> None:
-        self._set_title(None)
         for column in self.columns.values():
             column.blank()
