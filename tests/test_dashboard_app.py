@@ -16,6 +16,7 @@ import pytest
 from src.config import (
     FACTOR_TICKERS,
     MONTH_WINDOW,
+    NEW_LAUNCH_DAYS,
     QUARTER_WINDOW,
     REGIME_TICKERS,
     universe_grid_default_window,
@@ -562,8 +563,10 @@ def test_an_init_error_survives_a_window_change_and_a_pane_switch(app):
 
 
 def test_the_pane_carries_the_launch_cards_built_from_the_catalog(app):
+    # The board no longer titles itself (#307), so the evidence it was rendered
+    # is its caption naming the launch window.
     assert "launches" in app.highlights_cache
-    assert "New Launches" in app.commentary_pane.launches_w.value
+    assert f"past {NEW_LAUNCH_DAYS} days" in app.commentary_pane.launches_w.value
     assert app.commentary_pane.active == "commentary"  # opens on the commentary
 
 
@@ -588,7 +591,14 @@ def test_the_block_is_a_fixed_leaderboard_beside_an_absorbing_pane(app):
     assert "Leaderboard" in title.value
     assert bar is app.ranking_window_bar
     assert box.children == (app.leaderboard.root,)
-    assert pane_col.children == (app.commentary_pane.root,)
+
+    # The Bulletin is the same `section_panel`, differing only in what it holds
+    # (#307): the board-selection chips over the container that swaps boards.
+    (pane_panel,) = pane_col.children
+    pane_title, pane_bar, pane_box = pane_panel.children
+    assert "QIS Bulletin" in pane_title.value
+    assert pane_bar is app.commentary_pane.bar
+    assert pane_box.children == (app.commentary_pane.root,)
 
 
 # --- two horizons: fetch six years, analyse five (#311) --------------------

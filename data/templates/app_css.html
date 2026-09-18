@@ -862,6 +862,21 @@ div.itables_anywidget .dt-search input::placeholder {
    These rules give arbitrary author markup a legible dark rendering without
    asking the author to style anything. Scoped to the body only, so the
    surrounding chrome is untouched. */
+/* ---- QIS Bulletin note bodies (v0.9.22, #307) -------------------------
+   A note's text is plain text split into `<p>`s by `_render_note_paragraphs`,
+   so the only thing to style is the paragraph rhythm. The browser's default
+   `1em` margin would open a gap as tall as the line inside a card only a few
+   lines high; the first and last lose it entirely so the text sits against
+   the card's own padding rather than inside a second, invisible one. */
+.bbg-app .bbg-note-body p {
+  margin: 5px 0 0 0;
+}
+.bbg-app .bbg-note-body p:first-child {
+  margin-top: 0;
+}
+.bbg-app .bbg-note-body p:last-child {
+  margin-bottom: 0;
+}
 .bbg-app .bbg-commentary-body a {
   color: {{accent2}};
   text-decoration: underline;

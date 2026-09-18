@@ -561,10 +561,11 @@ class DashboardApp:
             layout=W.Layout(width="100%", padding="4px 0 8px 0"),
         )
 
-        # Leaderboard left under its window toggle, the switchable pane right.
-        # The leaderboard takes a fixed basis wide enough for its four columns
-        # and the pane absorbs the remainder (#276's rail idiom), so the split
-        # holds at any viewport width without a pixel constant for the pane.
+        # Two sections of the same shape side by side: Leaderboard left, QIS
+        # Bulletin right, each a `section_panel` of title → control bar → boxed
+        # body at one height. The leaderboard still takes a fixed basis wide
+        # enough for its four columns and the Bulletin absorbs the remainder
+        # (#276's rail idiom); the 60:40 split is #308's.
         leaderboard_col = W.Box(
             [
                 section_panel(
@@ -577,7 +578,14 @@ class DashboardApp:
             layout=W.Layout(flex="0 0 620px", min_width="0"),
         )
         pane_col = W.Box(
-            [self.commentary_pane.root],
+            [
+                section_panel(
+                    "QIS Bulletin",
+                    self.commentary_pane.bar,
+                    self.commentary_pane.root,
+                    height=COMMENTARY_BOX_HEIGHT,
+                )
+            ],
             layout=W.Layout(flex="1 1 0%", min_width="0", padding="0 0 0 12px"),
         )
         self.commentary_box = W.VBox(
