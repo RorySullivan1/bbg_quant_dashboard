@@ -47,11 +47,11 @@ from ..config import (
     PERFORMANCE_DISCLAIMER_PATH,
     QUARTER_WINDOW,
     REGIME_TICKERS,
-    SCORE_HISTORY_YEARS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     field_label,
+    score_history_years,
     stat_windows,
     universe_grid_default_window,
     universe_grid_group_fields,
@@ -725,16 +725,17 @@ class DashboardApp:
 
     def _wire_fetch_window(self) -> None:
         """The startup fetch window and the benchmark registry's callbacks."""
-        # Single BQL fetch at app-load time, bounded by SCORE_HISTORY_YEARS — a
-        # year longer than the app analyses, so the leaderboard's score has its
-        # 5-year sample at the 1Y window (#311). A wider fetch still (e.g. back
-        # to oldest live date) is too slow on the terminal.
+        # Single BQL fetch at app-load time, bounded by `score_history_years()`
+        # — the longest window the catalog offers plus the sample standardized
+        # behind it, so a score is never measured against a truncated history
+        # (#322). A wider fetch still (e.g. back to oldest live date) is too
+        # slow on the terminal.
         #
-        # Everything except that scorer reads `_analytics_window_start()`
-        # instead. The two are different numbers now, so a consumer that skips
-        # the slice is a six-year statistic under a `5Y` label.
+        # Everything except the scorers reads `_analytics_window_start()`
+        # instead. The two are years apart, so a consumer that skips the slice
+        # is a ten-year statistic under a `5Y` label.
         self.universe_start = (
-            pd.Timestamp(self.today) - pd.DateOffset(years=SCORE_HISTORY_YEARS)
+            pd.Timestamp(self.today) - pd.DateOffset(years=score_history_years())
         ).date()
 
         # Everything the startup fetch pulls (see `config.py` for the ride-along

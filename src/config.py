@@ -16,6 +16,7 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 "premium" is a total-return *spread*, not a true excess-of-risk-free premium.
 """
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -24,17 +25,11 @@ from typing import Literal
 #: the slice `DashboardApp._analytics_window_start` hands each consumer.
 LOOKBACK_YEARS = 5
 
-#: How far back the app **fetches** (v0.9.22 #311). Longer than it analyses,
-#: because the leaderboard's score z-scores a metric against its own rolling
-#: history: at the 1Y window that is 252 (window) + 1260 (5y sample) = 1512
-#: trading days, about six calendar years. Widening `LOOKBACK_YEARS` instead
-#: would have turned every whole-lookback analytic on two other tabs into a
-#: 6-year figure.
-#:
-#: The pair only means anything together, and the boundary between them is
+#: (How far back the app **fetches** is `score_history_years()`, further down
+#: beside `stat_windows()` — the window set it is derived from. The pair only
+#: means anything together, and the boundary between them is
 #: `_analytics_window_start()`: everything reads the sliced frame except the
-#: leaderboard's scorer, which is the one deliberate exception.
-SCORE_HISTORY_YEARS = 6
+#: scorers, which are the deliberate exceptions.)
 
 NEW_LAUNCH_DAYS = 30
 SHARPE_WINDOW = 252
@@ -48,7 +43,7 @@ PERF_TABLE_YEARS = (1, 3, 5)
 LEADERBOARD_WINDOW_DAYS = 21
 
 #: How long a sample the leaderboard's score is standardized against: five
-#: years of the metric's own rolling history. `SCORE_HISTORY_YEARS` sizes the
+#: years of the metric's own rolling history. `score_history_years()` sizes the
 #: fetch so this is available even at the 1Y window, where the rolling series
 #: only starts after its first 252 observations (#310, #311).
 LEADERBOARD_SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
@@ -300,6 +295,34 @@ def stat_windows() -> tuple[tuple[str, float], ...]:
     return tuple(
         (label, years) for label, years in STAT_WINDOWS if years <= LOOKBACK_YEARS
     )
+
+
+def score_history_years() -> int:
+    """How far back the app **fetches**, in years — always further than it
+    analyses.
+
+    Sized for the deepest score the app will ask for. The catalog's ranking
+    column is about to standardize a metric against `LOOKBACK_YEARS` of that
+    metric's *own rolling history*, at whichever window the table is showing
+    (#324), so the deepest case needs the longest offered window **plus** the
+    sample behind it: at `5Y` that is 5 + 5 = 10 calendar years. Fetch only
+    `LOOKBACK_YEARS` and the `5Y` window's sample is a single observation long,
+    which `rolling_metric_zscore` standardizes against without saying so.
+
+    Derived rather than typed, and for the reason the accessors above are:
+    #311 wrote `6` — `1Y window + 5Y sample`, the leaderboard's deepest case —
+    as a literal that nothing checked against the windows on offer. A second
+    consumer with a deeper window would have been a second literal. The
+    relationship is the fact worth storing, so widening `LOOKBACK_YEARS` or
+    adding a window to `STAT_WINDOWS` carries the fetch with it instead of
+    leaving a quietly truncated sample behind.
+
+    `stat_windows()` is itself capped by `LOOKBACK_YEARS`, so the two can never
+    disagree: the offered set never outruns the lookback, and the fetch never
+    outruns what the offered set needs. Rounded up because a window may be a
+    fraction of a year (`6M`) while `pd.DateOffset(years=...)` takes an int.
+    """
+    return math.ceil(LOOKBACK_YEARS + max(years for _, years in stat_windows()))
 
 
 def stat_window_years(label: str) -> float:

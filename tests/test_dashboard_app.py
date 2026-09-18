@@ -135,7 +135,11 @@ def test_benchmark_window_note_is_silent_for_full_history(app):
 
 
 def test_benchmark_window_note_flags_a_late_start(app):
-    start = pd.Timestamp(app.universe_start) + pd.Timedelta(days=400)
+    # Late measured against the **analysis** window, which is what the note is
+    # about — the fetch now reaches years further back (#322), so a start
+    # measured off `universe_start` can still cover the whole analysis window
+    # and deserve no caveat at all.
+    start = app._analytics_window_start() + pd.Timedelta(days=400)
     idx = pd.bdate_range(start, periods=40)
     note = app._benchmark_window_note(pd.Series(1.0, index=idx))
     assert "History starts" in note
@@ -632,27 +636,121 @@ def test_the_block_is_two_sections_at_sixty_forty(app):
     assert pane_box.children == (app.commentary_pane.root,)
 
 
-# --- two horizons: fetch six years, analyse five (#311) --------------------
+# --- two horizons: fetch ten years, analyse five (#311, #322) --------------
 #
-# The fetch reaches a year further back than the app analyses, so the leaderboard's
-# score has its 5-year sample at the 1Y window (#310). That makes a missed slice a
-# six-year statistic under a `5Y` label — which is why the boundary is one helper
-# and why these tests exist.
+# The fetch reaches back far enough that a score is never standardized against a
+# truncated sample: the longest window the catalog offers, plus the five years
+# behind it. That makes a missed slice a ten-year statistic under a `5Y` label —
+# which is why the boundary is one helper and why these tests exist.
 
 
 def test_the_fetch_reaches_further_back_than_the_analysis(app):
-    from src.config import LOOKBACK_YEARS, SCORE_HISTORY_YEARS
+    from src.config import LOOKBACK_YEARS, score_history_years
 
     fetch_start = pd.Timestamp(app.universe_start)
     analytics_start = app._analytics_window_start()
 
     assert fetch_start == pd.Timestamp(app.today) - pd.DateOffset(
-        years=SCORE_HISTORY_YEARS
+        years=score_history_years()
     )
     assert analytics_start == pd.Timestamp(app.today) - pd.DateOffset(
         years=LOOKBACK_YEARS
     )
     assert fetch_start < analytics_start
+
+
+def test_the_fetch_covers_the_longest_window_plus_its_sample():
+    """The relationship, not the number.
+
+    `6` was the leaderboard's deepest case written as a literal; the catalog's
+    is deeper, and a third consumer would have been a third literal. What is
+    pinned here is that the fetch always clears the longest offered window plus
+    the `LOOKBACK_YEARS` standardized behind it.
+    """
+    from src.config import LOOKBACK_YEARS, score_history_years, stat_windows
+
+    longest = max(years for _, years in stat_windows())
+    assert score_history_years() >= LOOKBACK_YEARS + longest
+    # Today: the 5Y window over a 5Y sample.
+    assert score_history_years() == 10
+
+
+def test_the_fetch_horizon_follows_the_lookback(monkeypatch):
+    """Widen the analysis window and the fetch widens with it, untouched."""
+    import src.config as config
+
+    monkeypatch.setattr(config, "LOOKBACK_YEARS", 10)
+    # `stat_windows()` is capped by the lookback, so 10Y and 15Y come on offer
+    # together with it — the deepest case is now 10Y over a 10Y sample.
+    assert max(years for _, years in config.stat_windows()) == 10.0
+    assert config.score_history_years() == 20
+
+
+def test_a_fractional_window_rounds_the_fetch_up(monkeypatch):
+    """`6M` is a real window; `pd.DateOffset(years=...)` is not fractional."""
+    import src.config as config
+
+    monkeypatch.setattr(config, "STAT_WINDOWS", (("6M", 0.5),))
+    horizon = config.score_history_years()
+    assert isinstance(horizon, int)
+    assert horizon == 6  # ceil(5 + 0.5)
+
+
+def _decade_of_prices(tickers=("AAA Index", "BBB Index", "CCC Index")):
+    """~10 trading years of seeded daily prices — the new fetch horizon."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    idx = pd.bdate_range(end="2026-09-18", periods=252 * 10)
+    drifts = np.linspace(-0.0002, 0.0005, len(tickers))
+    return pd.DataFrame(
+        {
+            ticker: 100.0
+            * np.cumprod(1.0 + rng.normal(loc=drift, scale=0.01, size=len(idx)))
+            for ticker, drift in zip(tickers, drifts, strict=True)
+        },
+        index=idx,
+    )
+
+
+def test_a_longer_fetch_moves_no_analytic():
+    """The whole bet of the two horizons: more history in, same numbers out.
+
+    Every perf window slices its own tail, so handing `universe_perf` ten years
+    instead of six must be invisible. If it ever is not, the fetch stopped being
+    free and a `5Y` column quietly became a ten-year one.
+    """
+    from src.stats import universe_perf
+
+    decade = _decade_of_prices()
+    six_years = decade.tail(252 * 6)
+
+    pd.testing.assert_frame_equal(universe_perf(decade), universe_perf(six_years))
+
+
+def test_a_longer_fetch_moves_no_leaderboard_score():
+    """The scorer is the one consumer that *reads* the extra history — and it
+    already had all it needed at six years, so the deeper book adds nothing to
+    it either. `rolling_metric_zscore` tails to `window + sample`, so both
+    frames hand it the same rows."""
+    from src.commentary import build_leaderboard, window_returns
+    from src.config import MONTH_WINDOW
+    from src.stats import daily_returns
+
+    decade = _decade_of_prices()
+    six_years = decade.tail(252 * 6)
+    meta = pd.DataFrame({"ticker": list(decade.columns), "name": list(decade.columns)})
+
+    def board(prices):
+        return build_leaderboard(
+            meta,
+            prices,
+            window_returns(prices, window_days=MONTH_WINDOW),
+            window_days=MONTH_WINDOW,
+            history_returns=daily_returns(prices),
+        )
+
+    assert board(decade) == board(six_years)
 
 
 def test_no_call_site_computes_the_analytics_window_for_itself():
