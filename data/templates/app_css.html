@@ -505,41 +505,63 @@ div.itables_anywidget table.dataTable thead th {
 div.itables_anywidget table.dataTable tbody tr:nth-child(even) td {
   background-color: {{surface}} !important;
 }
-/* Nested group headers — the point of the change. Level 0 is the outermost
-   tier (Solution), each deeper level steps its indent and drops its weight,
-   so the hierarchy reads without reading the text.
+/* Nested group headers — the point of the change, restyled in #284. Level 0
+   is the outermost tier (Solution); each deeper level steps its indent, drops
+   its weight, and steps DOWN in tint, so the hierarchy reads as bands without
+   reading the text.
 
-   RowGroup emits `<tr class="dtrg-group"><th colspan=N>` — a **th**, not a td.
-   Selecting only `td` here matched nothing and every level rendered in the
-   plain body colour, which looks like "the theme works" unless you check the
-   computed style per level. Both are listed so a future RowGroup version that
-   switches element still lands. */
+   Two things here are load-bearing and look like detail:
+
+   1. RowGroup emits `<tr class="dtrg-group"><th colspan=N>` — a **th**, not a
+      td. Selecting only `td` matched nothing and every level rendered in the
+      plain body colour, which looks like "the theme works" unless you check
+      the computed style per level. Both are listed so a future RowGroup
+      version that switches element still lands.
+   2. The foreground FLIPS partway down the scale. Levels 0 and 1 are bright
+      enough that light text fails contrast on them, so they take dark text —
+      exactly as `.bbg-tabband .bbg-pill.is-active` does. Levels 2 and 3 are
+      deep enough to take the normal light text. Each level's text colour is
+      part of its band, not a leftover from the level above.
+
+   The base rule carries the deepest band, so a nesting level beyond those
+   named below renders as a defined band rather than falling through to the
+   body colour. Four fields are groupable, so level 3 is reachable today. */
 div.itables_anywidget table.dataTable tr.dtrg-group th,
 div.itables_anywidget table.dataTable tr.dtrg-group td {
+  background-color: {{group_band3}} !important;
+  color: {{text_color}} !important;
   border-color: {{border_color}} !important;
   text-align: left !important;
+  font-weight: 600 !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 td {
-  background-color: {{surface2}} !important;
-  color: {{accent}} !important;
+  background-color: {{group_band0}} !important;
+  color: {{chrome_bg}} !important;
   font-weight: 700 !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 td {
-  background-color: {{surface}} !important;
-  color: {{accent2}} !important;
+  background-color: {{group_band1}} !important;
+  color: {{chrome_bg}} !important;
   font-weight: 600 !important;
   padding-left: 22px !important;
 }
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 th,
 div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 td {
-  background-color: {{chrome_bg}} !important;
+  background-color: {{group_band2}} !important;
   color: {{text_color}} !important;
   font-weight: 600 !important;
   padding-left: 40px !important;
+}
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 th,
+div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 td {
+  background-color: {{group_band3}} !important;
+  color: {{text_color}} !important;
+  font-weight: 600 !important;
+  padding-left: 58px !important;
 }
 /* Selected row (the Select extension) — the hook #265 builds on. */
 div.itables_anywidget table.dataTable tbody tr.selected td {

@@ -92,6 +92,24 @@ class Color(StrEnum):
     HEAT_NEG_SOFT = "#dc262655"  # RED_600 @ ~33%
     HEAT_NEG_STRONG = "#dc2626cc"  # RED_600 @ ~80%
 
+    # ---- Nested group-header bands (all-catalog grid, #284) ---------------
+    # One cyan fill per nesting level, stepping DOWN in tint, so the tiers read
+    # as bands rather than as a text colour on the body background. Level 0 is
+    # `ACCENT` itself and is not repeated here.
+    #
+    # The step is not uniform, and cannot be: the top two fills are bright
+    # enough that light text fails contrast on them, so they carry dark text
+    # (as `.bbg-tabband .bbg-pill.is-active` already does) while the lower two
+    # carry the normal light text. The scale therefore jumps down at level 2,
+    # where the foreground flips — a smooth ramp through the middle would put a
+    # band exactly where neither text colour is legible.
+    #
+    # Four levels because four fields are groupable
+    # (`UNIVERSE_GRID_GROUPABLE_FIELDS`), so level 3 is reachable today.
+    GROUP_BAND_1 = "#3fbdee"  # ACCENT lightened — still dark-text territory
+    GROUP_BAND_2 = "#0a6183"  # deep cyan; light text from here down
+    GROUP_BAND_3 = "#0a4a64"  # deepest, one step off the chrome
+
 
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""

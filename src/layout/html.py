@@ -63,6 +63,12 @@ STYLE_CTX = {
     "accent": Color.ACCENT,
     "accent2": Color.ACCENT_2,
     "scrim": Color.SCRIM,
+    # Group-header bands, level 0 (brightest) → 3. Level 0 *is* the accent, so
+    # it is mapped rather than duplicated as its own token.
+    "group_band0": Color.ACCENT,
+    "group_band1": Color.GROUP_BAND_1,
+    "group_band2": Color.GROUP_BAND_2,
+    "group_band3": Color.GROUP_BAND_3,
     "red": Color.RED_600,
     "green": Color.GREEN_600,
 }

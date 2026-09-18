@@ -751,3 +751,69 @@ def test_moving_the_search_box_leaves_the_scroll_container_alone():
     # recorded in grids.py is what it exists to avoid.
     css = render_template("app_css", **STYLE_CTX)
     assert ".dt-layout-row.dt-layout-table .dt-layout-cell" in css
+
+
+# --- nested group-header bands (#284) --------------------------------------
+
+
+def _luminance(color: str) -> float:
+    """WCAG relative luminance of an opaque ``#rrggbb`` colour."""
+
+    def _channel(value: float) -> float:
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
+
+
+def _contrast(fill: str, text: str) -> float:
+    dark, light = sorted((_luminance(fill), _luminance(text)))
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _bands() -> list[str]:
+    from src.layout.html import STYLE_CTX
+
+    return [str(STYLE_CTX[f"group_band{level}"]) for level in range(4)]
+
+
+def test_every_nesting_level_gets_its_own_band():
+    from src.style import Color
+
+    bands = _bands()
+    assert len(set(bands)) == 4
+    # Level 2 used to be `chrome_bg` — the table body's own colour — so the
+    # deepest tier separated from its rows by weight and indent alone.
+    assert str(Color.CHROME_BG) not in bands
+
+
+def test_text_contrast_holds_on_every_band_including_the_brightest():
+    from src.style import Color
+
+    # The foreground flips partway down: the two bright fills take dark text,
+    # the two deep ones take light text. A band that kept the light text all
+    # the way up is exactly the failure this asserts against.
+    dark, light = str(Color.CHROME_BG), str(Color.TEXT)
+    band0, band1, band2, band3 = _bands()
+    for fill, text in ((band0, dark), (band1, dark), (band2, light), (band3, light)):
+        assert _contrast(fill, text) >= 4.5, f"{fill} on {text}"
+    # And the pairing is the right way round — light text on the brightest
+    # fill would fail, which is why it is not used there.
+    assert _contrast(band0, light) < 4.5
+
+
+def test_the_stylesheet_bands_every_reachable_level_and_then_some():
+    from src.config import UNIVERSE_GRID_GROUPABLE_FIELDS
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    deepest = len(UNIVERSE_GRID_GROUPABLE_FIELDS) - 1
+    for level in range(deepest + 1):
+        assert f"tr.dtrg-group.dtrg-level-{level} th" in css
+    # The base rule carries a band of its own, so a level past the named ones
+    # renders as a defined band rather than falling through to the body.
+    base = css.split("tr.dtrg-group th,")[1].split("}")[0]
+    assert "background-color" in base and "color" in base
+    # Both elements stay listed: RowGroup emits a `th`, and a td-only rule
+    # matches nothing at all.
+    assert "tr.dtrg-group td {" in css
