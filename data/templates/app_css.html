@@ -572,6 +572,27 @@ div.itables_anywidget select:focus {
 div.itables_anywidget .dt-scroll-body {
   border-color: {{border_color}} !important;
 }
+/* The search box leads the table from the top-left (#283). The layout row is
+   flex and DataTables aligns the `topStart` cell with `justify-content`, so
+   moving the feature is not enough on its own — the cell has to stop pushing
+   its content to the end, or the box renders left-slotted but right-parked. */
+div.itables_anywidget .dt-layout-row .dt-layout-cell.dt-layout-start {
+  justify-content: flex-start !important;
+  text-align: left !important;
+}
+div.itables_anywidget .dt-search {
+  text-align: left !important;
+}
+div.itables_anywidget .dt-search input {
+  width: 260px !important;
+  max-width: 100% !important;
+  margin: 0 0 6px 0 !important;
+  padding: 4px 8px !important;
+}
+div.itables_anywidget .dt-search input::placeholder {
+  color: {{text_muted}} !important;
+  opacity: 1 !important;
+}
 
 /* Boxed grouping card — frames a section (e.g. the Platform analytics tabs) so
    the grouping reads at a glance, mirroring the Multi-Strategy bordered panels. */

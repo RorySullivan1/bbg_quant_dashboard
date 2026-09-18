@@ -701,3 +701,53 @@ def test_every_grouping_subset_stays_contiguous_at_every_level():
                 )
                 runs = _runs(path)
                 assert len(runs) == len(set(runs)), f"{subset} fragments at {depth}"
+
+
+# --- the search box leads the table from the top-left (#283) ---------------
+
+
+def test_the_search_box_is_slotted_top_left_and_only_once():
+    from src.layout.grids import _catalog_table_options
+
+    layout = _catalog_table_options(_catalog(), [])["layout"]
+    assert layout["topStart"] == "search"
+    # Cleared explicitly: the default layout object is merged, so leaving
+    # `topEnd` alone would draw a second search box on the right.
+    assert layout["topEnd"] is None
+    assert "search" not in [
+        layout["topEnd"],
+        layout["bottomStart"],
+        layout["bottomEnd"],
+    ]
+    # The row-count readout stays where it was.
+    assert layout["bottomStart"] == "info"
+
+
+def test_the_search_box_carries_a_placeholder_the_bundle_actually_reads():
+    from src.layout.grids import _catalog_table_options
+
+    language = _catalog_table_options(_catalog(), [])["language"]
+    # `sSearchPlaceholder`, not the documented camelCase `searchPlaceholder`:
+    # this bundle's camelCase map does not carry that key, so the camelCase
+    # form would be dropped silently and no placeholder would ever render.
+    assert language["sSearchPlaceholder"]
+    assert language["sSearch"] == ""  # the "Search:" label, dropped
+
+
+def test_the_relocated_search_box_keeps_the_dark_chrome():
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = render_template("app_css", **STYLE_CTX)
+    # The `topStart` cell aligns with `justify-content`, so the feature moving
+    # is not enough on its own.
+    assert ".dt-layout-cell.dt-layout-start" in css
+    assert ".dt-search input::placeholder" in css
+
+
+def test_moving_the_search_box_leaves_the_scroll_container_alone():
+    from src.layout.html import STYLE_CTX, render_template
+
+    # That cell is what keeps header and body in ONE table; the `scrollY` drift
+    # recorded in grids.py is what it exists to avoid.
+    css = render_template("app_css", **STYLE_CTX)
+    assert ".dt-layout-row.dt-layout-table .dt-layout-cell" in css

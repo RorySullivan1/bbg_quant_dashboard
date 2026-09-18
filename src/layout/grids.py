@@ -724,6 +724,32 @@ def _catalog_table_options(
         # One row at a time. Without this the Select extension is inert and
         # `selected_rows` never changes, so the click handler below never runs.
         "select": {"style": "single"},
+        # The search box goes top-LEFT (#283). DataTables' default puts it at
+        # `topEnd`, which is a default rather than a decision: the Platform tab
+        # reads from the left rail inwards, so the table's own search was the
+        # one piece of its chrome facing the other way. `topEnd` has to be
+        # cleared explicitly — the default layout object is merged, so setting
+        # `topStart` alone draws the search box twice. `None` → JSON `null` is
+        # how a slot is removed; DataTables' own SearchPanes extension clears
+        # layout the same way. `paging: False` already empties the two slots
+        # below, and `bottomStart` keeps the row-count readout where it is.
+        "layout": {
+            "topStart": "search",
+            "topEnd": None,
+            "bottomStart": "info",
+            "bottomEnd": None,
+        },
+        # Read as `sSearch` / `sSearchPlaceholder` — the internal names. The
+        # documented camelCase `searchPlaceholder` does not appear anywhere in
+        # this bundle's `widget.js`: DataTables translates camelCase options
+        # through a fixed map and that key is not in it, so the camelCase form
+        # would be dropped silently and the placeholder would never appear.
+        # An empty `sSearch` drops the "Search:" label; with the box now
+        # leading the table, the placeholder carries the meaning instead.
+        "language": {
+            "sSearch": "",
+            "sSearchPlaceholder": "Search the catalog…",
+        },
         # itables downsamples a table over ~64KB of JSON, keeping the head and
         # tail and dropping the middle. For a browse surface whose job is to
         # show the whole catalog that is a silent data loss, and the row a user
