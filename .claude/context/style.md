@@ -73,7 +73,9 @@ the viewport rather than the below-the-fold page is exactly right.)
   `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, the
   `.bbg-grid` frame, the `.bbg-card` boxed-grouping card (v0.8.8, used for
   the Platform analytics tab card, the leaderboard and the commentary pane),
-  and the `.bbg-lb-*` leaderboard rules (v0.9.20, below). Widgets opt in via
+  the `.bbg-lb-*` leaderboard rules (v0.9.20, below), and the
+  `.bbg-rail` / `.bbg-rail-title` / `.bbg-rail-heading` / `.bbg-chip` control
+  rails (v0.9.21, below). Widgets opt in via
   `widget.add_class(...)` (the ipywidgets `.style` API can't express
   `:hover`/`:focus`). The grids' cell
   colors come from ipydatagrid's `grid_style`/renderer API, not CSS. All
@@ -137,6 +139,51 @@ the navy surface. `.bbg-commentary-body` rules in `app_css.html` give links the
 rule, and tables and headings the border and text tokens. Scoped to the body, so
 the surrounding chrome is untouched. Anything an author can reasonably write
 renders legibly without their doing anything.
+
+## Control rails and chips (v0.9.21, epic #276)
+
+The Platform tab's controls are two rails, one either side of the catalog
+table, built by `control_rail` (`src/layout/rails.py`) rather than assembled at
+the call site — the rails differ by content, not by code.
+
+- **`.bbg-rail`** — the raised panel: `surface` fill, border, 8px radius, at a
+  fixed 210px basis (`RAIL_WIDTH`). It does **not** flex; the table between the
+  rails absorbs the remaining width (#280).
+- **`.bbg-rail-title`** — the rail's own accent heading, used only when its
+  sections are facets of one control (the Z-Score rail's Metric / Window /
+  Lookback). Group by / Window stand on their own and pass no title.
+- **`.bbg-rail-heading`** — a section heading: uppercase, letterspaced, muted.
+- **`.bbg-chip`** — a chip, in the `.bbg-pill` family so the base, hover,
+  active and focus colours are the tab band's and these rules only refine them:
+  full-rail width, left-aligned, with an accent bar down the leading edge when
+  active. `text-align` alone does **not** left-align a Jupyter button — the
+  widget renders a flex container, so `justify-content` is set with it.
+
+**The active state is a class, never inline `.style`.** `_make_chip` /
+`_style_chip` (`chrome.py`) toggle `is-active`, exactly as the tab-button pair
+does, because an inline button colour outranks the `:hover` / `:focus-visible`
+rules and leaves a chip that never lights up.
+
+## Catalog group-header bands (v0.9.21, #284)
+
+The classification tiers are drawn as nested row-group headers in cyan fills
+stepping **down** in tint, so the hierarchy reads as bands rather than as a text
+colour on the body background. Level 0 is `ACCENT` itself; levels 1–3 are
+`Color.GROUP_BAND_1/2/3`.
+
+**The foreground flips partway down the scale**, and that is why the step is not
+uniform. On a solid `ACCENT` fill the app's light text measures 2.1:1 —
+unreadable — so levels 0 and 1 take **dark** text (as
+`.bbg-tabband .bbg-pill.is-active` does) and levels 2 and 3 take the normal
+light text on deeper fills. A smooth ramp through the middle would put a band
+exactly where neither text colour is legible. Measured contrast: 7.4 / 8.6 /
+5.8 / 8.2:1 against the text colour each band actually uses, asserted from the
+tokens in `tests/test_catalog_grid.py` rather than written down here alone.
+
+Two selector facts are load-bearing: RowGroup emits a **`th`**, not a `td` (a
+td-only rule matches nothing and every level renders in the plain body colour),
+and the base `tr.dtrg-group` rule carries the deepest band so a nesting level
+past the named ones still renders as a defined band.
 
 ## Benchmark selector (#192)
 

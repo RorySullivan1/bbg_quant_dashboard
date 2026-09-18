@@ -219,7 +219,8 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Launches** board, reachable by its pill.
 - The **Platform** tab shows every catalog index with metadata plus **one
   stats window** (1Y by default), the classification tiers drawn as nested
-  group headers rather than body columns.
+  group headers rather than body columns, between a control rail on each side
+  (v0.9.21).
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
 
@@ -283,11 +284,11 @@ Run alongside the mock-price checklist above:
 
 - Tier columns are **absent from the body**; Solution / Category / Family
   appear as three indented header levels instead.
-- Checking **Asset Class** adds a fourth level *above* Solution — the hierarchy
-  order, whatever order the boxes were ticked in.
-- Unchecking every box leaves a **flat table with no group headers at all** —
+- Ticking the **Asset Class** chip adds a fourth level *above* Solution — the
+  hierarchy order, whatever order the chips were ticked in.
+- Unticking every chip leaves a **flat table with no group headers at all** —
   not one header per row.
-- The **Window** radio swaps all four stat columns; the grouping, the row order
+- The **Window** chips swap all four stat columns; the grouping, the row order
   and any selected row are undisturbed.
 - Only windows the price history supports are offered (6M/1Y/3Y/5Y at
   `LOOKBACK_YEARS = 5`); no column of dashes.
@@ -296,6 +297,64 @@ Run alongside the mock-price checklist above:
 - Clicking a row opens that strategy in the **Single Strategy** tab (the same
   route a leaderboard row takes).
 - The best index by z-score is still the first row.
+
+### Manual checklist — the Platform rails and table surface (v0.9.21, epic #276)
+
+**Read this section before running it.** Every item below was built in a
+container with **no display**, so none of it has ever been rendered. The DOM
+decisions behind the filter row and the two-row sticky header were derived by
+reading the bundled `widget.js` and confirmed kernel-side where they could be —
+which is exactly the class of evidence the section above says is not enough.
+The three marked **(never rendered)** are the ones to run first, and they must
+pass before #280's width criteria are judged: a filter row that lands wrong
+changes what "does it fit" means.
+
+The rails:
+
+- Group by and Window are chips in **one left rail**; Z-Score ranking is a
+  matching **right rail** under its own title. There is **no control row above
+  the table** — nothing between the universe header and the grid.
+- The chips read like the top tab band, not like native checkboxes and radios:
+  hover lights them, the selected one carries the accent bar, and keyboard
+  focus draws a visible ring.
+- Both rails hold their 210px width as the window is resized; neither shrinks
+  to let the table grow.
+
+The table surface:
+
+- **(never rendered)** A **filter row sits directly beneath the header
+  labels**, and the labels are still there. Text columns have an input; the
+  stat and Z-Score columns do not; a column hidden by the Window chips leaves
+  **no** orphaned input.
+- **(never rendered)** The **sticky header pins both rows** as the body
+  scrolls, with the filter row sitting clear of the labels rather than over
+  them. The offset is a hard-coded `CATALOG_HEADER_ROW_HEIGHT`, so this is
+  where a font or padding change would show up first.
+- **(never rendered)** Type a filter, then **switch the stats window**: the
+  filter text, the grouping and the selected row all survive. This is the
+  destroy-and-rebuild path — the table is torn down and rebuilt on every
+  options change, and only the browser-side store puts the filters back.
+- Typing in a column input filters that column alone; the global search still
+  filters across all of them; the two compose. Clicking into an input does
+  **not** re-sort, and sorting still works from the label row.
+- Clicking a **filtered** row still opens the right strategy in Single
+  Strategy — the row indices are data indices, not display positions.
+- The search box renders **top-left**, in the dark chrome, with its placeholder
+  visible and no "Search:" label.
+- Each nesting level is a distinct cyan band, legible at every level; a fourth
+  level (tick all four Group by chips) is styled rather than falling through to
+  the body colour.
+- No Return Type column. Launch Date is still there; Return Type is still on
+  the Single Strategy profile card and still a filter pill.
+- **No page-level horizontal scrollbar** at the default single-window column
+  set on a standard BQuant viewport, and the table fills the space between the
+  rails rather than leaving dead space to its right.
+- Widen the column set until it cannot fit: it scrolls **inside** the table,
+  with both rails still in place and fully visible.
+- Resize the viewport: the header stays on its columns. This is the event class
+  that exposed the `scrollY` drift recorded in `grids.py` — header and body are
+  one table here so there is nothing to drift by construction, which is the
+  claim being checked.
 
 ## Terminal verification (v0.9.16)
 
