@@ -308,21 +308,42 @@ def test_the_platform_shell_is_a_bar_above_and_a_rail_beside_the_table(app):
 
 
 def test_the_bar_lays_its_sections_across(app):
-    # Group by before Window: the order the two act in.
+    # Group by · Metric · Window: the order the three act in — what the rows
+    # are gathered into, what is measured, over how long (#325).
     headings = [
         c.value
         for block in app.table_bar.children
         for c in getattr(block, "children", ())
         if "bbg-rail-heading" in c._dom_classes
     ]
-    assert headings == ["Group by", "Window"]
-    # Same chrome as the rail beside the table, turned.
+    assert headings == ["Group by", "Metric", "Window"]
+    # Same chrome as a rail, turned.
     assert "bbg-rail" in app.table_bar._dom_classes
     assert "bbg-rail-bar" in app.table_bar._dom_classes
     # Its chips lay out across too, or the bar would be as tall as a rail.
-    for chips in (app.group_chips, app.window_chips):
+    for chips in (app.group_chips, app.z_metric_chips, app.window_chips):
         assert chips.layout.flex_flow == "row wrap"
         assert "bbg-chip-row" in chips._dom_classes
+
+
+def test_the_bar_holds_the_very_chips_the_analytics_reads(app):
+    """A container change, not a second copy (#325).
+
+    `PlatformAnalytics` was injected with these objects at construction and
+    reads `.value` / `.label` / `.observe` off them. A bar that built its own
+    would leave the chips on screen driving nothing.
+    """
+    from src.layout.rails import ChipGroup, MultiChipGroup
+
+    bar_chips = [
+        c
+        for block in app.table_bar.children
+        for c in getattr(block, "children", ())
+        if isinstance(c, ChipGroup | MultiChipGroup)
+    ]
+    assert bar_chips == [app.group_chips, app.z_metric_chips, app.window_chips]
+    assert app.analytics.z_metric_chips is app.z_metric_chips
+    assert app.analytics.window_chips is app.window_chips
 
 
 def _declarations(css: str, selector: str) -> list[str]:
@@ -498,11 +519,15 @@ def test_the_catalog_has_no_lookback_and_no_second_window(app):
     assert not hasattr(app, "z_window_chips")
     assert not hasattr(app.analytics, "z_lookback_chips")
     assert not hasattr(app.analytics, "z_window_chips")
-    # The rail is down to the one control that is left.
-    from src.layout.rails import ChipGroup
+    # And with the Metric moved into the bar (#325), the rail holds nothing at
+    # all — it is removed, with its component, in #326.
+    from src.layout.rails import ChipGroup, MultiChipGroup
 
-    rail_chips = [c for c in app.ranking_rail.children if isinstance(c, ChipGroup)]
-    assert rail_chips == [app.z_metric_chips]
+    assert not [
+        c
+        for c in app.ranking_rail.children
+        if isinstance(c, ChipGroup | MultiChipGroup)
+    ]
 
 
 def test_the_ranking_column_is_scored_over_a_fixed_five_year_sample(app, monkeypatch):

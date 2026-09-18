@@ -412,9 +412,13 @@ class DashboardApp:
         # The same four the Leaderboard's columns read, from one declaration
         # (#328) — the two boards rank the same catalog by the same kind of
         # number, so a reader should be able to carry a reading between them.
+        # `row=True` since #325: these sit in the table bar now, and a chip
+        # group defaults to the vertical stack a rail wants — four metrics down
+        # the page would make the bar four rows tall.
         self.z_metric_chips = ChipGroup(
             rankable_metric_chips(),
             value=DEFAULT_RANKING_METRIC,
+            row=True,
         )
         # Built here rather than inside `_build_table_bar`, which runs after
         # `PlatformAnalytics` is constructed: since #324 the Window is a
@@ -431,36 +435,40 @@ class DashboardApp:
         self.selected_perf_grid = PerfGrid()
 
     def _build_table_bar(self) -> W.HBox:
-        """The two controls that shape the table's *rows*, in a bar above it.
+        """The whole control set for the table, in a bar above it.
 
-        Group by before Window, because that is the order they act in: the
-        chips decide what the rows are gathered into, the window decides what
-        is measured across them. They were in different places and different
-        idioms before — checkboxes above the table, a radio beside it — and
-        nothing said they belonged together.
+        **Group by · Metric · Window**, in the order they act in: the chips
+        decide what the rows are gathered into, the metric decides what is
+        measured, the window decides over how long. They were in three places
+        and three idioms not long ago — checkboxes above the table, a radio
+        beside it, three dropdowns in a rail — and nothing said they belonged
+        together.
+
+        The Metric arrived here in #325, once #324 had made the bar's Window
+        the one the score is measured over. Before that the two would have read
+        as unrelated neighbours; now they are two thirds of one sentence.
 
         Across rather than down (`control_bar`): these sit above the table,
         where the eye starts, and a stacked rail there would cost the table
-        vertical space for chips that fit comfortably in a row. Same `.bbg-rail`
-        chrome as the ranking rail beside the table — one component, turned.
+        vertical space for chips that fit comfortably in a row.
         """
         return control_bar(
             RailSection("Group by", self._build_group_chips()),
+            RailSection("Metric", self.z_metric_chips),
             RailSection("Window", self.window_chips),
             title=TABLE_BAR_TITLE,
         )
 
     def _build_ranking_rail(self) -> W.VBox:
-        """What is left of the Z-Score ranking rail: the Metric alone.
+        """An empty rail, kept only until #326 removes it and its component.
 
-        Its Window and Lookback went in #324 — the score is measured over the
-        table's Window against a fixed five-year sample, so neither had a
-        choice left to offer. The Metric moves into the table bar in #325 and
-        this rail goes with #326; a rail for one chip group is a rail for
-        nothing.
+        Its Lookback and Window went in #324 and its Metric in #325, so there
+        is nothing left for it to hold. It stays for one sub-issue so the
+        deletion of `control_rail`, `RAIL_WIDTH` and the rail's CSS is a change
+        that can be reviewed on its own rather than riding in with a control
+        move.
         """
         return control_rail(
-            RailSection("Metric", self.z_metric_chips),
             title=RANKING_RAIL_TITLE,
             height=CATALOG_TABLE_HEIGHT,
         )

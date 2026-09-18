@@ -59,31 +59,33 @@ def test_build_app_renders_expected_tree():
 
 
 def test_platform_panel_has_zscore_controls_and_factor_scatter():
-    # The catalog's ranking, defaulting to Sharpe over the table's own window.
-    # It was Metric/Window/Lookback in a rail (#279); #324 fixed the sample at
-    # five years and handed the window to the table bar, leaving the Metric as
-    # the only chip group the rail still holds. The three analytics charts live
-    # in one boxed "Platform analytics" card with inner pill-tabs sharing the
-    # lookback toggle (sunburst default tab).
+    # The catalog's whole control set, in one bar above the table: Group by,
+    # then the ranking Metric (Sharpe by default), then the Window the score is
+    # measured over. It was Metric/Window/Lookback in a rail (#279); #324 fixed
+    # the sample at five years and handed the window to the bar, #325 moved the
+    # Metric in after it, and the rail is empty until #326 removes it. The three
+    # analytics charts live in one boxed "Platform analytics" card with inner
+    # pill-tabs sharing the lookback toggle (sunburst default tab).
     import plotly.graph_objects as go
-    from src.layout.rails import ChipGroup
+    from src.layout.rails import ChipGroup, MultiChipGroup
 
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]  # tab_content → active panel
     assert isinstance(platform_panel, W.VBox)
-    # Header, the control bar, the grid row (ranking rail + table), the card.
+    # Header, the control bar, the grid row (rail + table), the card.
     universe_header, table_bar, grid_row, analytics_card = platform_panel.children
-    ranking_rail = grid_row.children[0]
-    z_chips = [c for c in ranking_rail.children if isinstance(c, ChipGroup)]
-    assert [c.label for c in z_chips] == ["Sharpe"]
-    # The window the score is measured over is the table's, in the bar above it.
     bar_chips = [
         chips
         for block in table_bar.children
         for chips in getattr(block, "children", ())
-        if isinstance(chips, ChipGroup)
+        if isinstance(chips, ChipGroup | MultiChipGroup)
     ]
-    assert [c.label for c in bar_chips] == ["1Y"]
+    assert [c.label for c in bar_chips if isinstance(c, ChipGroup)] == ["Sharpe", "1Y"]
+    # Nothing is left beside the table.
+    ranking_rail = grid_row.children[0]
+    assert not [
+        c for c in ranking_rail.children if isinstance(c, ChipGroup | MultiChipGroup)
+    ]
 
     # The analytics card is a bordered box: header, tab bar (pills only), then
     # the body = HBox[left control column, chart box].
