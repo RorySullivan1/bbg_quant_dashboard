@@ -22,7 +22,6 @@ from src.config import (
     universe_grid_default_window,
 )
 from src.layout.app import DashboardApp
-from src.layout.rails import RAIL_WIDTH
 from src.price_source import MockPriceSource
 from src.style import COMMENTARY_BULLETIN_SHARE, COMMENTARY_LEADERBOARD_SHARE
 
@@ -296,15 +295,31 @@ def test_clicking_a_window_chip_moves_the_grid(app):
     app.window_chips.value = universe_grid_default_window()
 
 
-def test_the_platform_shell_is_a_bar_above_and_a_rail_beside_the_table(app):
-    # The controls that shape the rows sit above the table; the ranking rail
-    # runs down its left side. Neither is a row of widgets the table has to
-    # share its own line with.
-    rail, table = app.universe_grid_row.children
-    assert (rail, table) == (app.ranking_rail, app.universe_grid.widget)
-
+def test_the_platform_shell_is_a_bar_above_a_full_width_table(app):
+    # One bar of controls, then the table, then the analytics card. The rail
+    # that ran down the table's left side went in #326 with the last of its
+    # contents, and the table took the width back.
     children = list(app._top_panels["platform"].children)
-    assert children.index(app.table_bar) < children.index(app.universe_grid_row)
+    assert children == [
+        app.universe_header,
+        app.table_bar,
+        app.universe_grid.widget,
+        app.analytics.card,
+    ]
+    assert not hasattr(app, "ranking_rail")
+    assert not hasattr(app, "universe_grid_row")
+
+
+def test_the_table_takes_the_whole_width(app):
+    layout = app.universe_grid.widget.layout
+    assert layout.width == "100%"
+    # The flex share that gave it "whatever the rail leaves" is gone: in a
+    # column that basis applies to the HEIGHT and would fight the fixed box.
+    assert layout.flex is None
+    # `min_width` stays — no longer what keeps a wide column set inside the
+    # table (the `.dt-layout-cell` scroll does that), but the guard that made
+    # the row work, and putting the table back in a row without it is #280.
+    assert layout.min_width == "0"
 
 
 def test_the_bar_lays_its_sections_across(app):
@@ -353,16 +368,13 @@ def _declarations(css: str, selector: str) -> list[str]:
     return [line for line in lines if line.endswith(";") and ":" in line]
 
 
-def test_the_table_and_the_rail_are_one_fixed_height(app):
+def test_the_table_stands_at_a_fixed_height(app):
     from src.style import CATALOG_TABLE_HEIGHT
 
-    # Both boxes take the SAME constant, from the same token. Stretching was
-    # tried and is wrong here: it makes whichever box holds more content set
-    # the row, so the table grew to the rail on a small catalog and the rail to
-    # the table on a large one.
+    # One token, and since #326 only one box reads it — it was the number the
+    # table and the rail beside it had to share, because stretching made
+    # whichever held more content set the row.
     assert app.universe_grid.widget.layout.height == CATALOG_TABLE_HEIGHT
-    assert app.ranking_rail.layout.height == CATALOG_TABLE_HEIGHT
-    assert app.ranking_rail.layout.flex == f"0 0 {RAIL_WIDTH}"
 
 
 def test_the_table_s_internals_fill_its_box_rather_than_capping_a_cell(app):
@@ -398,13 +410,12 @@ def test_the_chips_never_shrink_to_fit(app):
     assert "flex: 0 0 auto !important;" in _declarations(css, rule)
 
 
-def test_both_containers_carry_a_title(app):
-    titles = []
-    for container in (app.table_bar, app.ranking_rail):
-        titles += [
-            c.value for c in container.children if "bbg-rail-title" in c._dom_classes
-        ]
-    assert titles == ["Table view", "Z-Score ranking"]
+def test_the_bar_carries_a_title(app):
+    # One container left, and it says what its three sections belong to.
+    titles = [
+        c.value for c in app.table_bar.children if "bbg-rail-title" in c._dom_classes
+    ]
+    assert titles == ["Table view"]
 
 
 def test_no_control_row_sits_above_the_grid(app):
@@ -519,15 +530,17 @@ def test_the_catalog_has_no_lookback_and_no_second_window(app):
     assert not hasattr(app, "z_window_chips")
     assert not hasattr(app.analytics, "z_lookback_chips")
     assert not hasattr(app.analytics, "z_window_chips")
-    # And with the Metric moved into the bar (#325), the rail holds nothing at
-    # all — it is removed, with its component, in #326.
+    # The Metric moved into the bar in #325 and the emptied rail went in #326,
+    # so the bar is the only place a catalog control can be.
     from src.layout.rails import ChipGroup, MultiChipGroup
 
-    assert not [
+    bar_chips = [
         c
-        for c in app.ranking_rail.children
+        for block in app.table_bar.children
+        for c in getattr(block, "children", ())
         if isinstance(c, ChipGroup | MultiChipGroup)
     ]
+    assert bar_chips == [app.group_chips, app.z_metric_chips, app.window_chips]
 
 
 def test_the_ranking_column_is_scored_over_a_fixed_five_year_sample(app, monkeypatch):

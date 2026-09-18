@@ -19,7 +19,6 @@ from src.layout.rails import (
     MultiChipGroup,
     RailSection,
     control_bar,
-    control_rail,
     section_panel,
 )
 from src.style import (
@@ -172,42 +171,68 @@ def test_assigning_a_value_is_normalized_into_options_order():
     assert group.value == ("solution", "family")
 
 
-# --- the rail builder ------------------------------------------------------
+# --- the bar builder -------------------------------------------------------
+#
+# These covered `control_rail` until #326 removed it. The behaviours are the
+# component's, not the column's, so they moved to the one that survives rather
+# than going with it.
 
 
-def test_a_rail_composes_its_sections_in_order():
-    windows = ChipGroup(WINDOWS)
-    tiers = MultiChipGroup(TIERS)
-    rail = control_rail(RailSection("Group by", tiers), RailSection("Window", windows))
+def test_a_bar_composes_its_sections_in_order():
+    windows = ChipGroup(WINDOWS, row=True)
+    tiers = MultiChipGroup(TIERS, row=True)
+    bar = control_bar(RailSection("Group by", tiers), RailSection("Window", windows))
 
-    headings = [c for c in rail.children if "bbg-rail-heading" in _classes(c)]
-    assert [h.value for h in headings] == ["Group by", "Window"]
-    assert list(rail.children) == [headings[0], tiers, headings[1], windows]
-
-
-def test_a_rail_is_typed_and_holds_its_basis():
-    rail = control_rail(RailSection("Window", ChipGroup(WINDOWS)), width="210px")
-    assert "bbg-rail" in _classes(rail)
-    assert rail.layout.width == "210px"
-    # It must not flex: the table between the rails absorbs the width (#280).
-    assert rail.layout.flex == "0 0 210px"
+    blocks = [c for c in bar.children if "bbg-rail-block" in _classes(c)]
+    assert [b.children[0].value for b in blocks] == ["Group by", "Window"]
+    assert [b.children[1] for b in blocks] == [tiers, windows]
 
 
-def test_a_rail_can_carry_a_title_above_its_sections():
-    # A rail whose sections are facets of one control says so once (#279).
-    rail = control_rail(
-        RailSection("Metric", ChipGroup(WINDOWS)),
-        RailSection("Window", ChipGroup(WINDOWS)),
-        title="Z-Score ranking",
+def test_a_bar_is_typed_and_its_sections_do_not_squeeze():
+    bar = control_bar(RailSection("Window", ChipGroup(WINDOWS, row=True)))
+    # `.bbg-rail` is the surface, `.bbg-rail-bar` the direction — the second is
+    # what the stylesheet keys the across layout off (#326).
+    assert "bbg-rail" in _classes(bar)
+    assert "bbg-rail-bar" in _classes(bar)
+    (block,) = [c for c in bar.children if "bbg-rail-block" in _classes(c)]
+    # A flex item shrinks before its container gives way, so a bar with more
+    # chips than fit would squeeze them flat rather than wrap.
+    assert block.layout.flex == "0 0 auto"
+
+
+def test_a_bar_can_carry_a_title_beside_its_sections():
+    # A bar whose sections are facets of one thing says so once (#279, #325):
+    # Group by / Metric / Window are three facets of the table view.
+    bar = control_bar(
+        RailSection("Metric", ChipGroup(WINDOWS, row=True)),
+        RailSection("Window", ChipGroup(WINDOWS, row=True)),
+        title="Table view",
     )
-    assert "bbg-rail-title" in _classes(rail.children[0])
-    assert rail.children[0].value == "Z-Score ranking"
+    assert "bbg-rail-title" in _classes(bar.children[0])
+    assert bar.children[0].value == "Table view"
 
 
-def test_a_rail_without_a_title_renders_none():
-    rail = control_rail(RailSection("Window", ChipGroup(WINDOWS)))
-    assert not any("bbg-rail-title" in _classes(c) for c in rail.children)
+def test_a_bar_without_a_title_renders_none():
+    bar = control_bar(RailSection("Window", ChipGroup(WINDOWS, row=True)))
+    assert not any("bbg-rail-title" in _classes(c) for c in bar.children)
     assert "bbg-rail-title" in render_template("app_css", **STYLE_CTX)
+
+
+def test_the_rail_component_is_gone():
+    """#326 removed the column and everything that only served it.
+
+    A component nothing reads is one more thing to keep in step with the rest
+    of the chrome — the argument that retired `WINDOW_LABELS` in #306.
+    """
+    import src.layout.rails as rails
+
+    assert not hasattr(rails, "control_rail")
+    assert not hasattr(rails, "RAIL_WIDTH")
+    css = render_template("app_css", **STYLE_CTX)
+    # The stacked-column rules go; the surface they were drawn on stays,
+    # because the bar is drawn on it too.
+    assert ".bbg-rail > .bbg-rail-heading" not in css
+    assert ".bbg-app .bbg-rail {" in css
 
 
 # --- section_panel: the shape the Platform tab already had (#305) ----------
@@ -329,10 +354,12 @@ def test_the_box_wears_the_catalog_table_s_chrome_and_not_a_card_s():
         css, "div.itables_anywidget.bbg-catalog"
     )
     assert "border-radius: 8px;" in _declarations(css, ".bbg-app .bbg-card")
-    # It scrolls the way a rail does, and for the same reason.
+    # A fixed height alone does not scroll a flex child: without `min-height`
+    # it refuses to shrink below its content and the body pushes the box open.
+    # (`.bbg-rail` carried the same pair until #326, when the stretched column
+    # it was for went away.)
     assert "min-height: 0;" in box
     assert "overflow-y: auto;" in box
-    assert "min-height: 0;" in _declarations(css, ".bbg-app .bbg-rail")
 
 
 def test_the_two_shares_are_one_ratio():

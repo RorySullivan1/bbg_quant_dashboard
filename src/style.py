@@ -122,16 +122,18 @@ CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 #: How tall the Platform row stands: the catalog table's box **and** the ranking
 #: rail beside it, both set to this exact value.
 #:
-#: A fixed height rather than a stretch, because stretching makes whichever box
-#: is taller set the row — so the table grew to the rail's content, or the rail
-#: to the table's, depending on the catalog. Fixing both to one number is the
-#: only arrangement where neither can push the other around.
+#: How tall the all-catalog table stands. Plainly its own height since #326;
+#: it was the number the table and the ranking rail beside it *shared*, because
+#: stretching made whichever box held more content set the row — the table grew
+#: to the rail on a small catalog and the rail to the table on a large one.
+#: With the rail gone there is nothing to keep in step with, and a fixed height
+#: is now simply how the table gets a box its internals can fill.
 #:
-#: The table's internals fill it: the search row and the row-count readout take
-#: what they need and the row area scrolls in the remainder, so this is the one
+#: Those internals fill it: the search row and the row-count readout take what
+#: they need and the row area scrolls in the remainder, so this is the one
 #: number to change and nothing has to be adjusted to match it.
-#: Raised 10% from 460px: at the old height the rail's three chip sections and
-#: the table's rows both read as squeezed.
+#: Raised 10% from 460px, when the table's rows read as squeezed. Worth
+#: re-tuning at a terminal's fonts now that the table is full width.
 CATALOG_TABLE_HEIGHT: str = "506px"
 
 
