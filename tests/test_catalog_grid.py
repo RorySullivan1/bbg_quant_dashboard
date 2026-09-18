@@ -817,3 +817,108 @@ def test_the_stylesheet_bands_every_reachable_level_and_then_some():
     # Both elements stay listed: RowGroup emits a `th`, and a td-only rule
     # matches nothing at all.
     assert "tr.dtrg-group td {" in css
+
+
+# --- per-column filter row (#285) ------------------------------------------
+#
+# The row itself is built in the browser, so what is asserted here is
+# everything that decides whether it *can* work: which columns get an input,
+# that the callback reaches DataTables at all through the itables widget, and
+# the invariants the JS depends on. The rendered DOM is the manual pass.
+
+
+def _draw_callback(grid) -> str:
+    from src.layout.grids import _catalog_table_options
+
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+    return str(options["drawCallback"])
+
+
+def test_only_the_text_columns_get_a_filter_input():
+    from src.layout.grids import _filterable_positions
+
+    grid = _populated_grid(("solution",))
+    positions = _filterable_positions(grid._display, grid._groups)
+    named = [str(grid._display.columns[p]) for p in positions]
+
+    assert "Name" in named and "Asset Class" in named and "Launch Date" in named
+    # Numbers are excluded: a substring filter over them matches nonsense
+    # ("1.2" would match 1.23, 11.2 and -1.2 alike).
+    assert not any(n.startswith("Z-Score") for n in named)
+    assert not any(n.endswith((" Return", " Vol", " Sharpe", " Max DD")) for n in named)
+    # Grouped columns are hidden and come back as row-group headers.
+    assert "Solution" not in named
+
+
+def test_the_filterable_set_does_not_move_with_the_stats_window():
+    from src.layout.grids import _filterable_positions
+
+    grid = _populated_grid()
+    first = _filterable_positions(grid._display, grid._groups)
+    grid.set_window("6M")
+    assert _filterable_positions(grid._display, grid._groups) == first
+
+
+def test_the_filter_row_is_built_from_a_drawcallback_the_widget_forwards():
+    from itables import JavascriptFunction
+    from src.layout.grids import _catalog_table_options
+
+    grid = _populated_grid()
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+
+    # `drawCallback`, NOT `initComplete`: the itables widget destructures
+    # `initComplete` out of the options and calls it only from inside its own
+    # wrapper, which it installs only when `column_filters` or
+    # `text_in_header_can_be_selected` is set — so a bare `initComplete` is
+    # dropped in silence.
+    assert isinstance(options["drawCallback"], JavascriptFunction)
+    assert "initComplete" not in options
+    # And not itables' own column filters: in this build that replaces the
+    # header with a flat `<thead><th>…</th></thead>` — no labels, no `<tr>` —
+    # and its wrapper only wires inputs it finds, creating none.
+    assert "column_filters" not in options
+
+
+def test_the_callback_reaches_datatables_through_the_widget():
+    from itables.javascript import get_itables_extension_arguments
+    from src.layout.grids import _catalog_table_options
+
+    grid = _populated_grid()
+    options = _catalog_table_options(grid._display, grid._groups, grid.window)
+    dt_args, _ = get_itables_extension_arguments(grid._display, **options)
+
+    # Present in the args the widget forwards, and registered for evaluation —
+    # a JS function that arrives as a string never runs.
+    assert "drawCallback" in dt_args
+    assert ["drawCallback"] in dt_args["keys_to_be_evaluated"]
+
+
+def test_the_callback_holds_the_invariants_the_row_depends_on():
+    grid = _populated_grid(("solution", "category"))
+    js = _draw_callback(grid)
+
+    # Built once: every later draw finds the row and returns, so a focused
+    # input is never torn out from under someone mid-type.
+    assert "querySelector('tr.bbg-filter-row')" in js
+    # Only visible columns, so a hidden one cannot leave an orphaned input.
+    assert "columns(':visible')" in js
+    # Matched by data index, which is stable under sorting and filtering.
+    assert "this.index()" in js
+    # The text survives the destroy-and-rebuild any options change causes:
+    # nothing carries it to the kernel, so it is stashed in the browser.
+    assert "window.__bbgCatalogFilters" in js
+    # Re-applied outside the draw that is running, or it re-enters it.
+    assert "setTimeout" in js
+
+
+def test_the_sticky_filter_row_clears_the_labels_it_sits_under():
+    from src.layout.html import STYLE_CTX, render_template
+    from src.style import CATALOG_HEADER_ROW_HEIGHT
+
+    css = render_template("app_css", **STYLE_CTX)
+    # One token drives both the label row's height and the filter row's sticky
+    # offset. Written separately they would drift, and the symptom would be a
+    # filter row parked over the labels.
+    assert f"height: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
+    assert f"top: {CATALOG_HEADER_ROW_HEIGHT} !important" in css
+    assert ".bbg-filter-input" in css

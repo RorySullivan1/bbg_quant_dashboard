@@ -111,6 +111,15 @@ class Color(StrEnum):
     GROUP_BAND_3 = "#0a4a64"  # deepest, one step off the chrome
 
 
+#: The all-catalog table's label-row height, and therefore the sticky `top`
+#: of the per-column filter row beneath it (#285). One value because the two
+#: CSS rules must agree: a sticky offset cannot be a percentage, so if the
+#: label row's height and the filter row's offset were written separately,
+#: nothing would stop them drifting apart — and the symptom would be a filter
+#: row parked over the labels it belongs to.
+CATALOG_HEADER_ROW_HEIGHT: str = "30px"
+
+
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""
 

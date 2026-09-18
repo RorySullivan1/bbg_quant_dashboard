@@ -477,11 +477,35 @@ div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell {
   overflow: auto;
 }
 /* Sticky header, which is the one thing `scrollY` gave us for free. It needs
-   an opaque background — the body scrolls underneath it, not behind a gap. */
+   an opaque background — the body scrolls underneath it, not behind a gap.
+
+   Since #285 the header is TWO rows: the labels, then the per-column filter
+   inputs. Both pin, which means the second row cannot also sit at `top: 0` —
+   it would cover the labels it belongs to. Its offset is the label row's
+   height, so the two are set together here: a sticky `top` cannot be a
+   percentage or `auto`, so the height has to be pinned rather than measured. */
 div.itables_anywidget table.dataTable thead th {
   position: sticky;
   top: 0;
   z-index: 2;
+}
+div.itables_anywidget table.dataTable thead tr:first-child th {
+  height: {{filter_row_top}} !important;
+  box-sizing: border-box !important;
+}
+div.itables_anywidget table.dataTable thead tr.bbg-filter-row th {
+  top: {{filter_row_top}} !important;
+  padding: 2px 4px !important;
+  font-weight: 400 !important;
+}
+/* The inputs themselves. They fill their column so the row reads as part of
+   the header rather than as a strip of controls sitting on top of it. */
+div.itables_anywidget .bbg-filter-input {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  font-size: {{micro_size}} !important;
+  padding: 2px 6px !important;
+  margin: 0 !important;
 }
 div.itables_anywidget table.dataTable,
 div.itables_anywidget table.dataTable tbody td,

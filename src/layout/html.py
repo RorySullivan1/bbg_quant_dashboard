@@ -27,7 +27,7 @@ from ..config import (
     catalog_field,
     field_label,
 )
-from ..style import Color, Font, FontSize, StatusTone
+from ..style import CATALOG_HEADER_ROW_HEIGHT, Color, Font, FontSize, StatusTone
 
 # Shared style-token vocabulary spread into every template's context, so the
 # `data/templates/*.html` files carry placeholders ({{navy}}, {{label_size}},
@@ -69,6 +69,10 @@ STYLE_CTX = {
     "group_band1": Color.GROUP_BAND_1,
     "group_band2": Color.GROUP_BAND_2,
     "group_band3": Color.GROUP_BAND_3,
+    # The catalog header's label-row height, which is also the sticky offset
+    # of the filter row beneath it (#285) — one value, used by both rules, so
+    # they cannot drift apart and leave the filter row covering the labels.
+    "filter_row_top": CATALOG_HEADER_ROW_HEIGHT,
     "red": Color.RED_600,
     "green": Color.GREEN_600,
 }
