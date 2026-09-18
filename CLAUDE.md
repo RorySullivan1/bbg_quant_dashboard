@@ -14,8 +14,9 @@ via `FigureWidget`), `ipydatagrid` (the per-strategy tables) and `itables`
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
-block** (a ranked **leaderboard** of four metric columns with clickable rows,
-beside a pane that switches between Weekly Commentary and New Launches) → a
+block** (two sections at 60:40 — a ranked **Leaderboard** of four metric
+columns with clickable rows, beside the **QIS Bulletin**, which switches
+between authored Commentary notes and New Launches) → a
 **top-level pill-button tab bar** with three
 tabs — **Platform** (a control bar over the all-catalog performance grid and a
 ranking rail down its left + a Platform-analytics card of Sunburst / Regime /
@@ -83,22 +84,43 @@ RowGroup only gathers adjacent rows, and **changing the window hides columns
 rather than dropping them**, so it cannot disturb the grouping or the
 selection. See `.claude/context/conventions.md`.
 
-The commentary block is a **ranked board beside a switchable pane** (epic #286,
-v0.9.20). The left pane is a **leaderboard**: four columns — Return, Sharpe,
-Calmar, Sortino — each listing the catalog's top three and bottom three as
-`rank · ticker · value`, ranked over the window the **Ranking window** toggle
-selects. Ranking is by the **raw** metric, so a row's position and the number it
-shows always agree; the asset-class-demeaned z-score stays where it belongs, on
-the Platform sunburst and the Z-Score column. **Clicking any row opens that
-strategy in Single Strategy**, through the same `_show_in_single_strategy` the
-catalog grid uses, so the two entry points cannot diverge. The right pane holds
-one board at a time — Weekly Commentary or New Launches — chosen by a pill pair.
-Three rules hold underneath: **a row is three buttons** because a `Button`'s
-description is one text node and a row needs three colours; **`errors_w` is a
-sibling of both panes**, never inside one, so no live control can wipe an init
-error; and **Refresh invalidates while a toggle re-slices** — the window toggle
-and the pane switch never issue BQL. This replaced the v0.8.x 16-card Market
-Superlatives board (#291); its metrics all live on in `src/stats/`.
+The commentary block is **two sections at 60:40** (epic #303, v0.9.22): the
+**Leaderboard** and the **QIS Bulletin**, each built from the same
+`section_panel` the Platform tab uses — a title, a `control_bar` of chips, then
+a boxed body at one shared height (`COMMENTARY_BOX_HEIGHT`). The shares are
+tokens (`COMMENTARY_LEADERBOARD_SHARE` / `_BULLETIN_SHARE`) applied as
+`flex: 1 1 <share>` with `min-width: 0`, not a pixel basis: the 620px column
+this replaced read as 60% at 1030px wide and 43% at 1440px, so the split drifted
+with the screen it was measured on.
+
+The **Leaderboard** is four columns — Return, Sharpe, Calmar, Sortino — each
+listing the catalog's top three and bottom three as
+**`rank · ticker · score (value)`** over the window its Window chips select
+(1W–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year does not
+reach the two controls built from `SHORT_WINDOW_OPTIONS`). **Ranking is by the
+score** (#310) — each metric standardized against its *own* trailing history,
+which is why the app fetches `SCORE_HISTORY_YEARS = 6` while analytics stay at
+`LOOKBACK_YEARS = 5`; the raw value rides behind it in parentheses so a reader
+can see what was standardized, and the sentiment colour sits on the score, which
+is what the row is read by. The asset-class-demeaned z-score is a different
+figure and stays where it belongs, on the Platform sunburst and the Z-Score
+column. **Clicking any row opens that strategy in Single Strategy**, through the
+same `_show_in_single_strategy` the catalog grid uses, so the two entry points
+cannot diverge.
+
+The **QIS Bulletin** holds one board at a time — Commentary or New Launches —
+chosen by chips. Commentary is the authored notes in `data/commentary.json`
+(#304), each with its own title and date; its text is **plain text**, escaped
+and then split on blank lines into paragraphs, so markup in a note is shown as
+typed. This retired the single undated `weekly_commentary.html` blob the app
+used to stamp with today.
+
+Three rules hold underneath: **a row is four buttons** because a `Button`'s
+description is one text node and a row needs four colours; **`errors_w` is a
+sibling of both sections**, never inside one, so no live control can wipe an
+init error; and **Refresh invalidates while a chip re-slices** — neither the
+window chips nor the board chips issue BQL. This replaced the v0.8.x 16-card
+Market Superlatives board (#291); its metrics all live on in `src/stats/`.
 
 The Platform tab is **one composed surface** (epic #276, v0.9.21). Its controls
 sit in two containers of the same chrome, differing only in direction: a
@@ -133,7 +155,7 @@ carries typed text to the kernel. See `.claude/context/style.md` and
 
 ## Current version
 
-`v0.9.21` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.22` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

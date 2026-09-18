@@ -104,8 +104,10 @@ only ever be one.
 ```
 
 - **`text` is plain text, not HTML.** The loader carries it verbatim and the
-  renderer escapes it, so a `<` or an `&` in a note shows as typed. A blank line
-  starts a paragraph; that is the whole formatting vocabulary.
+  renderer (`_render_note_paragraphs`, v0.9.22 #307) escapes it **first** and
+  then splits it, so a `<` or an `&` in a note shows as typed. A blank line
+  starts a paragraph — a single newline does not, so a wrapped sentence stays
+  one paragraph — and that is the whole formatting vocabulary.
 - **A note dates itself.** Notes render **newest first** by `date`; two notes on
   one day keep file order (the sort is stable).
 - **Unknown keys are ignored**, so a field added later cannot break an older
@@ -115,8 +117,9 @@ only ever be one.
   state, and a warning on every build is how a real warning gets tuned out).
   Anything else **warns and degrades**: an unreadable file, invalid JSON or a
   non-list payload yield no notes, and a single malformed note is **skipped by
-  name** rather than voiding the file — one typo in an old note must not take
-  today's note off the screen. Same shape as `UserBenchmarkStore.load`, which
+  its position in the file** rather than voiding the file — one typo in an old
+  note must not take today's note off the screen, and the warning names the
+  index so it can be found. Same shape as `UserBenchmarkStore.load`, which
   likewise filters bad members out of a good list.
 
 ## BQL contract

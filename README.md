@@ -2,8 +2,9 @@
 
 A Bloomberg BQuant App that lets clients browse an index catalog: filter by
 metadata, look up tickers, and view performance, correlation, and a 1-year
-rolling Sharpe-ratio z-score over a 5-year lookback. Index metadata is stored
-locally in `data/indexdb.json`; time-series prices are pulled from BQL at
+rolling Sharpe-ratio z-score over a 5-year analysis window (six years are
+fetched, so the leaderboard's scorer has five whole years to standardize
+against). Index metadata is stored locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime (with a deterministic, process-stable mock-price fallback off-terminal). The UI is built
 with `ipywidgets`, `plotly` (`FigureWidget`), `ipydatagrid` and `itables`, and is
 deployable via Voila.
@@ -16,16 +17,22 @@ deployable via Voila.
    dismisses to a slim, auto-fading post-load toast reporting the source (BQL,
    cache, or mock) and timing. On Refresh the refetch runs on a background
    worker thread so the overlay reliably paints before the fetch blocks.
-3. **All-catalog commentary** — a ranked **leaderboard** (Return / Sharpe /
-   Calmar / Sortino, top three and bottom three each, clickable straight
-   through to Single Strategy) beside a pane that switches between the
-   **Weekly Commentary** and **New Launches**. Always whole-catalog, and
-   re-ranked live over a 1W / 1M / 3M / 6M window with no refetch.
+3. **All-catalog commentary** — two sections at 60:40, each a title over a row
+   of chips over a boxed body. Left, the **Leaderboard**: four metric columns
+   (Return / Sharpe / Calmar / Sortino), each listing the top three and bottom
+   three as `rank · ticker · score (value)`, clickable straight through to
+   Single Strategy. Ranking is by the **score** — the metric standardized
+   against that index's own trailing history — with the raw value it was
+   computed from shown behind it. Right, the **QIS Bulletin**, holding either
+   the authored **Commentary** notes (`data/commentary.json`) or **New
+   Launches**. Always whole-catalog, and re-ranked live over a
+   1W / 1M / 3M / 6M / 1Y window with no refetch.
 4. **Top-level tab bar** with three tabs:
-   - **Platform** — a full-width all-catalog performance grid (every index with
-     metadata plus 1Y / 3Y / 5Y / Since-Inception performance), above a boxed
-     **Platform analytics** card of inner pill-tabs (Sunburst / Regime analysis
-     / Factor exposures).
+   - **Platform** — an all-catalog performance grid (every index with its
+     metadata plus **one stats window at a time**, chosen in the controls),
+     with a *Table view* bar above it and a *Z-Score ranking* rail down its
+     left, above a boxed **Platform analytics** card of inner pill-tabs
+     (Sunburst / Regime analysis / Factor exposures).
    - **Multi-Strategy** — a "Filters" accordion (strategies picker +
      filter panel: one pill per catalog filter dimension — today Solution /
      Category / Family / Asset Class / Return Type — plus Characteristics /
@@ -83,6 +90,7 @@ bbg_quant_dashboard/
 ├── assets/logo.png            # banner logo (placeholder)
 ├── data/
 │   ├── indexdb.json           # index metadata catalog
+│   ├── commentary.json        # QIS Bulletin notes: [{title, date, text}, …]
 │   ├── templates/             # component HTML templates ({{placeholder}})
 │   ├── performance_disclaimer.html
 │   └── legal_disclosure.html
@@ -93,15 +101,16 @@ bbg_quant_dashboard/
 │   ├── price_cache.py         # two-tier cache: session superset + parquet
 │   ├── price_source.py        # PriceSource protocol: BQL + off-terminal mock
 │   ├── style.py               # centralized style tokens (Color/Font/…)
-│   ├── commentary.py          # leaderboard + new-launch card builders
+│   ├── commentary.py          # leaderboard + new-launch builders, notes loader
 │   ├── user_benchmarks.py     # persists user-added benchmark tickers
 │   ├── stats/                 # metrics package: _common / performance / risk /
 │   │                          #   rolling / factors / regime / calendar
 │   └── layout/                # UI package: builder (entry point) + app (the
 │                              #   DashboardApp controller) + theme/chrome/filters/
 │                              #   panes/selection/platform/filter_panel/benchmarks/
-│                              #   single_strategy/multi_strategy/charts/grids/html/state
-│                              #   leaderboard/commentary_pane (build_app re-exported)
+│                              #   rails/single_strategy/multi_strategy/charts/grids/
+│                              #   html/state/leaderboard/commentary_pane
+│                              #   (build_app re-exported)
 └── tests/                     # pytest suite (unit + smoke): conftest + stats/data/
                                #   cache/commentary/grids/catalog-grid/platform/single_strategy/
                                #   live-controls/lazy-views/state/smoke tests

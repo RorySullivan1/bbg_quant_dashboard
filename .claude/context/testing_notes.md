@@ -229,8 +229,8 @@ renders the full dashboard without a Bloomberg session. Verify by:
   legal block renders justified.
 - The commentary block stays the same across filter changes — it
   describes the whole catalog every time.
-- The "Recently launched" indices appear on the commentary pane's **New
-  Launches** board, reachable by its pill.
+- The "Recently launched" indices appear on the QIS Bulletin's **New
+  Launches** board, reachable by its chip.
 - The **Platform** tab shows every catalog index with metadata plus **one
   stats window** (1Y by default), the classification tiers drawn as nested
   group headers rather than body columns, between a control rail on each side
@@ -238,31 +238,69 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
 
-### Manual checklist — the commentary block (v0.9.20)
+### Manual checklist — the commentary block (v0.9.22, epic #303)
 
-The block above the tab bar, on every tab:
+The block above the tab bar, on every tab. This is the part no unit test
+reaches: the suite can prove `flex` reads `1 1 60%` and that a chip re-ranks,
+but not that the two sections *look* like one pair at a terminal's fonts.
 
-- Four leaderboard columns — **Return / Sharpe / Calmar / Sortino** — each with
-  a top block and a bottom block separated by a divider. Values are right
-  aligned and line up column to column; positive values are green, negative red.
+**The two sections**
+
+- Two sections side by side, **Leaderboard left at ~60%, QIS Bulletin right at
+  ~40%**, each with a title line, a row of chips, and a bordered box beneath.
+  The two boxes are the **same height** and their borders line up top and
+  bottom.
+- Narrow the window. The ratio **holds** — the leaderboard's four columns get
+  narrower rather than the Bulletin being pushed off the row, and the page
+  never scrolls sideways.
+- Each box **scrolls internally** when its content overflows; neither grows the
+  block or pushes the tab bar down. `COMMENTARY_BOX_HEIGHT` is the one number
+  to tune here, and a terminal is where to judge it.
+- Exactly **one border** around each section's content — the boxes are the only
+  frames, with no second card nested inside them.
+
+**The Leaderboard**
+
+- Four columns — **Return / Sharpe / Calmar / Sortino** — each with a top block
+  and a bottom block separated by a divider, and **centred** column titles.
+- Every row reads `rank · ticker · score (value)`: the score carries the
+  colour (green positive, red negative) and the raw value follows it in
+  parentheses, muted. The numbers line up column to column.
 - Ranks in the bottom block are the **true catalog positions** (52 / 53 / 54 on
   a 54-index catalog), not 1 / 2 / 3.
-- Hovering a row lights **all three cells** at once and shows the strategy name;
-  the row reads as one strip, not three buttons.
+- Hovering a row lights **all four cells at once** and shows the strategy name;
+  the row reads as one strip, not four buttons. **Watch for the cell under the
+  cursor looking brighter than its neighbours** — that is the framework's own
+  button `:hover` winning, which the `!important` in `.bbg-lb-row:hover` is
+  there to prevent (#306). Keyboard focus is a separate, visible outline on one
+  cell, which is correct.
 - **Clicking any leaderboard row opens that strategy in the Single Strategy
-  tab**, exactly as a catalog-grid row does — including clicking the rank or the
-  value, not just the ticker. If the Single Strategy filters had excluded it,
-  they clear and the status toast says so.
-- Changing the **Ranking window** (1W / 1M / 3M / 6M) retitles the board
-  (`Ranking · Past Week`) and genuinely **reorders** the rows — with no fetch and
-  no visible pause. Toggling back to a window already seen is instant.
-- The **Commentary** / **New Launches** pills swap the right pane's board and
-  move the active highlight; Commentary is what is showing on load. Switching
-  issues no fetch.
+  tab**, exactly as a catalog-grid row does — including clicking the rank, the
+  score or the value, not just the ticker. If the Single Strategy filters had
+  excluded it, they clear and the status toast says so.
+- Changing the **Window** chips (1W / 1M / 3M / 6M / **1Y**) genuinely
+  **reorders** the rows — with no fetch and no visible pause. Returning to a
+  window already seen is instant. Nothing on screen still says "Past Week": the
+  section title and the lit chip are the only things naming the window.
+
+**The QIS Bulletin**
+
+- The **Commentary** / **New Launches** chips swap the board and move the lit
+  chip; Commentary is what is showing on load. Switching issues no fetch.
+- Commentary shows **one card per note** from `data/commentary.json`, newest
+  first, each with its own title and its own date — no single "as of" header
+  over the lot. Blank lines in a note render as paragraph breaks.
+- Put a `<b>` or an `&` in a note's `text` and confirm it is **shown as typed**,
+  not interpreted.
+- Empty `data/commentary.json` (or delete it) → the dashed "No commentary yet"
+  box, not a blank pane. Same for New Launches with no recent launches.
 - A **Refresh** while the New Launches board is open leaves it open — it must
   not snap back to Commentary.
-- An error in the block renders in the strip **above both panes** and survives
-  both a window change and a pane switch.
+
+**The error strip**
+
+- An error in the block renders in the strip **above both sections** and
+  survives a window change, a board switch and a Refresh.
 
 ## The catalog grid renders — and a unit test cannot tell you (v0.9.18)
 

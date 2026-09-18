@@ -71,9 +71,12 @@ the viewport rather than the below-the-fold page is exactly right.)
   scrollbars, the `.bbg-masthead`, the loading `.bbg-overlay`/`.bbg-progress`
   + post-load `.bbg-toast`, button states (`.bbg-pill`/`.bbg-pill.is-active`,
   `.bbg-btn`, `.bbg-btn-secondary`), best-effort dark form controls, the
-  `.bbg-grid` frame, the `.bbg-card` boxed-grouping card (v0.8.8, used for
-  the Platform analytics tab card, the leaderboard and the commentary pane),
-  the `.bbg-lb-*` leaderboard rules (v0.9.20, below), and the
+  `.bbg-grid` frame, the `.bbg-card` boxed-grouping card (v0.8.8 — the
+  Platform analytics tab card; the commentary block's two sections wear
+  `.bbg-section-box` instead since v0.9.22, and dropped their cards so the
+  section shell is the only frame), the `.bbg-section-box` boxed section body
+  (v0.9.22 #305), the `.bbg-lb-*` leaderboard rules and `.bbg-note-body`
+  (v0.9.20 / v0.9.22, below), and the
   `.bbg-rail` / `.bbg-rail-title` / `.bbg-rail-heading` / `.bbg-chip` control
   rails (v0.9.21, below). Widgets opt in via
   `widget.add_class(...)` (the ipywidgets `.style` API can't express
@@ -85,60 +88,89 @@ the viewport rather than the below-the-fold page is exactly right.)
   reference the `Color`, `Font`, `FontSize`, `StatusTone`, and `Sentiment`
   enums. Adding a new color or size: extend the enum, don't inline.
 
-## The commentary block (v0.9.20, epic #286)
+## The commentary block (v0.9.22, epic #303)
 
-**The leaderboard's rows are three buttons each, drawn as one strip.** An
+**Both sections are one component.** The Leaderboard and the QIS Bulletin are
+each a `section_panel` (`rails.py`): a title line in the `grid_header`
+treatment, the section's `control_bar` of chips, then a `.bbg-section-box` —
+the same `{{chrome_bg}}` surface, 1px border and 6px radius the Platform
+table's box wears — at a fixed `COMMENTARY_BOX_HEIGHT` (300px), scrolling its
+body inside that height rather than growing the row. The height is a **token
+and not a literal** precisely so it is one edit to tune once it has been seen
+at a terminal's fonts, which is where it should be tuned.
+
+**The split is shares, not pixels.** `COMMENTARY_LEADERBOARD_SHARE` (60%) and
+`COMMENTARY_BULLETIN_SHARE` (40%), applied as `flex: 1 1 <share>` with
+`min-width: 0` on both columns. The `flex: 0 0 620px` basis this replaced was a
+width that *happened* to read as 60% at 1030px wide and 43% at 1440px, so the
+ratio drifted with the screen it was measured on. `min-width: 0` is
+load-bearing, not tidiness: a flex item's automatic minimum is its content, so
+without it the leaderboard's four columns refuse to narrow and push the
+Bulletin off the row instead of both shrinking — the same pairing the catalog
+table needs beside its rail.
+
+Neither section's contents frame or title themselves. The `Leaderboard` board
+and the Bulletin's container both dropped their `.bbg-card` in #306 / #307:
+`section_panel`'s box is the frame, and two bordered surfaces nested draw two.
+Both boards likewise lost their in-HTML `<h3>`s and their `max-height: 30vh` —
+the section title, the lit chip and the box own all three.
+
+**The leaderboard's rows are four buttons each, drawn as one strip.** An
 ipywidgets `Button` renders its `description` as a single text node, so the
-whole label takes one colour — but a row needs three treatments: a dimmed rank,
-the ticker in the primary text colour, and a right-aligned value coloured by its
-sentiment. So a row is an `HBox` (`.bbg-lb-row`) of three `W.Button`s, each
-carrying `.bbg-lb-cell` plus one of `.bbg-lb-rank` / `.bbg-lb-ticker` /
-`.bbg-lb-value`. The cells are borderless, radius-free and transparent, so they
-read as one continuous strip rather than three buttons.
+whole label takes one colour — but a row needs four treatments: a dimmed rank,
+the ticker in the primary text colour, the **score** coloured by its sentiment,
+and the raw value behind it in parentheses, muted. So a row is an `HBox`
+(`.bbg-lb-row`) of four `W.Button`s, each carrying `.bbg-lb-cell` plus one of
+`.bbg-lb-rank` / `.bbg-lb-ticker` / `.bbg-lb-score` / `.bbg-lb-value`. The
+cells are borderless, radius-free and transparent, so they read as one
+continuous strip rather than four buttons.
 
 Two rules follow from that:
 
 - **The hover is on the row, not the cell** (`.bbg-lb-row:hover .bbg-lb-cell`),
-  so all three light together and the strip reads as one target. The ticker
-  additionally shifts to `{{accent2}}` on hover.
-- **Only the value's colour is inline.** The rank and ticker colours are static
-  and live in the stylesheet; the value's is *data* (green / red / bright by
-  sentiment) and is the single per-row `style.text_color`. `_value_color` in
-  `leaderboard.py` maps `Sentiment.NEUTRAL` to the bright chrome text token,
-  because the shared neutral is brand navy and illegible on the dark surface.
-  (It lived in `html.py` as `_superlative_value_color` until #291 retired the
-  cards and the leaderboard became its only caller.)
+  so all four light together and the strip reads as one target; the ticker
+  additionally shifts to `{{accent2}}`. Both rules carry `!important` (#306),
+  for the reason the rest of this stylesheet uses it: the widget framework
+  injects its own `:hover` background per button at runtime, and without it the
+  cell under the cursor paints differently from its siblings — which reads as
+  the *pieces* of a row highlighting rather than the row. `:focus-visible`
+  stays a separate, visible state: a keyboard user needs to see which cell they
+  are on.
+- **Only the score's colour is inline.** The rank, ticker and value colours are
+  static and live in the stylesheet; the score's is *data* (green / red /
+  bright by sentiment) and is the single per-row `style.text_color`. It sits on
+  the score rather than the value because #310 made the score what the row is
+  ranked and read by. `_value_color` in `leaderboard.py` maps
+  `Sentiment.NEUTRAL` to the bright chrome text token, because the shared
+  neutral is brand navy and illegible on the dark surface. (It lived in
+  `html.py` as `_superlative_value_color` until #291 retired the cards and the
+  leaderboard became its only caller.)
 
-The value cell uses `font-variant-numeric: tabular-nums` so figures line up
-column to column; rank and value cells are fixed-width and the ticker flexes,
-so the numbers align vertically regardless of ticker length. A blank slot is
-`visibility: hidden`, **not** `display: none`, so a short column keeps its
-height instead of pulling the divider up.
+The score and value cells use `font-variant-numeric: tabular-nums` so figures
+line up column to column; rank, score and value are fixed-width and the ticker
+flexes, so the numbers align vertically regardless of ticker length. Column
+titles are centred (#306). A blank slot is `visibility: hidden`, **not**
+`display: none`, so a short column keeps its height instead of pulling the
+divider up.
 
-**The pane's pill pair follows the tab-band idiom.** *Commentary* | *New
-Launches* are ordinary `.bbg-pill`s (the subtle style, not the inverted
-`.bbg-tabband` one), toggled by `_style_tab_button` — the active state is the
-`is-active` class, never an inline button colour, which would win over the
-`:hover` / `:focus-visible` rules.
+**The Bulletin's board control is a `ChipGroup`**, not the `.bbg-pill` pair it
+was through v0.9.20 — the block reads as the Platform tab's idiom rather than
+as a third one, and the chips are painted by the same `_style_chip` with the
+selected state a CSS class rather than an inline colour.
 
-**Both boards in the pane share one shape.** `weekly_commentary.html` used to
-carry the *light* palette from before the dark chrome (`{{slate50}}` panel,
-`{{navy}}` heading, `{{slate200}}` border) and its own bordered panel, so it
-rendered as a white card inside the dark pane. It now matches
-`launches_board.html`: a heading row (title plus a muted caption) over a body
-capped at `30vh` and scrolling past it, **with no panel of its own** — the
-pane's `.bbg-card` is the frame, and a second one nested inside it was the
-other half of why the two boards looked unrelated.
+**A note's body is plain text, so the stylesheet only sets its rhythm.**
+`_render_note_paragraphs` escapes the text and splits it into `<p>`s, so the
+`.bbg-note-body p` rules are the whole of it: a 5px top margin between
+paragraphs, none on the first or last, so the text sits against the card's own
+padding rather than inside a second, invisible one. The browser's default `1em`
+would open a gap as tall as a line inside a card only a few lines high.
 
-**The commentary body is author HTML, so the stylesheet dresses it.** The body
-comes from `data/weekly_commentary.html`, written by a person who should not
-have to think about the theme, and it arrives with no styling — which means
-browser defaults: a default-blue link and near-black `code`, both unreadable on
-the navy surface. `.bbg-commentary-body` rules in `app_css.html` give links the
-`{{accent2}}` colour, `code` a `{{surface2}}` chip, blockquotes a muted left
-rule, and tables and headings the border and text tokens. Scoped to the body, so
-the surrounding chrome is untouched. Anything an author can reasonably write
-renders legibly without their doing anything.
+*(Through v0.9.20 the Commentary board was author-written HTML from
+`data/weekly_commentary.html`, and a `.bbg-commentary-body` block dressed
+arbitrary author markup — links, `code`, headings, blockquotes, `hr`, tables —
+so it stayed legible on the navy surface without the author thinking about the
+theme. #308 retired the blob, and the block with it: none of that markup can
+arise from plain text split into paragraphs.)*
 
 ## Control rails and chips (v0.9.21, epic #276)
 
