@@ -305,6 +305,29 @@
   margin: 0 6px 0 0 !important;
   padding: 0 12px;
 }
+/* ---- Section panel (v0.9.22, #305) ------------------------------------
+   The box under a section's title line and chip row. It reproduces the
+   catalog table's container rather than reusing it: those rules are
+   DataTables-specific (`.dt-container`, `.dt-layout-cell`), so the values are
+   what travel. Two of them are deliberate and easy to get wrong — the radius
+   is the table's 6px and NOT `.bbg-card`'s 8px, and the background is
+   `chrome_bg`, the table body's field, not the `surface` a card sits on.
+
+   It scrolls the way `.bbg-rail` does: a fixed height from the widget's
+   layout, `min-height: 0` so a flex child may shrink below its content, and
+   `overflow-y: auto`. The table needs a second, inner scroller only because
+   its header has to stay sticky against it; nothing here is sticky. */
+.bbg-app .bbg-section-box {
+  background: {{chrome_bg}};
+  border: 1px solid {{border_color}};
+  border-radius: 6px;
+  padding: 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
 .bbg-app .bbg-rail-title {
   color: {{accent}};
   font-size: {{label_size}};
