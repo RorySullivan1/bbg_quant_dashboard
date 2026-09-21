@@ -622,7 +622,13 @@ def test_icicle_frame_columns_and_join(multiyear_prices):
         }
     )
     frame = stats.icicle_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["asset_class", "category", "family", "value"]
+    assert list(frame.columns) == [
+        "solution",
+        "asset_class",
+        "category",
+        "family",
+        "value",
+    ]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
     assert frame.loc["BBB Index", "family"] == "Y"
@@ -660,7 +666,13 @@ def test_icicle_frame_honors_metric_params(multiyear_prices):
 def test_icicle_frame_empty_safe():
     meta = pd.DataFrame({"ticker": [], "asset_class": [], "category": []})
     out = stats.icicle_frame(pd.DataFrame(), meta)
-    assert list(out.columns) == ["asset_class", "category", "family", "value"]
+    assert list(out.columns) == [
+        "solution",
+        "asset_class",
+        "category",
+        "family",
+        "value",
+    ]
     assert out.empty
 
 
@@ -710,19 +722,19 @@ def test_analytics_levels_rejects_a_level_that_is_not_a_schema_field(monkeypatch
         cfg.analytics_levels()
 
 
-def test_drill_levels_must_be_a_suffix_of_the_hierarchy(monkeypatch):
-    """The stops address positions in the scope path, so they cannot float.
+def test_every_hierarchy_level_is_a_drill_stop():
+    """The stops are derived from the hierarchy, not declared beside it.
 
-    A stop that is not in the hierarchy — or one above the root's colour key —
-    would draw points the scope has no prefix for, which is a wrong picture
-    rather than a crash, so the relationship is asserted rather than assumed.
+    `DRILL_LEVELS` was a separate tuple, a suffix of the hierarchy *after* its
+    first element, because the first level was the root's colour key rather
+    than somewhere to stand. With `solution` leading the hierarchy the root
+    draws solutions, so the first level is a stop like any other and a second
+    tuple could only disagree with this one.
     """
     import src.config as cfg
 
-    assert cfg.drill_levels() == ("category", "family", "ticker")
-    monkeypatch.setattr(cfg, "DRILL_LEVELS", ("asset_class", "category"))
-    with pytest.raises(ValueError, match="suffix"):
-        cfg.drill_levels()
+    assert cfg.drill_levels() == (*cfg.analytics_levels(), cfg.DRILL_LEAF_LEVEL)
+    assert cfg.drill_levels()[0] == "solution"
 
 
 def test_the_drill_leaf_is_labelled_without_a_schema_field():
@@ -731,6 +743,8 @@ def test_the_drill_leaf_is_labelled_without_a_schema_field():
     import src.config as cfg
 
     assert [cfg.drill_level_label(k) for k in cfg.drill_levels()] == [
+        "Solution",
+        "Asset Class",
         "Category",
         "Family",
         "Strategy",

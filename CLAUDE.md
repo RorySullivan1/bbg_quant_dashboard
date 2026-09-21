@@ -196,15 +196,33 @@ factor view merged, Y the metric and X / Z the term- and equity-risk-premium
 betas over one sample — the Window's days inside the regime bucket; the
 **Strip** is five dates of 1D returns, the only view that can draw *this week*.
 
-All three **drill**. One frozen `Drill(scope, level)` (`src/layout/drill.py`)
-is written through **one setter**, and a marker click, an icicle zoom, a Level
-chip, a breadcrumb segment and a table row all go through it — so no chart
-holds a private focus. A node is a **path**, never a bare label, because
-*Emerging Markets* sits under two asset classes in the shipped catalog and a
-label alone would average two unrelated groups into one point. A group's value
-is the **equal-weight mean** of its members, taken after the regime mask, and
-colour **keys to the points shown**: asset class at the root, the points' own
-level below it, because a key that stops varying stops informing.
+All three **drill**, down **Solution → Asset Class → Category → Family →
+Strategy** (v0.9.25). `ANALYTICS_LEVELS` leads with `solution` because that is
+how the desk browses the catalog, and **every level is a stop**, so
+`drill_levels()` is derived from the hierarchy rather than declared beside it.
+The Scope breadcrumb's root reads **QIS Strategy**, which names what is being
+browsed where "All" did not.
+
+One frozen `Drill(scope, level)` (`src/layout/drill.py`) is written through
+**one setter**, and a marker click, an icicle zoom, a Level chip, a breadcrumb
+segment and a table row all go through it — so no chart holds a private focus.
+A node is a **path**, never a bare label, because *Emerging Markets* sits under
+two asset classes in the shipped catalog and a label alone would average two
+unrelated groups into one point. A group's value is the **equal-weight mean**
+of its members, taken after the regime mask, and colour **keys to the points
+shown** — their own level, because a key that stops varying stops informing.
+
+**The Icicle's zoom is the drill, which means it must be re-asserted.** A cell
+click zooms Plotly client-side *and* re-renders the trace from the kernel; a
+trace built without `level` renders at the root, so the zoom was undone the
+instant it happened while the table and the Level chip correctly showed the
+narrowed state (v0.9.25). The trace is now built from the scope, and clicking
+the cell you are already inside zooms out, as Plotly's own icicle does.
+
+The drill is a **position**, not a setting, so it sits on its own strip below
+the bar (`.bbg-drill-bar`), breadcrumb first — "where am I" reads before "how
+deep". Scope shows on every chart, the Icicle included; Level hides there,
+because a chart drawing every level at once has no single depth to select.
 
 The points table reads `points()` and never a figure's traces, and a row click
 routes on the **`leaf` flag**: a group narrows the drill, a strategy opens in
@@ -216,12 +234,14 @@ name to a ticker dropdown. The path cannot disambiguate them either: a family
 node and a ticker under it are both three segments deep. The flag is carried
 for exactly this reason. Chart and table stand at one fixed `ANALYTICS_HEIGHT` for
 `CATALOG_TABLE_HEIGHT`'s reason — stretching lets whichever box holds more
-content set the row. Both `ITable`s now wear a shared **`.bbg-itable`**;
+content set the row — and split **60:40** as flex shares with `min-width: 0`,
+the `COMMENTARY_*_SHARE` pattern: the 360px basis this replaced squeezed the
+table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-itable`**;
 `.bbg-catalog` keeps only the group bands and the filter row.
 
 ## Current version
 
-`v0.9.24` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.25` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

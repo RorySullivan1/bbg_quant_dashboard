@@ -127,6 +127,9 @@ class IcicleChart(Chart):
         self._points = pd.DataFrame()
         self._value_label = ""
         self._metric = "sharpe"
+        #: The scope this trace was drawn at, so a click can tell "into a
+        #: child" from "out of the node I am already in".
+        self._scope: tuple[str, ...] = ()
         super().__init__()
 
     def _build(self) -> go.FigureWidget:
@@ -165,6 +168,7 @@ class IcicleChart(Chart):
         """
         self._metric = metric
         self._value_label = metric_label
+        self._scope = tuple(scope)
         levels = list(analytics_levels())
         frame = frame.dropna(subset=["value"])
         if frame.empty:
@@ -218,6 +222,15 @@ class IcicleChart(Chart):
             values=values,
             branchvalues="total",
             maxdepth=len(levels),
+            # **The drill's zoom, re-asserted on every redraw.** Plotly zooms
+            # client-side when a cell is clicked, but the click also re-renders
+            # this trace from the kernel — and a trace built without `level`
+            # renders at the root, which snapped the chart straight back to the
+            # whole catalog while the table and the Level chips (driven from
+            # the same `Drill`) correctly showed the narrowed view. Setting it
+            # from the scope is what makes the client-side zoom and the kernel
+            # state the same thing rather than two that race.
+            level=PATH_SEP.join(scope),
             # Horizontal: the hierarchy reads left to right and the labels sit
             # along the reading direction, which a vertical tiling turns on its
             # side at the depths that matter most.
@@ -306,6 +319,12 @@ class IcicleChart(Chart):
         path = tuple(self.fig.data[0].ids[index].split(PATH_SEP))
         if len(path) > len(analytics_levels()):
             return
+        if path == self._scope:
+            # Plotly's own icicle zooms OUT when you click the cell you are
+            # already inside. Following it keeps the chart's behaviour the one
+            # the user expects from the widget, and gives the drill a way up
+            # that is not the breadcrumb.
+            path = path[:-1]
         self._on_drill(path)
 
     def clear(self) -> None:

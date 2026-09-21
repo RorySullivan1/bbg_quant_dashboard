@@ -158,11 +158,14 @@ CATALOG_TABLE_HEIGHT: str = "506px"
 #: thing on the tab, and a chart as tall as the catalog pushes the page.
 ANALYTICS_HEIGHT: str = "420px"
 
-#: How wide the points table beside the chart stands. A fixed basis, so a wide
-#: chart pushes nothing off: the chart takes the remaining width (`flex: 1 1 0%`
-#: **and** `min-width: 0`, the #280 pair) and a long strategy name wraps or
-#: ellipsizes inside this rather than widening the column set.
-ANALYTICS_TABLE_WIDTH: str = "360px"
+#: The analytics card's chart:table split, as flex bases rather than pixels —
+#: the `COMMENTARY_*_SHARE` pattern, and for the same reason. The 360px basis
+#: this replaces squeezed the table into a strip on a wide screen and read as
+#: a different layout at every width; a share holds the proportion the card
+#: was designed at. Both boxes carry `min-width: 0` so a long strategy name
+#: wraps inside its column instead of widening it.
+ANALYTICS_CHART_SHARE: str = "60%"
+ANALYTICS_TABLE_SHARE: str = "40%"
 
 #: How tall a `section_panel`'s container stands in the commentary block — the
 #: Leaderboard's and the QIS Bulletin's, both from this one token, so neither

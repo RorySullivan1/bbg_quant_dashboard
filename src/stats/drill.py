@@ -129,18 +129,20 @@ def color_key(
     level: str | None = None,
     levels: tuple[str, ...] | None = None,
 ) -> str:
-    """The level the drawn points' colours should key to.
+    """The level the drawn points' colours should key to — their own.
 
-    The coarsest level beneath ``scope`` that still varies among the points:
-    at the root that is the hierarchy's first level (asset class — the
-    category points' parents), and below the root it is the points' own level.
+    *A key that stops varying stops informing, and the point of narrowing is
+    to tell the members apart* (#331 decision 17). The points at any depth all
+    sit under one scope, so the only thing that varies among them is their own
+    level: solutions at the root, asset classes inside a solution, categories
+    inside an asset class.
 
-    *Settled against keeping asset-class colour at every depth: a key that
-    stops varying stops informing, and the point of narrowing is to tell the
-    members apart* (#331 decision 17). This is that rule, spelled once, for
-    the Scatter, the Strip and the table to read.
+    It needed a special case at the root while the first level was a colour
+    key rather than a stop — the root drew categories and coloured them by the
+    asset class *above* them. With `solution` leading the hierarchy the root
+    draws solutions, so there is nothing above the points to key to and the
+    rule is uniform. ``scope`` and ``levels`` are kept in the signature: the
+    callers pass them, and a hierarchy that reintroduces a non-stop first
+    level would need them again.
     """
-    keys = tuple(levels) if levels is not None else analytics_levels()
-    if not scope:
-        return keys[0]
     return level or drill_levels()[0]

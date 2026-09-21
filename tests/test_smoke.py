@@ -92,14 +92,23 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # the shared Lookback toggle went in #333; the card's controls are chips
     # in one `control_bar`, the catalog table's own chrome.
     assert analytics_card._dom_classes == ("bbg-card",)
-    _card_header, bar, body = analytics_card.children
+    _card_header, bar, drill_row, body = analytics_card.children
     assert "bbg-rail" in bar._dom_classes
     headings = [
         block.children[0].value
         for block in bar.children
         if "bbg-rail-block" in getattr(block, "_dom_classes", ())
     ]
-    assert headings == ["Chart", "Metric", "Window", "Regime", "Level", "Scope"]
+    # Settings on the bar; the drill's *position* on its own strip below, the
+    # breadcrumb leading it (v0.9.25).
+    assert headings == ["Chart", "Metric", "Window", "Regime"]
+    assert "bbg-drill-bar" in drill_row._dom_classes
+    drill_headings = [
+        block.children[0].value
+        for block in drill_row.children
+        if "bbg-drill-block" in getattr(block, "_dom_classes", ())
+    ]
+    assert drill_headings == ["Scope", "Level"]
     assert not [w for w in _walk(analytics_card) if isinstance(w, W.ToggleButtons)]
 
     chart_box, points_box = body.children
@@ -114,6 +123,8 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
         label for label, _years in stat_windows()
     ]
     assert [label for label, _ in pa.level_chips.options] == [
+        "Solution",
+        "Asset Class",
         "Category",
         "Family",
         "Strategy",
@@ -147,7 +158,7 @@ def test_regime_analysis_section_conditions_live():
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
     analytics_card = platform_panel.children[-1]  # the analytics card is last (#279)
-    body = analytics_card.children[2]
+    body = analytics_card.children[3]
     pa = analytics_card._analytics
     pa.chart_chips.value = "scatter"  # the Regime section shows on the Scatter
 

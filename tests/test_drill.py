@@ -30,6 +30,7 @@ def lumpy_meta() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "ticker": ["A", "B", "C", "D", "E"],
+            "solution": ["ARP", "ARP", "ARP", "ARP", "Beta"],
             "asset_class": ["Equity", "Equity", "Equity", "Equity", "Fixed Income"],
             "category": ["Momentum", "Momentum", "Momentum", "Value", "Credit"],
             "family": ["Fast", "Fast", "Fast", "Cheap", "IG"],
@@ -54,6 +55,7 @@ def test_a_node_is_a_path_not_a_label(lumpy_meta):
             pd.DataFrame(
                 {
                     "ticker": ["F"],
+                    "solution": ["ARP"],
                     "asset_class": ["Fixed Income"],
                     # The sample catalog's real case: Emerging Markets sits
                     # under two asset classes.
@@ -65,16 +67,16 @@ def test_a_node_is_a_path_not_a_label(lumpy_meta):
         ignore_index=True,
     )
     paths = node_paths(meta)
-    assert paths.loc["A"].tolist() == ["Equity", "Momentum", "Fast"]
-    assert paths.loc["F"].tolist() == ["Fixed Income", "Momentum", "Fast"]
+    assert paths.loc["A"].tolist() == ["ARP", "Equity", "Momentum", "Fast"]
+    assert paths.loc["F"].tolist() == ["ARP", "Fixed Income", "Momentum", "Fast"]
 
     leaves = pd.DataFrame({"value": [1.0] * 6}, index=list("ABCDEF"))
     points = drill_points(leaves, paths, level="category")
     momentum = points[points["label"] == "Momentum"]
     assert len(momentum) == 2, "one Momentum per asset class, not one merged node"
     assert set(momentum["path"]) == {
-        ("Equity", "Momentum"),
-        ("Fixed Income", "Momentum"),
+        ("ARP", "Equity", "Momentum"),
+        ("ARP", "Fixed Income", "Momentum"),
     }
 
 
@@ -84,7 +86,7 @@ def test_a_group_point_is_the_equal_weight_mean_of_its_members(
     """Hand-computed over a three-member family — the case the mock cannot make."""
     paths = node_paths(lumpy_meta)
     points = drill_points(
-        lumpy_leaves, paths, scope=("Equity", "Momentum"), level="family"
+        lumpy_leaves, paths, scope=("ARP", "Equity", "Momentum"), level="family"
     )
     fast = points.loc["Fast"]
     assert fast["count"] == 3
@@ -103,7 +105,9 @@ def test_every_numeric_column_is_averaged_and_nothing_else_is(lumpy_leaves, lump
 
 def test_the_scope_filters_before_the_grouping(lumpy_leaves, lumpy_meta):
     paths = node_paths(lumpy_meta)
-    inside = drill_points(lumpy_leaves, paths, scope=("Equity",), level="category")
+    inside = drill_points(
+        lumpy_leaves, paths, scope=("ARP", "Equity"), level="category"
+    )
     assert set(inside["label"]) == {"Momentum", "Value"}
     assert "Credit" not in set(inside["label"]), "Fixed Income is out of scope"
 
@@ -118,30 +122,30 @@ def test_a_single_member_group_is_not_mistaken_for_a_strategy(lumpy_leaves, lump
     open a category in Single Strategy.
     """
     paths = node_paths(lumpy_meta)
-    groups = drill_points(lumpy_leaves, paths, scope=("Equity",), level="family")
+    groups = drill_points(lumpy_leaves, paths, scope=("ARP", "Equity"), level="family")
     cheap = groups.loc["Cheap"]
     assert cheap["count"] == 1, "a one-member family"
     assert not cheap["leaf"], "but not a strategy"
-    assert len(cheap["path"]) == 3, "and the same depth as a ticker row"
+    assert len(cheap["path"]) == 4, "and the same depth as a ticker row"
 
     tickers = drill_points(
-        lumpy_leaves, paths, scope=("Equity", "Value", "Cheap"), level="ticker"
+        lumpy_leaves, paths, scope=("ARP", "Equity", "Value", "Cheap"), level="ticker"
     )
     assert tickers.loc["D", "count"] == 1
     assert tickers.loc["D", "leaf"]
-    assert len(tickers.loc["D", "path"]) == 3
+    assert len(tickers.loc["D", "path"]) == 4
 
 
 def test_the_leaf_level_is_one_row_per_ticker(lumpy_leaves, lumpy_meta):
     paths = node_paths(lumpy_meta)
     points = drill_points(
-        lumpy_leaves, paths, scope=("Equity", "Momentum", "Fast"), level="ticker"
+        lumpy_leaves, paths, scope=("ARP", "Equity", "Momentum", "Fast"), level="ticker"
     )
     assert list(points.index) == ["A", "B", "C"]
     assert (points["count"] == 1).all()
     # A strategy's value is its own, not an average of itself.
     assert points.loc["C", "value"] == pytest.approx(6.0)
-    assert points.loc["C", "path"] == ("Equity", "Momentum", "Fast")
+    assert points.loc["C", "path"] == ("ARP", "Equity", "Momentum", "Fast")
 
 
 def test_a_missing_level_is_bucketed_so_a_path_is_never_ragged(lumpy_meta):
@@ -153,12 +157,17 @@ def test_a_missing_level_is_bucketed_so_a_path_is_never_ragged(lumpy_meta):
 
 
 def test_colour_keys_to_the_points_shown():
-    """#331 decision 17 — a key that stops varying stops informing."""
-    # At the root the points are categories; their parents are what differ.
-    assert color_key(scope=(), level="category") == "asset_class"
-    # Inside a category every point is a family, so family is the key.
-    assert color_key(scope=("Equity", "Momentum"), level="family") == "family"
-    assert color_key(scope=("Equity", "Momentum", "Fast"), level="ticker") == "ticker"
+    """#331 decision 17 — a key that stops varying stops informing.
+
+    Uniform since the hierarchy gained `solution` at its head: the points at
+    any depth sit under one scope, so their own level is the only thing that
+    varies among them. It needed a root special case only while the first
+    level was a colour key rather than a stop.
+    """
+    assert color_key(scope=(), level="solution") == "solution"
+    assert color_key(scope=("ARP",), level="asset_class") == "asset_class"
+    assert color_key(scope=("ARP", "Equity"), level="category") == "category"
+    assert color_key(scope=("ARP", "Equity", "Momentum"), level="ticker") == "ticker"
 
 
 def test_empty_inputs_return_the_columns_rather_than_raising(lumpy_meta):
@@ -189,12 +198,12 @@ def test_the_shipped_catalog_s_repeated_labels_draw_as_two_nodes_each():
     categories = drill_points(leaves, paths, level="category")
     emerging = categories[categories["label"] == "Emerging Markets"]
     assert len(emerging) == 2
-    assert {p[0] for p in emerging["path"]} == {"Equity", "Fixed Income"}
+    assert {p[1] for p in emerging["path"]} == {"Equity", "Fixed Income"}
 
     families = drill_points(leaves, paths, level="family")
     sectors = families[families["label"] == "S&P US Sector"]
     assert len(sectors) == 2
-    assert {p[1] for p in sectors["path"]} == {"Technology", "Energy"}
+    assert {p[2] for p in sectors["path"]} == {"Technology", "Energy"}
 
 
 def test_the_shipped_catalog_cannot_test_aggregation_at_the_family_level():
