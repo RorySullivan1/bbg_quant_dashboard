@@ -131,16 +131,11 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
 
-    # Clear the selection, then click Refresh prices so the recompute runs the
-    # empty-selection branch (which sets `state.cur_prep = None`).
+    # Clearing the selection runs the empty-selection branch on its own
+    # (v0.9.30: a basket write re-slices; there is no Refresh button left),
+    # which is what sets `state.cur_prep = None`.
     _basket(app).clear()
-    refresh_btn = next(
-        w
-        for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Refresh prices"
-    )
-    refresh_btn.click()
-    after_refresh = calls["n"]  # the refresh did refetch once
+    after_refresh = calls["n"]
 
     # With no selection the live observers must early-return: no crash, no
     # fetch triggered by toggling a benchmark.

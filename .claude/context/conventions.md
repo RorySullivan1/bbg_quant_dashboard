@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.29`.
+- **Current version**: `v0.9.30`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -107,15 +107,20 @@ CSS, style tokens — live in `style.md`.)
   directory is gitignored. *(Not yet done: a pyarrow dataset partitioned by
   ticker for per-ticker on-disk append — the disk tier still writes one whole-
   superset parquet per `end` day.)*
-- **Refresh prices button** (formerly Apply): re-fetches from BQL with
-  `use_cache=False`, overwrites the parquet, then recomputes everything.
-  Filter-only re-slicing (today the button always refetches) will be
-  split back into a separate Apply control in a later PR.
+- **There is no Refresh prices button** (v0.9.30). It re-fetched from BQL with
+  `use_cache=False`, overwrote the parquet and recomputed everything — and it
+  was the only control in the app that fetched. It went because selection never
+  needed it: the startup fetch pulls every catalog series, so ticking a row
+  re-slices a cache that already holds the answer, and a button whose one
+  visible effect was a loading overlay taught otherwise. **Prices are the
+  startup fetch's for the life of the session**; a fresh pull means reloading
+  the app. `_refresh_prices` / `_run_refresh` / `refresh_inflight` are gone.
 - **Loading overlay + toast** report load progress (v0.6.5, replacing the
   old permanent status banner). A full-screen dimmed `.bbg-overlay` with a
   staged progress bar advances through the load (`_set_progress`: 0
   Initializing → 25 metadata → 60 fetching → 85 building catalog → 100
-  Ready) then dismisses; **Refresh prices** re-shows it. On a fatal fetch
+  Ready) then dismisses. **It shows once, on the initial load** — nothing
+  re-shows it since v0.9.30. On a fatal fetch
   error the overlay stays visible in a red `is-error` state and the full
   traceback also renders in the commentary block. The post-load summary
   (`Loaded N indices · M trading days · fetched from BQL in X.Ys` /
@@ -416,14 +421,14 @@ CSS, style tokens — live in `style.md`.)
   `.observe` handlers). Live observers no-op when `state.cur_prep is None`
   (no valid selection) and swallow per-chart errors (the chart's own
   except-branch leaves it safe; a broken benchmark still surfaces on the
-  next Refresh prices, where errors flow into the commentary block). The
+  next reload, where errors flow into the commentary block). The
   heatmap Benchmark / Regime checkboxes keep their separate visibility-sync
   observers (in `panes.py`, with the cascade Benchmark → benchmark dd +
   Regime → `>`/`<` + tail); the data re-render is added on top. The unchecked default
   uses the shared full-sample `prep.cm`; the regime path is computed
-  per-pane so the two panes stay independent. **Refresh prices remains the
-  only path that hits BQL and the only path that re-runs filters /
-  multi-strategy selection / the analysis-date-range re-slice.**
+  per-pane so the two panes stay independent. **The startup fetch is now the
+  only path that hits BQL** (v0.9.30); everything else — filters, the
+  selection, the derived analysis window — re-slices the cache live.
 - **Benchmark-dependent results are memoized (v0.6.9 Workstream B)**. The
   four heavy computes behind the live charts — `rolling_correlation`,
   `rolling_beta`, `excess_cum_return`, and the regime `regime_corr_matrix`
@@ -441,22 +446,15 @@ CSS, style tokens — live in `style.md`.)
   already-computed `prep.cm` (no memo). Validation (benchmark-has-data)
   lives inside the memoized `compute` so a real miss still raises into the
   chart's `except`; a hit skips both the slice and the compute.
-- **Analysis date range scopes the selected set, on Refresh prices.**
-  Unlike the metadata filters (which only narrow the ticker dropdown),
-  the date-range **boxes** re-slice the already-fetched `universe_prices`
-  (still no BQL) and feed the narrowed `sel_window` into both the perf
-  grid and every pane chart, with benchmark series sliced to the **same**
-  `[win_start, win_end]`. Editing a date box only enforces `min ≤ max`
-  (v0.7.5: the `SelectionRangeSlider` was removed) — the re-slice happens
-  on the next Refresh prices. Bounds re-derive from the selection on every
-  Refresh: `DashboardState.last_sel_key` tracks the rendered ticker set, so a
-  **changed** basket resets the boxes to the new full overlap, while an
-  **unchanged** basket preserves the user's narrowed range (clamped to
-  current bounds). The overlap window's ends are persisted on
-  `DashboardState.cur_bound_start` / `cur_bound_end`; `Clear all` snaps the
-  boxes back to that full span; `Clear section` leaves them untouched (it
-  is not a filter pill). All of this lives on `DashboardApp`
-  (`src/layout/app.py`: `_set_date_bounds`, `_on_range_box`).
+- **The analysis window is the selection's overlap, and nothing scopes it.**
+  The date-range boxes that used to narrow inside it went in v0.9.29 with
+  `last_sel_key` / `sync_guard` / `cur_bound_*`, and the *Refresh prices* they
+  re-sliced on went in v0.9.30. `basket_window` derives the window from the
+  members' histories and names the one binding each edge; the readout says it
+  and the binding member's card is marked. A selection change re-slices the
+  already-fetched `universe_prices` (still no BQL) and feeds the narrowed
+  `sel_window` into every pane chart, with benchmark series sliced to the
+  **same** `[win_start, win_end]`.
 - **Inline HTML lives in `data/templates/`, not Python.** Every HTML
   snippet the UI builds (banner, status banner, section labels, quant-row
   labels, the commentary block's cards and boards (`launch_card` /
@@ -677,10 +675,16 @@ their bounds came from or which member set them, so the control invited
 second-guessing a number the tab never explained. The readout says it, the
 binding member's card is marked, and shortening the sample is one click.
 
-**No BQL from a control.** A chip, a filter, a tick, a header or a card
-re-slices the cache; only *Refresh prices* fetches. The re-slice is debounced
-(`RESLICE_DEBOUNCE_S`) so a 25-name selection is one recompute, and **deferred
-by re-arming** while `refresh_inflight` is set — both write `state.cur_prep`
-and the panes, and re-arming rather than queueing means the later run reads the
-basket as it is when it fires. With no frontend it runs synchronously, so a
-test observes the render immediately after the write with no thread to join.
+**No BQL from a control** — and since v0.9.30, **no BQL after startup at
+all**. A chip, a filter, a tick, a header or a card re-slices the cache; the
+*Refresh prices* button that was the one exception is gone, because selection
+never needed it and a button whose only visible effect was a loading overlay
+taught otherwise. Prices are the startup fetch's for the session's life.
+
+The re-slice is debounced (`RESLICE_DEBOUNCE_S`) so a 25-name selection is one
+recompute, and it **clears `state.memo`** first: the memo is keyed to the
+slice, so every benchmark-dependent result a previous selection cached is
+stale, and serving one would mean the right benchmark over the wrong
+strategies with nothing on screen to say so. With no frontend it runs
+synchronously, so a test observes the render immediately after the write with
+no thread to join.

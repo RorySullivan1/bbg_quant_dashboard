@@ -273,35 +273,39 @@ class BasketCards(W.Box):
         )
 
     def _card(self, ticker, names, classes, palette) -> W.Box:
-        # The colour is the one palette helper's, never a literal: the cards
-        # and the Platform charts have to agree on what Equity looks like.
-        # Inline because it is per card; the CSS rule owns only the shape.
-        colour = palette.get(classes.get(ticker, ""), ASSET_CLASS_FALLBACK_COLOR)
-        tag = W.HTML(f"<div class='bbg-basket-tag' style='background:{colour}'></div>")
+        """`[TICKER] x` — and nothing else (v0.9.30).
 
+        The first cut carried a colour tag, the ticker, the strategy's **name**
+        and the x. Real names are long, so the name pushed the x off the end of
+        the card and it stopped rendering at all. A card is an entry in a list
+        of what is selected, not a row of metadata — the table above it has the
+        names, and the tooltip carries one for the card.
+
+        The asset-class colour survives as the card's **left edge**, which is a
+        border rather than a child, so it costs no width and cannot displace
+        anything. Same for the binding marker: an accent edge, not a glyph.
+        """
+        colour = palette.get(classes.get(ticker, ""), ASSET_CLASS_FALLBACK_COLOR)
         open_btn = W.Button(description=_short_ticker(ticker))
         open_btn.add_class("bbg-basket-ticker")
-        open_btn.tooltip = f"Open {ticker} in Single Strategy"
+        name = str(names.get(ticker, "") or "")
+        open_btn.tooltip = f"{name} - open in Single Strategy" if name else ticker
         if self._on_open is not None:
             open_btn.on_click(lambda _b, t=ticker: self._on_open(t))
 
-        name = str(names.get(ticker, "") or "")
-        name_w = W.HTML(f"<span class='bbg-basket-name'>{html.escape(name)}</span>")
-        name_w.tooltip = name
-
-        remove = W.Button(description="×")
+        remove = W.Button(description="\u00d7")
         remove.add_class("bbg-basket-remove")
         remove.tooltip = f"Remove {ticker}"
         remove.on_click(lambda _b, t=ticker: self.basket.remove(t))
 
-        children = [tag, open_btn, name_w]
-        if ticker == self._binding:
-            mark = W.HTML("<span class='bbg-basket-binding'>◤</span>")
-            mark.tooltip = "sets the analysis start"
-            children.append(mark)
-        children.append(remove)
-        card = W.Box(children, layout=W.Layout())
+        card = W.Box(
+            [open_btn, remove], layout=W.Layout(border_left=f"3px solid {colour}")
+        )
         card.add_class("bbg-basket-card")
+        if ticker == self._binding:
+            # Tooltips do not reach a Box, so the marker is the class alone;
+            # the readout beside the strip names the member in words.
+            card.add_class("bbg-basket-binding")
         return card
 
 

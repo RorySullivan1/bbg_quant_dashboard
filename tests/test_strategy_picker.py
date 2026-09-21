@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ipywidgets as W
 import pytest
-from src.layout.app import DashboardApp
+from src.layout.app import SELECTION_TITLE, DashboardApp
 
 
 @pytest.fixture
@@ -44,15 +44,18 @@ def test_the_tab_is_a_section_a_bar_and_the_basket_table(app):
     _mount_multi_strategy(app.root)
     assert app.basket_grid.widget in list(_walk(app.root))
     assert app.basket_grid.table_options()["select"] == {"style": "multi"}
-    # The bar's four sections, in the order they act in.
+    # The bar's three sections, in the order they act in. *Filter* left it in
+    # v0.9.30 — the dimension chips sit beside their values on one row below,
+    # because stacked they read as two unrelated controls and cost two rows of
+    # height above a table that wants them.
     headings = [w.value for w in _walk(app.basket_bar) if isinstance(w, W.HTML)]
     assert headings[0] == "Table view"
-    assert headings[1:5] == [
+    assert headings[1:4] == [
         "Group by",
         "Window",
         "Benchmark",
-        "Filter",
     ], "the bar reads in the order the controls act in"
+    assert "Filter" not in headings
 
 
 def test_the_retired_idioms_are_gone_from_the_multi_strategy_assembly(app):
@@ -118,11 +121,18 @@ def test_the_cap_is_rejected_on_the_basket_and_the_popup_names_the_count(app):
     assert str(basket.cap) in app.limit_popup_w.value
 
 
-def test_the_strip_note_tracks_the_basket(app):
+def test_the_strip_note_and_title_survive_a_write(app):
+    """The title is re-rendered on every basket change, so it has to carry the
+    same name the constructor set — a rename that missed the re-render would
+    show correctly on load and revert on the first tick."""
     app.basket.clear()
     assert "0 / 25 selected" in app.basket_note_w.value
+    assert SELECTION_TITLE in app.basket_note_w.value
+
     app.basket.add(app.basket_grid._tickers[0])
     assert "1 / 25 selected" in app.basket_note_w.value
+    assert SELECTION_TITLE in app.basket_note_w.value
+    assert "Basket" not in app.basket_note_w.value
 
 
 # --- filters narrow the table, never the basket ------------------------------

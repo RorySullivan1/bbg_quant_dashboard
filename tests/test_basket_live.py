@@ -9,7 +9,8 @@ columns now, and `QuantColumns` is the one place either reads.
 **A pick reaches the analytics without a refetch.** `universe_prices` has held
 every catalog series since the initial load, and `_render_selection` only
 re-slices it — but the only path to it was *Refresh prices*, the button that
-hits BQL.
+hits BQL. **That button is gone** (v0.9.30), so the tests that drove it went
+with it; what is left is that a basket write renders, and renders once.
 """
 
 from __future__ import annotations
@@ -44,13 +45,13 @@ def test_every_quant_column_is_named_so_the_table_already_knows_it():
         assert _is_stat_col(name), f"{name} must get a comparison filter"
 
 
-def test_the_fraction_columns_carry_the_percent_scale():
-    """VaR and Jensen are stored as fractions and rendered as percentages, so
-    a filter that did not carry the x100 would answer '>1' with everything."""
-    assert _is_percent_col(quant_column_name("1Y", "VaR"))
-    assert _is_percent_col(quant_column_name("1Y", "Jensen"))
-    for ratio in ("Sortino", "Calmar", "Beta", "Treynor", "RSI"):
-        assert not _is_percent_col(quant_column_name("1Y", ratio))
+def test_no_quant_column_is_a_percent_column():
+    """The two stored as fractions — VaR (a daily loss fraction) and Jensen
+    alpha (annualized) — are exactly the two dropped in v0.9.30. What is left
+    is four ratios, stored as they read, so nothing here needs the x100 the
+    percent columns carry."""
+    for metric in QUANT_METRICS:
+        assert not _is_percent_col(quant_column_name("1Y", metric))
 
 
 def test_the_basket_table_carries_the_seven_metrics_for_every_window(app):
@@ -143,32 +144,6 @@ def test_an_emptied_basket_clears_the_slice_and_the_readout(app):
     assert app.state.basket_window.start is None
 
 
-def test_a_re_slice_is_deferred_while_a_refresh_is_running(app, monkeypatch):
-    """Both write `state.cur_prep` and the panes, so they must not overlap."""
-    armed: list = []
-    monkeypatch.setattr(app, "_schedule_reslice", lambda: armed.append(1))
-    app.refresh_inflight["running"] = True
-    try:
-        app._run_reslice()
-    finally:
-        app.refresh_inflight["running"] = False
-    assert armed == [1], "the re-slice re-arms rather than running concurrently"
-
-
-def test_refresh_re_slices_the_same_basket(app, monkeypatch):
-    calls = _fetch_counter(monkeypatch)
-    app.basket.replace(list(app.basket_grid._tickers[:2]))
-    held = app.basket.value
-
-    app.apply_btn.click()
-
-    assert calls["n"] >= 1, "Refresh is the one control that fetches"
-    assert app.basket.value == held, "Refresh never replaces the basket"
-
-
-# --- what the code review caught ----------------------------------------------
-
-
 def test_the_load_builds_the_selection_slice_exactly_once(monkeypatch):
     """Seeding the basket from `_default_selection` is a basket write like any
     other, so without suspending the debounce the load would build the slice
@@ -188,46 +163,27 @@ def test_the_load_builds_the_selection_slice_exactly_once(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_a_refresh_builds_the_selection_slice_exactly_once(app, monkeypatch):
-    from src.layout import selection
+def test_a_re_slice_invalidates_the_benchmark_memo(app):
+    """The memo is keyed to the **slice**, so a new selection invalidates all
+    of it.
 
+    `_recompute` had always cleared it; the debounced re-slice called
+    `_render_selection` directly and skipped that, so a pane revisited after a
+    selection change was served the chart memoised for the *previous* one —
+    the right benchmark, the wrong strategies, and nothing on screen to say so.
+    """
+    app.basket.replace(list(app.basket_grid._tickers[:3]))
     calls = {"n": 0}
-    original = selection.SelectionSlice.build
 
-    def counted(*args, **kwargs):
+    def compute():
         calls["n"] += 1
-        return original(*args, **kwargs)
+        return object()
 
-    monkeypatch.setattr(selection.SelectionSlice, "build", staticmethod(counted))
-    app.apply_btn.click()
-    assert calls["n"] == 1
+    app.state.memo.get_or_compute(("sentinel",), compute)
+    app.state.memo.get_or_compute(("sentinel",), compute)
+    assert calls["n"] == 1, "the second read is a cache hit"
 
+    app.basket.replace(list(app.basket_grid._tickers[:2]))
 
-def test_a_pruned_ticker_is_dropped_from_the_basket_by_a_refresh(app, monkeypatch):
-    """A ticker the prune removes has no prices left. Leaving it in would hand
-    `basket_window` an all-NaN column and collapse the overlap to nothing —
-    the whole analysis breaking because one index went stale."""
-    import src.layout.app as module
-
-    held = list(app.basket_grid._tickers[:3])
-    app.basket.replace(held)
-    doomed = held[0]
-
-    # The prune keeps only the columns that moved recently; flatten one so the
-    # refetch's `active_columns` drops it.
-    original = module.fetch_prices
-
-    def with_a_stale_column(*args, **kwargs):
-        prices, missing = original(*args, **kwargs)
-        if doomed in prices.columns:
-            prices[doomed] = 100.0  # flat -> stale
-        return prices, missing
-
-    monkeypatch.setattr(module, "fetch_prices", with_a_stale_column)
-    app.apply_btn.click()
-
-    assert doomed not in app.basket.value, "a pruned ticker must leave the basket"
-    assert doomed not in [
-        b.children[1].description for b in app.basket_cards.children if b.children
-    ]
-    assert set(app.basket.value) <= set(app.meta["ticker"])
+    app.state.memo.get_or_compute(("sentinel",), compute)
+    assert calls["n"] == 2, "a selection change must empty the memo"

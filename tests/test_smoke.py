@@ -277,10 +277,11 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     assert set(basket.value) == expected
     assert 1 <= len(basket.value) <= 5
 
-    # The selected-strategy perf grid is populated on load (one row per pick).
-    grid = next(w for w in _walk(panel) if w.__class__.__name__ == "DataGrid")
-    assert grid.data.shape[0] == len(basket.value)
-    # Both panes' mounted figures carry data without a Refresh click.
+    # **No perf grid under the table** (v0.9.30): it was a second table of the
+    # same strategies below the catalog, whose numbers the catalog already
+    # shows per row.
+    assert not [w for w in _walk(panel) if w.__class__.__name__ == "DataGrid"]
+    # Both panes' mounted figures carry data with nothing to click.
     figs = [w for w in _walk(panel) if isinstance(w, go.FigureWidget)]
     assert sum(1 for f in figs if f.data) >= 1
 

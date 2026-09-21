@@ -15,6 +15,13 @@ import src.layout.multi_strategy as ms_mod
 from src.layout import build_app
 
 
+def _basket(root):
+    """The app's selection state — what re-slices the analytics (v0.9.30)."""
+    from src.layout.basket import BasketCards
+
+    return next(w for w in _walk(root) if isinstance(w, BasketCards)).basket
+
+
 def _walk(widget):
     yield widget
     for child in getattr(widget, "children", ()) or ():
@@ -108,14 +115,13 @@ def test_refresh_restales_offscreen_views(monkeypatch):
     assert rc["n"] == 1
     picker.value = "Drawdown"  # leave Rolling Correlation mounted elsewhere
 
-    # Refresh rebuilds the slice; only the now-mounted Drawdown view renders, so
-    # Rolling Correlation is not recomputed here...
-    refresh_btn = next(
-        w
-        for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Refresh prices"
-    )
-    refresh_btn.click()
+    # A basket change rebuilds the slice (v0.9.30 — Refresh prices is gone and
+    # this is what re-slices now); only the now-mounted Drawdown view renders,
+    # so Rolling Correlation is not recomputed here...
+    # Two, not one: a correlation needs a pair, so dropping to a
+    # single strategy would leave `rolling_correlation` uncalled and
+    # the counter unmoved for the wrong reason.
+    _basket(app).replace(list(_basket(app).value)[:2])
     assert rc["n"] == 1
 
     # ...but it's now stale, so re-picking it rebuilds on demand.

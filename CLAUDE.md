@@ -274,9 +274,26 @@ was picking from is the one the Platform tab draws grouped, with performance
 columns, one tab away.
 
 Now it is that table: `section_panel` + a *Table view* `control_bar` reading
-**Group by · Window · Benchmark · Filter**, the same `ITable` in Select's
-`multi` style, then a **Basket strip** of cards, then the perf grid and the two
-panes. `CatalogTable` (`src/layout/grids.py`) is the base the Platform's
+**Group by · Window · Benchmark**, a **filter row** beneath it pairing the
+dimension chips with that dimension's values, the same `ITable` in Select's
+`multi` style with a leading **tick column**, then the **Selected Strategies**
+strip of `[TICKER] ×` cards, then the two analysis panes.
+
+Terminal use trimmed it hard (v0.9.30). The **second grid went** — an
+ipydatagrid of the selected set's performance sat under the itables catalog,
+two tables of the same strategies in two stacks, and the catalog already shows
+every one of those numbers for every row. The **quant columns went from seven
+to four** (Sortino · Calmar · Beta · Treynor): seven across four windows is 28
+columns, and VaR, RSI and Jensen α are the ones a reader narrows by least. The
+tick became **its own column** rather than a class on the Ticker cell, because
+Select draws its checkbox as a pseudo-element and sharing a cell put the two
+on top of each other at some widths and beside each other at others. The cards
+lost their names, which were long enough to push the **×** off the end of the
+card so it stopped rendering at all. And **Refresh prices went**, with its
+overlay: selection never needed it — the startup fetch pulls every catalog
+series — so a button whose one effect was a loading overlay taught the user
+that picking a strategy costs a round trip. The cost is deliberate: **prices
+are now whatever the startup fetch returned** for the life of the session. `CatalogTable` (`src/layout/grids.py`) is the base the Platform's
 `UniverseGrid` and the new `BasketGrid` share; what a click *means* is the
 subclass's, which is the only reason there are two.
 
@@ -320,17 +337,22 @@ table.** *Filter* names a dimension and a `FilterStrip` below the bar shows its
 values as chips (one control per dimension, swapped by `display`, so switching
 dimensions keeps every dimension's ticks; a chip badge counts the active ones,
 because a hidden selection is otherwise invisible). And the nine quant
-thresholds became **columns** — Sortino · Calmar · Beta · Treynor · Jensen α ·
-VaR · RSI, named `"{window} {metric}"` so the Window chip hides them and the
-comparison filter row filters them with no new branches. `QuantColumns` is the
-one place both tabs read, so the number on screen is the number the threshold
-compares. Vol and the cross-sectional Z stayed behind: the Platform tab ranks,
+thresholds became **columns** — Sortino · Calmar · Beta · Treynor, named
+`"{window} {metric}"` so the Window chip hides them and the comparison filter
+row filters them with no new branches. `QuantColumns` is the one place both
+tabs read, so the number on screen is the number the threshold compares —
+which is how v0.9.30 found two ways those numbers had been wrong: the window
+loop divided **years** by `TRADING_DAYS_PER_YEAR` as if they were days, and
+every caller of `ann_beta` handed it a benchmark **price** series where it
+covaries against returns, so every Beta had been collapsing toward zero and
+taking Treynor and Jensen with it. `stats.risk.benchmark_returns` is the
+conversion, and `factor_beta` is the one caller that already held returns. Vol and the cross-sectional Z stayed behind: the Platform tab ranks,
 this tab narrows. **Single Strategy keeps `FilterPanel`** and is its only
 caller now.
 
 ## Current version
 
-`v0.9.29` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.30` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

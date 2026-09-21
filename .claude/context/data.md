@@ -220,17 +220,30 @@ column header rather than typed at three sites.
 ## The quant columns' naming (v0.9.29, #345)
 
 The Multi-Strategy tab's nine `≥ / ≤` thresholds became **columns** of the
-basket table. Seven survive — Sortino · Calmar · Beta · Treynor · Jensen α ·
-VaR · RSI — and each is named **`"{window} {metric}"`**, exactly as the
+selection table. **Four** survive — Sortino · Calmar · Beta · Treynor (VaR,
+RSI and Jensen α were dropped in v0.9.30: seven metrics across four windows is
+28 columns, and those three are the ones a reader narrows by least) — each
+named **`"{window} {metric}"`**, exactly as the
 performance columns are (`"1Y Sharpe"`).
 
 That is not cosmetic. Four behaviours key off the `"<window> "` prefix and the
 metric suffix, and naming the columns this way buys all four with no new
 branches anywhere: `_window_of` puts them under the Window chip (so switching
 windows hides them rather than recomputing), `_is_stat_col` gives them a
-**comparison** filter instead of a substring one, `_is_percent_col` carries the
-×100 for the two that are stored as fractions — **VaR** (a daily loss fraction)
-and **Jensen α** (annualized) — and the numeric renderer formats them.
+**comparison** filter instead of a substring one, `_is_percent_col` has nothing to do for them
+(the two stored as fractions, VaR and Jensen α, are the ones that were
+dropped), and the numeric renderer formats them.
+
+**Two units bugs lived here and both were silent** (v0.9.30). `stat_windows()`
+yields `(label, years)` — `0.5, 1, 3, 5` — and the column builder divided by
+`TRADING_DAYS_PER_YEAR` as though they were days, so `1Y` asked for a
+**single day**: the short windows rendered N/A and the long ones returned
+numbers measured over three days. And `ann_beta` covaries its returns frame
+against whatever it is handed, while every quant caller held benchmark
+**prices**; `cov(returns, index levels) / var(index levels)` put every Beta
+near zero, Treynor (return / beta) in the thousands and Jensen at the asset's
+own return. `stats.risk.benchmark_returns` is the conversion, and `factor_beta`
+is the one caller that already held returns and does not need it.
 
 Two deliberate absences. **Vol** is not here and not rankable on the Platform
 tab either: the ramp and the sort both say *higher is better*, which volatility

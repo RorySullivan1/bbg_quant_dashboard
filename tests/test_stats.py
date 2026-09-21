@@ -304,8 +304,11 @@ def test_quant_table_shares_one_beta_across_beta_treynor_jensen(
         stats.jensen_alpha(rets, multiyear_prices, benchmark, 1),
         check_names=False,
     )
-    # Passing an explicit beta matches computing it internally.
-    beta = stats.ann_beta(rets, benchmark, 1)
+    # Passing an explicit beta matches computing it internally. The benchmark
+    # is a **price** series, so it is converted before `ann_beta` — that is the
+    # conversion the helpers do for themselves (v0.9.30); handing `ann_beta`
+    # prices directly is what made every beta collapse toward zero.
+    beta = stats.ann_beta(rets, stats.benchmark_returns(benchmark), 1)
     pd.testing.assert_series_equal(
         stats.treynor_ratio(rets, multiyear_prices, benchmark, 1, beta=beta),
         stats.treynor_ratio(rets, multiyear_prices, benchmark, 1),
