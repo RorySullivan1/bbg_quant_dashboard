@@ -319,9 +319,16 @@ the hue. The rule for *which* level the colours key to lives once, in
 own level below it.
 
 **One height, and a 60:40 width.** `ANALYTICS_HEIGHT` sets the chart's box,
-the table's, and the chart's own `height` — fixed rather than stretched for
+the table's, and — **since v0.9.27, in fact rather than only in this
+paragraph** — the figures' own `height`, through `ANALYTICS_HEIGHT_PX` passed
+to each `_chart_layout`. Left to its default, `_chart_layout` takes the
+app-wide `CHART_HEIGHT` (520px), which was *taller* than the 420px box, so the
+card clipped every chart it drew. The box is fixed rather than stretched for
 `CATALOG_TABLE_HEIGHT`'s reason: stretching lets whichever box holds more
-content set the row. The width is `ANALYTICS_CHART_SHARE` /
+content set the row. It went 420px → **504px** (+20%) in v0.9.27 because the
+Icicle draws four levels plus the ticker leaves and five rows in 420px read as
+a squeezed band — a band the `pathbar` was making one row shorter still, which
+is why it is now off (see `architecture.md`). The width is `ANALYTICS_CHART_SHARE` /
 `ANALYTICS_TABLE_SHARE` as flex bases, the `COMMENTARY_*_SHARE` pattern
 (v0.9.25). The 360px basis this replaced held the table at one width whatever
 the screen, so it read as a squeezed strip on anything wide. Both boxes carry

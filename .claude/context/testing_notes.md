@@ -237,7 +237,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
 
-### Manual checklist — the Platform analytics card (v0.9.24, epic #331)
+### Manual checklist — the Platform analytics card (v0.9.27, epic #331)
 
 The card below the catalog table. Three charts, a drill and a points table —
 and almost none of it is something a widget-tree assertion can see, which is
@@ -249,10 +249,19 @@ catalog is the real test of how the charts read.
 **The bar and the drill strip**
 
 - One `control_bar` titled *Chart view*, in the same chrome as the table's bar
-  above it, reading **Chart · Metric · Window · Regime** — settings only. No
-  native toggle buttons anywhere on the card.
+  above it, reading **Chart · Metric · Window · Regime · Solution** — settings
+  only. No native toggle buttons anywhere on the card.
+- **Solution** offers only the solutions the drawn universe holds — on the
+  terminal catalog *ARP*, *Alternative Risk Premia* and *Smart Beta*, and
+  **no `Beta` chip** (that solution is filtered out of the analytics universe,
+  and a chip for it would draw an empty chart). One is selected on load.
+- Pick another Solution: all three charts redraw inside it, the breadcrumb's
+  root **renames to that solution**, and the Level chips reset to *Asset
+  Class*. No fetch, no overlay.
 - Beneath it, a **subordinate strip** carrying **Scope** (the breadcrumb) then
-  **Level**. It should read as a different kind of thing from the bar above:
+  **Level**. Level offers **Asset Class · Category · Family · Strategy** —
+  *Solution* is not among them: it is the base the Solution chips pin, not a
+  stop to drill to. It should read as a different kind of thing from the bar above:
   no box of its own, lighter, tighter. At a narrow terminal width it **wraps**
   rather than scrolling sideways.
 - Select **Icicle**: Level disappears, **Scope stays** (its zoom is the drill). Select **Strip**: Metric and
@@ -264,6 +273,14 @@ catalog is the real test of how the charts read.
 
 **The Icicle**
 
+- The chart fills a box **20% taller** than the rest of v0.9.26's card
+  (`ANALYTICS_HEIGHT` 504px), and the figure is **the same height as its box**
+  — no clipped bottom row, no inner scrollbar. Check the Scatter and the Strip
+  too; all three are built at the token.
+- **No grey ancestor bar** above the cells. Plotly's `pathbar` is off — the
+  Scope breadcrumb is the only thing saying where you are.
+- The **top row is the pinned Solution alone**, not one cell per solution, and
+  the row below it is that solution's **asset classes**.
 - Cells span the width in proportion to **how many strategies** they hold, not
   to any metric — a category with four indices is twice the width of one with
   two, at every level.
@@ -277,13 +294,15 @@ catalog is the real test of how the charts read.
   rebuilt without its `level` — that was the v0.9.24 bug (fixed in v0.9.25),
   and it is the first thing to check if it ever returns.
 - **Click the cell you are already inside**: it zooms out one level, as
-  Plotly's own icicle does, and the breadcrumb loses a segment.
+  Plotly's own icicle does, and the breadcrumb loses a segment. From the
+  Solution row it **stays put** — the base is as far out as the filter goes.
 
 **The Scatter**
 
-- One marker per **solution** at the root, coloured by solution with a
-  legend (v0.9.25 — the drill starts at Solution, not Category). Y is the metric, X the term-premium β, Z the equity-risk-premium β,
-  and the axis titles say so.
+- One marker per **asset class** of the pinned solution at the root, coloured
+  by asset class with a legend (v0.9.27 — the drill is based at the Solution
+  chips' choice). Y is the metric, X the term-premium β, Z the
+  equity-risk-premium β, and the axis titles say so.
 - Hover is **three lines** and small enough to see the cloud past it; a group
   says *mean of N*. There is no way to anchor it beside the marker in a 3D
   scene, so if it still hides too much the fix is fewer characters.
@@ -291,9 +310,9 @@ catalog is the real test of how the charts read.
   at the default camera, and the box is a cube so a β of 0.2 is the same
   length on all three axes. Orbit the camera and check the zero lines still
   read — this is what the planes were there for.
-- Walk the whole path: a solution marker narrows to its **asset classes**,
-  then **categories**, then **families**, then **strategies**, each level in
-  its own colours and the breadcrumb growing a segment each time. Click a
+- Walk the whole path: an asset-class marker narrows to its **categories**,
+  then **families**, then **strategies**, each level in its own colours and
+  the breadcrumb growing a segment each time. Click a
   strategy: nothing happens (the table row is the way into Single Strategy).
 - Change the Regime bucket: the markers move, with no fetch. A regime whose
   indicator is missing from the cache draws the unconditioned all-days view
@@ -317,8 +336,8 @@ catalog is the real test of how the charts read.
   the **same height**, borders lining up top and bottom, and the table's rows
   scrolling inside it. Widen the window: the split **holds** — the table must
   not shrink to a strip.
-- Its first column is headed for the current **Level** (*Solution* /
-  *Asset Class* / *Category* / *Family* / *Strategy*) and its last for the chart's own value (`1Y Sharpe`, or
+- Its first column is headed for the current **Level** (*Asset Class* /
+  *Category* / *Family* / *Strategy*) and its last for the chart's own value (`1Y Sharpe`, or
   `5D Return` on the Strip). A **Count** column appears above the strategy
   level and not at it.
 - Sorted by value **descending**, blanks last.
@@ -326,8 +345,9 @@ catalog is the real test of how the charts read.
   does. Click a **strategy** row → Single Strategy opens on it, with the
   filters cleared, the same as clicking a catalog row.
 - Walk all the way down and back: marker → Level chip → breadcrumb segment →
-  *QIS Strategy*. The chart, the breadcrumb, the Level chips and the table agree at
-  every step.
+  the root, which is **named for the pinned Solution**. The chart, the
+  breadcrumb, the Level chips and the table agree at every step, and clicking
+  the root never escapes the Solution filter.
 - At the default BQuant viewport there is **no page-level horizontal
   scrollbar** with the Scatter active — it has the widest legend.
 

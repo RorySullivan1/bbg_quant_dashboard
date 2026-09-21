@@ -101,7 +101,7 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     ]
     # Settings on the bar; the drill's *position* on its own strip below, the
     # breadcrumb leading it (v0.9.25).
-    assert headings == ["Chart", "Metric", "Window", "Regime"]
+    assert headings == ["Chart", "Metric", "Window", "Regime", "Solution"]
     assert "bbg-drill-bar" in drill_row._dom_classes
     drill_headings = [
         block.children[0].value
@@ -116,14 +116,23 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # surfaces can be read at different windows but cannot offer different
     # things (#331 decision 1).
     pa = analytics_card._analytics
+    # The card draws ONE solution at a time (v0.9.27), and the chips offer
+    # only the solutions the analytics universe actually contains — the
+    # catalog's `Beta` is filtered out of it, and a chip for it would draw an
+    # empty chart.
+    assert [label for label, _ in pa.solution_chips.options] == [
+        "ARP",
+        "Alternative Risk Premia",
+        "Smart Beta",
+    ]
     assert [label for label, _ in pa.metric_chips.options] == [
         label for _key, label in RANKABLE_METRICS
     ]
     assert [label for label, _ in pa.card_window_chips.options] == [
         label for label, _years in stat_windows()
     ]
+    # Solution is the base now, so it is not a depth to select.
     assert [label for label, _ in pa.level_chips.options] == [
-        "Solution",
         "Asset Class",
         "Category",
         "Family",

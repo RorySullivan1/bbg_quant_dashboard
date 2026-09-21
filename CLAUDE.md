@@ -182,7 +182,8 @@ epic #331, which is the "its own issue" #321 named.
 
 The analytics card below the table is **a chart beside its own points** (epic
 #331, v0.9.24). Its controls are a second `control_bar` in the same chrome —
-*Chart view*: **Chart · Metric · Window · Regime · Level · Scope** — and
+*Chart view*: **Chart · Metric · Window · Regime · Solution**, with
+**Scope · Level** on the drill strip below it — and
 Metric and Window are the table's own option lists, so the two surfaces can be
 read at different windows but cannot *offer* different things. Sections the
 active chart does not read are **hidden, not rebuilt**, so a chip keeps its
@@ -202,8 +203,20 @@ All three **drill**, down **Solution → Asset Class → Category → Family →
 Strategy** (v0.9.25). `ANALYTICS_LEVELS` leads with `solution` because that is
 how the desk browses the catalog, and **every level is a stop**, so
 `drill_levels()` is derived from the hierarchy rather than declared beside it.
-The Scope breadcrumb's root reads **QIS Strategy**, which names what is being
-browsed where "All" did not.
+
+Since v0.9.27 the **first level is a filter, not a cell**: a *Solution* chip
+group in the bar picks one solution and the card draws that subtree alone,
+based at `(solution,)` with the Level chips offering `drill_levels()[1:]` and
+the breadcrumb naming the solution as its root. The card used to open on every
+solution at once — a row of sibling cells with no way to say which one you
+came to look at. The chips are built from the **drawn universe**, not from
+`UNIVERSE_SOLUTION_VALUES`: that is what the universe is filtered *by*, and
+the catalog's `Beta` solution does not survive it, so a chip for it would draw
+an empty chart. Two clamps keep the filter honest — `narrow_to` puts the base
+back when a zoom-out would walk off it, and the Icicle's frame is filtered to
+the solution so Plotly cannot zoom out past it either. `DRILL_ROOT_LABEL`
+(**QIS Strategy**) still names the root in the window between construction and
+the first render, before a solution is pinned.
 
 One frozen `Drill(scope, level)` (`src/layout/drill.py`) is written through
 **one setter**, and a marker click, an icicle zoom, a Level chip, a breadcrumb
@@ -234,16 +247,21 @@ of 1 too, and 16 of the shipped catalog's 17 root points are one-member
 categories, so that route clears the user's filters and then hands a category
 name to a ticker dropdown. The path cannot disambiguate them either: a family
 node and a ticker under it are both three segments deep. The flag is carried
-for exactly this reason. Chart and table stand at one fixed `ANALYTICS_HEIGHT` for
-`CATALOG_TABLE_HEIGHT`'s reason — stretching lets whichever box holds more
-content set the row — and split **60:40** as flex shares with `min-width: 0`,
+for exactly this reason. Chart and table stand at one fixed `ANALYTICS_HEIGHT`
+for `CATALOG_TABLE_HEIGHT`'s reason — stretching lets whichever box holds more
+content set the row — **and the figures are built at that height too**
+(`ANALYTICS_HEIGHT_PX`, v0.9.27), which the token's comment had claimed since
+v0.9.24 without it being true: the charts took the app-wide `CHART_HEIGHT`, 100px
+taller than their box, so the card clipped every one it drew. The box is also
+20% taller than it was, because the Icicle draws five rows. They split **60:40**
+as flex shares with `min-width: 0`,
 the `COMMENTARY_*_SHARE` pattern: the 360px basis this replaced squeezed the
 table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-itable`**;
 `.bbg-catalog` keeps only the group bands and the filter row.
 
 ## Current version
 
-`v0.9.26` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.27` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

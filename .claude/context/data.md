@@ -165,10 +165,7 @@ Project-specific hooks:
 
 `ANALYTICS_LEVELS` is the one tree the Platform card draws: the Icicle's
 levels, what the Scatter and the Strip aggregate over, and what the drill
-walks. `DRILL_LEVELS` is the drill's **stops** within it — validated at the
-call as a suffix of `ANALYTICS_LEVELS` after its first element, because the
-first level is the colour key at the root rather than somewhere to stand.
-`drill_levels()` returns those stops plus the ticker leaf, whose label lives
+walks. `drill_levels()` is that tree plus the ticker leaf, whose label lives
 in `DRILL_LEAF_LABEL` because `ticker` is derived from the catalog's keys and
 is not a schema field `field_label` could name.
 
@@ -189,9 +186,20 @@ solutions now, so that special case is gone from `next_stop` and `color_key`
 alike, and a second tuple could only disagree with this one.
 
 One data wart this makes prominent: `Solution` carries both `"ARP"` and
-`"Alternative Risk Premia"` — two labels for one concept, which now draw as
-two sibling cells **at the drill's root**, the first thing a user sees. It is
-a fix in `indexdb.json`, not in code.
+`"Alternative Risk Premia"` — two labels for one concept. Since v0.9.27 they
+are two *chips* in the card's Solution filter rather than two sibling cells at
+the root, which makes the duplication more prominent still: the user is asked
+to choose between them. It is a fix in `indexdb.json`, not in code.
+
+**The card bases the drill at one solution** (v0.9.27). The schema is
+unchanged — `solution` still leads the hierarchy and `drill_levels()` still
+starts there — but `PlatformAnalytics` treats that first level as the
+universe **filter**: chips pick one solution, the scope is based at
+`(solution,)`, and the Level chips offer `drill_levels()[1:]`. That is a
+layout decision about how the card is browsed, not a statement about the tree,
+which is why it lives in `src/layout/platform.py` and not here. `stats.drill`
+and `icicle_frame` still work over whatever frame they are handed — the card
+hands them one solution's rows.
 
 **A node is a path, never a bare label.** *Emerging Markets* sits under two
 asset classes in the shipped catalog and *S&P US Sector* under two categories,

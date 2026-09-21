@@ -30,6 +30,7 @@ from ..config import (
     CATALOG_SCORE_MIN_SAMPLE_DAYS,
     DEFAULT_RANKING_METRIC,
     DRILL_LEAF_LEVEL,
+    DRILL_ROOT_LABEL,
     REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
     STRIP_DAYS,
@@ -60,7 +61,7 @@ from ..stats import (
     term_premium,
 )
 from ..style import ANALYTICS_CHART_SHARE, ANALYTICS_HEIGHT, ANALYTICS_TABLE_SHARE
-from .drill import Drill
+from .drill import Drill, next_stop
 from .grids import ChartPointsGrid, zscore_column_name
 from .html import STYLE_CTX, render_template
 from .platform_charts import (
@@ -266,9 +267,20 @@ class PlatformAnalytics:
             layout=W.Layout(width="auto"),
         )
 
+        # The universe filter. The card draws ONE solution at a time (v0.9.27):
+        # the root used to be every solution at once, which is a cell per
+        # solution and no way to say which one you came to look at. Populated
+        # from the drawn universe on first render, because the catalog is not
+        # loaded yet here.
+        self.solution_chips = ChipGroup([("\u2014", "")], row=True)
+        #: Set while the chips are repopulated from the universe, so their own
+        #: observer does not re-enter and re-render mid-render.
+        self._syncing_solution = False
+
+        # Solution is the base, not a stop, so it is not on offer here.
         self.level_chips = ChipGroup(
-            [(drill_level_label(key), key) for key in drill_levels()],
-            value=drill_levels()[0],
+            [(drill_level_label(key), key) for key in drill_levels()[1:]],
+            value=drill_levels()[1],
             row=True,
         )
         self.breadcrumb = Breadcrumb(on_pick=self._on_breadcrumb)
@@ -278,6 +290,7 @@ class PlatformAnalytics:
             RailSection("Metric", self.metric_chips),
             RailSection("Window", self.card_window_chips),
             RailSection("Regime", regime_controls),
+            RailSection("Solution", self.solution_chips),
             title="Chart view",
         )
         # The drill is a position, not a setting, so it gets its own line
@@ -411,6 +424,42 @@ class PlatformAnalytics:
 
     # --- the drill ------------------------------------------------------------
 
+    @property
+    def solution(self) -> str:
+        """The solution the card is filtered to — the drill's base."""
+        return str(self.solution_chips.value or "")
+
+    def _sync_solution_chips(self, meta: pd.DataFrame) -> None:
+        """Offer the solutions the drawn universe actually contains.
+
+        Built from the universe rather than from `UNIVERSE_SOLUTION_VALUES`,
+        which is what the universe is filtered *by* and not what survived: the
+        catalog carries a `Beta` solution the analytics universe excludes, and
+        a chip for it would draw an empty chart.
+        """
+        prices = self.state.arp_universe_prices
+        if prices.empty or not {"ticker", "solution"} <= set(meta.columns):
+            return
+        inside = meta[meta["ticker"].isin(prices.columns)]
+        values = sorted({str(v) for v in inside["solution"].dropna() if str(v)})
+        if not values or [v for _, v in self.solution_chips.options] == values:
+            return
+        keep = self.solution if self.solution in values else values[0]
+        self._syncing_solution = True
+        try:
+            self.solution_chips.set_options([(v, v) for v in values], value=keep)
+        finally:
+            self._syncing_solution = False
+        self.set_drill((keep,), next_stop((keep,)))
+
+    def _on_solution(self, _change=None) -> None:
+        """A Solution chip re-bases the drill and redraws."""
+        if self._syncing_solution:
+            return
+        base = (self.solution,)
+        self.set_drill(base, next_stop(base))
+        self._render_current()
+
     def set_drill(self, scope: tuple[str, ...], level: str) -> None:
         """The one writer of `self.drill`.
 
@@ -420,17 +469,44 @@ class PlatformAnalytics:
         two controls that display the state with their observers suppressed,
         then re-renders the visible chart once.
         """
+        # Clamp to a level the chips actually offer. `solution` is a base
+        # rather than a stop since v0.9.27, so it is off the chip row — but
+        # `next_stop(())` still names it, and assigning it raised inside the
+        # breadcrumb's callback, where a raise surfaces as a dead control
+        # rather than as an error anyone can act on. The one setter is where
+        # the drill and its displays are made to agree, so it is where this
+        # belongs.
+        offered = [value for _, value in self.level_chips.options]
+        if offered and level not in offered:
+            level = offered[0]
         self.drill = Drill(scope=tuple(scope), level=level)
         self._syncing_drill = True
         try:
             self.level_chips.value = self.drill.level
-            self.breadcrumb.set_path(self.drill.scope)
+            # A pinned solution IS the root, so the breadcrumb names it and
+            # shows only what lies below. With none pinned — before the first
+            # render populates the chips — the whole scope is shown under the
+            # generic root, or the first segment would silently vanish.
+            if self.solution:
+                self.breadcrumb.root_label = self.solution
+                self.breadcrumb.set_path(self.drill.scope[1:])
+            else:
+                self.breadcrumb.root_label = DRILL_ROOT_LABEL
+                self.breadcrumb.set_path(self.drill.scope)
         finally:
             self._syncing_drill = False
 
     def narrow_to(self, path: tuple[str, ...]) -> None:
-        """Move into ``path`` and show its children — what a click means."""
-        moved = self.drill.narrowed_to(tuple(path))
+        """Move into ``path`` and show its children — what a click means.
+
+        Clamped to the pinned solution: the Icicle's click-to-zoom-out walks
+        one segment off the path, and from the base that would be the whole
+        catalog again — out of the filter the Solution chips say is applied.
+        """
+        path = tuple(path)
+        if self.solution and not path:
+            path = (self.solution,)
+        moved = self.drill.narrowed_to(path)
         self.set_drill(moved.scope, moved.level)
 
     def _drill_from_chart(self, path: tuple[str, ...]) -> None:
@@ -443,10 +519,14 @@ class PlatformAnalytics:
         self._render_current()
 
     def _on_breadcrumb(self, prefix: tuple[str, ...]) -> None:
-        """A breadcrumb segment: back to that prefix, at the stop below it."""
+        """A breadcrumb segment: back to that prefix, at the stop below it.
+
+        ``prefix`` is relative to the pinned solution, which the breadcrumb
+        does not show as a segment, so the base goes back on here.
+        """
         if self._syncing_drill:
             return
-        self.narrow_to(prefix)
+        self.narrow_to((self.solution, *prefix) if self.solution else prefix)
         self._render_current()
 
     def _on_level_chip(self, _change=None) -> None:
@@ -548,14 +628,22 @@ class PlatformAnalytics:
                 if {"ticker", "name"} <= set(meta.columns)
                 else None
             )
+            frame = icicle_frame(
+                state.arp_universe_prices,
+                meta,
+                metric=metric,
+                window=_window_days(self.card_window_chips.value),
+                returns=state.universe_rets,
+            )
+            # Only the pinned solution's subtree reaches the trace. Handing it
+            # the whole catalog and relying on `level` to show one branch left
+            # the others one plotly zoom-out away, which would walk out of the
+            # filter the chips say is applied.
+            base = analytics_levels()[0]
+            if self.solution and base in frame.columns:
+                frame = frame[frame[base] == self.solution]
             self.icicle.update(
-                icicle_frame(
-                    state.arp_universe_prices,
-                    meta,
-                    metric=metric,
-                    window=_window_days(self.card_window_chips.value),
-                    returns=state.universe_rets,
-                ),
+                frame,
                 metric=metric,
                 metric_label=(
                     f"{self.card_window_chips.label} {self.metric_chips.label}"
@@ -738,6 +826,7 @@ class PlatformAnalytics:
 
     def _render_tab(self, meta: pd.DataFrame, which: str) -> None:
         """Render one analytics tab and mark it fresh."""
+        self._sync_solution_chips(meta)
         renderer = {
             "icicle": self.render_icicle,
             "scatter": self.render_scatter,
@@ -824,6 +913,7 @@ class PlatformAnalytics:
             chips.observe(lambda _c: self._render_current(), names="value")
 
         self.level_chips.observe(self._on_level_chip, names="value")
+        self.solution_chips.observe(self._on_solution, names="value")
 
         self.sync_regime_controls()
 

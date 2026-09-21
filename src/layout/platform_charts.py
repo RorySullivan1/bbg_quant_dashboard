@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from ..config import STRIP_DAYS, analytics_levels
 from ..stats import compounded_return
 from ..style import (
+    ANALYTICS_HEIGHT_PX,
     ASSET_CLASS_COLORS,
     ASSET_CLASS_FALLBACK_COLOR,
     LINE_PALETTE,
@@ -148,7 +149,11 @@ class IcicleChart(Chart):
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
-            layout=_chart_layout(title="", margin=dict(t=44, b=10, l=10, r=10))
+            layout=_chart_layout(
+                title="",
+                height=ANALYTICS_HEIGHT_PX,
+                margin=dict(t=10, b=10, l=10, r=10),
+            )
         )
 
     @property
@@ -249,6 +254,11 @@ class IcicleChart(Chart):
             # along the reading direction, which a vertical tiling turns on its
             # side at the depths that matter most.
             tiling=dict(orientation="h"),
+            # Plotly's own ancestor bar, off. It defaults ON and draws a grey
+            # strip above the cells carrying the current root — which is both
+            # what the Scope breadcrumb already says and a band of chrome in
+            # a chart that wants its height for data.
+            pathbar=dict(visible=False),
             marker=dict(
                 colors=colors,
                 colorscale=_RAMP,
@@ -381,6 +391,7 @@ class RegimeFactorScatter(Chart):
         return go.FigureWidget(
             layout=_chart_layout(
                 title="",
+                height=ANALYTICS_HEIGHT_PX,
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                 # No anchor property exists to put the label on one side of
@@ -582,6 +593,7 @@ class StripChart(Chart):
         return go.FigureWidget(
             layout=_chart_layout(
                 title="",
+                height=ANALYTICS_HEIGHT_PX,
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                 hovermode="closest",
