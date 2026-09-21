@@ -43,6 +43,7 @@ from ..config import (
 from ..data import apply_filters, unique_values
 from ..stats import (
     ann_beta,
+    benchmark_returns,
     daily_returns,
     jensen_alpha,
     quant_metrics_table,
@@ -291,7 +292,7 @@ class QuantFilter:
         # Beta / Treynor / Jensen carry their own (independent) benchmark
         # dropdowns, so they can't share one beta here; the whole table is
         # memoized instead, so this runs once per (period, benchmarks) config.
-        qt["Beta"] = ann_beta(rets, universe.get(beta_b), years)
+        qt["Beta"] = ann_beta(rets, benchmark_returns(universe.get(beta_b)), years)
         qt["Treynor"] = treynor_ratio(rets, arp, universe.get(trey_b), years)
         qt["Jensen"] = jensen_alpha(rets, arp, universe.get(jens_b), years)
         self._memo[key] = qt

@@ -24,28 +24,33 @@ import pandas as pd
 
 from ..stats import (
     ann_beta,
+    benchmark_returns,
     daily_returns,
     jensen_alpha,
     quant_metrics_table,
     treynor_ratio,
 )
 
-#: The metrics the basket table carries, in column order. Deliberately the old
-#: threshold set **minus Z**: a cross-sectional z-score is a ranking, and the
-#: Platform tab's ranking column is where a ranking belongs (#341 dec. 9).
+#: The metrics the selection table carries, in column order.
+#:
+#: Four, not the old nine. **Z** went first (v0.9.29): a cross-sectional
+#: z-score is a ranking, and the Platform tab's ranking column is where a
+#: ranking belongs. **VaR, RSI and Jensen alpha** followed in v0.9.30, from
+#: terminal use — seven metrics across four windows is 28 columns, and the
+#: three dropped are the ones a reader narrows by least. What is left is two
+#: risk-adjusted returns and two benchmark-relative measures.
 QUANT_METRICS: tuple[str, ...] = (
     "Sortino",
     "Calmar",
     "Beta",
     "Treynor",
-    "Jensen",
-    "VaR",
-    "RSI",
 )
 
-#: The three that need a benchmark. One dropdown feeds all of them here, where
+#: The ones that need a benchmark. One dropdown feeds them here, where
 #: `QuantFilter` gave each its own — three benchmarks in one table is a
 #: comparison nobody asked for, and the bar has room for one control.
+#: Jensen is still computed (Single Strategy's thresholds read it); it is no
+#: longer a column.
 BENCHMARK_METRICS: tuple[str, ...] = ("Beta", "Treynor", "Jensen")
 
 
@@ -98,7 +103,9 @@ class QuantColumns:
         if rets is None:
             rets = daily_returns(prices)
         table = quant_metrics_table(prices, None, years, returns=rets)
-        table["Beta"] = ann_beta(rets, benchmark, years)
+        # `benchmark` is a price series; `ann_beta` covaries against
+        # returns. See `stats.risk.benchmark_returns`.
+        table["Beta"] = ann_beta(rets, benchmark_returns(benchmark), years)
         table["Treynor"] = treynor_ratio(rets, prices, benchmark, years)
         table["Jensen"] = jensen_alpha(rets, prices, benchmark, years)
         self._memo[key] = table

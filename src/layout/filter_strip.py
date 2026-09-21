@@ -85,7 +85,6 @@ class FilterStrip:
             list(self._boxes.values()),
             layout=W.Layout(width="100%"),
         )
-        self.root.add_class("bbg-rail")
         self.root.add_class("bbg-filter-strip")
         self.show(self.keys[0])
         self._suspended = False

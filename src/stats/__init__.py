@@ -83,6 +83,7 @@ from .regime import (
 )
 from .risk import (
     ann_beta,
+    benchmark_returns,
     calmar_ratio,
     corr_matrix,
     downside_deviation,
@@ -120,6 +121,7 @@ __all__ = [
     "_slice_last_years",
     "active_columns",
     "ann_beta",
+    "benchmark_returns",
     "ann_return",
     "ann_sharpe",
     "ann_volatility",

@@ -214,35 +214,25 @@ _STAT_SUFFIXES: tuple[str, ...] = (
     " Vol",
     " Sharpe",
     " Max DD",
-    # The basket table's quant block (#345). Listed here rather than given a
+    # The selection table's quant block (#345). Listed here rather than given a
     # test of their own so they inherit every behaviour the window stats have:
     # hidden by the Window chip (`_window_of` matches the same prefix),
     # comparison-filtered rather than substring-searched, and rendered as
     # numbers. That is the whole reason they are named "<window> <metric>".
+    # Kept in step with `QUANT_METRICS`.
     " Sortino",
     " Calmar",
     " Beta",
     " Treynor",
-    " Jensen",
-    " VaR",
-    " RSI",
 )
 # The stat columns whose stored value is a fraction and whose rendered value is
 # a percentage. Read by both the catalog renderer and the numeric filter, so a
 # column cannot be rendered as a percentage and filtered as a fraction — which
 # would answer ">1" on a Return column with every row in the catalog.
-#: VaR joins them: `historical_var` returns a positive daily loss *fraction*,
-#: so a cell reading "1.85%" stores 0.0185 and a filter that did not carry the
-#: x100 would answer ">1" with the whole catalog. Jensen alpha is annualized
-#: and also a fraction, for the same reason. The other five are ratios or
-#: index levels and are stored as they read.
-_PERCENT_SUFFIXES: tuple[str, ...] = (
-    " Return",
-    " Vol",
-    " Max DD",
-    " VaR",
-    " Jensen",
-)
+#: None of the quant columns is here since v0.9.30: VaR and Jensen alpha were
+#: the two stored as fractions, and both were dropped as columns. Sortino,
+#: Calmar, Beta and Treynor are ratios and are stored as they read.
+_PERCENT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Max DD")
 
 
 def _content_px(header: object, values: object) -> int:
@@ -727,8 +717,17 @@ def _js_heat_cell(thresholds: tuple[float, float, float, float]) -> JavascriptFu
     )
 
 
+#: The tick column's header. Blank — it is an affordance, not a heading, and a
+#: title would be the widest thing in a column sized to hold a checkbox.
+TICK_COLUMN: str = " "
+
+#: How wide the tick column is. Wide enough for Select's checkbox and no wider
+#: — the point of the column is that it costs almost nothing.
+TICK_COLUMN_PX: int = 28
+
+
 def _catalog_display_frame(
-    frame: pd.DataFrame, group_labels: list[str]
+    frame: pd.DataFrame, group_labels: list[str], *, tick_column: bool = False
 ) -> tuple[pd.DataFrame, list[str]]:
     """Reshape the assembled frame for DataTables: group columns first, then
     the ticker, then everything else.
@@ -737,13 +736,26 @@ def _catalog_display_frame(
     position, and a frame whose group fields lead gives the widget a stable
     `[0 … n-1]` to both hide and group on. Returns the frame and the group
     columns actually present, which is what `()` group fields degrade to.
+
+    `tick_column` inserts an empty column **immediately after the group
+    columns** — so it is the first *visible* one, the group columns being
+    hidden. It is a real column (v0.9.30) rather than a class on the Ticker
+    cell: Select draws its checkbox as a pseudo-element on the cell, and
+    sharing a cell with text put the two on top of each other at some widths
+    and beside each other at others. A column of its own cannot overlap
+    anything. Every position in `_catalog_table_options` is derived by
+    enumerating these columns, so inserting it here is all that is needed —
+    there is no second place keeping a column index.
     """
     if frame.empty:
         return frame, []
     display = frame.reset_index()
     present = [label for label in group_labels if label in display.columns]
     rest = [col for col in display.columns if col not in present]
-    return display[[*present, *rest]], present
+    display = display[[*present, *rest]]
+    if tick_column:
+        display.insert(len(present), TICK_COLUMN, "")
+    return display, present
 
 
 def _window_of(name: str) -> str | None:
@@ -857,7 +869,9 @@ def _filter_kinds(
     """
     kinds: dict[int, str] = {}
     for position, name in enumerate(str(c) for c in frame.columns):
-        if name in groups:
+        if name in groups or name == TICK_COLUMN:
+            # The tick column holds no data — a filter box under it would be a
+            # control over nothing, and it would set the column's width.
             continue
         if _is_percent_col(name):
             kinds[position] = "percent"
@@ -1174,19 +1188,27 @@ def _catalog_table_options(
     if groups:
         targets = list(range(len(groups)))
         column_defs.append({"targets": targets, "visible": False})
-    if select_style == "multi":
-        # The tick, on the **first visible column** rather than in a column of
-        # its own. Select draws its checkbox from this class, and a dedicated
-        # column would have to be prepended to the frame — which shifts every
-        # position the rest of this function is keyed to: the hidden group
-        # targets, `rowGroup.dataSrc`, the window targets, the ranking
-        # column's five behaviours and the filter row's indices. Every one of
-        # those would need an offset nobody reading them would expect. The
-        # group columns are hidden, so the first visible one is `len(groups)`.
+    tick_position = next(
+        (
+            i
+            for i, name in enumerate(str(c) for c in frame.columns)
+            if name == TICK_COLUMN
+        ),
+        None,
+    )
+    if tick_position is not None:
+        # A column of its own (v0.9.30). Select draws its checkbox as a
+        # pseudo-element on the cell, so sharing a cell with the ticker put the
+        # two on top of each other at some widths and beside each other at
+        # others. Not orderable and not searchable: it holds no data, and a
+        # sort or a filter box on it would be a control over nothing.
         column_defs.append(
             {
-                "targets": [len(groups)],
+                "targets": [tick_position],
                 "className": "select-checkbox bbg-tick-cell",
+                "orderable": False,
+                "searchable": False,
+                "width": f"{TICK_COLUMN_PX}px",
             }
         )
     hidden_windows = [
@@ -1432,6 +1454,9 @@ class CatalogTable:
         )
         self._set_data(combined, zscore_col=zscore_col)
 
+    #: Whether `_catalog_display_frame` inserts the leading tick column.
+    tick_column: bool = False
+
     def _set_data(self, frame: pd.DataFrame, *, zscore_col: str | None = None) -> None:
         """The single write path. Options are rebuilt on every write because
         they are keyed to column *positions*, and the Z-Score column's name —
@@ -1442,7 +1467,9 @@ class CatalogTable:
         self._tickers = tuple(str(t) for t in frame.index)
         self._zscore_col = zscore_col
         self._display, self._groups = _catalog_display_frame(
-            frame, _catalog_group_labels(self.group_fields)
+            frame,
+            _catalog_group_labels(self.group_fields),
+            tick_column=self.tick_column,
         )
         self.widget.update(self._display, **self.table_options())
 
@@ -1558,6 +1585,7 @@ class BasketGrid(CatalogTable):
         on_limit: Callable[[object], None] | None = None,
     ) -> None:
         super().__init__(select_style="multi", select_buttons=True)
+        self.tick_column = True
         self.widget.add_class(BASKET_TABLE_CLASS)
         self.basket = basket
         self._on_limit = on_limit

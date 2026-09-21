@@ -21,7 +21,6 @@ Whether the overlay paints meanwhile follows `_OVERLAY_PAINT_DELAY_S`.
 
 from __future__ import annotations
 
-import contextlib
 import threading
 import time
 import traceback
@@ -145,6 +144,17 @@ _OVERLAY_PAINT_DELAY_S = 0.35
 #: the rail beside it. Spelled once so the docs, the tests and the screen agree.
 TABLE_BAR_TITLE = "Table view"
 
+#: What the strip below the table is called. **Not "Basket"** (v0.9.30): a
+#: basket is something you build out of instruments and then hold, and nothing
+#: here is combined, weighted or traded. These are the strategies the analytics
+#: are run over — so that is what the heading says.
+SELECTION_TITLE = "Selected Strategies"
+
+#: How much of the filter row the dimension chips take, the values scrolling in
+#: the rest. Fixed rather than shared: the chip set never changes, so it should
+#: not move when a dimension with many values is selected.
+FILTER_CHIPS_WIDTH = "280px"
+
 
 class DashboardApp:
     """The dashboard: its widgets, its session state, and its orchestration.
@@ -218,23 +228,26 @@ class DashboardApp:
         #: slice **twice** — once for the write, once for the `_recompute` that
         #: follows it — and the second would throw the first away.
         self._reslice_suspended = False
-        self._build_refresh_button()
+        self._build_limit_popup()
         self._build_benchmarks_and_filters()
         self._build_basket_section()
 
-    def _build_refresh_button(self) -> None:
-        """*Refresh prices* — the one control on this tab that fetches.
+    def _build_limit_popup(self) -> None:
+        """The auto-fading toast a rejected over-cap pick raises.
 
-        It sits on the section's **title line**, not in the bar: the bar holds
-        settings that re-slice the cache, and a fetch among them would read as
-        a fourth chip group (#341 dec. 11).
+        **There is no Refresh prices button** (v0.9.30). It was the last thing
+        on this tab that fetched, and selection never needed it: the startup
+        fetch pulls every catalog series, so ticking a row only re-slices a
+        cache that already holds the answer. Keeping a button whose one effect
+        was a loading overlay taught the user that picking a strategy costs a
+        round trip, which it does not.
+
+        The cost is real and deliberate: **prices are now whatever the startup
+        fetch returned** for the life of the session. A window left open all
+        day shows the morning's data until it is reloaded.
         """
         self.limit_popup_w = _selection_limit_popup()
         self._limit_nonce = [0]
-        self.apply_btn = W.Button(description="Refresh prices")
-        # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
-        # states — styled via CSS class, not inline `.style`, so `:hover` works.
-        self.apply_btn.add_class("bbg-btn")
 
     def _build_benchmarks_and_filters(self) -> None:
         """The live benchmark registry and the shared filter panel."""
@@ -312,19 +325,42 @@ class DashboardApp:
             row=True,
         )
         self.filter_dim_chips.observe(self._on_filter_dimension, names="value")
+        # **The dimension and its values sit on one row** (v0.9.30). They were
+        # stacked — chips in the bar, values on a strip under it — which read
+        # as two unrelated controls and cost two rows of height above a table
+        # that wants them. Side by side, the sentence is one line: *this
+        # dimension, these values*.
+        #
+        # The chips wrap into a fixed-width block on the left (a 2xN / 3xN
+        # grid, however many fit) and the values scroll in the remainder, so a
+        # dimension with forty values cannot push the chips off screen or grow
+        # the row.
+        self.filter_dim_chips.layout.width = "auto"
+        filter_row = W.HBox(
+            [
+                W.Box(
+                    [self.filter_dim_chips],
+                    layout=W.Layout(flex=f"0 0 {FILTER_CHIPS_WIDTH}", min_width="0"),
+                ),
+                W.Box(
+                    [self.filter_strip.root],
+                    layout=W.Layout(flex="1 1 0%", min_width="0", overflow="auto"),
+                ),
+            ],
+            layout=W.Layout(width="100%", align_items="stretch"),
+        )
+        filter_row.add_class("bbg-filter-row-pair")
         self.basket_bar = control_bar(
             RailSection("Group by", self.basket_group_chips),
             RailSection("Window", self.basket_window_chips),
             RailSection("Benchmark", self.basket_benchmark_dd),
-            RailSection("Filter", self.filter_dim_chips),
             title=TABLE_BAR_TITLE,
         )
         self.basket_section = section_panel(
             "Strategy selection",
-            W.VBox([self.basket_bar, self.filter_strip.root]),
+            W.VBox([self.basket_bar, filter_row]),
             self.basket_grid.widget,
             height=CATALOG_TABLE_HEIGHT,
-            actions=self.apply_btn,
         )
 
         # --- the Basket strip (#346) -----------------------------------------
@@ -338,13 +374,13 @@ class DashboardApp:
         self.window_readout = WindowReadout()
         clear_basket_btn = _make_chip("Clear all", active=False)
         clear_basket_btn.on_click(lambda _b: self.basket.clear())
-        self.basket_note_w = _section_title("Basket", self._basket_note())
+        self.basket_note_w = _section_title(SELECTION_TITLE, self._basket_note())
         self.basket_strip = W.VBox(
             [
                 self.basket_note_w,
                 control_bar(
                     RailSection("Analysis window", self.window_readout),
-                    RailSection("Basket", clear_basket_btn),
+                    RailSection("Selection", clear_basket_btn),
                     title="",
                 ),
                 self._strip_box(self.basket_cards),
@@ -381,7 +417,9 @@ class DashboardApp:
         The cards follow through their own `basket.observe` and the ticks
         through the grid's; this is the controller's share.
         """
-        self.basket_note_w.value = _section_title("Basket", self._basket_note()).value
+        self.basket_note_w.value = _section_title(
+            SELECTION_TITLE, self._basket_note()
+        ).value
         self._schedule_reslice()
 
     # --- the live re-slice (#347) --------------------------------------------
@@ -415,14 +453,17 @@ class DashboardApp:
     def _run_reslice(self) -> None:
         """The debounced body. Deferred while a Refresh is running.
 
-        Both write `state.cur_prep` and the panes, so they must not overlap.
-        Deferring **re-arms** rather than queueing: the basket is read when the
-        timer fires, so the later run sees the current one either way.
+        It has nothing to contend with since v0.9.30: *Refresh prices* was the
+        only other writer of `state.cur_prep` and the panes, and it is gone —
+        so the deferral this carried (`refresh_inflight`) went with it.
         """
         self._reslice_timer = None
-        if self.refresh_inflight["running"]:
-            self._schedule_reslice()
-            return
+        # **The memo is keyed to the slice, so a new basket invalidates all of
+        # it.** `_recompute` has always cleared it here; calling
+        # `_render_selection` directly skipped that, so a pane revisited after
+        # a basket change was served the chart memoised for the *previous*
+        # selection — the right benchmark, the wrong strategies.
+        self.state.memo.clear()
         errors: list[str] = []
         started = time.perf_counter()
         self._render_selection(self._analytics_window_start(), errors)
@@ -501,10 +542,14 @@ class DashboardApp:
         name = self.basket_benchmark_dd.value
         series = self.state.universe_prices.get(name)
         blocks: list[pd.DataFrame] = []
-        for label, days in stat_windows():
+        # `stat_windows()` yields (label, **years**) — 0.5, 1, 3, 5 — not days.
+        # This divided by `TRADING_DAYS_PER_YEAR` and asked for 1/252 of a
+        # year, which is why the columns read N/A on the short windows and,
+        # worse, returned numbers measured over three days on the long ones.
+        for label, years in stat_windows():
             table = self.quant_columns.table(
                 arp,
-                years=days / TRADING_DAYS_PER_YEAR,
+                years=years,
                 benchmark=series,
                 benchmark_name=name,
                 returns=self.state.universe_rets,
@@ -699,16 +744,6 @@ class DashboardApp:
             errors_w=self.errors_w,
         )
 
-        selected_perf_header = W.HTML(
-            render_template(
-                "grid_header", **STYLE_CTX, text="Selected-strategy performance"
-            )
-        )
-        self.selected_perf_section = W.VBox(
-            [selected_perf_header, self.selected_perf_grid.grid],
-            layout=W.Layout(width="100%", padding="4px 0 8px 0"),
-        )
-
         # Two sections of the same shape side by side at 60:40 (#308):
         # Leaderboard left, QIS Bulletin right, each a `section_panel` of
         # title → control bar → boxed body at one height.
@@ -799,11 +834,15 @@ class DashboardApp:
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
         )
+        # No second grid below the table (v0.9.30). The tab carried an
+        # ipydatagrid of the selected set's performance under the itables
+        # catalog — two tables of the same strategies, in two different
+        # stacks, stacked. The catalog table already shows every one of those
+        # numbers for every row, ticked or not.
         selected_panel = W.VBox(
             [
                 self.basket_section,
                 self.basket_strip,
-                self.selected_perf_section,
                 self.analysis_pane_row,
             ],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
@@ -910,10 +949,6 @@ class DashboardApp:
             lambda c: self._render_leaderboard(c["new"]), names="value"
         )
 
-        # Guards against a second Refresh being launched while a worker thread is
-        # still fetching/recomputing (the button is also disabled for the duration).
-        self.refresh_inflight = {"running": False}
-        self.apply_btn.on_click(self._refresh_prices)
         bind_live_controls(self.state, self.meta, self.state.pane_left)
         bind_live_controls(self.state, self.meta, self.state.pane_right)
         bind_lazy_render(self.state, self.meta, self.state.pane_left)
@@ -1249,19 +1284,6 @@ class DashboardApp:
         except Exception:
             self.state.errors_w.value += _render_error(traceback.format_exc())
 
-    @contextlib.contextmanager
-    def _owns_the_render(self):
-        """Suppress the debounced re-slice for the duration.
-
-        For a caller that seeds the basket **and** renders it — the initial
-        load and Refresh both do — so the slice is built once, by them.
-        """
-        self._reslice_suspended = True
-        try:
-            yield
-        finally:
-            self._reslice_suspended = False
-
     def _recompute(self, _btn=None):
         # A recompute rebuilds the selection slice (`cur_prep`), so every
         # memoized benchmark-dependent result is stale — drop them all. This is
@@ -1383,87 +1405,6 @@ class DashboardApp:
             f"{time.perf_counter() - t_panes:.2f}s"
         )
 
-    def _run_refresh(self):
-        """The Refresh-prices blocking work: refetch, re-prune, recompute.
-
-        **It never seeds or replaces the basket** (#341 dec. 11) — it re-slices
-        the one it finds, dropping only the members the prune removed. The
-        re-slice is suspended throughout because the `_recompute` at the end is
-        the render, and a basket write here would otherwise queue a second.
-
-        Split out of ``_refresh_prices`` so a live frontend can run it on a
-        worker thread (see ``_refresh_prices``). Drives the overlay's staged
-        progress from 60% (fetch) through dismissal at 100%."""
-        with self._owns_the_render():
-            self._run_refresh_body()
-
-    def _run_refresh_body(self):
-        try:
-            self.state.universe_prices, _ = fetch_prices(
-                self._fetch_tickers(), self.universe_start, self.today, use_cache=False
-            )
-        except Exception:
-            self._set_progress(60, "Load failed — see error below", error=True)
-            self._set_status("Load failed — see error below", tone=StatusTone.ERROR)
-            self.state.init_errors.append(
-                f"Universe refresh ({self.universe_start} → {self.today}) failed:\n"
-                f"{traceback.format_exc()}"
-            )
-            self._recompute()
-            return
-        # Re-prune stale indices from the full catalog against the fresh cache
-        # (a resumed ticker can return), then refresh the strategies dropdown.
-        if not self.state.universe_prices.empty:
-            live = set(
-                active_columns(
-                    self.state.universe_prices.reindex(columns=self.meta_all["ticker"])
-                )
-            )
-            self.meta = self.meta_all[self.meta_all["ticker"].isin(live)].reset_index(
-                drop=True
-            )
-            # **Re-seat the basket** (#347): a ticker the prune dropped has no
-            # prices left, so leaving it in would hand `basket_window` an
-            # all-NaN column and collapse the overlap to nothing — the whole
-            # analysis breaking because one index went stale. Through
-            # `basket.remove`, so the card and the tick go with it.
-            self.state.basket.remove(
-                [t for t in self.state.basket.value if t not in live]
-            )
-            self._on_filter_change()
-            self.single_strategy.picker.options = _ticker_options(self.meta)
-            self.benchmarks.set_catalog(_ticker_options(self.meta))
-            self._log(
-                f"refresh pruned to {len(self.meta)} of {len(self.meta_all)} indices "
-                f"({len(self.meta_all) - len(self.meta)} dropped as stale/flat/all-NaN)"
-            )
-        self.state.arp_universe_prices = self.state.universe_prices.reindex(
-            columns=self.meta["ticker"]
-        )
-        self.state.universe_rets = daily_returns(self.state.arp_universe_prices)
-        try:
-            self.state.universe_up = universe_perf(self.state.arp_universe_prices)
-            self.analytics.render_universe_grid(self.meta)
-            self._render_basket_grid()
-            # Fresh data → every analytics tab is stale; re-render the visible
-            # one now, the hidden two lazily on next activation.
-            self.analytics.invalidate(self.meta)
-        except Exception:
-            self.state.init_errors.append(
-                f"universe_perf computation failed:\n{traceback.format_exc()}"
-            )
-        self._set_progress(85, "Building catalog…")
-        # No post-load toast on Refresh: the loading overlay already signals
-        # progress, and the "Loaded N indices …" toast is reserved for the
-        # dashboard's *initial* load. (A refresh failure still toasts, above.)
-        self._recompute()
-        # Re-apply the Single Strategy filters against the fresh cache (arp is
-        # updated above) so its picker stays consistent with any active filter;
-        # this renders the tab once. (`_on_single_filter_change` is defined
-        # below but only ever called at runtime, like `_render_single`.)
-        self._on_single_filter_change()
-        self._set_progress(100, "Ready", hidden=True)
-
     def _render_single(self, _change=None) -> None:
         """Re-render the Single Strategy tab's Section 1 from the cache. Bound to
         the picker / benchmark controls and called on load + Refresh. Reads the
@@ -1474,45 +1415,6 @@ class DashboardApp:
         if getattr(self.single_strategy, "_suspend", False):
             return
         self.single_strategy.render(self.meta, self._analytics_window_start())
-
-    def _refresh_prices(self, _btn=None):
-        # The overlay is already in the tree, so re-render its value visible and
-        # re-run the staged bar. Because there is no fresh mount here, the
-        # blocking fetch/recompute goes to a worker thread and the click handler
-        # returns — see `_OVERLAY_PAINT_DELAY_S`.
-        self._set_progress(0, "Refreshing…")
-        self._set_progress(
-            60, f"Fetching prices for {len(self._fetch_tickers())} indices…"
-        )
-
-        # A pending re-slice is dropped rather than left to fire mid-fetch:
-        # `_run_refresh` ends by rendering the same basket, so the timer would
-        # only duplicate it — against a half-replaced cache.
-        if self._reslice_timer is not None:
-            self._reslice_timer.cancel()
-            self._reslice_timer = None
-        if get_ipython() is None:
-            # Headless / pytest: run synchronously so callers observe the
-            # refetch immediately after `.click()` (no frontend to paint for).
-            self._run_refresh()
-            return
-
-        if self.refresh_inflight["running"]:
-            return  # a refresh is already running; ignore re-clicks
-        self.refresh_inflight["running"] = True
-        self.apply_btn.disabled = True
-
-        def _worker():
-            try:
-                # See `_OVERLAY_PAINT_DELAY_S`. On this worker thread the sleep
-                # leaves the kernel free to flush the paint.
-                time.sleep(_OVERLAY_PAINT_DELAY_S)
-                self._run_refresh()
-            finally:
-                self.refresh_inflight["running"] = False
-                self.apply_btn.disabled = False
-
-        threading.Thread(target=_worker, name="bbg-refresh", daemon=True).start()
 
     def _on_single_filter_change(self, _change=None) -> None:
         """Narrow the Single Strategy picker to the filter matches and re-render.

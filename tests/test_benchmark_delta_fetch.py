@@ -289,27 +289,12 @@ def test_a_failed_fetch_cannot_break_a_loaded_dashboard(monkeypatch, captured):
 # --------------------------------------------------------------------------
 
 
-def test_an_added_benchmark_rides_the_refresh(monkeypatch, captured):
-    requested: list[list[str]] = []
-    real = app_mod.fetch_prices
-
-    def spy(tickers, *a, **k):
-        requested.append(list(tickers))
-        return real(tickers, *a, **k)
-
-    monkeypatch.setattr(app_mod, "fetch_prices", spy)
-
-    app = build_app(verbose=False)
-    _click(app, "Multi-Strategy")
-    _selectors(app)[0]._box.value = "newbm"
-
-    _click(app, "Refresh prices")
-
-    # Without folding the added benchmark into the refresh request it would
-    # silently drop out of the cache the first time the user refreshed.
-    assert NEW in requested[-1]
-    assert NEW in captured["state"].universe_prices.columns
-    assert NEW in captured["registry"].tickers
+# `test_an_added_benchmark_rides_the_refresh` lived here until v0.9.30. It
+# pinned that a benchmark added after the initial load was folded into the next
+# *Refresh prices* request, so it did not drop out of the cache. There is no
+# refresh request any more — and there does not need to be: an added benchmark
+# is fetched as a **delta** the moment it is added (v0.9.14), which is what the
+# rest of this file tests.
 
 
 def test_the_startup_request_still_covers_the_curated_benchmarks(monkeypatch):

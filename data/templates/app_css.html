@@ -759,21 +759,24 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
   border: 1px solid {{border_color}};
   border-radius: 3px;
   display: flex;
-  gap: 6px;
-  max-width: 260px;
-  padding: 2px 6px 2px 0;
+  gap: 2px;
+  /* No max-width and no name (v0.9.30): the card is `[TICKER] x`, so it is as
+     wide as a ticker. The name used to sit between them and push the x off
+     the end of the card, where it stopped rendering. */
+  padding: 1px 4px 1px 6px;
+}
+/* The member that binds the analysis start. An accent edge rather than a
+   glyph, so marking it costs no width. */
+.bbg-basket-card.bbg-basket-binding {
+  border-color: {{accent2}};
 }
 .bbg-basket-card:hover {
   border-color: {{accent}};
 }
-/* The asset-class colour edge. Its hue comes from the one palette helper, set
-   inline per card, so the cards and the Platform charts cannot disagree about
-   what Equity looks like — this rule owns only the shape. */
-.bbg-basket-card .bbg-basket-tag {
-  border-radius: 3px 0 0 3px;
-  height: 22px;
-  width: 4px;
-}
+/* The asset-class colour is the card's **left border**, set inline per card
+   from the one palette helper (so the cards and the Platform charts cannot
+   disagree about what Equity looks like). A border rather than a child
+   element, so it takes no space in the row. */
 .bbg-basket-card .bbg-basket-ticker {
   background: transparent !important;
   border: none !important;
@@ -791,20 +794,6 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
 .bbg-basket-card .bbg-basket-ticker:hover {
   color: {{accent}} !important;
   text-decoration: underline;
-}
-.bbg-basket-name {
-  color: {{text_muted}};
-  font-size: {{micro_size}};
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* The member that sets the analysis start, marked so the readout above and the
-   card point at each other. */
-.bbg-basket-binding {
-  color: {{accent2}};
-  font-size: {{micro_size}};
 }
 .bbg-basket-card .bbg-basket-remove {
   background: transparent !important;
@@ -843,13 +832,20 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
   font-size: {{micro_size}};
   font-style: italic;
 }
-/* The filter value strip, under the Table view bar (#345). Subordinate to the
-   bar the way the drill strip is: no box of its own, a rule above instead. */
+/* The filter dimension and its values, on **one row** (v0.9.30). Subordinate
+   to the bar above the way the drill strip is: no box of its own, a rule above
+   instead. The chips hold a fixed column on the left and wrap inside it; the
+   values scroll in the remainder, so a dimension with forty values cannot push
+   the chips off screen or grow the row. */
+.bbg-filter-row-pair {
+  border-top: 1px solid {{border_color}};
+  margin: -6px 0 6px 0;
+  max-height: 84px;
+  padding: 6px 8px;
+}
 .bbg-filter-strip {
   border: none !important;
-  border-top: 1px solid {{border_color}} !important;
-  margin: -6px 0 6px 0 !important;
-  padding: 6px 8px !important;
+  padding: 0 !important;
 }
 .bbg-filter-strip .bbg-strip-dash {
   color: {{text_muted}};

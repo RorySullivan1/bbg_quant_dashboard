@@ -135,15 +135,11 @@ renders the full dashboard without a Bloomberg session. Verify by:
   the count stays 25/25, and a red auto-fading "Maximum 25 strategies" popup
   appears at the top of the viewport. (The bundled mock catalog has only ~4
   indices, so exercising the cap needs a larger catalog / a live terminal.)
-- The **Analysis date range** row (full-width, below the two panels):
-  select a basket → Refresh prices → the two hyphen-separated date boxes
-  span the overlap window. Editing a box enforces `min ≤ max` but does
-  **not** redraw; clicking Refresh prices re-slices the perf grid + all
-  pane charts to the chosen window. Refreshing the **same** basket
-  preserves a narrowed range; changing the basket resets the boxes to the
-  new full overlap. Pairing a recently-launched index with SPTR shrinks the
-  bounds to the short overlap. `Clear all` snaps the range to full span. A
-  single-ticker or non-overlapping basket renders without a traceback.
+- **No analysis date range and no Refresh prices.** The window is the
+  selection's overlap (v0.9.29) and nothing refetches (v0.9.30); the Selected
+  Strategies strip's readout says the window and names the member that binds
+  its start. Pairing a recently-launched index with a long-history one shortens
+  it; removing that member lengthens it again, live.
 - Cold start (no `data/.cache/`) — the loading overlay advances through its
   stages then dismisses; the post-load toast reads `Loaded N indices · M
   trading days · fetched from mock prices in X.Ys`; a `prices_<today>.parquet`
@@ -151,19 +147,9 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Warm start (within `CACHE_TTL_HOURS`) — the toast reads
   `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
   BQL/mock fetch happens.
-- Clicking Refresh prices — the overlay re-shows and runs the staged bar,
-  then dismisses; the parquet mtime advances. The overlay must actually
-  **become visible** even when the refetch is near-instant (off-terminal mock
-  or a warm cache): the refetch runs on a worker thread and the overlay is held
-  up for a short beat (`_OVERLAY_PAINT_DELAY_S`) first, so it can't be shown and
-  hidden inside one frame (which previously made the dialog never appear). The
-  overlay's scrim is a translucent **black** mask (clearly darker than the navy
-  chrome) that covers the **viewport** — it stays covering the screen even if the
-  page is scrolled when Refresh is clicked (both scrim and card use
-  `position: fixed`; an `absolute` scrim sat off-screen once scrolled, leaving a
-  bare dialog with no mask). **No** `Loaded …` toast fires on Refresh — that
-  toast is reserved for the dashboard's initial load; only a refresh *failure*
-  toasts.
+- **Nothing re-shows the overlay.** It runs once, on the initial load, and
+  dismisses. If it appears again during a session, something still fetches —
+  which nothing should since v0.9.30.
 - Clicking the top-level **Platform** / **Multi-Strategy** / **Single
   Strategy** pill buttons toggles the active button (`.bbg-pill.is-active`)
   and swaps the content area; commentary stays visible across all three.
@@ -183,7 +169,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   first still-matching strategy is auto-selected and the whole tab re-renders;
   when nothing matches, the picker empties and the sections clear without a
   traceback. **Clear all** restores the full catalog.
-- Clicking Refresh prices with 2+ tickers — every figure in BOTH
+- Selecting 2+ strategies — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows
   the new data; the other 8 pre-built views are also populated so
   swapping the picker afterwards is instant — 9 analysis views total).
@@ -211,8 +197,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
 - Each pane has its OWN Rolling Correlation / Rolling Beta benchmark
   dropdown — setting the left pane's benchmark to SPTR and the right
-  pane's to MXWO, then clicking Refresh prices, produces two
-  independently-titled charts.
+  pane's to MXWO produces two independently-titled charts.
 - On the Correlation Heatmap view, ticking **Benchmark** reveals a
   benchmark dropdown and a nested **Regime** checkbox; ticking **Regime**
   reveals a **`>` / `<`** dropdown and a 0–100% tail dropdown and
@@ -269,7 +254,8 @@ catalog is the real test of how the charts read.
   Scatter, switch to the Strip and back — **the metric is still selected**.
   (Hidden, not rebuilt: a rebuilt bar resets every chip.)
 - Changing any chip re-renders **only the visible chart**, with no fetch and
-  no overlay. Refresh prices is the only thing that reloads.
+  no overlay. Nothing on the page reloads prices (v0.9.30) — a reload of the
+  app is the only way to fetch again.
 
 **The Icicle**
 
@@ -355,7 +341,7 @@ catalog is the real test of how the charts read.
 - At the default BQuant viewport there is **no page-level horizontal
   scrollbar** with the Scatter active — it has the widest legend.
 
-### Manual checklist — the Multi-Strategy basket tab (v0.9.29, epic #341)
+### Manual checklist — the Multi-Strategy selection tab (v0.9.30, epic #341)
 
 The tab is the catalog table with ticks. Almost none of this is something a
 widget-tree assertion can see — the group-header click, *Select all shown* and
@@ -368,10 +354,12 @@ real test of it.
 
 **The shell**
 
-- Top to bottom: *Strategy selection* with **Refresh prices** right-aligned on
-  its title line; a *Table view* bar reading **Group by · Window · Benchmark ·
-  Filter**; the filter value strip; the table; the **Basket** strip; the perf
-  grid; the two panes.
+- Top to bottom: *Strategy selection*; a *Table view* bar reading **Group by ·
+  Window · Benchmark**; the **filter row** (dimension chips left, that
+  dimension's values scrolling right, on ONE line); the table; the **Selected
+  Strategies** strip; the two panes.
+- **No Refresh prices button and no second grid** (v0.9.30). Nothing on this
+  tab shows a loading overlay — if one appears, something still fetches.
 - **No accordion, no pill-tab bar, no 240px checkbox list, no analysis date
   pickers.** The only date pickers on the tab are the strip's *Launch date* —
   a characteristic of a strategy, not the analysis range.
@@ -398,10 +386,18 @@ real test of it.
   **the ticked rows that survive are still ticked**. This is the one to watch —
   it is re-derived from tickers, so a rebuild that loses ticks means the push
   is racing the widget's own re-send.
-- The seven quant columns are there for the visible window
-  (Sortino · Calmar · Beta · Treynor · Jensen · VaR · RSI), each with a
-  comparison box in the filter row. Type `>1` under **1Y Sortino**: it filters
-  in the units shown. Under **1Y VaR**, `>1` means 1%, not 1.0.
+- **Four** quant columns for the visible window — Sortino · Calmar · Beta ·
+  Treynor — each with a comparison box in the filter row. Type `>1` under
+  **1Y Sortino**: it filters in the units shown.
+- **Every one of them carries a number, not N/A**, at every window. Two bugs
+  made them wrong before v0.9.30 and both were silent: the window loop treated
+  `stat_windows()`' years as days (so 1Y measured one day), and `ann_beta` was
+  handed benchmark *prices* where it covaries against returns (so every Beta
+  sat near zero and Treynor exploded). Sanity-check a Beta against a benchmark
+  you know — a broad equity index should not read 0.00 for everything.
+- The **tick is its own column**, narrow, at the left edge, and **never
+  overlaps the ticker text at any window width**. Resize the browser and check
+  again — sharing a cell is exactly what broke before.
 - Change **Benchmark**: Beta, Treynor and Jensen move; nothing else does.
 
 **The filters**
@@ -414,9 +410,11 @@ real test of it.
 
 **The basket**
 
-- One card per member, in the order they were added: colour tag, ticker, name,
-  **×**. The tag's colour is the asset class's, the same hue the Platform
-  charts use.
+- One card per member, in the order they were added: **`[TICKER] ×`** and
+  nothing else. The asset-class colour is the card's left border and the
+  binding member's is the accent; the strategy's name is the ticker's tooltip.
+  **The × renders on every card** — it was the name spilling that pushed it off
+  the end before v0.9.30.
 - **×** removes the card and unticks the row if it is shown. Clicking the
   **ticker** opens that strategy in Single Strategy, with the filters cleared —
   the same as clicking a catalog row.
@@ -434,9 +432,8 @@ real test of it.
   no overlay and no fetch**. This is the headline change — it used to need
   Refresh.
 - *Select all shown* is **one** recompute, not one per row.
-- **Refresh prices** still refetches (the overlay appears) and re-renders the
-  **same** basket — it never seeds or replaces it. A ticker the refetch prunes
-  as stale loses its card and its tick.
+- There is **nothing to press**. Prices are the startup fetch's for the life of
+  the session (v0.9.30) — to get fresh ones, reload the app.
 - Single Strategy is unchanged: its accordion, its pickers, its live narrowing.
 
 ### Manual checklist — the commentary block (v0.9.22, epic #303)

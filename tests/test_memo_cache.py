@@ -16,6 +16,13 @@ from src.layout import build_app
 from src.layout.benchmarks import BenchmarkSelect
 
 
+def _basket(root):
+    """The app's selection state — what re-slices the analytics (v0.9.30)."""
+    from src.layout.basket import BasketCards
+
+    return next(w for w in _walk(root) if isinstance(w, BasketCards)).basket
+
+
 def _walk(widget):
     yield widget
     for child in getattr(widget, "children", ()) or ():
@@ -115,13 +122,10 @@ def test_refresh_invalidates_memo(monkeypatch):
     _pickers(app)[0].value = "Rolling Correlation"
     assert calls["n"] == 1
 
-    # Refresh prices rebuilds the slice and must clear the memo, so the same
+    # A basket change rebuilds the slice and must clear the memo, so the same
     # benchmark is recomputed (the mounted view re-renders) rather than served
-    # stale.
-    refresh_btn = next(
-        w
-        for w in _walk(app)
-        if isinstance(w, W.Button) and w.description == "Refresh prices"
-    )
-    refresh_btn.click()
+    # stale. This was Refresh prices' job until v0.9.30 removed the button.
+    basket = _basket(app)
+    # Two, not one: a correlation needs a pair.
+    basket.replace(list(basket.value)[:2])
     assert calls["n"] == 2  # recomputed after invalidation

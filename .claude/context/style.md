@@ -8,14 +8,11 @@ with an accent rule, buttons/controls/grids are dark-themed, and load
 progress shows in a full-screen dimmed loading overlay with a staged progress
 bar that dismisses once data is loaded, leaving a slim auto-fading post-load
 toast. The post-load toast ("Loaded N indices …") is shown **only on the
-initial load** — **Refresh prices** does not re-toast (the overlay already
-signals progress); a refresh *failure* still toasts. On Refresh the same overlay
-re-shows while the refetch runs on a background worker thread (so the click
-handler returns and the frontend can paint the overlay before the kernel
-blocks); the worker holds the overlay visible for a short beat
-(`_OVERLAY_PAINT_DELAY_S` in `builder.py`) first, so an *instant* refetch
-(off-terminal mock or warm cache) can't hide it inside the same frame it was
-shown. The scrim (`.bbg-overlay`, `Color.SCRIM`) is a translucent **black** mask
+initial load**, which since v0.9.30 is the *only* load: the **Refresh prices**
+button that re-showed this overlay on a worker thread is gone, and with it the
+whole re-toast question. The overlay still holds for a short beat
+(`_OVERLAY_PAINT_DELAY_S`) so an instant startup (off-terminal mock or a warm
+cache) cannot hide it inside the frame it was shown in. The scrim (`.bbg-overlay`, `Color.SCRIM`) is a translucent **black** mask
 (so it reads clearly darker than the navy chrome, signalling "loading"); both it
 **and** the progress *card* (`.bbg-overlay-card`) float with `position: fixed`,
 so they cover / centre on the **viewport** — the same mechanism as the
@@ -27,14 +24,19 @@ the viewport rather than the below-the-fold page is exactly right.)
 - **One color identity per strategy**: every chart inside an
   analysis pane (lines, bars, scatter points) uses positional
   `LINE_PALETTE` colors keyed by the strategy's position in the
-  selected ticker set. The selected-strategy perf grid above the
-  panes carries a leftmost color-swatch column whose header is
-  **deliberately blank** (`PERF_COLOR_COLUMN_NAME = " "`, a single
-  space — a nameless legend chip, not a labelled field), rendered with
-  `ipydatagrid.VegaExpr` and the same positional palette, so the
-  grid acts as the universal legend — each plotly chart's own legend
-  is off (`showlegend=False`), with the swatch column serving as the
-  shared legend instead.
+  selected ticker set. **Single Strategy's** perf grid carries a leftmost
+  colour-swatch column whose header is **deliberately blank**
+  (`PERF_COLOR_COLUMN_NAME = " "`, a single space — a nameless legend chip,
+  not a labelled field), rendered with `ipydatagrid.VegaExpr` and the same
+  positional palette, so the grid acts as the legend and each plotly chart's
+  own legend stays off (`showlegend=False`).
+
+  **The Multi-Strategy tab lost that grid in v0.9.30** — it was a second table
+  of the same strategies below the itables catalog, which already shows every
+  one of those numbers per row. Its panes' colours are still positional, so
+  the identity holds; what went is the swatch column that named it. If reading
+  the panes without a legend proves hard at a terminal, that is the thing to
+  put back, not the grid.
 - **Chart theme is dark (Bloomberg / Barclays blend)**: charts render on a
   **transparent** `paper_bgcolor`/`plot_bgcolor` (`Color.TRANSPARENT`) via
   plotly's `plotly_dark` template + custom overrides defined in
@@ -377,6 +379,13 @@ own. A leaf says nothing at all: "mean of 1" is true and useless.
 
 ## The Basket strip and the filter strip (v0.9.29, epic #341)
 
+**A card is `[TICKER] ×`, and nothing else** (v0.9.30). The first cut carried
+a colour tag, the ticker, the strategy's *name* and the ×; real names are long
+enough that the name pushed the × off the end of the card and it stopped
+rendering. The asset-class colour survives as the card's **left border** and
+the binding marker as an accent border — both borders rather than children, so
+neither costs width or can displace the ×. The name is the ticker's tooltip.
+
 **A card exists whether or not the table has a row for it.** That is the whole
 reason the basket is drawn as cards rather than read off the ticks: a pick the
 filters have hidden is still in the basket, and the strip is where it stays
@@ -407,8 +416,12 @@ selects, and two kinds of control should not read as one row of equals.
 **The basket table's group headers advertise that they are hit areas** —
 pointer cursor and an accent hover, scoped to `.bbg-basket-table` so the
 Platform's headers, which are not clickable, do not make the same promise. The
-tick is Select's own `select-checkbox`, drawn into the **first visible column**
-rather than a column of its own: a prepended column would shift every position
-`_catalog_table_options` is keyed to — the hidden group targets,
-`rowGroup.dataSrc`, the window targets, the ranking column's five behaviours
-and the filter row's indices.
+tick is Select's own `select-checkbox`, in a **column of its own**
+(`TICK_COLUMN`, `TICK_COLUMN_PX` wide, not orderable and not searchable). It
+shared the Ticker cell until v0.9.30, because a prepended column looked like it
+would shift every position `_catalog_table_options` is keyed to. It does not:
+those positions are all derived by *enumerating the frame*, so inserting the
+column after the group columns in `_catalog_display_frame` is the whole change.
+Sharing a cell was the real cost — Select draws its checkbox as a
+pseudo-element, so it sat on top of the ticker text at some widths and beside
+it at others, and which one you got moved with the window.

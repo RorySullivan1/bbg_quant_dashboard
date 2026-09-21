@@ -1,14 +1,15 @@
-"""Refresh-prices loading overlay (regression for the vanished loading screen).
+"""The initial load's overlay (regression for the vanished loading screen).
 
-Under a live frontend the Refresh-prices click must hand its blocking fetch +
-recompute to a worker thread, so the click handler returns and the frontend
-gets a paint cycle to actually show the overlay before the kernel blocks on
-BQL. Headlessly (``get_ipython() is None``) the work stays synchronous so
-callers observe the refetch immediately after ``.click()``.
+`build_app` is synchronous: it displays the overlay, pushes staged progress as
+each load step completes, then mounts the dashboard and dismisses it. These
+drive the rendered widget tree and assert that path — headless and under a
+forced frontend — plus the error branch, where a fatal fetch leaves the
+overlay up in its red state and renders the traceback.
 
-These tests drive the rendered widget tree and assert both paths: the headless
-path refetches inline, and the forced-frontend path spawns a ``bbg-refresh``
-worker that refetches, dismisses the overlay, and re-enables the button.
+**The Refresh-prices half of this file went in v0.9.30**, with the button. It
+covered the worker thread that kept the overlay painting while a refetch
+blocked the kernel; nothing refetches any more, so the initial load is the
+only thing the overlay serves.
 """
 
 from __future__ import annotations
@@ -157,101 +158,3 @@ def test_failed_initial_load_renders_the_traceback(monkeypatch):
         if isinstance(w, W.HTML) and "simulated BQL outage" in w.value
     ]
     assert errors, "the startup traceback must be rendered for the user"
-
-
-def test_headless_refresh_runs_synchronously(monkeypatch):
-    """With no frontend, `.click()` returns only after the refetch — the
-    existing synchronous contract the other suites rely on."""
-    calls = _patch_fetch_counter(monkeypatch)
-    app = build_app(verbose=False)
-    _mount_multi_strategy(app)
-    before = calls["n"]
-
-    _refresh_button(app).click()
-
-    # No worker thread was spawned, and the refetch already happened inline.
-    assert not any(t.name == "bbg-refresh" for t in threading.enumerate())
-    assert calls["n"] == before + 1
-    assert "is-hidden" in _overlay(app).value
-
-
-def test_frontend_refresh_uses_worker_thread(monkeypatch):
-    """With a (faked) live frontend, the click offloads to a `bbg-refresh`
-    worker; once it finishes the overlay is dismissed and the button re-enabled.
-
-    This is the fix for the vanished loading screen: the click handler must
-    return before the fetch so the frontend can paint the visible overlay."""
-    import src.layout.app as app_mod
-
-    calls = _patch_fetch_counter(monkeypatch)
-    app = build_app(verbose=False)
-    _mount_multi_strategy(app)
-    before = calls["n"]
-
-    # Force the "live frontend" branch (build_app already ran, so faking this
-    # now only affects the refresh handler).
-    monkeypatch.setattr(app_mod, "get_ipython", lambda: object())
-
-    btn = _refresh_button(app)
-    btn.click()
-    _join_refresh_worker()
-
-    assert calls["n"] == before + 1
-    assert not btn.disabled  # re-enabled in the worker's finally block
-    assert "is-hidden" in _overlay(app).value
-
-
-def test_refresh_holds_overlay_visible_before_instant_refetch(monkeypatch):
-    """The worker must hold the overlay visible (the paint-delay beat) BEFORE it
-    runs the refetch, so an instant (mock / warm-cache) refetch can't hide the
-    overlay inside the same frame it was shown — the "loading dialog never
-    appears" regression."""
-    import src.layout.app as app_mod
-
-    calls = _patch_fetch_counter(monkeypatch)
-    app = build_app(verbose=False)
-    _mount_multi_strategy(app)
-    monkeypatch.setattr(app_mod, "get_ipython", lambda: object())
-    before = calls["n"]
-
-    seen: dict = {}
-    real_sleep = app_mod.time.sleep
-
-    def spy_sleep(secs):
-        # At the paint-hold beat, capture the overlay state and whether the
-        # refetch has run yet — don't actually block the test.
-        if abs(secs - app_mod._OVERLAY_PAINT_DELAY_S) < 1e-9:
-            seen["overlay"] = _overlay(app).value
-            seen["fetches_so_far"] = calls["n"]
-            return real_sleep(0)
-        return real_sleep(secs)
-
-    monkeypatch.setattr(app_mod.time, "sleep", spy_sleep)
-
-    _refresh_button(app).click()
-    _join_refresh_worker()
-
-    assert app_mod._OVERLAY_PAINT_DELAY_S > 0
-    assert "overlay" in seen  # the paint-hold beat ran
-    assert "is-hidden" not in seen["overlay"]  # overlay was VISIBLE during it
-    assert seen["fetches_so_far"] == before  # ...and it ran BEFORE the refetch
-    assert calls["n"] == before + 1  # the refetch still happened
-    assert "is-hidden" in _overlay(app).value  # dismissed at the end
-
-
-def test_refresh_does_not_re_toast(monkeypatch):
-    """The post-load "Loaded N indices …" toast only appears on the initial
-    load — a Refresh must not re-toast (the loading overlay already signals
-    progress). The status widget's value is unchanged across a refresh."""
-    calls = _patch_fetch_counter(monkeypatch)
-    app = build_app(verbose=False)
-    _mount_multi_strategy(app)
-
-    toast = _toast(app)
-    before_value = toast.value  # the initial-load toast
-    before_n = calls["n"]
-
-    _refresh_button(app).click()  # headless => synchronous refresh
-
-    assert calls["n"] == before_n + 1  # the refetch happened
-    assert toast.value == before_value  # ...but no new toast was emitted

@@ -204,6 +204,28 @@ def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Se
     return pd.Series(cov / var, index=returns.columns)
 
 
+def benchmark_returns(benchmark: pd.Series | pd.DataFrame | None) -> pd.Series | None:
+    """A benchmark **price** series as daily returns, for `ann_beta`.
+
+    `ann_beta` covaries its `returns` frame against whatever it is handed, so
+    the benchmark has to be returns too. Every quant caller holds *prices* —
+    `state.universe_prices[ticker]` — and until v0.9.30 passed them straight
+    in. `cov(daily returns, index levels) / var(index levels)` is a ratio
+    between two quantities of wildly different scale, so **every Beta came out
+    at roughly zero**, Treynor (return / beta) exploded into the thousands,
+    and Jensen collapsed to the asset's own return. The numbers were wrong,
+    not missing, which is why nothing caught it until the column was on
+    screen.
+
+    `factor_beta` is the one caller that already holds returns; it calls
+    `ann_beta` directly and does not come through here.
+    """
+    series = _benchmark_series(benchmark)
+    if series is None or series.empty:
+        return None
+    return daily_returns(series.to_frame()).iloc[:, 0]
+
+
 def treynor_ratio(
     returns: pd.DataFrame,
     prices: pd.DataFrame,
@@ -220,7 +242,7 @@ def treynor_ratio(
     """
     ret = ann_return(prices, years)
     if beta is None:
-        beta = ann_beta(returns, benchmark, years)
+        beta = ann_beta(returns, benchmark_returns(benchmark), years)
     return ret.divide(beta.replace(0, np.nan))
 
 
@@ -242,7 +264,7 @@ def jensen_alpha(
         return pd.Series(np.nan, index=prices.columns)
     bench_ret = ann_return(bench.to_frame(), years).iloc[0]
     if beta is None:
-        beta = ann_beta(returns, benchmark, years)
+        beta = ann_beta(returns, benchmark_returns(benchmark), years)
     return ann_return(prices, years) - beta * bench_ret
 
 
@@ -333,7 +355,9 @@ def quant_metrics_table(
     # Beta vs the benchmark is computed once and shared across the Beta /
     # Treynor / Jensen columns (they all measure vs the same benchmark), instead
     # of each recomputing it.
-    beta = ann_beta(rets, benchmark, years)
+    # `benchmark` is a price series (it is `ann_return`-ed in `jensen_alpha`
+    # below), so it is converted before it reaches `ann_beta`.
+    beta = ann_beta(rets, benchmark_returns(benchmark), years)
     return pd.DataFrame(
         {
             "Sharpe": ann_sharpe(rets, prices, years),
