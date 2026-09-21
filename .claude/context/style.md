@@ -318,9 +318,21 @@ the hue. The rule for *which* level the colours key to lives once, in
 `stats.drill.color_key`: the hierarchy's first level at the root, the points'
 own level below it.
 
-**One height for the card's row.** `ANALYTICS_HEIGHT` sets the chart's box and
-the table's, and the chart's own `height`; `ANALYTICS_TABLE_WIDTH` is the
-table's fixed basis. Fixed rather than stretched for `CATALOG_TABLE_HEIGHT`'s
-reason: stretching lets whichever box holds more content set the row. The
-chart takes the remaining width with `flex: 1 1 0%` **and** `min-width: 0` —
-the #280 pair — so a wide legend fits rather than pushing the table off.
+**One height, and a 60:40 width.** `ANALYTICS_HEIGHT` sets the chart's box,
+the table's, and the chart's own `height` — fixed rather than stretched for
+`CATALOG_TABLE_HEIGHT`'s reason: stretching lets whichever box holds more
+content set the row. The width is `ANALYTICS_CHART_SHARE` /
+`ANALYTICS_TABLE_SHARE` as flex bases, the `COMMENTARY_*_SHARE` pattern
+(v0.9.25). The 360px basis this replaced held the table at one width whatever
+the screen, so it read as a squeezed strip on anything wide. Both boxes carry
+`min-width: 0` — the #280 pair — so a long strategy name wraps inside its
+column instead of widening it.
+
+**The drill has its own strip** (`.bbg-drill-bar`, v0.9.25), below the *Chart
+view* bar and subordinate to it: no border box of its own, a rule above
+instead, tighter vertical rhythm, and the accent left to the bar's title. The
+bar above carries **settings**; this carries a **position** the charts
+themselves write back to, and two different kinds of control should not read
+as one row of equals. Its blocks lay the heading *beside* the control rather
+than above it, so the strip is one line of "Scope: … Level: …", and it wraps
+rather than scrolling — a full path is five segments plus the Level chips.

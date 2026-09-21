@@ -313,10 +313,11 @@ def test_the_icicle_sizes_every_cell_by_its_strategy_count():
     assert isinstance(trace, go.Icicle)
     assert trace.branchvalues == "total"
     value = dict(zip(trace.ids, trace.values, strict=True))
-    # Two strategies, one asset class, two categories under it.
-    assert value["Equity"] == 2
-    assert value["Equity / Growth"] == 1
-    assert value["Equity / Growth / Momentum"] == 1
+    # Two strategies under one solution and one asset class, in two categories.
+    assert value["ARP"] == 2
+    assert value["ARP / Equity"] == 2
+    assert value["ARP / Equity / Growth"] == 1
+    assert value["ARP / Equity / Growth / Momentum"] == 1
     # Every leaf is exactly 1, whatever its metric says.
     leaves = [v for node, v in value.items() if node.endswith(" Index")]
     assert leaves == [1, 1]
@@ -329,7 +330,7 @@ def test_the_icicle_colours_a_parent_by_the_mean_of_its_leaves():
 
     (trace,) = chart.fig.data
     colour = dict(zip(trace.ids, trace.marker.colors, strict=True))
-    assert colour["Equity"] == pytest.approx(frame["value"].mean())
+    assert colour["ARP"] == pytest.approx(frame["value"].mean())
 
 
 def test_the_icicle_s_colour_range_is_symmetric_and_taken_from_the_data():
@@ -354,9 +355,9 @@ def test_the_icicle_s_ids_are_paths_so_a_click_round_trips():
     chart.update(_icicle_frame(), **_ICICLE_KW)
 
     trace = chart.fig.data[0]
-    index = list(trace.ids).index("Equity / Growth")
+    index = list(trace.ids).index("ARP / Equity / Growth")
     chart._clicked(trace, SimpleNamespace(point_inds=[index]), None)
-    assert got == [("Equity", "Growth")]
+    assert got == [("ARP", "Equity", "Growth")]
 
 
 def test_the_icicle_s_ids_keep_a_repeated_label_as_two_cells():
@@ -374,13 +375,13 @@ def test_the_icicle_s_ids_keep_a_repeated_label_as_two_cells():
     chart.update(_icicle_frame(meta), **_ICICLE_KW)
 
     ids = set(chart.fig.data[0].ids)
-    assert "Equity / Emerging Markets" in ids
-    assert "Fixed Income / Emerging Markets" in ids
+    assert "ARP / Equity / Emerging Markets" in ids
+    assert "ARP / Fixed Income / Emerging Markets" in ids
 
 
 def test_the_icicle_s_points_are_its_leaves_under_the_scope():
     chart = IcicleChart()
-    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("Equity", "Growth"))
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("ARP", "Equity", "Growth"))
 
     points = chart.points()
     assert list(points.columns) == [
@@ -393,7 +394,7 @@ def test_the_icicle_s_points_are_its_leaves_under_the_scope():
     ]
     assert list(points["label"]) == ["AAA Index"]
     assert (points["count"] == 1).all()
-    assert points.loc["AAA Index", "path"] == ("Equity", "Growth", "Momentum")
+    assert points.loc["AAA Index", "path"] == ("ARP", "Equity", "Growth", "Momentum")
 
 
 def test_the_icicle_follows_a_reconfigured_hierarchy(monkeypatch):
@@ -880,17 +881,26 @@ def test_the_points_table_follows_every_chart_render():
 def test_chart_and_table_stand_at_one_height():
     """#331 decision 7 — stretching would let whichever box holds more content
     set the row (the #298 lesson)."""
-    from src.style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
+    from src.style import (
+        ANALYTICS_CHART_SHARE,
+        ANALYTICS_HEIGHT,
+        ANALYTICS_TABLE_SHARE,
+    )
 
     pa = _analytics()
-    chart_box, points_box = pa.card.children[2].children
+    chart_box, points_box = pa.card.children[3].children
     assert chart_box.layout.height == ANALYTICS_HEIGHT
     assert points_box.layout.height == ANALYTICS_HEIGHT
     # A wide chart pushes nothing off: it takes the remaining width and its
     # own content scrolls inside it (the #280 pair).
-    assert chart_box.layout.flex == "1 1 0%"
+    # A 60:40 share, not a pixel basis: the 360px basis this replaces squeezed
+    # the table into a strip on a wide screen (the `COMMENTARY_*_SHARE` lesson).
+    assert chart_box.layout.flex == f"1 1 {ANALYTICS_CHART_SHARE}"
+    assert points_box.layout.flex == f"1 1 {ANALYTICS_TABLE_SHARE}"
+    # Both carry `min-width: 0`, or a long name widens its column instead of
+    # wrapping inside it.
     assert chart_box.layout.min_width == "0"
-    assert points_box.layout.flex == f"0 0 {ANALYTICS_TABLE_WIDTH}"
+    assert points_box.layout.min_width == "0"
 
 
 # --- what the code review caught (epic #331) --------------------------------
@@ -974,8 +984,11 @@ def test_colour_keys_to_the_points_own_level_below_the_root():
         }
     )
     assert list(_color_values(inside, "category")) == ["Momentum", "Value"]
-    # At the root the key IS the parent, which is what varies there.
-    assert list(_color_values(inside, "asset_class")) == ["Equity", "Equity"]
+    # And at the root too, now that the root draws solutions rather than
+    # categories: the points all sit under one scope, so their own level is
+    # the only thing that varies among them.
+    roots = pd.DataFrame({"path": [("Beta",), ("ARP",)], "label": ["Beta", "ARP"]})
+    assert list(_color_values(roots, "solution")) == ["Beta", "ARP"]
 
 
 def test_the_strip_separates_two_nodes_that_share_a_label():
@@ -1001,6 +1014,58 @@ def test_the_strip_separates_two_nodes_that_share_a_label():
     xs = [x for tr in chart.fig.data for x in tr.x]
     first_column = sorted(x for x in xs if abs(x) < 0.5)
     assert first_column[0] != first_column[1], "they must not stack"
+
+
+# --- the drill's zoom survives its own redraw (v0.9.25) ---------------------
+
+
+def test_the_icicle_redraws_at_the_scope_rather_than_snapping_back():
+    """The reported bug: the chart reverted while the table and chips did not.
+
+    A cell click zooms Plotly client-side AND re-renders this trace from the
+    kernel. A trace built without `level` renders at the root, so the zoom was
+    undone the instant it happened — which looked like "the drill glitches and
+    returns to the original view", with the table and the Level chip (driven
+    from the same `Drill`) correctly showing the narrowed state.
+    """
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("ARP", "Equity"))
+    assert chart.fig.data[0].level == "ARP / Equity"
+
+    # And the root draws from the root, rather than carrying a stale zoom.
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=())
+    assert chart.fig.data[0].level == ""
+
+
+def test_clicking_the_cell_you_are_inside_zooms_out():
+    """Plotly's own icicle does this, so following it keeps the widget's
+    behaviour the one the user expects — and gives a way back up that is not
+    the breadcrumb."""
+    got: list[tuple[str, ...]] = []
+    chart = IcicleChart(on_drill=got.append)
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("ARP", "Equity"))
+
+    trace = chart.fig.data[0]
+    index = list(trace.ids).index("ARP / Equity")
+    chart._clicked(trace, SimpleNamespace(point_inds=[index]), None)
+    assert got == [("ARP",)], "out one level, not back into the same node"
+
+
+def test_the_drill_survives_a_round_trip_through_the_card():
+    """End to end: a click moves the state, the chart, the chips and the table
+    together — the four things the bug had disagreeing."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
+    pa.wire(lambda: pd.DataFrame())
+
+    pa.narrow_to(("Beta", "Equity"))
+    assert pa.drill.scope == ("Beta", "Equity")
+    assert pa.level_chips.value == "category"
+    assert [b.description for b in pa.breadcrumb.children] == [
+        "QIS Strategy",
+        "Beta",
+        "Equity",
+    ]
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
@@ -1068,7 +1133,7 @@ def test_platform_chart_chips_swap_the_chart():
     app = build_app(verbose=False)
     panel = app.children[5].children[0]
     card = panel.children[-1]
-    chart_box = card.children[2].children[0]
+    chart_box = card.children[3].children[0]
     first = chart_box.children[0]
 
     _chart_chip(card, "Scatter").click()
@@ -1083,12 +1148,15 @@ def test_the_bar_shows_only_the_sections_the_active_chart_reads():
     pa.fresh.update({"icicle", "scatter", "strip"})
 
     def shown(heading):
-        return pa.bar.section(heading).layout.display != "none"
+        bar = pa.drill_bar if heading in ("Scope", "Level") else pa.bar
+        return bar.section(heading).layout.display != "none"
 
     pa.activate(pd.DataFrame(), "icicle")
-    # The Icicle draws every level at once and zooms itself, so a Level or a
-    # Scope would be describing a position it does not have.
-    assert not shown("Level") and not shown("Scope")
+    # The Icicle draws every level at once, so no single depth is selectable —
+    # but its zoom IS the drill now, so Scope stays visible: hiding it left the
+    # one chart that can narrow with no way to see where it had got to.
+    assert not shown("Level")
+    assert shown("Scope")
     assert shown("Metric") and shown("Window")
     assert not shown("Regime")
 
@@ -1163,7 +1231,7 @@ def test_platform_analytics_instances_do_not_share_state():
     assert b.active_analytics == "icicle"
     assert a.icicle is not b.icicle
     # The drill is per-instance too, for the same reason.
-    a.set_drill(("Equity",), "family")
+    a.set_drill(("Beta",), "asset_class")
     assert b.drill.scope == ()
 
 
@@ -1194,29 +1262,33 @@ def test_invalidate_marks_every_chart_stale():
 def test_set_drill_is_the_only_writer_and_repaints_both_displays():
     """#331 decision 15: no chart holds a private focus."""
     pa = _analytics()
-    pa.set_drill(("Equity", "Momentum"), "family")
+    pa.set_drill(("Beta", "Equity"), "category")
 
-    assert pa.drill.scope == ("Equity", "Momentum")
-    assert pa.drill.level == "family"
+    assert pa.drill.scope == ("Beta", "Equity")
+    assert pa.drill.level == "category"
     # The two controls that DISPLAY the state follow it, rather than each
     # holding a copy that could disagree.
-    assert pa.level_chips.value == "family"
+    assert pa.level_chips.value == "category"
     assert [b.description for b in pa.breadcrumb.children] == [
-        "All",
+        "QIS Strategy",
+        "Beta",
         "Equity",
-        "Momentum",
     ]
 
 
 def test_narrowing_moves_one_stop_down_and_bottoms_out_at_the_leaf():
     pa = _analytics()
-    pa.narrow_to(("Equity", "Momentum"))
+    # One stop per segment consumed, from Solution down to the ticker leaf.
+    pa.narrow_to(("Beta",))
+    assert pa.drill.level == "asset_class"
+    pa.narrow_to(("Beta", "Equity"))
+    assert pa.drill.level == "category"
+    pa.narrow_to(("Beta", "Equity", "Core Beta"))
     assert pa.drill.level == "family"
-    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    pa.narrow_to(("Beta", "Equity", "Core Beta", "S&P US Broad"))
     assert pa.drill.level == "ticker"
-    # A click on a strategy is a no-op, not an error: the table row is the way
-    # into Single Strategy.
-    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    # It bottoms out rather than running off the end.
+    pa.narrow_to(("Beta", "Equity", "Core Beta", "S&P US Broad"))
     assert pa.drill.level == "ticker"
 
 
@@ -1224,26 +1296,26 @@ def test_a_breadcrumb_segment_returns_to_its_prefix():
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
     pa.wire(lambda: pd.DataFrame())
-    pa.set_drill(("Equity", "Momentum"), "family")
+    pa.set_drill(("Beta", "Equity"), "category")
 
-    pa.breadcrumb.children[1].click()  # "Equity"
-    assert pa.drill.scope == ("Equity",)
-    assert pa.drill.level == "category"  # the stop below an asset class
+    pa.breadcrumb.children[1].click()  # "Beta"
+    assert pa.drill.scope == ("Beta",)
+    assert pa.drill.level == "asset_class"  # the stop below a solution
 
-    pa.breadcrumb.children[0].click()  # "All"
+    pa.breadcrumb.children[0].click()  # "QIS Strategy" — the root
     assert pa.drill.scope == ()
-    assert pa.drill.level == "category"
+    assert pa.drill.level == "solution"
 
 
 def test_a_level_chip_sets_the_depth_within_the_current_scope():
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()
     pa.wire(lambda: pd.DataFrame())
-    pa.set_drill(("Equity",), "category")
+    pa.set_drill(("Beta",), "asset_class")
 
     pa.level_chips.value = "ticker"
     assert pa.drill.level == "ticker"
-    assert pa.drill.scope == ("Equity",), "the chip changes depth, not scope"
+    assert pa.drill.scope == ("Beta",), "the chip changes depth, not scope"
 
 
 def test_syncing_the_displays_does_not_re_enter_the_setter():

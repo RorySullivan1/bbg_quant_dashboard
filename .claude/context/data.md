@@ -172,14 +172,26 @@ first level is the colour key at the root rather than somewhere to stand.
 in `DRILL_LEAF_LABEL` because `ticker` is derived from the catalog's keys and
 is not a schema field `field_label` could name.
 
-**`solution` is deliberately absent**, though it is `CLASSIFICATION_TIERS`'
-top tier and the catalog table groups on it. Epic #331 ships Category →
-Family → Strategy and names a solution stop a non-goal, on the reading that
-asset class and solution are two ways to cut the catalog rather than one
-nesting. Adding it later is the two tuples and no renderer change, and the
-sample catalog says it is safe: **no category there spans more than one
-solution**, so inserting it only nests, and a nesting level that never splits
-a group cannot break the row contiguity RowGroup needs.
+**`solution` leads the hierarchy** (v0.9.25). Epic #331 shipped without it and
+called a solution stop a non-goal; the desk's reading is the other way — the
+catalog is browsed *by solution first*, so that is where a drill should start.
+The measurement recorded when it was left out is what made the change safe:
+**no category in the shipped catalog spans more than one solution**, so
+inserting the level only nests and cannot break the row contiguity RowGroup
+needs.
+
+With that, **every level is a stop** and `drill_levels()` is derived from
+`ANALYTICS_LEVELS` rather than declared beside it. The separate `DRILL_LEVELS`
+tuple existed to be a suffix *after* the first element, because the first
+level served as the root's colour key rather than somewhere to stand — the
+root drew categories and coloured them by asset class. The root draws
+solutions now, so that special case is gone from `next_stop` and `color_key`
+alike, and a second tuple could only disagree with this one.
+
+One data wart this makes prominent: `Solution` carries both `"ARP"` and
+`"Alternative Risk Premia"` — two labels for one concept, which now draw as
+two sibling cells **at the drill's root**, the first thing a user sees. It is
+a fix in `indexdb.json`, not in code.
 
 **A node is a path, never a bare label.** *Emerging Markets* sits under two
 asset classes in the shipped catalog and *S&P US Sector* under two categories,

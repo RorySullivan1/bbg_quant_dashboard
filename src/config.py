@@ -316,15 +316,19 @@ def filterable_fields() -> tuple[CatalogField, ...]:
 #: its levels, so the shape is a config flip with no code edit; any number of
 #: levels works and the leaf is always the ticker.
 #:
-#: `solution` is deliberately absent, though it is `CLASSIFICATION_TIERS`' top
-#: tier and the catalog table groups on it. Epic #331 ships Category → Family →
-#: Strategy and names a solution stop a non-goal, on the reading that asset
-#: class and solution are two ways to cut the catalog rather than one nesting.
-#: Adding it is this tuple plus `DRILL_LEVELS` — a two-line edit, no renderer
-#: change — and the sample catalog says it is safe to: no category there spans
-#: more than one solution, so inserting it only nests, and a nesting level that
-#: never splits a group cannot break the row contiguity RowGroup needs.
-ANALYTICS_LEVELS: tuple[str, ...] = ("asset_class", "category", "family")
+#: `solution` leads it, above `asset_class`. Epic #331 shipped without it and
+#: called a solution stop a non-goal; the desk's reading is the other way —
+#: the catalog is browsed *by solution first*, so that is where a drill should
+#: start. Nesting it is safe on the shipped catalog for the reason recorded
+#: when it was left out: no category there spans more than one solution, so
+#: inserting the level only nests and cannot break the row contiguity RowGroup
+#: needs.
+ANALYTICS_LEVELS: tuple[str, ...] = (
+    "solution",
+    "asset_class",
+    "category",
+    "family",
+)
 
 
 def analytics_levels() -> tuple[str, ...]:
@@ -340,11 +344,9 @@ def analytics_levels() -> tuple[str, ...]:
     return ANALYTICS_LEVELS
 
 
-#: The depths the drill stops at, above the ticker leaf. A **suffix** of
-#: `ANALYTICS_LEVELS` after its first element, because the first level is the
-#: colour key at the root (#331 decision 16-17) rather than somewhere to stand:
-#: the root view already shows one point per `DRILL_LEVELS[0]`.
-DRILL_LEVELS: tuple[str, ...] = ("category", "family")
+#: What the Scope breadcrumb calls the un-narrowed catalog. "All" said nothing
+#: about *all what*; this names the thing being browsed.
+DRILL_ROOT_LABEL: str = "QIS Strategy"
 
 #: The drill's leaf — every strategy drawn on its own. Not a schema field
 #: (`ticker` is derived from the catalog's keys, not one of its columns), so it
@@ -354,19 +356,20 @@ DRILL_LEAF_LABEL: str = "Strategy"
 
 
 def drill_levels() -> tuple[str, ...]:
-    """`DRILL_LEVELS` plus the ticker leaf — every depth the drill can stop at.
+    """Every depth the drill can stop at: the hierarchy, then the ticker leaf.
 
-    Validates the suffix relationship at the call rather than trusting the two
-    tuples to be edited together: a stop that is not in the hierarchy, or is
-    above the root's colour key, would draw points the scope cannot address.
+    **Every** level is a stop, including the first. It was a suffix *after*
+    the first element while the root drew one point per `DRILL_LEVELS[0]` and
+    the first level served only as the root's colour key — so the root view
+    was categories and asset class was a colour. With `solution` leading the
+    hierarchy the desk wants the root to be solutions, which makes the first
+    level somewhere to stand rather than only something to colour by, and the
+    two tuples collapse into one.
+
+    Derived rather than declared for that reason: a second tuple could only
+    disagree with this one.
     """
-    levels = analytics_levels()
-    if levels[1:][-len(DRILL_LEVELS) :] != DRILL_LEVELS or not DRILL_LEVELS:
-        raise ValueError(
-            f"DRILL_LEVELS {list(DRILL_LEVELS)} must be a non-empty suffix of "
-            f"ANALYTICS_LEVELS {list(levels)} after its first element"
-        )
-    return (*DRILL_LEVELS, DRILL_LEAF_LEVEL)
+    return (*analytics_levels(), DRILL_LEAF_LEVEL)
 
 
 def drill_level_label(key: str) -> str:

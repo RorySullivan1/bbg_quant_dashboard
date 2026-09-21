@@ -802,6 +802,43 @@ div.itables_anywidget .dt-search input::placeholder {
   opacity: 1 !important;
 }
 
+/* The drill's own strip, beneath the Chart view bar (v0.9.25). Subordinate to
+   it on purpose: the bar above carries settings, this carries a *position* the
+   charts themselves write back to, and the two should not read as one row of
+   equals. So: no border box of its own, a rule above it instead, tighter
+   vertical rhythm, and the accent reserved for the bar's title.
+
+   Laid out as a row that wraps, because a full path is five segments plus the
+   Level chips and a narrow terminal should wrap it rather than scroll. */
+.bbg-app .bbg-drill-bar {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 4px 0;
+  padding: 6px 10px 8px 10px;
+  margin: 0 0 10px 0;
+  border-top: 1px solid {{border_color}};
+  background: {{chrome_bg}};
+}
+/* A block here lays its heading BESIDE its control rather than above it: the
+   strip is one line of "Scope: … Level: …", not two stacked sections. */
+.bbg-app .bbg-drill-block {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+.bbg-app .bbg-drill-block .bbg-rail-heading {
+  margin: 0 8px 0 0;
+  white-space: nowrap;
+}
+/* The breadcrumb's segments read as a path, so they sit closer together than
+   the bar's chips and the one you are in is the emphasized end of it. */
+.bbg-app .bbg-drill-bar .bbg-chip-row {
+  gap: 2px;
+}
+
 /* Boxed grouping card — frames a section (e.g. the Platform analytics tabs) so
    the grouping reads at a glance, mirroring the Multi-Strategy bordered panels. */
 .bbg-app .bbg-card {

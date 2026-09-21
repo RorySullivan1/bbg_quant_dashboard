@@ -246,13 +246,16 @@ indices, and 14 of its 16 categories and families are singletons, so a drill
 often narrows to one point. That is the data, not the feature; the terminal
 catalog is the real test of how the charts read.
 
-**The bar**
+**The bar and the drill strip**
 
-- One `control_bar` titled *Chart view*, in the same chrome as the table's
-  bar above it, reading **Chart · Metric · Window · Regime · Level · Scope**
-  in that order, every control a `.bbg-pill` chip except the Regime *Source*
-  dropdown. No native toggle buttons anywhere on the card.
-- Select **Icicle**: Level and Scope disappear. Select **Strip**: Metric and
+- One `control_bar` titled *Chart view*, in the same chrome as the table's bar
+  above it, reading **Chart · Metric · Window · Regime** — settings only. No
+  native toggle buttons anywhere on the card.
+- Beneath it, a **subordinate strip** carrying **Scope** (the breadcrumb) then
+  **Level**. It should read as a different kind of thing from the bar above:
+  no box of its own, lighter, tighter. At a narrow terminal width it **wraps**
+  rather than scrolling sideways.
+- Select **Icicle**: Level disappears, **Scope stays** (its zoom is the drill). Select **Strip**: Metric and
   Window disappear. Select **Scatter**: Regime appears. Change Metric on the
   Scatter, switch to the Strip and back — **the metric is still selected**.
   (Hidden, not rebuilt: a rebuilt bar resets every chip.)
@@ -268,25 +271,27 @@ catalog is the real test of how the charts read.
   titled for the Metric and Window chips (e.g. `1Y Sharpe`). Hover shows the
   label, the count and the value.
 - Set Metric to **Return**: the numbers read as percentages, not 2dp ratios.
-- **The click gate.** Click a cell. If the drill follows — the points table
-  narrows to that branch — the kernel is receiving the callback. If it does
-  not, the Icicle *follows* a drill set from the Level chips and the
-  breadcrumb but cannot *set* one, which is a known limitation to record here
-  rather than a bug to chase. Plotly zooms the cell either way.
+- **Click a cell and it stays zoomed.** The chart, the breadcrumb and the
+  points table all move together. If the chart snaps back to the whole catalog
+  while the table and breadcrumb show the narrowed view, the trace is being
+  rebuilt without its `level` — that was the v0.9.24 bug (fixed in v0.9.25),
+  and it is the first thing to check if it ever returns.
+- **Click the cell you are already inside**: it zooms out one level, as
+  Plotly's own icicle does, and the breadcrumb loses a segment.
 
 **The Scatter**
 
-- One marker per **category** at the root, coloured by asset class with a
-  legend. Y is the metric, X the term-premium β, Z the equity-risk-premium β,
+- One marker per **solution** at the root, coloured by solution with a
+  legend (v0.9.25 — the drill starts at Solution, not Category). Y is the metric, X the term-premium β, Z the equity-risk-premium β,
   and the axis titles say so.
 - **No translucent planes.** Each axis's zero line and wall edge are visible
   at the default camera, and the box is a cube so a β of 0.2 is the same
   length on all three axes. Orbit the camera and check the zero lines still
   read — this is what the planes were there for.
-- Click a category marker: it narrows to that category's **families**, each in
-  its own colour, and the breadcrumb grows a segment. Click a family: its
-  **strategies**. Click a strategy: nothing happens (the table row is the way
-  into Single Strategy).
+- Walk the whole path: a solution marker narrows to its **asset classes**,
+  then **categories**, then **families**, then **strategies**, each level in
+  its own colours and the breadcrumb growing a segment each time. Click a
+  strategy: nothing happens (the table row is the way into Single Strategy).
 - Change the Regime bucket: the markers move, with no fetch. A regime whose
   indicator is missing from the cache draws the unconditioned all-days view
   rather than an empty chart.
@@ -301,10 +306,12 @@ catalog is the real test of how the charts read.
 
 **The drill and the points table**
 
-- The table sits to the right of every chart, both boxes the **same height**,
-  borders lining up top and bottom, and the table's rows scroll inside it.
-- Its first column is headed for the current **Level** (*Category* / *Family*
-  / *Strategy*) and its last for the chart's own value (`1Y Sharpe`, or
+- The table sits to the right of every chart at roughly **60:40**, both boxes
+  the **same height**, borders lining up top and bottom, and the table's rows
+  scrolling inside it. Widen the window: the split **holds** — the table must
+  not shrink to a strip.
+- Its first column is headed for the current **Level** (*Solution* /
+  *Asset Class* / *Category* / *Family* / *Strategy*) and its last for the chart's own value (`1Y Sharpe`, or
   `5D Return` on the Strip). A **Count** column appears above the strategy
   level and not at it.
 - Sorted by value **descending**, blanks last.
@@ -312,7 +319,7 @@ catalog is the real test of how the charts read.
   does. Click a **strategy** row → Single Strategy opens on it, with the
   filters cleared, the same as clicking a catalog row.
 - Walk all the way down and back: marker → Level chip → breadcrumb segment →
-  *All*. The chart, the breadcrumb, the Level chips and the table agree at
+  *QIS Strategy*. The chart, the breadcrumb, the Level chips and the table agree at
   every step.
 - At the default BQuant viewport there is **no page-level horizontal
   scrollbar** with the Scatter active — it has the widest legend.

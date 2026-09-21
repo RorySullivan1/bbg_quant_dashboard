@@ -63,14 +63,17 @@ class Drill:
 def next_stop(path: tuple[str, ...]) -> str:
     """The drill stop that shows ``path``'s children.
 
-    The root and the first hierarchy level both show the first stop: the root
-    draws one point per category, and so does a scope that pins only an asset
-    class, because asset class is a colour rather than a stop (#331 decision
-    16). Below that each extra path segment moves one stop down, and the
-    deepest is the ticker leaf.
+    One stop per path segment consumed: the root shows the first level, a
+    scope pinning one segment shows the second, and so on down to the ticker
+    leaf, which is as deep as it goes.
+
+    This used to need an off-by-one (`max(len(path), 1) - 1`) because the
+    hierarchy's first level was a colour key rather than a stop, so the root
+    and a one-segment scope both showed the same level. Every level is a stop
+    now, so the mapping is the plain one.
     """
     stops = drill_levels()
-    return stops[min(max(len(path), 1) - 1, len(stops) - 1)]
+    return stops[min(len(path), len(stops) - 1)]
 
 
 def is_leaf(level: str) -> bool:

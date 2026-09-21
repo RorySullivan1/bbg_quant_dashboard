@@ -59,7 +59,7 @@ from ..stats import (
     tercile_bounds,
     term_premium,
 )
-from ..style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
+from ..style import ANALYTICS_CHART_SHARE, ANALYTICS_HEIGHT, ANALYTICS_TABLE_SHARE
 from .drill import Drill
 from .grids import ChartPointsGrid, zscore_column_name
 from .html import STYLE_CTX, render_template
@@ -70,7 +70,7 @@ from .platform_charts import (
     asset_class_colors,
     group_colors,
 )
-from .rails import Breadcrumb, ChipGroup, RailSection, control_bar
+from .rails import Breadcrumb, ChipGroup, RailSection, control_bar, drill_bar
 from .theme import _short_ticker
 
 if TYPE_CHECKING:
@@ -278,9 +278,14 @@ class PlatformAnalytics:
             RailSection("Metric", self.metric_chips),
             RailSection("Window", self.card_window_chips),
             RailSection("Regime", regime_controls),
-            RailSection("Level", self.level_chips),
-            RailSection("Scope", self.breadcrumb),
             title="Chart view",
+        )
+        # The drill is a position, not a setting, so it gets its own line
+        # below rather than two more sections on the bar — and the breadcrumb
+        # leads it, because "where am I" reads before "how deep".
+        self.drill_bar = drill_bar(
+            RailSection("Scope", self.breadcrumb),
+            RailSection("Level", self.level_chips),
         )
 
         #: Chart key -> the figure (or placeholder) it mounts.
@@ -302,15 +307,19 @@ class PlatformAnalytics:
         self.chart_box = W.Box(
             [self.icicle.fig],
             layout=W.Layout(
-                flex="1 1 0%", width="100%", min_width="0", height=ANALYTICS_HEIGHT
+                flex=f"1 1 {ANALYTICS_CHART_SHARE}",
+                width="100%",
+                min_width="0",
+                height=ANALYTICS_HEIGHT,
             ),
         )
         self.points_grid = ChartPointsGrid(on_pick=self._pick_point)
         points_box = W.Box(
             [self.points_grid.widget],
             layout=W.Layout(
-                flex=f"0 0 {ANALYTICS_TABLE_WIDTH}",
-                width=ANALYTICS_TABLE_WIDTH,
+                flex=f"1 1 {ANALYTICS_TABLE_SHARE}",
+                width="100%",
+                min_width="0",
                 height=ANALYTICS_HEIGHT,
             ),
         )
@@ -327,6 +336,7 @@ class PlatformAnalytics:
                     )
                 ),
                 self.bar,
+                self.drill_bar,
                 analytics_body,
             ],
             layout=W.Layout(width="100%"),
@@ -480,8 +490,14 @@ class PlatformAnalytics:
         self.bar.show("Regime", chart == "scatter")
         self.bar.show("Metric", chart != "strip")
         self.bar.show("Window", chart != "strip")
-        self.bar.show("Level", chart != "icicle")
-        self.bar.show("Scope", chart != "icicle")
+        # Scope shows on every chart, the Icicle included. #331 hid it there
+        # because the Icicle "zooms itself" — but its zoom IS the drill now,
+        # so hiding the breadcrumb left the one chart that can narrow without
+        # any way to see where it had got to or to climb back out.
+        self.drill_bar.show("Scope", True)
+        # Level still hides on the Icicle, which draws every level at once:
+        # there is no single depth for a chip to select.
+        self.drill_bar.show("Level", chart != "icicle")
 
     # --- per-chart renders ----------------------------------------------------
 

@@ -38,6 +38,7 @@ from typing import Any, NamedTuple
 import ipywidgets as W
 import traitlets as T
 
+from ..config import DRILL_ROOT_LABEL
 from .chrome import _make_chip, _style_chip
 from .html import STYLE_CTX, render_template
 
@@ -292,7 +293,9 @@ class Breadcrumb(W.HBox):
     pointing at a prefix that is no longer on screen.
     """
 
-    def __init__(self, *, on_pick, root_label: str = "All", **kwargs) -> None:
+    def __init__(
+        self, *, on_pick, root_label: str = DRILL_ROOT_LABEL, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._on_pick = on_pick
         self._root_label = root_label
@@ -370,6 +373,37 @@ def control_bar(*sections: RailSection, title: str | None = None) -> ControlBar:
     )
     bar.add_class("bbg-rail")
     bar.add_class("bbg-rail-bar")
+    return bar
+
+
+def drill_bar(*sections: RailSection) -> ControlBar:
+    """The drill's own strip, beneath the bar that shapes the chart.
+
+    Deliberately not another `control_bar`. The bar above answers *what am I
+    looking at* — chart, metric, window, regime — and those are settings. This
+    answers *where am I*, which is a position the user moves through and the
+    charts write back to: a click on a marker changes it, and so does the
+    icicle's own zoom. Stacking it as a seventh and eighth section of the bar
+    made two different kinds of control look like one row of equals, and put
+    the breadcrumb — the thing that says where you are — at the far right end
+    of a row the eye reads left to right.
+
+    So: its own line below, in a subordinate treatment (`.bbg-drill-bar`),
+    and the breadcrumb **first**, because "where am I" reads before "how deep".
+    """
+    blocks: list[W.Widget] = []
+    named: dict[str, W.Widget] = {}
+    for section in sections:
+        block = W.HBox(
+            [_rail_heading(section.heading), section.control],
+            layout=W.Layout(flex="0 0 auto", margin="0 18px 0 0", align_items="center"),
+        )
+        block.add_class("bbg-rail-block")
+        block.add_class("bbg-drill-block")
+        blocks.append(block)
+        named[section.heading] = block
+    bar = ControlBar(blocks, named, layout=W.Layout(width="100%", align_items="center"))
+    bar.add_class("bbg-drill-bar")
     return bar
 
 
