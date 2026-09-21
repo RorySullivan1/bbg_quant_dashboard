@@ -169,6 +169,13 @@ def test_regime_analysis_section_conditions_live():
     body = analytics_card.children[3]
     pa = analytics_card._analytics
     pa.chart_chips.value = "scatter"  # the Regime section shows on the Scatter
+    # The regime is **opt-in** since v0.9.33: unticked, the Scatter is the
+    # plain factor view over the whole Window and the controls that describe a
+    # bucket are hidden. Everything below is about the conditioned view, so
+    # tick it on first.
+    assert pa.regime_on_chk.value is False
+    assert pa.regime_type_chips.layout.display == "none"
+    pa.regime_on_chk.value = True
 
     chart_box, _points_box = body.children
     # Type and Bucket are chips since #333; Source stays a dropdown because its

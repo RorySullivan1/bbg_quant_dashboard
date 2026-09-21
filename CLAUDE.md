@@ -195,7 +195,17 @@ drew, as `path` / `label` / `name` / `value` / `count` / `leaf`. The **Icicle** 
 the hierarchy sized by *strategy count* and coloured by mean metric on a ramp
 whose range comes from the data; the **Scatter** is the regime view and the
 factor view merged, Y the metric and X / Z the term- and equity-risk-premium
-betas over one sample — the Window's days inside the regime bucket; the
+betas over one sample — the Window's days, inside the regime bucket **when a
+regime is switched on**. The regime is opt-in (v0.9.33): a *Condition on
+regime* checkbox heads the section and the default is off, because every
+bucket is a subset of the window — an always-on regime opened the Scatter on
+`VIX < 15`, most of the window's days dropped, with nothing on screen saying
+the sample had been narrowed and no way to ask for the plain factor view. The
+switch is gated in `regime_indicator()`, which returns None while the box is
+clear: that is already what an absent indicator returns, so the unconditioned
+view is a path both states share rather than a second branch at the render.
+Type, Source and Bucket hide while it is off — the bar's hide-don't-rebuild
+rule — so ticking it back on finds the last choice still chosen. The
 **Strip** is six weekday columns of 1D returns — **T-1 back to T-6**, never
 today, whose return is against a price still moving — the only view that can
 draw *this week*, **ruled between the days** (v0.9.32): a solid bold line on
@@ -394,7 +404,7 @@ precisions.
 
 ## Current version
 
-`v0.9.32` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.33` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
