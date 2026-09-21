@@ -150,10 +150,14 @@ TABLE_BAR_TITLE = "Table view"
 #: are run over — so that is what the heading says.
 SELECTION_TITLE = "Selected Strategies"
 
-#: How much of the filter row the dimension chips take, the values scrolling in
-#: the rest. Fixed rather than shared: the chip set never changes, so it should
-#: not move when a dimension with many values is selected.
-FILTER_CHIPS_WIDTH = "280px"
+#: The filter row's split: the dimension chips left, that dimension's values
+#: right. **Shares, not a pixel column** (v0.9.31) — the 280px basis this
+#: replaces gave the chips a third of a narrow screen and a tenth of a wide
+#: one, and the values are what need the room: a dimension can carry forty of
+#: them where the chip set is always the same seven. The `COMMENTARY_*_SHARE`
+#: pattern, applied as `flex: 1 1 <share>` with `min-width: 0` on both.
+FILTER_CHIPS_SHARE = "20%"
+FILTER_VALUES_SHARE = "80%"
 
 
 class DashboardApp:
@@ -331,20 +335,27 @@ class DashboardApp:
         # that wants them. Side by side, the sentence is one line: *this
         # dimension, these values*.
         #
-        # The chips wrap into a fixed-width block on the left (a 2xN / 3xN
-        # grid, however many fit) and the values scroll in the remainder, so a
-        # dimension with forty values cannot push the chips off screen or grow
-        # the row.
+        # The chips wrap into the left share (a 2xN / 3xN grid, however many
+        # fit) and the values scroll in the right one, so a dimension with
+        # forty values cannot push the chips off screen or grow the row.
         self.filter_dim_chips.layout.width = "auto"
         filter_row = W.HBox(
             [
                 W.Box(
                     [self.filter_dim_chips],
-                    layout=W.Layout(flex=f"0 0 {FILTER_CHIPS_WIDTH}", min_width="0"),
+                    layout=W.Layout(
+                        flex=f"1 1 {FILTER_CHIPS_SHARE}",
+                        min_width="0",
+                        overflow="auto",
+                    ),
                 ),
                 W.Box(
                     [self.filter_strip.root],
-                    layout=W.Layout(flex="1 1 0%", min_width="0", overflow="auto"),
+                    layout=W.Layout(
+                        flex=f"1 1 {FILTER_VALUES_SHARE}",
+                        min_width="0",
+                        overflow="auto",
+                    ),
                 ),
             ],
             layout=W.Layout(width="100%", align_items="stretch"),

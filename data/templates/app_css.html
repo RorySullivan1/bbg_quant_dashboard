@@ -766,9 +766,16 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
   padding: 1px 4px 1px 6px;
 }
 /* The member that binds the analysis start. An accent edge rather than a
-   glyph, so marking it costs no width. */
+   glyph, so marking it costs no width — and on the three sides the
+   asset-class block does *not* occupy, so the two cannot be confused. */
 .bbg-basket-card.bbg-basket-binding {
-  border-color: {{accent2}};
+  border-top-color: {{accent2}};
+  border-right-color: {{accent2}};
+  border-bottom-color: {{accent2}};
+}
+/* A little more room beside the colour block, which is wider since v0.9.31. */
+.bbg-basket-card .bbg-basket-ticker {
+  margin-left: 4px !important;
 }
 .bbg-basket-card:hover {
   border-color: {{accent}};

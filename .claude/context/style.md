@@ -317,8 +317,19 @@ sorted order, **cycling** rather than collapsing to the grey fallback once the
 palette runs out: a family larger than the palette should still draw
 distinguishable neighbours, and the legend and hover name every point whatever
 the hue. The rule for *which* level the colours key to lives once, in
-`stats.drill.color_key`: the hierarchy's first level at the root, the points'
-own level below it.
+`stats.drill.color_key`: the points' own level, whatever the depth.
+
+**So does the mapping from a point to its key value** —
+`platform_charts.color_values`, read by both the charts and
+`platform._colors_for` (v0.9.31). There were two: the charts keyed off the
+level's *name*, the palette builder off the path's *depth*. They agreed only
+while the card was based at the root. v0.9.27 based it at a solution, so every
+point sat at depth 1 — the palette was built for the *parent* (`ARP`) while
+the charts looked up the *label* (`Equity`), every lookup missed, and the
+Scatter and the Strip each drew one grey trace. `CURATED_COLOR_LEVEL` names
+the level `ASSET_CLASS_COLORS` is keyed by rather than assuming it is
+`analytics_levels()[0]`, which stopped being asset class in v0.9.25 — so the
+identity colours had quietly stopped applying anywhere.
 
 **One height, and a 60:40 width.** `ANALYTICS_HEIGHT` sets the chart's box,
 the table's, and — **since v0.9.27, in fact rather than only in this
@@ -350,6 +361,13 @@ the screen, so it read as a squeezed strip on anything wide. Both boxes carry
 `min-width: 0` — the #280 pair — so a long strategy name wraps inside its
 column instead of widening it.
 
+**The filter row is 20:80** (v0.9.31): the dimension chips left, that
+dimension's values right, as `flex: 1 1 <share>` with `min-width: 0` — the
+`COMMENTARY_*_SHARE` pattern. The 280px column this replaced gave the chips a
+third of a narrow screen and a tenth of a wide one, and the values are what
+need the room: the chip set is always the same seven, while a dimension can
+carry forty values.
+
 **The drill has its own strip** (`.bbg-drill-bar`, v0.9.25), below the *Chart
 view* bar and subordinate to it: no border box of its own, a rule above
 instead, tighter vertical rhythm, and the accent left to the bar's title. The
@@ -379,12 +397,29 @@ own. A leaf says nothing at all: "mean of 1" is true and useless.
 
 ## The Basket strip and the filter strip (v0.9.29, epic #341)
 
+**One hover treatment, in the theme** (v0.9.31). `align="left"` (a multi-line
+tooltip's lines on a common left edge, not each one centred) and
+`namelength=-1` (no 15-character truncation of a trace name, which cuts most
+strategy names mid-word) live in `_chart_layout`'s base `hoverlabel`, so every
+chart in the app wears them — the Multi-Strategy and Single Strategy panes
+included. They were the Platform Scatter's alone, passed as its own
+`hoverlabel=`; because `_chart_layout` does `base.update(overrides)`, a key is
+**replaced rather than merged**, so that override was silently dropping the
+four theme tokens beside it. The one chart with the best hover geometry was
+also the only one not wearing the dark chrome. **Anything a chart adds to a
+hover label must go in the theme's dict, not in an override**, or it trades
+the tokens for the addition.
+
 **A card is `[TICKER] ×`, and nothing else** (v0.9.30). The first cut carried
 a colour tag, the ticker, the strategy's *name* and the ×; real names are long
 enough that the name pushed the × off the end of the card and it stopped
-rendering. The asset-class colour survives as the card's **left border** and
-the binding marker as an accent border — both borders rather than children, so
-neither costs width or can displace the ×. The name is the ticker's tooltip.
+rendering. The asset-class colour is a **`BASKET_TAG_WIDTH` block down the card's leading
+edge** — 10px since v0.9.31, where 3px read as trim rather than as the card's
+colour, and telling one card from another at a glance across a wrapping strip
+is the block's whole job. The binding marker is an accent edge on the other
+three sides, so the two cannot be confused. Both are borders rather than
+children, so neither costs width or can displace the ×. The name is the
+ticker's tooltip.
 
 **A card exists whether or not the table has a row for it.** That is the whole
 reason the basket is drawn as cards rather than read off the ticks: a pick the

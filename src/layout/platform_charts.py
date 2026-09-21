@@ -54,8 +54,6 @@ _RAMP = [
 #: a blank dashboard rather than a bad-looking chart (v0.9.26). Checking
 #: `_valid_props` here proves nothing about there — `run_instructions.md` has
 #: the one-liner that checks against 5.23.0 properly.
-_HOVER_LABEL = dict(align="left", namelength=-1)
-
 #: Where the colour range is clipped, as a percentile of |value| over the
 #: leaves. A single outlier otherwise flattens every other cell to the middle
 #: of the ramp; the fixed ±2 this replaces was a z-score's range, which a raw
@@ -396,7 +394,6 @@ class RegimeFactorScatter(Chart):
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                 # No anchor property exists to put the label on one side of
                 # the marker, so the template above keeps it small instead.
-                hoverlabel=_HOVER_LABEL,
                 scene=dict(
                     aspectmode="cube",
                     xaxis=_scene_axis("Term-premium β"),
@@ -441,7 +438,7 @@ class RegimeFactorScatter(Chart):
 
         fmt = value_format(metric)
         traces = []
-        for key, group in points.groupby(_color_values(points, color_key)):
+        for key, group in points.groupby(color_values(points, color_key)):
             counts = group["count"].to_numpy()
             traces.append(
                 go.Scatter3d(
@@ -533,8 +530,16 @@ def _scene_axis(title: str) -> dict:
     )
 
 
-def _color_values(points: pd.DataFrame, color_key: str) -> pd.Series:
+def color_values(points: pd.DataFrame, color_key: str) -> pd.Series:
     """The value each point is coloured by, per `stats.drill.color_key`.
+
+    **One implementation, read by both the charts and the palette builder.**
+    `platform._colors_for` had a second copy that keyed off the path's *depth*
+    rather than the level's name. They agreed while the card was based at the
+    root; v0.9.27 based it at a solution, so every point sat at depth 1 and the
+    copy started returning the *parent* (`ARP`) while the charts asked for the
+    *label* (`Equity`). Every lookup missed and every point drew in the grey
+    fallback — one trace, one colour, on both the Scatter and the Strip.
 
     At the root the key is the hierarchy's first level, which for the points
     drawn there is their **parent** — the path's first segment. Below the
@@ -597,7 +602,6 @@ class StripChart(Chart):
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                 hovermode="closest",
-                hoverlabel=_HOVER_LABEL,
                 # A numeric axis wearing the dates as tick labels, NOT a
                 # categorical one: Plotly puts every marker of a category on
                 # one line, so a group of ten strategies would draw as a
@@ -637,7 +641,7 @@ class StripChart(Chart):
             self.clear()
             return
         labels = [_date_label(d) for d in dates]
-        keys = _color_values(points, color_key)
+        keys = color_values(points, color_key)
         # Jitter is assigned over ALL the points, not per trace, so two groups
         # drawn in different traces cannot land on the same spot.
         # Keyed by PATH, not by label: two nodes can share a label — the

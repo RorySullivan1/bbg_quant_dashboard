@@ -289,6 +289,13 @@ catalog is the real test of how the charts read.
 
 **The Scatter**
 
+- **Every point is coloured, and the colours differ** — no all-grey cloud, and
+  no single legend entry. Drill a level and check again: colour keys to the
+  points' own level at every depth. At the asset-class level the hues are the
+  curated identity ones (Equity's blue, and so on), not palette order.
+- **Hover reads left-aligned and is not truncated**, on this and on every
+  other chart in the app including the Multi-Strategy panes — one treatment,
+  in the theme.
 - One marker per **asset class** of the pinned solution at the root, coloured
   by asset class with a legend (v0.9.27 — the drill is based at the Solution
   chips' choice). Y is the metric, X the term-premium β, Z the
@@ -386,6 +393,9 @@ real test of it.
   **the ticked rows that survive are still ticked**. This is the one to watch —
   it is re-derived from tickers, so a rebuild that loses ticks means the push
   is racing the widget's own re-send.
+- The **filter row is one line at 20:80** — dimension chips left, that
+  dimension's values right, the values scrolling when there are many. Narrow
+  the window: the split holds and neither side pushes the other off.
 - **Four** quant columns for the visible window — Sortino · Calmar · Beta ·
   Treynor — each with a comparison box in the filter row. Type `>1` under
   **1Y Sortino**: it filters in the units shown.
@@ -412,7 +422,9 @@ real test of it.
 
 - One card per member, in the order they were added: **`[TICKER] ×`** and
   nothing else. The asset-class colour is the card's left border and the
-  binding member's is the accent; the strategy's name is the ticker's tooltip.
+  binding member's is the accent on the other three sides; the strategy's name
+  is the ticker's tooltip. **The colour block should be obvious at a glance
+  across the strip** — if it reads as trim, `BASKET_TAG_WIDTH` is the lever.
   **The × renders on every card** — it was the name spilling that pushed it off
   the end before v0.9.30.
 - **×** removes the card and unticks the row if it is shown. Clicking the

@@ -56,11 +56,24 @@ def _chart_layout(*, title: str, **overrides) -> dict:
         ),
         showlegend=False,
         font=dict(family=Font.SANS.value, color=Color.CHART_TEXT.value, size=12),
+        # **One hover treatment for every chart in the app** (v0.9.31). `align`
+        # and `namelength` were the Platform Scatter's alone, passed as its own
+        # `hoverlabel=` — and because `base.update(overrides)` replaces a key
+        # rather than merging into it, that override was silently dropping the
+        # four theme tokens beside them, so the one chart with the best hover
+        # geometry was also the only one not wearing the dark chrome.
+        #
+        # `align="left"` keeps a multi-line tooltip's lines on a common left
+        # edge instead of centring each one; `namelength=-1` stops plotly
+        # truncating a trace name to 15 characters with an ellipsis, which on
+        # this catalog cuts most strategy names mid-word.
         hoverlabel=dict(
             font_family=Font.SANS.value,
             bgcolor=Color.CHART_HOVER_BG.value,
             font_color=Color.CHART_TEXT.value,
             bordercolor=Color.CHART_AXIS.value,
+            align="left",
+            namelength=-1,
         ),
     )
     base.update(overrides)
