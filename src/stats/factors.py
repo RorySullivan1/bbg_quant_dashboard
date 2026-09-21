@@ -2,8 +2,8 @@
 
 Macro-factor return proxies built from the already-fetched price cache
 (equity risk premium, term premium), a thin factor-beta wrapper over
-``risk.ann_beta``, and the per-ticker frame backing the Platform asset-class
-sunburst. Everything here is a pure function over prices — no BQL, no fetch.
+``risk.ann_beta``, and the per-ticker frame backing the Platform Icicle.
+Everything here is a pure function over prices — no BQL, no fetch.
 """
 
 from __future__ import annotations
@@ -13,24 +13,23 @@ import pandas as pd
 from ..config import (
     EQUITY_FACTOR_TICKER,
     LONG_TREASURY_TICKER,
-    SHARPE_ZSCORE_WINDOW,
+    SHARPE_WINDOW,
     SHORT_RATE_TICKER,
     TREND_TICKER,
-    WEEK_WINDOW,
-    sunburst_levels,
+    analytics_levels,
 )
 from ._common import daily_returns
 from .risk import ann_beta
-from .rolling import rolling_metric_zscore
+from .rolling import latest_rolling_metric
 
 
-def _sunburst_columns() -> list[str]:
-    """The sunburst frame's columns: each configured level, then ``z``.
+def _icicle_columns() -> list[str]:
+    """The icicle frame's columns: each configured level, then ``value``.
 
     A function rather than a module constant so a reconfigured hierarchy is
     picked up without re-importing.
     """
-    return [*sunburst_levels(), "z"]
+    return [*analytics_levels(), "value"]
 
 
 def _factor_spread(prices: pd.DataFrame, long_leg: str, short_leg: str) -> pd.Series:
@@ -94,33 +93,33 @@ def factor_beta(
     return ann_beta(returns, factor_returns, years)
 
 
-def platform_sunburst_frame(
+def icicle_frame(
     prices: pd.DataFrame,
     meta: pd.DataFrame,
     *,
     metric: str = "sharpe",
-    window: int = WEEK_WINDOW,
-    lookback: int = SHARPE_ZSCORE_WINDOW,
+    window: int = SHARPE_WINDOW,
+    returns: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Per-ticker grouping levels + ``z`` for the Platform sunburst.
+    """Per-ticker grouping levels + ``value`` for the Platform Icicle.
 
-    One column per `config.SUNBURST_LEVELS` entry (outermost grouping first)
-    plus ``z`` = z(``metric`` over ``window``, ``lookback``) — the **raw** signed
-    z-score (can be negative; default z(1W Sharpe, 1Y)). The renderer derives the
-    gross-|z| arc sizes and the level-averaged colors; this frame just supplies
-    the metric and the grouping levels. A level the metadata does not carry
-    comes back all-NA, which the renderer buckets as "Other", so a partial feed
-    still draws. The ``window`` / ``lookback`` args are trading-day counts.
+    One column per `config.ANALYTICS_LEVELS` entry (outermost grouping first)
+    plus ``value`` = `latest_rolling_metric` — the **raw** metric over the
+    window, not a z-score, so the cell's colour is the number the table beside
+    it shows (#331 decision 2). A level the metadata does not carry comes back
+    all-NA, which the renderer buckets as "Other", so a partial feed still
+    draws. ``window`` is a trading-day count.
+
+    Pass ``returns`` (e.g. a shared ``universe_rets``) to skip re-deriving
+    `daily_returns` here; the result is identical either way.
     """
-    columns = _sunburst_columns()
-    if prices.empty:
+    columns = _icicle_columns()
+    if prices.empty and returns is None:
         return pd.DataFrame(columns=columns)
-    z = rolling_metric_zscore(
-        prices, metric=metric, window=window, zscore_window=lookback
-    )
-    frame = pd.DataFrame({"z": z})
+    value = latest_rolling_metric(prices, metric=metric, window=window, returns=returns)
+    frame = pd.DataFrame({"value": value})
     has_ticker = "ticker" in meta.columns
-    for level in sunburst_levels():
+    for level in analytics_levels():
         if has_ticker and level in meta.columns:
             mapping = meta.set_index("ticker")[level]
             frame[level] = frame.index.map(mapping)

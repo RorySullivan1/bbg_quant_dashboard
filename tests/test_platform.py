@@ -216,9 +216,7 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
-_SUNBURST_KW = dict(
-    metric="sharpe", window=WEEK_WINDOW, lookback=252, label="1W Sharpe"
-)
+_SUNBURST_KW = dict(metric="sharpe", window=WEEK_WINDOW, label="1W Sharpe")
 
 
 def test_sunburst_leaf_sizes_magnitude_drives_arc():
@@ -239,7 +237,7 @@ def test_sunburst_leaf_sizes_all_zero_uniform():
     assert (sizes == 1.0).all()
 
 
-def test_update_sunburst_builds_the_default_two_level_hierarchy():
+def test_update_sunburst_builds_the_configured_hierarchy():
     fig = _sunburst()
     universe = _universe()
     arp = universe[["AAA Index", "BBB Index"]]
@@ -252,15 +250,18 @@ def test_update_sunburst_builds_the_default_two_level_hierarchy():
     assert isinstance(sb, go.Sunburst)
     assert sb.branchvalues == "total"
     # maxdepth == the number of configured levels, so the ticker ring stays
-    # hidden until the user drills into a grouping node.
-    assert sb.maxdepth == 2
+    # hidden until the user drills into a grouping node. Three since #332,
+    # which took `ANALYTICS_LEVELS` down to the family tier.
+    assert sb.maxdepth == 3
     nodes = dict(zip(sb.ids, sb.parents, strict=True))
-    # asset-class node is a root; category nodes hang off it; leaves off the categories.
+    # asset class is a root; category hangs off it, family off the category,
+    # and the ticker leaves off the families.
     assert nodes["Equity"] == ""
     assert nodes["Equity / Growth"] == "Equity"
     assert nodes["Equity / Value"] == "Equity"
-    assert nodes["AAA Index"] == "Equity / Growth"
-    assert nodes["BBB Index"] == "Equity / Value"
+    assert nodes["Equity / Growth / Momentum"] == "Equity / Growth"
+    assert nodes["AAA Index"] == "Equity / Growth / Momentum"
+    assert nodes["BBB Index"] == "Equity / Value / Carry"
     # Arcs are non-negative; one color per node.
     assert all(v >= 0 for v in sb.values)
     assert len(sb.marker.colors) == len(sb.ids)
@@ -268,17 +269,19 @@ def test_update_sunburst_builds_the_default_two_level_hierarchy():
     val = dict(zip(sb.ids, sb.values, strict=True))
     assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
     # Colorbar title reflects the selected metric label.
-    assert sb.marker.colorbar.title.text == "z(1W Sharpe)"
+    # The colorbar names the metric plainly: the cells carry the RAW metric
+    # since #332, not a z-score of it (#331 decision 2).
+    assert sb.marker.colorbar.title.text == "1W Sharpe"
 
 
 def test_update_sunburst_follows_a_three_level_config(monkeypatch):
-    # #213's acceptance: switching `SUNBURST_LEVELS` to the framework tiers
+    # #213's acceptance: switching `ANALYTICS_LEVELS` to the framework tiers
     # renders correctly with no code edit — three rings above the leaves, ids
     # spelling the path, and parent value == Σ children at *every* level (what
     # `branchvalues="total"` requires).
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("solution", "category", "family"))
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("solution", "category", "family"))
     fig = _sunburst()
     arp = _universe()[["AAA Index", "BBB Index"]]
     _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
@@ -305,7 +308,7 @@ def test_update_sunburst_buckets_a_missing_level_as_other(monkeypatch):
     # A level absent from the metadata must not break the render.
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "return_type"))
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("asset_class", "return_type"))
     fig = _sunburst()
     arp = _universe()[["AAA Index", "BBB Index"]]
     _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
@@ -320,7 +323,7 @@ def test_update_sunburst_label_drives_colorbar_title():
     arp = _universe()[["AAA Index", "BBB Index"]]
     kw = {**_SUNBURST_KW, "metric": "sortino", "label": "3M Sortino"}
     _update_sunburst(fig, arp, _treemap_meta(), **kw)
-    assert fig.data[0].marker.colorbar.title.text == "z(3M Sortino)"
+    assert fig.data[0].marker.colorbar.title.text == "3M Sortino"
 
 
 def test_update_sunburst_empty_clears_traces():

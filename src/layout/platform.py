@@ -37,14 +37,14 @@ from ..config import (
     WEEK_WINDOW,
     LevelRegime,
     TercileRegime,
+    analytics_levels,
     stat_window_years,
-    sunburst_levels,
 )
 from ..stats import (
     daily_returns,
     equity_risk_premium,
     factor_beta,
-    platform_sunburst_frame,
+    icicle_frame,
     regime_mask,
     regime_risk_return,
     rolling_autocorr,
@@ -282,7 +282,7 @@ def _update_factor_scatter(
 
 
 def _sunburst() -> go.FigureWidget:
-    """The `config.SUNBURST_LEVELS` hierarchy down to ticker leaves (inside
+    """The `config.ANALYTICS_LEVELS` hierarchy down to ticker leaves (inside
     out), arcs sized by each ring's gross-|z| share and colored by the
     (level-averaged) metric z-score.
     Built empty; `_update_sunburst` fills it. No in-figure title — the
@@ -303,11 +303,10 @@ def _update_sunburst(
     *,
     metric: str,
     window: int,
-    lookback: int,
     label: str,
 ) -> None:
-    """Populate the sunburst from `platform_sunburst_frame`: one ring per
-    `config.SUNBURST_LEVELS` entry over the ticker leaves, so reconfiguring the
+    """Populate the sunburst from `icicle_frame`: one ring per
+    `config.ANALYTICS_LEVELS` entry over the ticker leaves, so reconfiguring the
     hierarchy — two levels today, the three framework tiers if that is what the
     catalog should show — needs no edit here. Each arc is sized by |z| (so with
     `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
@@ -316,21 +315,21 @@ def _update_sunburst(
     ticker ring appears when the user clicks into one (client-side drill-down).
     `label` (e.g. "1W Sharpe") titles the colorbar + hover. No BQL — pure compute
     over the already-fetched cache."""
-    frame = platform_sunburst_frame(
-        prices, meta, metric=metric, window=window, lookback=lookback
-    ).dropna(subset=["z"])
+    frame = icicle_frame(prices, meta, metric=metric, window=window).dropna(
+        subset=["value"]
+    )
     if frame.empty:
         with fig.batch_update():
             fig.data = ()
         return
 
-    levels = list(sunburst_levels())
+    levels = list(analytics_levels())
     frame = frame.copy()
     for level in levels:
         frame[level] = frame[level].fillna("Other").astype(str)
     # Arc value = |z| (gross magnitude) + floor; parents sum to the gross-|z|
     # share at each ring. Color is the signed z (below), averaged up each level.
-    frame["size"] = _sunburst_leaf_sizes(frame["z"])
+    frame["size"] = _sunburst_leaf_sizes(frame["value"])
 
     ids: list[str] = []
     labels: list[str] = []
@@ -352,7 +351,7 @@ def _update_sunburst(
                 labels.append(_short_ticker(ticker))
                 parents.append(parent_id)
                 values.append(float(row["size"]))
-                colors.append(float(row["z"]))
+                colors.append(float(row["value"]))
             return float(group["size"].sum())
 
         total = 0.0
@@ -365,7 +364,7 @@ def _update_sunburst(
             labels.append(str(value))
             parents.append(parent_id)
             values.append(subtotal)
-            colors.append(float(sub["z"].mean()))
+            colors.append(float(sub["value"].mean()))
             total += subtotal
         return total
 
@@ -390,7 +389,7 @@ def _update_sunburst(
             cmax=2,
             line=dict(width=1, color=Color.CHART_BG.value),
             showscale=True,
-            colorbar=dict(title=dict(text=f"z({label})")),
+            colorbar=dict(title=dict(text=label)),
         ),
         hovertemplate=_SUNBURST_HOVER.format(metric_label=label),
     )
@@ -775,7 +774,7 @@ class PlatformAnalytics:
             )
 
     def render_sunburst(self, meta: pd.DataFrame) -> None:
-        """Render the `SUNBURST_LEVELS` -> ticker sunburst from the Metric/Window
+        """Render the `ANALYTICS_LEVELS` -> ticker sunburst from the Metric/Window
         Z-score controls + the shared lookback, live from the ARP-only cache."""
         state = self.state
         if state.arp_universe_prices.empty:
@@ -787,7 +786,6 @@ class PlatformAnalytics:
                 meta,
                 metric=self.sb_metric_dd.value,
                 window=self.sb_window_dd.value,
-                lookback=self.lookback_selector.value,
                 label=f"{self.sb_window_dd.label} {self.sb_metric_dd.label}",
             )
 

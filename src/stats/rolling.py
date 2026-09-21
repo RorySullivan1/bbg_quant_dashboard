@@ -138,6 +138,44 @@ _ROLLING_METRICS = {
 }
 
 
+def latest_rolling_metric(
+    prices: pd.DataFrame,
+    *,
+    metric: str = "sharpe",
+    window: int = SHARPE_WINDOW,
+    returns: pd.DataFrame | None = None,
+) -> pd.Series:
+    """Per-ticker value of ``metric`` over the trailing ``window`` trading days.
+
+    The last point of the same rolling series `rolling_metric_zscore`
+    standardizes — that function's numerator before it is demeaned and scaled.
+    The Platform charts draw this rather than the z-score because a marker's
+    position, an icicle cell's colour and the table cell beside them are one
+    number, and a z of a Sharpe is not a Sharpe (#331 decision 2).
+
+    Same ``metric`` keys and the same `ValueError` on an unknown one, and the
+    same ``returns`` short-cut: the tail of the rolling series depends only on
+    the tail of the returns, so the input is sliced before the rolling compute
+    exactly as it is there. A ticker with fewer than ``window`` observations in
+    that tail is NaN — the rolling series has not filled yet — rather than
+    scored on a partial window.
+    """
+    try:
+        metric_fn = _ROLLING_METRICS[metric]
+    except KeyError:
+        raise ValueError(
+            f"unknown metric {metric!r}; choose from {sorted(_ROLLING_METRICS)}"
+        ) from None
+    if returns is None:
+        rets = daily_returns(prices.tail(window + 2))  # +1 for the pct_change drop
+    else:
+        rets = returns.tail(window + 1)
+    series = metric_fn(rets, window)
+    if series.empty:
+        return pd.Series(np.nan, index=rets.columns, name=metric)
+    return series.iloc[-1].rename(metric)
+
+
 def rolling_metric_zscore(
     prices: pd.DataFrame,
     *,

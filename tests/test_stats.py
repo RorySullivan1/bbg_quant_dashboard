@@ -15,8 +15,9 @@ import pytest
 from src import stats
 from src.config import (
     MONTH_WINDOW,
+    SHARPE_WINDOW,
+    STRIP_DAYS,
     TRADING_DAYS_PER_YEAR,
-    WEEK_WINDOW,
 )
 
 # --- basics ----------------------------------------------------------------
@@ -611,71 +612,64 @@ def test_factor_beta_matches_ann_beta(bdays):
     )
 
 
-def test_platform_sunburst_frame_columns_and_join(multiyear_prices):
+def test_icicle_frame_columns_and_join(multiyear_prices):
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
             "category": ["Growth", "Credit", "Energy"],
+            "family": ["X", "Y", "Z"],
         }
     )
-    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["asset_class", "category", "z"]
+    frame = stats.icicle_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["asset_class", "category", "family", "value"]
     assert len(frame) == 3
     assert frame.loc["BBB Index", "asset_class"] == "Fixed Income"
-    assert frame.loc["BBB Index", "category"] == "Credit"
-    assert frame["z"].notna().any()
-    # Default: z(1W Sharpe, 1Y).
-    expected = stats.rolling_metric_zscore(
-        multiyear_prices, metric="sharpe", window=WEEK_WINDOW, zscore_window=252
+    assert frame.loc["BBB Index", "family"] == "Y"
+    assert frame["value"].notna().any()
+    # The RAW metric over the window, not a z-score (#331 decision 2): the
+    # cell's colour is the number the table beside it shows.
+    expected = stats.latest_rolling_metric(
+        multiyear_prices, metric="sharpe", window=SHARPE_WINDOW
     )
     pd.testing.assert_series_equal(
-        frame["z"], expected.reindex(frame.index), check_names=False
+        frame["value"], expected.reindex(frame.index), check_names=False
     )
 
 
-def test_platform_sunburst_frame_honors_metric_params(multiyear_prices):
-    """z honors the selected metric/window/lookback."""
+def test_icicle_frame_honors_metric_params(multiyear_prices):
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
             "category": ["Growth", "Credit", "Energy"],
+            "family": ["X", "Y", "Z"],
         }
     )
-    frame = stats.platform_sunburst_frame(
-        multiyear_prices,
-        meta,
-        metric="sortino",
-        window=MONTH_WINDOW,
-        lookback=TRADING_DAYS_PER_YEAR * 3,
+    frame = stats.icicle_frame(
+        multiyear_prices, meta, metric="sortino", window=MONTH_WINDOW
     )
-    expected = stats.rolling_metric_zscore(
-        multiyear_prices,
-        metric="sortino",
-        window=MONTH_WINDOW,
-        zscore_window=TRADING_DAYS_PER_YEAR * 3,
+    expected = stats.latest_rolling_metric(
+        multiyear_prices, metric="sortino", window=MONTH_WINDOW
     )
     pd.testing.assert_series_equal(
-        frame["z"], expected.reindex(frame.index), check_names=False
+        frame["value"], expected.reindex(frame.index), check_names=False
     )
 
 
-def test_platform_sunburst_frame_empty_safe():
+def test_icicle_frame_empty_safe():
     meta = pd.DataFrame({"ticker": [], "asset_class": [], "category": []})
-    out = stats.platform_sunburst_frame(pd.DataFrame(), meta)
-    assert list(out.columns) == ["asset_class", "category", "z"]
+    out = stats.icicle_frame(pd.DataFrame(), meta)
+    assert list(out.columns) == ["asset_class", "category", "family", "value"]
     assert out.empty
 
 
-def test_platform_sunburst_frame_follows_configured_levels(
-    multiyear_prices, monkeypatch
-):
-    # #213: the frame's grouping columns are whatever `SUNBURST_LEVELS` says,
-    # in that order — three framework tiers here instead of the default two.
+def test_icicle_frame_follows_configured_levels(multiyear_prices, monkeypatch):
+    # #213/#332: the frame's grouping columns are whatever `ANALYTICS_LEVELS`
+    # says, in that order — the framework tiers here instead of the default.
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("solution", "category", "family"))
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("solution", "category", "family"))
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
@@ -684,36 +678,239 @@ def test_platform_sunburst_frame_follows_configured_levels(
             "family": ["X", "Y", "Z"],
         }
     )
-    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["solution", "category", "family", "z"]
+    frame = stats.icicle_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["solution", "category", "family", "value"]
     assert frame.loc["CCC Index", "solution"] == "Smart Beta"
     assert frame.loc["CCC Index", "family"] == "Z"
 
 
-def test_platform_sunburst_frame_missing_level_is_all_na(multiyear_prices, monkeypatch):
+def test_icicle_frame_missing_level_is_all_na(multiyear_prices, monkeypatch):
     # A level the metadata doesn't carry comes back NA rather than raising; the
     # renderer buckets it as "Other", so a partial feed still draws.
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "solution"))
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("asset_class", "solution"))
     meta = pd.DataFrame(
         {
             "ticker": ["AAA Index", "BBB Index", "CCC Index"],
             "asset_class": ["Equity", "Fixed Income", "Commodity"],
         }
     )
-    frame = stats.platform_sunburst_frame(multiyear_prices, meta)
-    assert list(frame.columns) == ["asset_class", "solution", "z"]
+    frame = stats.icicle_frame(multiyear_prices, meta)
+    assert list(frame.columns) == ["asset_class", "solution", "value"]
     assert frame["solution"].isna().all()
 
 
-def test_sunburst_levels_rejects_a_level_that_is_not_a_schema_field(monkeypatch):
-    # Without this the typo would render as one undifferentiated "Other" ring.
+def test_analytics_levels_rejects_a_level_that_is_not_a_schema_field(monkeypatch):
+    # Without this the typo would render as one undifferentiated "Other" band.
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "theme"))
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("asset_class", "theme"))
     with pytest.raises(KeyError, match="theme"):
-        cfg.sunburst_levels()
+        cfg.analytics_levels()
+
+
+def test_drill_levels_must_be_a_suffix_of_the_hierarchy(monkeypatch):
+    """The stops address positions in the scope path, so they cannot float.
+
+    A stop that is not in the hierarchy — or one above the root's colour key —
+    would draw points the scope has no prefix for, which is a wrong picture
+    rather than a crash, so the relationship is asserted rather than assumed.
+    """
+    import src.config as cfg
+
+    assert cfg.drill_levels() == ("category", "family", "ticker")
+    monkeypatch.setattr(cfg, "DRILL_LEVELS", ("asset_class", "category"))
+    with pytest.raises(ValueError, match="suffix"):
+        cfg.drill_levels()
+
+
+def test_the_drill_leaf_is_labelled_without_a_schema_field():
+    # `ticker` is derived from the catalog's keys, not one of its columns, so
+    # `field_label` cannot name it; the leaf carries its own label in config.
+    import src.config as cfg
+
+    assert [cfg.drill_level_label(k) for k in cfg.drill_levels()] == [
+        "Category",
+        "Family",
+        "Strategy",
+    ]
+
+
+def test_latest_rolling_metric_is_the_zscore_s_numerator(multiyear_prices):
+    """The un-standardized quantity `rolling_metric_zscore` standardizes.
+
+    Pinned as a relationship rather than a number: the two must not drift
+    apart, because the charts draw this one and the catalog column draws the
+    z of it, and a reader comparing them has to be able to trust that they
+    are the same series.
+    """
+    window = MONTH_WINDOW
+    rets = stats.daily_returns(multiyear_prices)
+    series = stats.rolling_sharpe(rets, window)
+    latest = stats.latest_rolling_metric(
+        multiyear_prices, metric="sharpe", window=window
+    )
+    pd.testing.assert_series_equal(
+        latest, series.iloc[-1].rename("sharpe"), check_names=False
+    )
+
+
+def test_latest_rolling_metric_shares_the_zscore_s_vocabulary(multiyear_prices):
+    for metric in ("sharpe", "sortino", "return", "vol", "calmar"):
+        out = stats.latest_rolling_metric(multiyear_prices, metric=metric)
+        assert len(out) == multiyear_prices.shape[1]
+    with pytest.raises(ValueError, match="unknown metric"):
+        stats.latest_rolling_metric(multiyear_prices, metric="nope")
+
+
+def test_latest_rolling_metric_takes_returns_without_changing_the_answer(
+    multiyear_prices,
+):
+    # The tail of a rolling series depends only on the tail of the returns, so
+    # the shared `universe_rets` short-cut must be exact, not approximate.
+    rets = stats.daily_returns(multiyear_prices)
+    pd.testing.assert_series_equal(
+        stats.latest_rolling_metric(multiyear_prices, window=SHARPE_WINDOW),
+        stats.latest_rolling_metric(pd.DataFrame(), window=SHARPE_WINDOW, returns=rets),
+    )
+
+
+def test_latest_rolling_metric_is_nan_below_its_window(multiyear_prices):
+    # Scored on a partial window a young index looks like a seasoned one.
+    short = multiyear_prices.tail(10)
+    out = stats.latest_rolling_metric(short, metric="sharpe", window=SHARPE_WINDOW)
+    assert out.isna().all()
+
+
+# --- regime-masked betas and metrics (#332) --------------------------------
+
+
+def _mask_of(index, keep):
+    return pd.Series([i in keep for i in index], index=index)
+
+
+def test_masked_beta_matches_a_hand_computed_beta_on_three_rows():
+    idx = pd.bdate_range("2024-01-01", periods=6)
+    rets = pd.DataFrame({"AAA": [0.01, -0.02, 0.03, 0.00, 0.05, -0.01]}, index=idx)
+    factor = pd.Series([0.02, -0.01, 0.04, 0.10, 0.20, 0.30], index=idx)
+    keep = idx[:3]
+    mask = _mask_of(idx, set(keep))
+
+    out = stats.masked_beta(rets, factor, mask)
+    # cov/var over exactly the masked rows — the unmasked tail must not leak in.
+    expected = rets.loc[keep, "AAA"].cov(factor.loc[keep]) / factor.loc[keep].var()
+    assert out["AAA"] == pytest.approx(expected)
+
+
+def test_masked_beta_is_ann_beta_over_the_same_rows():
+    """The regime twin must agree with the window version on the same sample."""
+    idx = pd.bdate_range("2024-01-01", periods=40)
+    rng = np.random.default_rng(0)
+    rets = pd.DataFrame(rng.normal(0, 0.01, (40, 3)), index=idx, columns=list("ABC"))
+    factor = pd.Series(rng.normal(0, 0.01, 40), index=idx)
+    everything = pd.Series(True, index=idx)
+    pd.testing.assert_series_equal(
+        stats.masked_beta(rets, factor, everything),
+        stats.ann_beta(rets, factor, years=10),
+    )
+
+
+def test_regime_metric_annualizes_from_the_mean_not_a_cagr():
+    """Regime days are non-contiguous; a CAGR would claim compounding."""
+    idx = pd.bdate_range("2024-01-01", periods=6)
+    rets = pd.DataFrame({"AAA": [0.01, 0.02, -0.01, 0.50, 0.50, 0.50]}, index=idx)
+    mask = _mask_of(idx, set(idx[:3]))
+    out = stats.regime_metric(rets, mask, "return")
+    assert out["AAA"] == pytest.approx(
+        rets.loc[idx[:3], "AAA"].mean() * TRADING_DAYS_PER_YEAR
+    )
+
+
+def test_regime_metric_calmar_compounds_the_masked_days_as_if_contiguous():
+    idx = pd.bdate_range("2024-01-01", periods=5)
+    # Masked days: +10%, -20%, +5%. Strung together the path peaks at 1.10 and
+    # troughs at 0.88 -> a 20% drawdown.
+    rets = pd.DataFrame({"AAA": [0.10, 0.99, -0.20, 0.99, 0.05]}, index=idx)
+    mask = _mask_of(idx, {idx[0], idx[2], idx[4]})
+    out = stats.regime_metric(rets, mask, "calmar")
+    masked = rets.loc[[idx[0], idx[2], idx[4]], "AAA"]
+    ann = masked.mean() * TRADING_DAYS_PER_YEAR
+    assert out["AAA"] == pytest.approx(ann / 0.20, rel=1e-6)
+
+
+def test_regime_metric_rejects_an_unknown_metric():
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    rets = pd.DataFrame({"AAA": [0.01] * 4}, index=idx)
+    with pytest.raises(ValueError, match="unknown metric"):
+        stats.regime_metric(rets, pd.Series(True, index=idx), "vol")
+
+
+def test_regime_factor_frame_carries_the_three_axes_over_one_sample():
+    idx = pd.bdate_range("2024-01-01", periods=30)
+    rng = np.random.default_rng(1)
+    rets = pd.DataFrame(rng.normal(0, 0.01, (30, 3)), index=idx, columns=list("ABC"))
+    erp = pd.Series(rng.normal(0, 0.01, 30), index=idx)
+    tp = pd.Series(rng.normal(0, 0.01, 30), index=idx)
+    mask = pd.Series([True] * 20 + [False] * 10, index=idx)
+
+    frame = stats.regime_factor_frame(rets, mask, erp, tp, metric="sharpe")
+    assert list(frame.columns) == ["value", "x", "z"]
+    # Each column is its own function over the SAME masked rows: X is the term
+    # premium and Z the equity risk premium, not the other way round.
+    pd.testing.assert_series_equal(
+        frame["x"], stats.masked_beta(rets, tp, mask), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        frame["z"], stats.masked_beta(rets, erp, mask), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        frame["value"], stats.regime_metric(rets, mask, "sharpe"), check_names=False
+    )
+
+
+def test_regime_factor_frame_is_empty_below_two_masked_days():
+    idx = pd.bdate_range("2024-01-01", periods=5)
+    rets = pd.DataFrame({"AAA": [0.01] * 5}, index=idx)
+    one_day = pd.Series([True] + [False] * 4, index=idx)
+    out = stats.regime_factor_frame(
+        rets, one_day, pd.Series(0.0, index=idx), pd.Series(0.0, index=idx)
+    )
+    assert list(out.columns) == ["value", "x", "z"]
+    assert out.empty
+
+
+# --- the Strip's frame (#332) ----------------------------------------------
+
+
+def test_recent_daily_returns_is_dates_by_tickers_oldest_first(multiyear_prices):
+    out = stats.recent_daily_returns(multiyear_prices)
+    assert len(out) == STRIP_DAYS
+    assert list(out.columns) == list(multiyear_prices.columns)
+    assert out.index.is_monotonic_increasing
+    pd.testing.assert_frame_equal(
+        out, stats.daily_returns(multiyear_prices).tail(STRIP_DAYS)
+    )
+
+
+def test_recent_daily_returns_draws_what_exists_below_five_days():
+    # A fresh mock or a benchmark added mid-session as a delta.
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    prices = pd.DataFrame({"AAA": [100.0, 101.0, 102.0, 103.0]}, index=idx)
+    out = stats.recent_daily_returns(prices)
+    assert len(out) == 3  # 4 prices -> 3 returns, not an exception
+
+
+def test_compounded_return_is_the_product_of_the_days_it_is_given():
+    rets = pd.DataFrame({"AAA": [0.10, -0.10, 0.05]})
+    out = stats.compounded_return(rets)
+    assert out["AAA"] == pytest.approx(1.10 * 0.90 * 1.05 - 1.0)
+
+
+def test_compounded_return_treats_a_gap_as_a_flat_day():
+    # One missing day must not blank a whole column on the Strip.
+    rets = pd.DataFrame({"AAA": [0.10, np.nan, 0.10]})
+    assert stats.compounded_return(rets)["AAA"] == pytest.approx(1.10 * 1.10 - 1.0)
 
 
 # --- period_return / streak / trend ----------------------------------------

@@ -17,6 +17,31 @@ def daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.pct_change().dropna(how="all")
 
 
+def pairwise_cov(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Covariance of every column of ``a`` with the vector ``b``, pairwise-complete.
+
+    One pass over the whole matrix rather than a `Series.cov` per column: each
+    column uses only the rows where both it and ``b`` are non-NaN, which is what
+    `Series.cov` does, and ddof=1 to match it. A column with fewer than two
+    paired points is NaN rather than 0.0 — with no spread there is no
+    covariance to report, and 0.0 would read as "uncorrelated".
+
+    Shared by `risk.ann_beta` (over a window) and `regime.masked_beta` (over a
+    regime's days). Both divide the result by the factor's own variance; the
+    only difference between them is which rows they hand in.
+    """
+    mask = ~np.isnan(a) & ~np.isnan(b)[:, None]
+    cnt = mask.sum(axis=0)
+    safe = np.where(cnt > 0, cnt, 1)
+    mean_a = np.where(mask, a, 0.0).sum(axis=0) / safe
+    mean_b = np.where(mask, b[:, None], 0.0).sum(axis=0) / safe
+    da = np.where(mask, a - mean_a, 0.0)
+    db = np.where(mask, b[:, None] - mean_b, 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = (da * db).sum(axis=0) / (cnt - 1)
+    return np.where(cnt >= 2, cov, np.nan)
+
+
 def drawdown_series(prices: pd.DataFrame) -> pd.DataFrame:
     """Per-ticker drawdown from the running peak, as a non-positive fraction."""
     if prices.empty:

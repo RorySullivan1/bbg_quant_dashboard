@@ -159,6 +159,11 @@ LEADERBOARD_WINDOW_OPTIONS: list[tuple[str, int]] = [
     ("1Y", TRADING_DAYS_PER_YEAR),
 ]
 
+#: How many trading days the Platform Strip chart draws, one column per date.
+#: Read by the stats function, the chart and its header rather than typed at
+#: three sites (#331 decision 12).
+STRIP_DAYS: int = 5
+
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level
 RSI_WINDOW = 14  # Wilder RSI lookback in trading days
@@ -305,25 +310,68 @@ def filterable_fields() -> tuple[CatalogField, ...]:
     return tuple(f for f in CATALOG_SCHEMA if f.role in ("tier", "attribute"))
 
 
-#: The Platform sunburst's rings above the ticker leaves, outermost grouping
-#: first. This is today's picture — asset class → category → ticker — and the
-#: renderer walks it rather than naming the levels, so switching to the full
-#: framework hierarchy (`CLASSIFICATION_TIERS`) is a config flip with no code
-#: edit. Any number of levels works; the leaf ring is always the ticker.
-SUNBURST_LEVELS: tuple[str, ...] = ("asset_class", "category")
+#: The Platform analytics hierarchy above the ticker leaves, outermost grouping
+#: first — the one tree the Icicle draws, the Scatter and Strip aggregate over,
+#: and the drill walks (epic #331). Every renderer walks it rather than naming
+#: its levels, so the shape is a config flip with no code edit; any number of
+#: levels works and the leaf is always the ticker.
+#:
+#: `solution` is deliberately absent, though it is `CLASSIFICATION_TIERS`' top
+#: tier and the catalog table groups on it. Epic #331 ships Category → Family →
+#: Strategy and names a solution stop a non-goal, on the reading that asset
+#: class and solution are two ways to cut the catalog rather than one nesting.
+#: Adding it is this tuple plus `DRILL_LEVELS` — a two-line edit, no renderer
+#: change — and the sample catalog says it is safe to: no category there spans
+#: more than one solution, so inserting it only nests, and a nesting level that
+#: never splits a group cannot break the row contiguity RowGroup needs.
+ANALYTICS_LEVELS: tuple[str, ...] = ("asset_class", "category", "family")
 
 
-def sunburst_levels() -> tuple[str, ...]:
-    """`SUNBURST_LEVELS`, validated against the schema.
+def analytics_levels() -> tuple[str, ...]:
+    """`ANALYTICS_LEVELS`, validated against the schema.
 
-    Read through a call so a reconfigured hierarchy reaches both the frame
-    builder and the renderer. The validation earns its keep because the
-    renderer fills a missing level with "Other": a mistyped level would
-    otherwise render as one undifferentiated ring rather than fail.
+    Read through a call so a reconfigured hierarchy reaches the frame builders,
+    the renderers and the drill together. The validation earns its keep because
+    a missing level is filled with "Other": a mistyped one would otherwise
+    render as a single undifferentiated band rather than fail.
     """
-    for key in SUNBURST_LEVELS:
+    for key in ANALYTICS_LEVELS:
         catalog_field(key)  # raises KeyError naming the offending level
-    return SUNBURST_LEVELS
+    return ANALYTICS_LEVELS
+
+
+#: The depths the drill stops at, above the ticker leaf. A **suffix** of
+#: `ANALYTICS_LEVELS` after its first element, because the first level is the
+#: colour key at the root (#331 decision 16-17) rather than somewhere to stand:
+#: the root view already shows one point per `DRILL_LEVELS[0]`.
+DRILL_LEVELS: tuple[str, ...] = ("category", "family")
+
+#: The drill's leaf — every strategy drawn on its own. Not a schema field
+#: (`ticker` is derived from the catalog's keys, not one of its columns), so it
+#: carries its label here instead of through `field_label`.
+DRILL_LEAF_LEVEL: str = "ticker"
+DRILL_LEAF_LABEL: str = "Strategy"
+
+
+def drill_levels() -> tuple[str, ...]:
+    """`DRILL_LEVELS` plus the ticker leaf — every depth the drill can stop at.
+
+    Validates the suffix relationship at the call rather than trusting the two
+    tuples to be edited together: a stop that is not in the hierarchy, or is
+    above the root's colour key, would draw points the scope cannot address.
+    """
+    levels = analytics_levels()
+    if levels[1:][-len(DRILL_LEVELS) :] != DRILL_LEVELS or not DRILL_LEVELS:
+        raise ValueError(
+            f"DRILL_LEVELS {list(DRILL_LEVELS)} must be a non-empty suffix of "
+            f"ANALYTICS_LEVELS {list(levels)} after its first element"
+        )
+    return (*DRILL_LEVELS, DRILL_LEAF_LEVEL)
+
+
+def drill_level_label(key: str) -> str:
+    """The display label for a drill stop, the ticker leaf included."""
+    return DRILL_LEAF_LABEL if key == DRILL_LEAF_LEVEL else field_label(key)
 
 
 #: The stats windows the all-catalog grid can offer, widest label first in
