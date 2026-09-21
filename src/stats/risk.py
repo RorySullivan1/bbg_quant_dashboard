@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 
 from ..config import RSI_WINDOW, TRADING_DAYS_PER_YEAR, VAR_CONFIDENCE
-from ._common import _benchmark_series, _slice_last_years, daily_returns, max_drawdown
+from ._common import (
+    _benchmark_series,
+    _slice_last_years,
+    daily_returns,
+    max_drawdown,
+    pairwise_cov,
+)
 from .performance import ann_return, ann_sharpe
 
 
@@ -190,21 +196,11 @@ def ann_beta(returns: pd.DataFrame, benchmark: pd.Series, years: float) -> pd.Se
     if not var or np.isnan(var):
         return pd.Series(np.nan, index=returns.columns)
     # Pairwise-complete covariance of every column vs the benchmark in one
-    # pass. Each column uses only rows where both it and the benchmark are
-    # non-NaN (matching ``Series.cov``); the benchmark's own ``var`` is the
-    # full-window scalar.
-    a = sliced.to_numpy(dtype=float)  # (n_days, n_tickers)
-    b = bench.to_numpy(dtype=float)  # (n_days,)
-    mask = ~np.isnan(a) & ~np.isnan(b)[:, None]
-    cnt = mask.sum(axis=0)
-    safe = np.where(cnt > 0, cnt, 1)
-    mean_a = np.where(mask, a, 0.0).sum(axis=0) / safe
-    mean_b = np.where(mask, b[:, None], 0.0).sum(axis=0) / safe
-    da = np.where(mask, a - mean_a, 0.0)
-    db = np.where(mask, b[:, None] - mean_b, 0.0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        cov = (da * db).sum(axis=0) / (cnt - 1)  # ddof=1, like Series.cov
-    cov = np.where(cnt >= 2, cov, np.nan)  # <2 paired points → NaN
+    # pass; the benchmark's own ``var`` is the full-window scalar.
+    cov = pairwise_cov(
+        sliced.to_numpy(dtype=float),  # (n_days, n_tickers)
+        bench.to_numpy(dtype=float),  # (n_days,)
+    )
     return pd.Series(cov / var, index=returns.columns)
 
 

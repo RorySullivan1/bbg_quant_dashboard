@@ -7,6 +7,7 @@ import pandas as pd
 
 from ..config import (
     PERF_TABLE_YEARS,
+    STRIP_DAYS,
     TRADING_DAYS_PER_YEAR,
     stat_window_label,
     stat_windows,
@@ -62,6 +63,46 @@ def period_return(prices: pd.DataFrame, *, window_days: int = 21) -> pd.Series:
     out = last / first - 1.0
     out[tail.notna().sum() < 2] = np.nan
     return out.rename("period_return")
+
+
+def recent_daily_returns(
+    prices: pd.DataFrame,
+    *,
+    days: int = STRIP_DAYS,
+    returns: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """The last ``days`` rows of daily returns — dates × tickers.
+
+    The Platform Strip's frame: one row per date, one column per ticker, oldest
+    first, so the chart's five categorical columns are the index. Fewer than
+    ``days`` rows in the cache draws what exists (a fresh mock, or a benchmark
+    added as a delta mid-session) rather than raising.
+
+    Pass ``returns`` to reuse a shared ``universe_rets`` instead of re-deriving
+    `daily_returns` here.
+    """
+    rets = daily_returns(prices) if returns is None else returns
+    if rets.empty:
+        return pd.DataFrame(index=pd.Index([], name=rets.index.name))
+    return rets.tail(days)
+
+
+def compounded_return(returns: pd.DataFrame) -> pd.Series:
+    """Per-column compounded return over every row: ``prod(1 + r) - 1``.
+
+    The Strip's single honest number — a `label · name · value` row cannot hold
+    five dots, and the five days' compounded return is what they add up to
+    (#331 decision 12).
+
+    The returns twin of `period_return`, which takes **prices** and reads
+    last/first over a window. Both answer "what did this make over the
+    period"; which one to call is decided by what is already in hand, and this
+    one is exact over a set of rows rather than over a window's endpoints. NaN
+    is treated as a flat day so one gap does not blank the whole column.
+    """
+    if returns.empty:
+        return pd.Series(dtype=float)
+    return ((1.0 + returns.fillna(0.0)).prod() - 1.0).rename("compounded_return")
 
 
 def _longest_streak(window: pd.DataFrame, *, positive: bool) -> pd.Series:

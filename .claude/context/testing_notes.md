@@ -233,10 +233,89 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Launches** board, reachable by its chip.
 - The **Platform** tab shows every catalog index with metadata plus **one
   stats window** (1Y by default), the classification tiers drawn as nested
-  group headers rather than body columns, between a control rail on each side
-  (v0.9.21).
+  group headers rather than body columns, under one control bar (v0.9.23).
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
+
+### Manual checklist — the Platform analytics card (v0.9.24, epic #331)
+
+The card below the catalog table. Three charts, a drill and a points table —
+and almost none of it is something a widget-tree assertion can see, which is
+the #255 lesson. **Read the mock catalog as shapes, not as findings:** 18
+indices, and 14 of its 16 categories and families are singletons, so a drill
+often narrows to one point. That is the data, not the feature; the terminal
+catalog is the real test of how the charts read.
+
+**The bar**
+
+- One `control_bar` titled *Chart view*, in the same chrome as the table's
+  bar above it, reading **Chart · Metric · Window · Regime · Level · Scope**
+  in that order, every control a `.bbg-pill` chip except the Regime *Source*
+  dropdown. No native toggle buttons anywhere on the card.
+- Select **Icicle**: Level and Scope disappear. Select **Strip**: Metric and
+  Window disappear. Select **Scatter**: Regime appears. Change Metric on the
+  Scatter, switch to the Strip and back — **the metric is still selected**.
+  (Hidden, not rebuilt: a rebuilt bar resets every chip.)
+- Changing any chip re-renders **only the visible chart**, with no fetch and
+  no overlay. Refresh prices is the only thing that reloads.
+
+**The Icicle**
+
+- Cells span the width in proportion to **how many strategies** they hold, not
+  to any metric — a category with four indices is twice the width of one with
+  two, at every level.
+- Colour is the mean metric, red through neutral to green, and the colorbar is
+  titled for the Metric and Window chips (e.g. `1Y Sharpe`). Hover shows the
+  label, the count and the value.
+- Set Metric to **Return**: the numbers read as percentages, not 2dp ratios.
+- **The click gate.** Click a cell. If the drill follows — the points table
+  narrows to that branch — the kernel is receiving the callback. If it does
+  not, the Icicle *follows* a drill set from the Level chips and the
+  breadcrumb but cannot *set* one, which is a known limitation to record here
+  rather than a bug to chase. Plotly zooms the cell either way.
+
+**The Scatter**
+
+- One marker per **category** at the root, coloured by asset class with a
+  legend. Y is the metric, X the term-premium β, Z the equity-risk-premium β,
+  and the axis titles say so.
+- **No translucent planes.** Each axis's zero line and wall edge are visible
+  at the default camera, and the box is a cube so a β of 0.2 is the same
+  length on all three axes. Orbit the camera and check the zero lines still
+  read — this is what the planes were there for.
+- Click a category marker: it narrows to that category's **families**, each in
+  its own colour, and the breadcrumb grows a segment. Click a family: its
+  **strategies**. Click a strategy: nothing happens (the table row is the way
+  into Single Strategy).
+- Change the Regime bucket: the markers move, with no fetch. A regime whose
+  indicator is missing from the cache draws the unconditioned all-days view
+  rather than an empty chart.
+
+**The Strip**
+
+- Five date columns, oldest left, labelled `DD Mon`, with a dashed zero line.
+  Markers are **spread within** each column rather than stacked on one line.
+- Switch away and back: the cloud is in the **same arrangement**. A reshuffle
+  would read as movement in the data.
+- Hover reads name, group, date and return.
+
+**The drill and the points table**
+
+- The table sits to the right of every chart, both boxes the **same height**,
+  borders lining up top and bottom, and the table's rows scroll inside it.
+- Its first column is headed for the current **Level** (*Category* / *Family*
+  / *Strategy*) and its last for the chart's own value (`1Y Sharpe`, or
+  `5D Return` on the Strip). A **Count** column appears above the strategy
+  level and not at it.
+- Sorted by value **descending**, blanks last.
+- Click a **group** row → the drill narrows, exactly as clicking its marker
+  does. Click a **strategy** row → Single Strategy opens on it, with the
+  filters cleared, the same as clicking a catalog row.
+- Walk all the way down and back: marker → Level chip → breadcrumb segment →
+  *All*. The chart, the breadcrumb, the Level chips and the table agree at
+  every step.
+- At the default BQuant viewport there is **no page-level horizontal
+  scrollbar** with the Scatter active — it has the widest legend.
 
 ### Manual checklist — the commentary block (v0.9.22, epic #303)
 

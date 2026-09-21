@@ -620,6 +620,9 @@ class DashboardApp:
             self.state,
             z_metric_chips=self.z_metric_chips,
             window_chips=self.window_chips,
+            # The same route the catalog grid and the leaderboard take, so the
+            # three ways into Single Strategy cannot diverge (#286's rule).
+            on_open_strategy=self._show_in_single_strategy,
         )
         # A callable, so the observers always see the *current* catalog —
         # `self.meta` is re-pointed to the pruned one after each load (#242).

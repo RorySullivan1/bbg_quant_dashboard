@@ -31,3 +31,28 @@ they are identical in every process — two runs of the same code render the sam
 numbers, which is what makes an off-terminal before/after comparison meaningful.
 (Until #235 the seed was `hash(ticker)`, which Python randomizes per process:
 every restart showed different numbers.)
+
+
+## A limit of the off-terminal render (found v0.9.24, epic #331)
+
+**Plotly `FigureWidget` figures do not draw under a headless local Voila.**
+The widget's div is created and the layout is applied — axes, grid, the dark
+theme — but no trace reaches it: the browser's `div.data` is empty and the
+chart area shows an empty cartesian plot whatever the figure holds.
+
+Checked both ways before it was believed: the same probe against `v0.9.23`,
+before any of epic #331's charts existed, finds the **sunburst** equally
+blank. So it is the environment, not a regression, and it predates the epic
+by a long way.
+
+The `ipydatagrid` and `itables` widgets are unaffected — the catalog table and
+the chart's points table both render — so an off-terminal pass is still worth
+running for everything that is not a plotly figure. What it cannot do is
+confirm a chart, which is precisely the class of defect a widget-tree
+assertion cannot see either (#255). **For the Platform card's charts, a
+terminal is the only evidence**, and `testing_notes.md`'s checklist for that
+card should be read as terminal-only.
+
+Not yet diagnosed. The most likely cause is the one #269 records for widget
+packages generally: a labextension is enumerated once at server startup, and
+`jupyterlab-plotly` may not be reaching this Voila the way `anywidget` does.

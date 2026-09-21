@@ -21,18 +21,17 @@ from src.config import (
     TercileRegime,
 )
 from src.data import load_metadata
+from src.layout.grids import ChartPointsGrid
 from src.layout.platform import (
-    _SUNBURST_SIZE_FLOOR,
     PlatformAnalytics,
-    _asset_class_colors,
-    _factor_beta_scatter,
-    _regime_scatter,
-    _sunburst,
-    _sunburst_leaf_sizes,
-    _update_factor_scatter,
-    _update_regime_scatter,
-    _update_sunburst,
     regime_bucket_options,
+)
+from src.layout.platform_charts import (
+    IcicleChart,
+    RegimeFactorScatter,
+    StripChart,
+    asset_class_colors,
+    group_colors,
 )
 from src.layout.rails import ChipGroup
 from src.layout.theme import _v_ref
@@ -78,101 +77,157 @@ def test_v_ref_is_vertical_paper_height_line():
     assert shape["yref"] == "paper" and shape["y0"] == 0 and shape["y1"] == 1
 
 
-def test_update_factor_scatter_one_trace_per_asset_class():
-    fig = _factor_beta_scatter()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+def _scatter_points(n_groups=2, counts=(3, 1)) -> pd.DataFrame:
+    """An aggregated points frame of the shape `drill_points` returns."""
+    labels = ["Equity", "Fixed Income"][:n_groups]
+    return pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": labels,
+            "count": list(counts)[:n_groups],
+            "leaf": [False, False][:n_groups],
+            "value": [1.5, -0.5][:n_groups],
+            "x": [0.2, -0.1][:n_groups],
+            "z": [0.9, 0.3][:n_groups],
+        },
+        index=labels,
+    )
 
-    # No in-figure title (v0.7.1) — the section header stands alone.
-    assert not fig.layout.title.text
-    # AAA → Equity, BBB → Fixed Income → one marker trace each (the figure also
-    # holds the three Mesh3d zero planes, filtered out here).
-    by_name = {tr.name: tr for tr in fig.data if isinstance(tr, go.Scatter3d)}
+
+def test_the_scatter_draws_one_trace_per_colour_key():
+    chart = RegimeFactorScatter()
+    points = _scatter_points()
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+
+    assert not chart.fig.layout.title.text
+    by_name = {tr.name: tr for tr in chart.fig.data}
     assert set(by_name) == {"Equity", "Fixed Income"}
+    assert all(isinstance(tr, go.Scatter3d) for tr in chart.fig.data)
     assert by_name["Equity"].marker.color == ASSET_CLASS_COLORS["Equity"]
-    assert by_name["Fixed Income"].marker.color == ASSET_CLASS_COLORS["Fixed Income"]
-    # 3D marker traces — one strategy each, finite betas on all three axes.
-    for tr in by_name.values():
-        assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
-        assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
 
 
-def _scatter_xyz(fig) -> dict:
-    """{trace name: (x, y, [z])} for the marker traces, for equality checks."""
-    out = {}
-    for tr in fig.data:
-        if isinstance(tr, (go.Scatter, go.Scatter3d)):
-            coords = [tuple(tr.x), tuple(tr.y)]
-            if isinstance(tr, go.Scatter3d):
-                coords.append(tuple(tr.z))
-            out[tr.name] = coords
-    return out
-
-
-def test_factor_scatter_returns_arg_matches_recompute():
-    # v0.9.13 #166: threading the shared universe_rets must produce a byte-
-    # identical scatter to letting the updater re-derive daily_returns.
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    fig_a = _factor_beta_scatter()
-    _update_factor_scatter(fig_a, arp, universe, _meta(), years=1)
-    fig_b = _factor_beta_scatter()
-    _update_factor_scatter(
-        fig_b, arp, universe, _meta(), years=1, returns=daily_returns(arp)
+def test_the_scatter_puts_the_metric_on_y_and_the_betas_on_x_and_z():
+    """#331 decision 10 — the axes are the merge, so they are pinned."""
+    chart = RegimeFactorScatter()
+    points = _scatter_points(n_groups=1, counts=(3,))
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+
+    (trace,) = chart.fig.data
+    assert trace.y[0] == points.loc["Equity", "value"]
+    assert trace.x[0] == points.loc["Equity", "x"]  # term premium
+    assert trace.z[0] == points.loc["Equity", "z"]  # equity risk premium
+    scene = chart.fig.layout.scene
+    assert scene.xaxis.title.text == "Term-premium β"
+    assert scene.yaxis.title.text == "1Y Sharpe"
+    assert scene.zaxis.title.text == "Equity risk-premium β"
 
 
-def test_regime_scatter_returns_arg_matches_recompute():
-    # v0.9.13 #166: daily_returns(arp).tail(lookback - 1) is exactly
-    # daily_returns(arp.tail(lookback)), so the threaded path matches.
-    arp, vix = _regime_universe()
-    fig_a = _regime_scatter()
-    _update_regime_scatter(
-        fig_a, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+def test_the_origin_is_drawn_by_the_axes_and_the_planes_are_gone():
+    """The translucent Mesh3d planes dimmed the markers they framed (#331
+    decision 11). A scene takes no paper shapes, but its axes carry a zero
+    line and a wall edge, which is enough."""
+    from src.style import Color
+
+    chart = RegimeFactorScatter()
+    chart.update(
+        _scatter_points(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    fig_b = _regime_scatter()
-    _update_regime_scatter(
-        fig_b,
-        arp,
-        vix,
-        _regime_meta(),
-        low=15.0,
-        high=25.0,
-        lookback=200,
-        returns=daily_returns(arp),
+
+    assert not [tr for tr in chart.fig.data if isinstance(tr, go.Mesh3d)]
+    assert all(isinstance(tr, go.Scatter3d) for tr in chart.fig.data)
+    scene = chart.fig.layout.scene
+    for axis in (scene.xaxis, scene.yaxis, scene.zaxis):
+        assert axis.zeroline is True
+        assert axis.zerolinecolor == Color.CHART_ZERO_LINE.value
+        assert axis.zerolinewidth == 3
+        assert axis.showline is True
+        assert axis.linecolor == Color.CHART_AXIS_LINE.value
+    # The three axes stay comparable, so a beta of 0.2 looks the same size
+    # whichever axis it is on.
+    assert scene.aspectmode == "cube"
+
+
+def test_a_group_marker_is_bigger_than_a_strategy_marker():
+    chart = RegimeFactorScatter()
+    chart.update(
+        _scatter_points(counts=(9, 1)),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+    by_name = {tr.name: tr for tr in chart.fig.data}
+    assert by_name["Equity"].marker.size[0] > by_name["Fixed Income"].marker.size[0]
 
 
-def test_factor_scatter_has_three_zero_planes():
-    fig = _factor_beta_scatter()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+def test_clicking_a_group_marker_narrows_and_a_strategy_marker_does_not():
+    """The `leaf` flag routes it, not the count.
 
-    planes = {tr.name: tr for tr in fig.data if isinstance(tr, go.Mesh3d)}
-    assert set(planes) == {"x=0", "y=0", "z=0"}
-    # Each plane is a faint, legend-less, non-hovering reference surface.
-    for tr in planes.values():
-        assert tr.showlegend is False
-        assert 0 < tr.opacity < 1
+    A one-member category has a count of 1 too, and on the shipped catalog
+    nearly every root marker is one — a count test would make the chart
+    undrillable.
+    """
+    got: list[tuple[str, ...]] = []
+    chart = RegimeFactorScatter(on_drill=got.append)
+    points = _scatter_points(counts=(1, 1))
+    points["leaf"] = [False, True]  # a one-member GROUP, and a strategy
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    by_name = {tr.name: tr for tr in chart.fig.data}
 
-    # Each plane is constant 0 on its own axis...
-    assert all(v == 0 for v in planes["x=0"].x)
-    assert all(v == 0 for v in planes["y=0"].y)
-    assert all(v == 0 for v in planes["z=0"].z)
+    chart._clicked(by_name["Equity"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)], "a one-member group still drills"
 
-    # ...and spans (covers) the marker cloud on its other two axes.
-    markers = [tr for tr in fig.data if isinstance(tr, go.Scatter3d)]
-    xs = [v for tr in markers for v in tr.x]
-    ys = [v for tr in markers for v in tr.y]
-    zs = [v for tr in markers for v in tr.z]
-    assert min(planes["x=0"].y) <= min(ys) and max(planes["x=0"].y) >= max(ys)
-    assert min(planes["x=0"].z) <= min(zs) and max(planes["x=0"].z) >= max(zs)
-    assert min(planes["y=0"].x) <= min(xs) and max(planes["y=0"].x) >= max(xs)
-    assert min(planes["z=0"].x) <= min(xs) and max(planes["z=0"].x) >= max(xs)
+    # A leaf has no children; the table row is the way into Single Strategy.
+    chart._clicked(by_name["Fixed Income"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
+
+
+def test_every_trace_carries_the_click_handler_not_just_the_first():
+    chart = RegimeFactorScatter(on_drill=lambda _p: None)
+    chart.update(
+        _scatter_points(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    assert len(chart.fig.data) == 2
+    assert all(tr._click_callbacks for tr in chart.fig.data)
+
+
+def test_the_scatter_empty_clears_traces():
+    chart = RegimeFactorScatter()
+    chart.update(
+        pd.DataFrame(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors={},
+    )
+    assert chart.fig.data == ()
 
 
 def test_catalog_asset_classes_get_distinct_non_fallback_colors():
@@ -180,7 +235,7 @@ def test_catalog_asset_classes_get_distinct_non_fallback_colors():
     color — guards against the all-grey legend (driven off the loaded metadata,
     so future catalog additions are covered too)."""
     classes = sorted(load_metadata()["asset_class"].dropna().unique())
-    colors = _asset_class_colors(classes)
+    colors = asset_class_colors(classes)
     assert set(colors) == set(classes)
     assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
     assert len(set(colors.values())) == len(classes)  # all distinct
@@ -189,16 +244,31 @@ def test_catalog_asset_classes_get_distinct_non_fallback_colors():
 def test_asset_class_colors_unmapped_class_avoids_fallback():
     """An unmapped class still gets a distinct palette color, not the grey
     fallback, as long as the palette isn't exhausted."""
-    colors = _asset_class_colors(["Equity", "Crypto"])
+    colors = asset_class_colors(["Equity", "Crypto"])
     assert colors["Equity"] == ASSET_CLASS_COLORS["Equity"]
     assert colors["Crypto"] != ASSET_CLASS_FALLBACK_COLOR
     assert colors["Crypto"] != colors["Equity"]
 
 
-def test_update_factor_scatter_empty_clears_traces():
-    fig = _factor_beta_scatter()
-    _update_factor_scatter(fig, pd.DataFrame(), pd.DataFrame(), _meta(), years=1)
-    assert fig.data == ()
+def test_group_colors_serves_keys_that_are_not_asset_classes():
+    """The drill re-keys colours at every depth (#331 decision 17), so the
+    palette has to serve families and tickers too — with no curated map, and
+    with no claim on an asset class's identity colour."""
+    colors = group_colors(["Momentum", "Carry", "Value"])
+    assert len(set(colors.values())) == 3
+    assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
+
+
+def test_group_colors_cycles_rather_than_collapsing_to_grey():
+    """A family larger than the palette should still draw distinguishable
+    neighbours; the legend and hover name every point whatever the hue."""
+    from src.style import LINE_PALETTE
+
+    keys = [f"k{i:02d}" for i in range(len(LINE_PALETTE) + 3)]
+    colors = group_colors(keys)
+    assert set(colors) == set(keys)
+    assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
+    assert len(set(colors.values())) == len(LINE_PALETTE)
 
 
 def _treemap_meta() -> pd.DataFrame:
@@ -216,117 +286,168 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
-_SUNBURST_KW = dict(
-    metric="sharpe", window=WEEK_WINDOW, lookback=252, label="1W Sharpe"
-)
+_ICICLE_KW = dict(metric="sharpe", metric_label="1W Sharpe")
 
 
-def test_sunburst_leaf_sizes_magnitude_drives_arc():
-    # Arc = |z|: equal-magnitude +z/-z get equal arcs; near-zero lands on the
-    # floor; bigger |z| -> bigger arc. Sign is for color, not size.
-    z = pd.Series({"up": 2.0, "down": -2.0, "flat": 0.0})
-    sizes = _sunburst_leaf_sizes(z)
-    floor = _SUNBURST_SIZE_FLOOR * 2.0  # max |z| = 2.0
-    assert sizes["up"] == sizes["down"] == 2.0 + floor
-    assert sizes["flat"] == floor
-    assert sizes["up"] > 10 * sizes["flat"]
-    assert (sizes >= 0).all()
+def _icicle_frame(meta=None):
+    """`icicle_frame` over the seeded universe, restricted to the strategies."""
+    from src.stats import icicle_frame
+
+    meta = _treemap_meta() if meta is None else meta
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    return icicle_frame(arp, meta, metric="sharpe", window=WEEK_WINDOW)
 
 
-def test_sunburst_leaf_sizes_all_zero_uniform():
-    # No deviation anywhere -> uniform fallback (avoids divide-by-zero floor).
-    sizes = _sunburst_leaf_sizes(pd.Series({"a": 0.0, "b": 0.0, "c": 0.0}))
-    assert (sizes == 1.0).all()
+def test_the_icicle_sizes_every_cell_by_its_strategy_count():
+    """#331 decision 8 — the change of meaning, not just of chart type.
+
+    The sunburst sized arcs by |z|: the gross magnitude of the very quantity
+    colour already encoded, so a ring's shares read as nothing. Counting makes
+    a cell's width its share of strategies, which is a question the catalog
+    does not otherwise answer visually.
+    """
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    (trace,) = chart.fig.data
+    assert isinstance(trace, go.Icicle)
+    assert trace.branchvalues == "total"
+    value = dict(zip(trace.ids, trace.values, strict=True))
+    # Two strategies, one asset class, two categories under it.
+    assert value["Equity"] == 2
+    assert value["Equity / Growth"] == 1
+    assert value["Equity / Growth / Momentum"] == 1
+    # Every leaf is exactly 1, whatever its metric says.
+    leaves = [v for node, v in value.items() if node.endswith(" Index")]
+    assert leaves == [1, 1]
 
 
-def test_update_sunburst_builds_the_default_two_level_hierarchy():
-    fig = _sunburst()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+def test_the_icicle_colours_a_parent_by_the_mean_of_its_leaves():
+    chart = IcicleChart()
+    frame = _icicle_frame()
+    chart.update(frame, **_ICICLE_KW)
 
-    # No in-figure title (v0.7.3) — the section header stands alone.
-    assert not fig.layout.title.text
-    assert len(fig.data) == 1
-    sb = fig.data[0]
-    assert isinstance(sb, go.Sunburst)
-    assert sb.branchvalues == "total"
-    # maxdepth == the number of configured levels, so the ticker ring stays
-    # hidden until the user drills into a grouping node.
-    assert sb.maxdepth == 2
-    nodes = dict(zip(sb.ids, sb.parents, strict=True))
-    # asset-class node is a root; category nodes hang off it; leaves off the categories.
-    assert nodes["Equity"] == ""
-    assert nodes["Equity / Growth"] == "Equity"
-    assert nodes["Equity / Value"] == "Equity"
-    assert nodes["AAA Index"] == "Equity / Growth"
-    assert nodes["BBB Index"] == "Equity / Value"
-    # Arcs are non-negative; one color per node.
-    assert all(v >= 0 for v in sb.values)
-    assert len(sb.marker.colors) == len(sb.ids)
-    # branchvalues="total": the asset-class arc == the sum of its ticker leaves.
-    val = dict(zip(sb.ids, sb.values, strict=True))
-    assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
-    # Colorbar title reflects the selected metric label.
-    assert sb.marker.colorbar.title.text == "z(1W Sharpe)"
+    (trace,) = chart.fig.data
+    colour = dict(zip(trace.ids, trace.marker.colors, strict=True))
+    assert colour["Equity"] == pytest.approx(frame["value"].mean())
 
 
-def test_update_sunburst_follows_a_three_level_config(monkeypatch):
-    # #213's acceptance: switching `SUNBURST_LEVELS` to the framework tiers
-    # renders correctly with no code edit — three rings above the leaves, ids
-    # spelling the path, and parent value == Σ children at *every* level (what
-    # `branchvalues="total"` requires).
+def test_the_icicle_s_colour_range_is_symmetric_and_taken_from_the_data():
+    """The fixed ±2 it replaces was a z-score's range; a raw Sharpe has no
+    reason to share it, and an outlier must not flatten everything else."""
+    chart = IcicleChart()
+    frame = _icicle_frame()
+    frame.loc["AAA Index", "value"] = 40.0  # one wild outlier
+    chart.update(frame, **_ICICLE_KW)
+
+    marker = chart.fig.data[0].marker
+    assert marker.cmid == 0
+    assert marker.cmin == pytest.approx(-marker.cmax)
+    assert marker.cmax < 40.0, "the 95th percentile clips the outlier"
+
+
+def test_the_icicle_s_ids_are_paths_so_a_click_round_trips():
+    """A cell's id IS the path, so a click becomes a `Drill.scope` without
+    parsing anything the renderer invented."""
+    got: list[tuple[str, ...]] = []
+    chart = IcicleChart(on_drill=got.append)
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    trace = chart.fig.data[0]
+    index = list(trace.ids).index("Equity / Growth")
+    chart._clicked(trace, SimpleNamespace(point_inds=[index]), None)
+    assert got == [("Equity", "Growth")]
+
+
+def test_the_icicle_s_ids_keep_a_repeated_label_as_two_cells():
+    # The sample catalog's real case: one category under two asset classes.
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index"],
+            "asset_class": ["Equity", "Fixed Income"],
+            "solution": ["ARP", "ARP"],
+            "category": ["Emerging Markets", "Emerging Markets"],
+            "family": ["MSCI", "Bloomberg"],
+        }
+    )
+    chart = IcicleChart()
+    chart.update(_icicle_frame(meta), **_ICICLE_KW)
+
+    ids = set(chart.fig.data[0].ids)
+    assert "Equity / Emerging Markets" in ids
+    assert "Fixed Income / Emerging Markets" in ids
+
+
+def test_the_icicle_s_points_are_its_leaves_under_the_scope():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("Equity", "Growth"))
+
+    points = chart.points()
+    assert list(points.columns) == [
+        "path",
+        "label",
+        "name",
+        "value",
+        "count",
+        "leaf",
+    ]
+    assert list(points["label"]) == ["AAA Index"]
+    assert (points["count"] == 1).all()
+    assert points.loc["AAA Index", "path"] == ("Equity", "Growth", "Momentum")
+
+
+def test_the_icicle_follows_a_reconfigured_hierarchy(monkeypatch):
+    # #213's acceptance, carried over: the chart walks `ANALYTICS_LEVELS`
+    # rather than naming its levels, so the tiers are a config flip.
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("solution", "category", "family"))
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("solution", "category", "family"))
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
 
-    sb = fig.data[0]
-    assert sb.maxdepth == 3
-    nodes = dict(zip(sb.ids, sb.parents, strict=True))
+    trace = chart.fig.data[0]
+    assert trace.maxdepth == 3
+    nodes = dict(zip(trace.ids, trace.parents, strict=True))
     assert nodes["ARP"] == ""
     assert nodes["ARP / Growth"] == "ARP"
     assert nodes["ARP / Growth / Momentum"] == "ARP / Growth"
-    assert nodes["AAA Index"] == "ARP / Growth / Momentum"
-    assert nodes["BBB Index"] == "ARP / Value / Carry"
-
-    val = dict(zip(sb.ids, sb.values, strict=True))
-    children: dict[str, list[str]] = {}
-    for node, parent in nodes.items():
-        children.setdefault(parent, []).append(node)
-    for node, kids in children.items():
-        if node:  # "" is Plotly's root, not a node with a value
-            assert val[node] == pytest.approx(sum(val[k] for k in kids))
 
 
-def test_update_sunburst_buckets_a_missing_level_as_other(monkeypatch):
-    # A level absent from the metadata must not break the render.
+def test_the_icicle_buckets_a_missing_level_as_other(monkeypatch):
     import src.config as cfg
 
-    monkeypatch.setattr(cfg, "SUNBURST_LEVELS", ("asset_class", "return_type"))
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+    monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("asset_class", "return_type"))
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
 
-    nodes = dict(zip(fig.data[0].ids, fig.data[0].parents, strict=True))
+    nodes = dict(zip(chart.fig.data[0].ids, chart.fig.data[0].parents, strict=True))
     assert nodes["Equity / Other"] == "Equity"
-    assert nodes["AAA Index"] == "Equity / Other"
 
 
-def test_update_sunburst_label_drives_colorbar_title():
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    kw = {**_SUNBURST_KW, "metric": "sortino", "label": "3M Sortino"}
-    _update_sunburst(fig, arp, _treemap_meta(), **kw)
-    assert fig.data[0].marker.colorbar.title.text == "z(3M Sortino)"
+def test_the_icicle_label_drives_the_colorbar_and_the_value_label():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), metric="sortino", metric_label="3M Sortino")
+    assert chart.fig.data[0].marker.colorbar.title.text == "3M Sortino"
+    # #337's table reads this rather than spelling a label of its own.
+    assert chart.value_label == "3M Sortino"
+    assert chart.value_format == ".2f"
 
 
-def test_update_sunburst_empty_clears_traces():
-    fig = _sunburst()
-    _update_sunburst(fig, pd.DataFrame(), _treemap_meta(), **_SUNBURST_KW)
-    assert fig.data == ()
+def test_the_icicle_formats_a_return_as_a_percentage():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), metric="return", metric_label="1Y Return")
+    assert chart.value_format == ".2%"
+
+
+def test_the_icicle_empty_clears_traces_and_points():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+    chart.update(
+        pd.DataFrame(columns=["asset_class", "category", "family", "value"]),
+        **_ICICLE_KW,
+    )
+    assert chart.fig.data == ()
+    assert chart.points().empty
 
 
 # --- Regime specs (#220) -----------------------------------------------------
@@ -390,7 +511,7 @@ def test_regime_bucket_options_by_spec_type():
     ]
 
 
-def _analytics() -> PlatformAnalytics:
+def _analytics(on_open_strategy=None) -> PlatformAnalytics:
     """A `PlatformAnalytics` over a stub state — enough for the pure resolvers."""
     # Two options, so a test can actually change the value and fire observers.
     chips = lambda: ChipGroup([("a", 1), ("b", 2)], value=1)  # noqa: E731
@@ -407,6 +528,19 @@ def _analytics() -> PlatformAnalytics:
         # The table's own Window, carrying stats-window labels since #324 — the
         # score is measured over whichever window the table is showing.
         window_chips=ChipGroup(["1Y", "3Y"], value="1Y"),
+        on_open_strategy=on_open_strategy,
+    )
+
+
+def _analytics_of(app) -> PlatformAnalytics:
+    """The live `PlatformAnalytics` inside a built app.
+
+    Reached through the card's own widgets rather than a child index, so a
+    layout change moves the test's footing once, here.
+    """
+    card = app.children[5].children[0].children[-1]
+    return next(
+        w._analytics for w in _walk(card) if getattr(w, "_analytics", None) is not None
     )
 
 
@@ -415,23 +549,24 @@ def test_regime_selector_options_by_spec_type():
     # benchmark registry (#190) so a runtime addition shows up in its picker;
     # a fixed-level regime has one ticker and so offers no source at all.
     pa = _analytics()
-    pa.regime_type_dd.value = "Volatility"
+    pa.regime_type_chips.value = "Volatility"
     assert pa.regime_selector_options() == []
-    pa.regime_type_dd.value = "Rate-level"
+    pa.regime_type_chips.value = "Rate-level"
     assert pa.regime_selector_options() == [
         ("US (FEDL01)", "FEDL01 Index"),
         ("EU (EONIA)", "EONIA Index"),
         ("JP (MUTKCALM)", "MUTKCALM Index"),
     ]
-    pa.regime_type_dd.value = "Trend"
+    pa.regime_type_chips.value = "Trend"
     assert pa.regime_selector_options() == [("SPX", "SPX Index")]
 
 
 def test_regime_selector_options_tolerates_an_unknown_regime():
     # An unknown regime type resolves to None upstream; it must not raise.
     pa = _analytics()
-    pa.regime_type_dd.options = [*pa.regime_type_dd.options, "Nope"]
-    pa.regime_type_dd.value = "Nope"
+    pa.regime_type_chips.set_options(
+        [*pa.regime_type_chips.options, ("Nope", "Nope")], value="Nope"
+    )
     assert pa.regime_selector_options() == []
     assert pa.regime_indicator() is None
 
@@ -467,59 +602,405 @@ def _regime_meta() -> pd.DataFrame:
     )
 
 
-def test_update_regime_scatter_one_trace_per_asset_class():
-    fig = _regime_scatter()
+def test_the_regime_mask_conditions_the_scatter_s_sample():
+    """What the old regime scatter tested, at the level it now lives.
+
+    The chart no longer owns the conditioning: `_regime_window_mask` picks the
+    days and `regime_factor_frame` measures all three axes over them, so the
+    behaviour is pinned on the pair rather than on a figure's coordinates.
+    """
+    from src.layout.platform import _regime_window_mask
+    from src.stats import daily_returns, regime_factor_frame
+
     arp, vix = _regime_universe()
-    _update_regime_scatter(
-        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
-    )
-    assert not fig.layout.title.text
-    by_name = {tr.name: tr for tr in fig.data}
-    assert set(by_name) == {"Equity", "Fixed Income"}
-    for tr in fig.data:
-        assert isinstance(tr, go.Scatter)
-        assert len(tr.x) == len(tr.y) >= 1
-        assert all(np.isfinite(v) for v in tr.x)
+    rets = daily_returns(arp).tail(200)
+    erp = pd.Series(0.001, index=rets.index)
+    tp = pd.Series(0.0005, index=rets.index)
 
-
-def test_update_regime_scatter_unconditioned_when_no_indicator():
-    # A scaffolded regime passes no indicator / no bucket → all-days view.
-    fig = _regime_scatter()
-    arp, _ = _regime_universe()
-    _update_regime_scatter(
-        fig, arp, None, _regime_meta(), low=None, high=None, lookback=200
-    )
-    assert fig.data  # renders over the full window
-
-
-def test_update_regime_scatter_empty_clears():
-    fig = _regime_scatter()
-    _update_regime_scatter(
-        fig, pd.DataFrame(), None, _regime_meta(), low=15.0, high=25.0, lookback=200
-    )
-    assert fig.data == ()
-
-
-def test_update_regime_scatter_tercile_bounds_condition_differently():
-    # The tercile modes derive (low, high) from the indicator's quantiles; the
-    # low and high thirds of the VIX-like series condition on disjoint day sets,
-    # so the scatter coordinates differ.
-    arp, vix = _regime_universe()
     lo_low, lo_high = tercile_bounds(vix.tail(200), "low")
     hi_low, hi_high = tercile_bounds(vix.tail(200), "high")
+    low_mask = _regime_window_mask(vix, rets.index, lo_low, lo_high)
+    high_mask = _regime_window_mask(vix, rets.index, hi_low, hi_high)
 
-    fig_low = _regime_scatter()
-    _update_regime_scatter(
-        fig_low, arp, vix, _regime_meta(), low=lo_low, high=lo_high, lookback=200
+    # Disjoint day sets, so the two buckets describe the catalog differently.
+    assert not (low_mask & high_mask).any()
+    low = regime_factor_frame(rets, low_mask, erp, tp, metric="sharpe")
+    high = regime_factor_frame(rets, high_mask, erp, tp, metric="sharpe")
+    assert not low.empty and not high.empty
+    assert not low["value"].equals(high["value"])
+
+
+def test_a_scaffolded_regime_is_the_unconditioned_view():
+    # A regime with no indicator in the cache must not blank the chart; it
+    # falls back to every day in the window, as it did before the merge.
+    from src.layout.platform import _regime_window_mask
+
+    arp, _ = _regime_universe()
+    index = daily_returns(arp).tail(200).index
+    mask = _regime_window_mask(None, index, None, None)
+    assert mask.all()
+
+
+# --- the Strip (#336) -------------------------------------------------------
+
+
+def _strip_points(counts=(3, 1)) -> tuple[pd.DataFrame, list]:
+    """An aggregated points frame with one column per date."""
+    dates = list(pd.bdate_range("2026-09-14", periods=3))
+    labels = ["Equity", "Fixed Income"]
+    frame = pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": labels,
+            "count": list(counts),
+            "leaf": [False, False],
+            dates[0]: [0.01, -0.02],
+            dates[1]: [0.02, 0.01],
+            dates[2]: [-0.01, 0.03],
+        },
+        index=labels,
     )
-    fig_high = _regime_scatter()
-    _update_regime_scatter(
-        fig_high, arp, vix, _regime_meta(), low=hi_low, high=hi_high, lookback=200
+    return frame, dates
+
+
+def test_the_strip_draws_one_column_per_date_with_the_dates_as_labels():
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    assert chart.fig.data
+    axis = chart.fig.layout.xaxis
+    assert list(axis.tickvals) == [0, 1, 2]
+    assert list(axis.ticktext) == ["14 Sep", "15 Sep", "16 Sep"]
+    # A dashed zero reference, so a down day reads as down at a glance.
+    assert chart.fig.layout.shapes
+
+
+def test_the_strip_jitters_within_a_date_rather_than_stacking_on_it():
+    """A categorical axis puts every marker of a column on one line, so a
+    group of ten strategies would draw as a single dot."""
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    xs = [x for tr in chart.fig.data for x in tr.x]
+    # Two points per date, each offset from the date's centre, none overlapping.
+    first_column = sorted(x for x in xs if abs(x) < 0.5)
+    assert len(first_column) == 2
+    assert first_column[0] != first_column[1]
+    assert all(abs(x - round(x)) <= StripChart.JITTER + 1e-9 for x in xs)
+
+
+def test_the_strip_s_jitter_is_stable_across_redraws():
+    # Drawn at random it would reshuffle on every redraw and read as movement
+    # in the data.
+    points, dates = _strip_points()
+    first = StripChart()
+    first.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    second = StripChart()
+    second.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    assert [tuple(t.x) for t in first.fig.data] == [tuple(t.x) for t in second.fig.data]
+
+
+def test_the_strip_s_points_value_is_the_compounded_return_of_its_row():
+    """#331 decision 12 — a `label · name · value` row cannot hold five dots,
+    and what they add up to is the honest single number."""
+    from src.stats import compounded_return
+
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    drawn = chart.points()
+    expected = compounded_return(points[dates].T)
+    assert drawn.loc["Equity", "value"] == pytest.approx(expected["Equity"])
+    assert chart.value_label == "5D Return"
+    assert chart.value_format == ".2%"
+
+
+def test_clicking_a_strip_group_narrows_and_a_strategy_does_not():
+    got: list[tuple[str, ...]] = []
+    chart = StripChart(on_drill=got.append)
+    points, dates = _strip_points(counts=(1, 1))
+    points["leaf"] = [False, True]  # a one-member GROUP, and a strategy
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    by_name = {tr.name: tr for tr in chart.fig.data}
+    chart._clicked(by_name["Equity"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
+    chart._clicked(by_name["Fixed Income"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
+
+
+def test_the_strip_draws_what_exists_below_five_days():
+    # A fresh mock, or a benchmark added mid-session as a delta.
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates[:2], color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    assert list(chart.fig.layout.xaxis.tickvals) == [0, 1]
+
+
+def test_the_strip_empty_clears():
+    chart = StripChart()
+    chart.update(pd.DataFrame(), [], color_key="asset_class", colors={})
+    assert chart.fig.data == ()
+    assert chart.points().empty
+
+
+def test_a_metric_or_window_change_does_not_render_the_strip():
+    """The Strip's metric and window are fixed, so the controls that would
+    normally re-render the visible chart must not touch it (#331 dec. 3)."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    rendered: list[str] = []
+    pa._render_tab = lambda meta, which: rendered.append(which)  # type: ignore
+
+    pa.activate(pd.DataFrame(), "strip")
+    rendered.clear()
+    # Both sections are hidden while the Strip is active, so a user cannot
+    # reach them — this pins that the wiring agrees with the chrome.
+    assert pa.bar.section("Metric").layout.display == "none"
+    assert pa.bar.section("Window").layout.display == "none"
+
+
+# --- the points table (#337) ------------------------------------------------
+
+
+def _points_frame(counts=(3, 1)) -> pd.DataFrame:
+    labels = ["Equity", "Fixed Income"]
+    return pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": ["Equity basket", "Credit basket"],
+            "count": list(counts),
+            "leaf": [False, True],
+            "value": [0.5, 1.5],
+        },
+        index=labels,
     )
-    assert fig_low.data and fig_high.data
-    low_xy = [tuple(tr.x) for tr in fig_low.data]
-    high_xy = [tuple(tr.x) for tr in fig_high.data]
-    assert low_xy != high_xy
+
+
+def test_the_points_table_heads_its_columns_from_the_chart_and_the_level():
+    """The first column says what a row *is*; the last, in the chart's own
+    units, says what it is worth. Neither label is spelled here (#337)."""
+    grid = ChartPointsGrid()
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    assert list(grid.widget.df.columns) == [
+        "Category",
+        "Name",
+        "Count",
+        "1Y Sharpe",
+    ]
+
+
+def test_the_points_table_sorts_by_value_descending_with_blanks_last():
+    grid = ChartPointsGrid()
+    frame = _points_frame()
+    frame.loc["Equity", "value"] = float("nan")
+    grid.update(frame, level_label="Category", value_label="1Y Sharpe", fmt=".2f")
+    # A strategy with no history sinks rather than topping the table.
+    assert list(grid.widget.df["Category"]) == ["Fixed Income", "Equity"]
+
+
+def test_the_count_column_appears_only_above_the_leaf():
+    """At the leaf every row is one strategy, and a column of 1s is noise."""
+    grid = ChartPointsGrid()
+    grid.update(
+        _points_frame(counts=(1, 1)),
+        level_label="Strategy",
+        value_label="1Y Sharpe",
+        fmt=".2f",
+    )
+    assert "Count" not in grid.widget.df.columns
+
+    grid.update(
+        _points_frame(counts=(4, 1)),
+        level_label="Category",
+        value_label="1Y Sharpe",
+        fmt=".2f",
+    )
+    assert "Count" in grid.widget.df.columns
+
+
+def test_a_points_row_click_hands_over_the_whole_row():
+    picked: list[pd.Series] = []
+    grid = ChartPointsGrid(on_pick=picked.append)
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    # Sorted descending, so row 0 is Fixed Income.
+    grid._forward_pick({"new": [0]})
+    assert picked and picked[0]["label"] == "Fixed Income"
+    assert picked[0]["path"] == ("Fixed Income",)
+
+
+def test_a_points_deselection_and_a_stale_row_do_nothing():
+    picked: list[pd.Series] = []
+    grid = ChartPointsGrid(on_pick=picked.append)
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    grid._forward_pick({"new": []})  # deselection
+    grid._forward_pick({"new": [99]})  # a re-render landed between click and callback
+    assert picked == []
+
+
+def test_a_group_row_narrows_and_a_strategy_row_opens_single_strategy():
+    """#331 decision 19 — `count` routes it, not the level: a row that stands
+    for one strategy IS that strategy, whatever depth the chart is drawn at."""
+    opened: list[str] = []
+    pa = _analytics(on_open_strategy=opened.append)
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    pa._pick_point(_points_frame().loc["Equity"])  # count 3 → narrow
+    assert pa.drill.scope == ("Equity",)
+    assert opened == []
+
+    pa._pick_point(_points_frame().loc["Fixed Income"])  # count 1 → open
+    assert opened == ["Fixed Income"]
+
+
+def test_the_points_table_follows_every_chart_render():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    seen: list[str] = []
+    pa.render_points = lambda: seen.append(pa.active_analytics)  # type: ignore
+
+    pa.fresh.update({"icicle", "scatter", "strip"})
+    pa.activate(pd.DataFrame(), "scatter")
+    assert seen == ["scatter"]
+
+
+def test_chart_and_table_stand_at_one_height():
+    """#331 decision 7 — stretching would let whichever box holds more content
+    set the row (the #298 lesson)."""
+    from src.style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
+
+    pa = _analytics()
+    chart_box, points_box = pa.card.children[2].children
+    assert chart_box.layout.height == ANALYTICS_HEIGHT
+    assert points_box.layout.height == ANALYTICS_HEIGHT
+    # A wide chart pushes nothing off: it takes the remaining width and its
+    # own content scrolls inside it (the #280 pair).
+    assert chart_box.layout.flex == "1 1 0%"
+    assert chart_box.layout.min_width == "0"
+    assert points_box.layout.flex == f"0 0 {ANALYTICS_TABLE_WIDTH}"
+
+
+# --- what the code review caught (epic #331) --------------------------------
+
+
+def test_a_one_member_category_row_is_not_opened_as_a_strategy():
+    """The review's first finding, pinned.
+
+    16 of the shipped catalog's 17 root points are one-member categories. A
+    `count == 1` route would clear the user's filters and then hand a category
+    name to the ticker picker, which raises.
+    """
+    opened: list[str] = []
+    pa = _analytics(on_open_strategy=opened.append)
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    lone_group = pd.Series(
+        {
+            "path": ("Equity", "Technology"),
+            "label": "Technology",
+            "name": "Technology",
+            "count": 1,
+            "leaf": False,
+            "value": 1.0,
+        }
+    )
+    pa._pick_point(lone_group)
+    assert opened == [], "a category must never reach Single Strategy"
+    assert pa.drill.scope == ("Equity", "Technology")
+
+
+def test_clicking_an_icicle_ticker_cell_does_not_raise():
+    """A leaf cell's id is one segment deeper than the scope can address."""
+    got: list[tuple[str, ...]] = []
+    chart = IcicleChart(on_drill=got.append)
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    trace = chart.fig.data[0]
+    leaf = next(i for i, node in enumerate(trace.ids) if node.endswith(" Index"))
+    chart._clicked(trace, SimpleNamespace(point_inds=[leaf]), None)
+    assert got == [], "a strategy has no children to narrow into"
+
+
+def test_a_metric_change_stales_the_charts_it_did_not_redraw():
+    """`activate` skips a `fresh` chart, so a stale one would show the old
+    metric under a bar saying something else."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.fresh.update({"icicle", "scatter", "strip"})
+
+    pa.metric_chips.value = "calmar"
+    assert "scatter" not in pa.fresh and "strip" not in pa.fresh
+
+
+def test_a_regime_change_stales_the_scatter_even_while_it_is_hidden():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.activate(pd.DataFrame(), "icicle")
+    pa.fresh.update({"icicle", "scatter"})
+
+    pa.regime_bucket_chips.value = pa.regime_bucket_chips.options[-1][1]
+    assert "scatter" not in pa.fresh
+    assert "icicle" in pa.fresh, "only the Scatter reads the regime"
+
+
+def test_colour_keys_to_the_points_own_level_below_the_root():
+    """A key that stops varying stops informing (#331 decision 17).
+
+    Reading the parent at every depth collapses a whole scope to one colour
+    and one legend entry — which is what the review found.
+    """
+    from src.layout.platform_charts import _color_values
+
+    inside = pd.DataFrame(
+        {
+            "path": [("Equity", "Momentum"), ("Equity", "Value")],
+            "label": ["Momentum", "Value"],
+        }
+    )
+    assert list(_color_values(inside, "category")) == ["Momentum", "Value"]
+    # At the root the key IS the parent, which is what varies there.
+    assert list(_color_values(inside, "asset_class")) == ["Equity", "Equity"]
+
+
+def test_the_strip_separates_two_nodes_that_share_a_label():
+    """The shipped catalog has "S&P US Sector" under two categories."""
+    dates = list(pd.bdate_range("2026-09-14", periods=2))
+    twins = pd.DataFrame(
+        {
+            "path": [
+                ("Equity", "Technology", "S&P US Sector"),
+                ("Equity", "Energy", "S&P US Sector"),
+            ],
+            "label": ["S&P US Sector", "S&P US Sector"],
+            "name": ["Tech sectors", "Energy sectors"],
+            "count": [1, 1],
+            "leaf": [False, False],
+            dates[0]: [0.01, 0.02],
+            dates[1]: [0.0, 0.01],
+        },
+        index=[0, 1],
+    )
+    chart = StripChart()
+    chart.update(twins, dates, color_key="family", colors={})
+    xs = [x for tr in chart.fig.data for x in tr.x]
+    first_column = sorted(x for x in xs if abs(x) < 0.5)
+    assert first_column[0] != first_column[1], "they must not stack"
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
@@ -533,85 +1014,103 @@ def _walk(w):
         yield from _walk(c)
 
 
+def _chart_chip(card, label: str):
+    """The Chart section's chip named ``label`` (#333 retired the pill row)."""
+    import ipywidgets as W
+
+    return next(
+        b for b in _walk(card) if isinstance(b, W.Button) and b.description == label
+    )
+
+
 def test_platform_regime_controls_resync_on_type_change():
-    """The regime Type dropdown is wired (platform.wire_platform_analytics ->
-    _sync_regime_controls) to repopulate the Source / Bucket dropdowns: a
-    tercile regime (Trend) shows the Source dropdown and Low/Middle/High
-    buckets; Volatility hides the Source and uses fixed VIX-level buckets."""
+    """The regime Type chips repopulate the Source dropdown and Bucket chips.
+
+    A tercile regime (Trend) shows the Source dropdown and Low/Middle/High
+    buckets; Volatility hides the Source and uses fixed VIX-level buckets.
+    Type and Bucket are `ChipGroup`s since #333; Source stays a dropdown
+    because its options are a long live list (#331 decision 13).
+    """
     import ipywidgets as W
     from src.layout import build_app
 
     app = build_app(verbose=False)
     panel = app.children[5].children[0]  # Platform is the default tab
-    # Mount the Regime analytics tab so its controls are in the widget tree.
-    next(
-        b
-        for b in _walk(app)
-        if isinstance(b, W.Button) and b.description == "Regime analysis"
-    ).click()
-    type_dd = next(
-        w for w in _walk(panel) if isinstance(w, W.Dropdown) and w.description == "Type"
-    )
+    card = panel.children[-1]
+    pa = _analytics_of(app)
+
+    # The Regime section only shows on the Scatter, so select it first.
+    _chart_chip(card, "Scatter").click()
     source_dd = next(
         w
         for w in _walk(panel)
         if isinstance(w, W.Dropdown) and w.description == "Source"
     )
-    bucket_dd = next(
-        w
-        for w in _walk(panel)
-        if isinstance(w, W.Dropdown) and w.description == "Bucket"
-    )
 
-    assert type_dd.value == "Volatility"
+    assert pa.regime_type_chips.value == "Volatility"
     assert source_dd.layout.display == "none"  # no source for Volatility
-    vix_buckets = [o[0] for o in bucket_dd.options]
+    vix_buckets = [label for label, _ in pa.regime_bucket_chips.options]
 
-    type_dd.value = "Trend"  # tercile regime — wired observer re-syncs
+    pa.regime_type_chips.value = "Trend"  # tercile regime — observer re-syncs
     assert source_dd.layout.display != "none"
     assert len(source_dd.options) > 0
-    assert [o[0] for o in bucket_dd.options] != vix_buckets
+    assert [label for label, _ in pa.regime_bucket_chips.options] != vix_buckets
 
-    type_dd.value = "Volatility"  # back to fixed buckets, source hidden
+    pa.regime_type_chips.value = "Volatility"  # back to fixed buckets
     assert source_dd.layout.display == "none"
-    assert [o[0] for o in bucket_dd.options] == vix_buckets
+    assert [label for label, _ in pa.regime_bucket_chips.options] == vix_buckets
 
 
-def test_platform_analytics_tab_swap():
-    """Clicking the analytics pills swaps the chart shown in the card
-    (platform.activate_platform_tab, wired by build_app)."""
-    import ipywidgets as W
+def test_platform_chart_chips_swap_the_chart():
+    """The Chart chips are the selector the three pills used to be (#331 dec. 4)."""
     from src.layout import build_app
 
     app = build_app(verbose=False)
     panel = app.children[5].children[0]
-    analytics_card = panel.children[
-        -1
-    ]  # the card is last; #279 removed the row above the table
-    chart_box = analytics_card.children[2].children[1]  # analytics_body -> chart_box
-    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+    card = panel.children[-1]
+    chart_box = card.children[2].children[0]
     first = chart_box.children[0]
-    pills["Factor exposures"].click()
-    assert chart_box.children[0] is not first  # swapped to the factor scatter
-    pills["Sunburst"].click()
-    assert chart_box.children[0] is first  # back to the sunburst
+
+    _chart_chip(card, "Scatter").click()
+    assert chart_box.children[0] is not first
+    _chart_chip(card, "Icicle").click()
+    assert chart_box.children[0] is first
+
+
+def test_the_bar_shows_only_the_sections_the_active_chart_reads():
+    """#331 decision 3 — and the chips keep their state across the switch."""
+    pa = _analytics()
+    pa.fresh.update({"icicle", "scatter", "strip"})
+
+    def shown(heading):
+        return pa.bar.section(heading).layout.display != "none"
+
+    pa.activate(pd.DataFrame(), "icicle")
+    # The Icicle draws every level at once and zooms itself, so a Level or a
+    # Scope would be describing a position it does not have.
+    assert not shown("Level") and not shown("Scope")
+    assert shown("Metric") and shown("Window")
+    assert not shown("Regime")
+
+    pa.metric_chips.value = "calmar"
+    pa.activate(pd.DataFrame(), "strip")
+    # The Strip's metric and window are fixed (1D returns over five days).
+    assert not shown("Metric") and not shown("Window")
+    assert shown("Level") and shown("Scope")
+
+    pa.activate(pd.DataFrame(), "scatter")
+    assert shown("Regime")
+    # Hidden, not rebuilt: the selection survives the round trip.
+    assert pa.metric_chips.value == "calmar"
 
 
 def test_platform_analytics_render_is_lazy(monkeypatch):
-    """v0.9.13 #168: only the visible (Sunburst) analytics tab renders on load;
-    Regime / Factor render on their pill's first activation and not again while
-    fresh."""
-    import ipywidgets as W
+    """v0.9.13 #168: only the visible chart renders on load; the others render
+    on their chip's first selection and not again while fresh."""
     from src.layout import build_app
 
-    calls = {"sunburst": 0, "regime": 0, "factor": 0}
-    # #219: the renderers are methods now, so spy on the class rather than on a
-    # module-level dispatch dict.
-    methods = {
-        "sunburst": "render_sunburst",
-        "regime": "render_regime_scatter",
-        "factor": "render_factor_scatter",
-    }
+    calls = {"icicle": 0, "scatter": 0}
+    methods = {"icicle": "render_icicle", "scatter": "render_scatter"}
 
     def _spy(name, real):
         def render(self, meta):
@@ -626,19 +1125,15 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
         )
 
     app = build_app(verbose=False)
-    # On load only the visible Sunburst tab is computed.
-    assert calls == {"sunburst": 1, "regime": 0, "factor": 0}
+    assert calls == {"icicle": 1, "scatter": 0}
 
-    analytics_card = app.children[5].children[0].children[-1]
-    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
-
-    pills["Factor exposures"].click()  # first activation → render once
-    assert calls["factor"] == 1
-    pills["Sunburst"].click()  # already fresh → no re-render
-    pills["Factor exposures"].click()  # still fresh → no re-render
-    assert calls["factor"] == 1
-    assert calls["sunburst"] == 1
-    assert calls["regime"] == 0  # never activated → never rendered
+    card = app.children[5].children[0].children[-1]
+    _chart_chip(card, "Scatter").click()  # first selection → render once
+    assert calls["scatter"] == 1
+    _chart_chip(card, "Icicle").click()  # already fresh → no re-render
+    _chart_chip(card, "Scatter").click()  # still fresh → no re-render
+    assert calls["scatter"] == 1
+    assert calls["icicle"] == 1
 
 
 def test_platform_analytics_owns_its_card_and_lazy_state():
@@ -649,50 +1144,123 @@ def test_platform_analytics_owns_its_card_and_lazy_state():
     pa = _analytics()
     assert isinstance(pa.card, W.VBox)
     assert "bbg-card" in pa.card._dom_classes
-    assert set(pa.analytics_tabs) == {"sunburst", "regime", "factor"}
-    for key, (pill, controls, fig) in pa.analytics_tabs.items():
-        assert isinstance(pill, W.Button), key
-        assert isinstance(controls, W.Widget), key
-        assert isinstance(fig, go.FigureWidget), key
-    # Opens on Sunburst with nothing drawn yet — the lazy contract's start state.
-    assert pa.active_analytics == "sunburst"
+    assert set(pa.analytics_tabs) == {"icicle", "scatter", "strip"}
+    for key, mounted in pa.analytics_tabs.items():
+        assert isinstance(mounted, W.Widget), key
+    # Opens on the Icicle with nothing drawn yet — the lazy contract's start.
+    assert pa.active_analytics == "icicle"
     assert pa.fresh == set()
-    assert pa.chart_box.children == (pa.sunburst_fig,)
+    assert pa.chart_box.children == (pa.icicle.fig,)
 
 
 def test_platform_analytics_instances_do_not_share_state():
     # `fresh` is a per-instance set, not a class attribute — the mutable-default
     # trap on a field `activate` / `invalidate` mutate constantly.
     a, b = _analytics(), _analytics()
-    a.fresh.add("regime")
-    a.active_analytics = "regime"
+    a.fresh.add("scatter")
+    a.active_analytics = "scatter"
     assert b.fresh == set()
-    assert b.active_analytics == "sunburst"
-    assert a.sunburst_fig is not b.sunburst_fig
+    assert b.active_analytics == "icicle"
+    assert a.icicle is not b.icicle
+    # The drill is per-instance too, for the same reason.
+    a.set_drill(("Equity",), "family")
+    assert b.drill.scope == ()
 
 
-def test_activate_swaps_controls_and_chart():
-    # The pill click's visible effect, independent of any rendering: the left
-    # column and the chart box follow the active tab.
+def test_activate_swaps_the_chart():
+    # The chip's visible effect, independent of any rendering.
     pa = _analytics()
-    pa.fresh.update({"sunburst", "regime", "factor"})  # skip the lazy render
-    pa.activate(pd.DataFrame(), "regime")
-    assert pa.active_analytics == "regime"
-    assert pa.chart_box.children == (pa.regime_scatter_fig,)
-    assert pa.tab_controls_box.children == (pa.analytics_tabs["regime"][1],)
-    pa.activate(pd.DataFrame(), "factor")
-    assert pa.chart_box.children == (pa.factor_scatter_fig,)
+    pa.fresh.update({"icicle", "scatter", "strip"})
+    pa.activate(pd.DataFrame(), "scatter")
+    assert pa.active_analytics == "scatter"
+    assert pa.chart_box.children == (pa.scatter.fig,)
+    pa.activate(pd.DataFrame(), "strip")
+    assert pa.chart_box.children == (pa.strip.fig,)
 
 
-def test_invalidate_marks_every_tab_stale():
-    # A data or lookback change stales all three; only the visible one redraws
-    # (the redraw itself no-ops here — the stub state has no prices).
+def test_invalidate_marks_every_chart_stale():
+    # A data change stales all three; only the visible one redraws (the redraw
+    # itself no-ops here — the stub state has no prices).
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()
-    pa.fresh.update({"sunburst", "regime", "factor"})
+    pa.fresh.update({"icicle", "scatter", "strip"})
     pa.invalidate(pd.DataFrame())
-    # `render_active` re-adds only the visible tab; the hidden two stay stale.
-    assert pa.fresh == {"sunburst"}
+    assert pa.fresh == {"icicle"}
+
+
+# --- the drill (#333) -------------------------------------------------------
+
+
+def test_set_drill_is_the_only_writer_and_repaints_both_displays():
+    """#331 decision 15: no chart holds a private focus."""
+    pa = _analytics()
+    pa.set_drill(("Equity", "Momentum"), "family")
+
+    assert pa.drill.scope == ("Equity", "Momentum")
+    assert pa.drill.level == "family"
+    # The two controls that DISPLAY the state follow it, rather than each
+    # holding a copy that could disagree.
+    assert pa.level_chips.value == "family"
+    assert [b.description for b in pa.breadcrumb.children] == [
+        "All",
+        "Equity",
+        "Momentum",
+    ]
+
+
+def test_narrowing_moves_one_stop_down_and_bottoms_out_at_the_leaf():
+    pa = _analytics()
+    pa.narrow_to(("Equity", "Momentum"))
+    assert pa.drill.level == "family"
+    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    assert pa.drill.level == "ticker"
+    # A click on a strategy is a no-op, not an error: the table row is the way
+    # into Single Strategy.
+    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    assert pa.drill.level == "ticker"
+
+
+def test_a_breadcrumb_segment_returns_to_its_prefix():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
+    pa.wire(lambda: pd.DataFrame())
+    pa.set_drill(("Equity", "Momentum"), "family")
+
+    pa.breadcrumb.children[1].click()  # "Equity"
+    assert pa.drill.scope == ("Equity",)
+    assert pa.drill.level == "category"  # the stop below an asset class
+
+    pa.breadcrumb.children[0].click()  # "All"
+    assert pa.drill.scope == ()
+    assert pa.drill.level == "category"
+
+
+def test_a_level_chip_sets_the_depth_within_the_current_scope():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.set_drill(("Equity",), "category")
+
+    pa.level_chips.value = "ticker"
+    assert pa.drill.level == "ticker"
+    assert pa.drill.scope == ("Equity",), "the chip changes depth, not scope"
+
+
+def test_syncing_the_displays_does_not_re_enter_the_setter():
+    """`set_drill` repaints the Level chips; their observer must not fire back.
+
+    Without the guard a drill change renders twice — and a breadcrumb click
+    would set the level from the chip it had just repainted, not from the
+    prefix that was clicked.
+    """
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    renders: list[str] = []
+    pa.wire(lambda: pd.DataFrame())
+    pa._render_tab = lambda meta, which: renders.append(which)  # type: ignore
+
+    pa.breadcrumb.children[0].click()  # "All" — one drill change
+    assert len(renders) == 1
 
 
 def test_observers_render_against_the_current_catalog_not_the_wired_one():

@@ -506,7 +506,12 @@
   overflow: hidden;
 }
 
-/* v0.9.18 (#263) — dark theme for the all-catalog itables/DataTables table.
+/* v0.9.18 (#263) — dark theme for the app's itables/DataTables tables.
+
+   `.bbg-itable` is the chrome BOTH tables wear (#337): the catalog's and
+   the points table beside the Platform chart. `.bbg-catalog` keeps only
+   what belongs to the catalog alone — the nested group bands and the
+   per-column filter row, neither of which the points table has.
 
    Two things here are load-bearing and look like noise:
 
@@ -519,7 +524,7 @@
    Colors are placeholder substitutions from `src/style.py`, same as the rest
    of this file — nothing here is a literal hex. */
 .bbg-app div.itables_anywidget,
-div.itables_anywidget.bbg-catalog {
+div.itables_anywidget.bbg-itable {
   border: 1px solid {{border_color}};
   border-radius: 6px;
   overflow: hidden;
@@ -544,8 +549,8 @@ div.itables_anywidget.bbg-catalog {
    `chrome_bg`, not `surface`: this is the table's own base, so the strips
    read as part of the table rather than as a band of header colour. */
 .bbg-app div.itables_anywidget,
-div.itables_anywidget.bbg-catalog,
-div.itables_anywidget.bbg-catalog .dt-container {
+div.itables_anywidget.bbg-itable,
+div.itables_anywidget.bbg-itable .dt-container {
   --dt-html-background: {{chrome_bg}};
   background-color: {{chrome_bg}} !important;
 }
@@ -562,9 +567,9 @@ div.itables_anywidget.bbg-catalog .dt-container {
    The scroll on a too-wide column set stays INSIDE the table: the layout cell
    already carries `overflow: auto` (see the sticky-header rules below), so
    the page never grows a horizontal scrollbar of its own. */
-div.itables_anywidget.bbg-catalog,
-div.itables_anywidget.bbg-catalog .dt-container,
-div.itables_anywidget.bbg-catalog table.dataTable {
+div.itables_anywidget.bbg-itable,
+div.itables_anywidget.bbg-itable .dt-container,
+div.itables_anywidget.bbg-itable table.dataTable {
   width: 100% !important;
 }
 /* The catalog scrolls here rather than through DataTables' `scrollY`.
@@ -593,16 +598,16 @@ div.itables_anywidget .dt-layout-row.dt-layout-table {
    ancestor of the header — so a sticky `th` sticks to the cell whatever the row
    does. Scrolling the row instead left the header scrolling away with the
    body. */
-div.itables_anywidget.bbg-catalog,
-div.itables_anywidget.bbg-catalog .dt-container {
+div.itables_anywidget.bbg-itable,
+div.itables_anywidget.bbg-itable .dt-container {
   display: flex !important;
   flex-direction: column !important;
   min-height: 0 !important;
 }
-div.itables_anywidget.bbg-catalog .dt-container {
+div.itables_anywidget.bbg-itable .dt-container {
   flex: 1 1 auto !important;
 }
-div.itables_anywidget.bbg-catalog .dt-layout-row.dt-layout-table {
+div.itables_anywidget.bbg-itable .dt-layout-row.dt-layout-table {
   flex: 1 1 auto !important;
   min-height: 0 !important;
 }
@@ -633,7 +638,7 @@ div.itables_anywidget table.dataTable thead tr:first-child th {
    left this row blank). So they inherit none of the header rules above and
    carry their own: the pin, the offset beneath the labels, and the same
    opaque surface, or the body would scroll through them. */
-div.itables_anywidget table.dataTable thead tr.bbg-filter-row td.bbg-filter-cell {
+div.itables_anywidget.bbg-catalog table.dataTable thead tr.bbg-filter-row td.bbg-filter-cell {
   position: sticky !important;
   top: {{filter_row_top}} !important;
   z-index: 2 !important;
@@ -707,38 +712,38 @@ div.itables_anywidget table.dataTable tbody tr:nth-child(even) td {
    The base rule carries the deepest band, so a nesting level beyond those
    named below renders as a defined band rather than falling through to the
    body colour. Four fields are groupable, so level 3 is reachable today. */
-div.itables_anywidget table.dataTable tr.dtrg-group th,
-div.itables_anywidget table.dataTable tr.dtrg-group td {
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group th,
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group td {
   background-color: {{group_band3}} !important;
   color: {{text_color}} !important;
   border-color: {{border_color}} !important;
   text-align: left !important;
   font-weight: 600 !important;
 }
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 th,
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-0 td {
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-0 th,
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-0 td {
   background-color: {{group_band0}} !important;
   color: {{chrome_bg}} !important;
   font-weight: 700 !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
 }
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 th,
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-1 td {
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-1 th,
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-1 td {
   background-color: {{group_band1}} !important;
   color: {{chrome_bg}} !important;
   font-weight: 600 !important;
   padding-left: 22px !important;
 }
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 th,
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-2 td {
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-2 th,
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-2 td {
   background-color: {{group_band2}} !important;
   color: {{text_color}} !important;
   font-weight: 600 !important;
   padding-left: 40px !important;
 }
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 th,
-div.itables_anywidget table.dataTable tr.dtrg-group.dtrg-level-3 td {
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 th,
+div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td {
   background-color: {{group_band3}} !important;
   color: {{text_color}} !important;
   font-weight: 600 !important;

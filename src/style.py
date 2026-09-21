@@ -63,6 +63,14 @@ class Color(StrEnum):
     TRANSPARENT = "rgba(0,0,0,0)"
     CHART_GRID = "#1f2937"
     CHART_AXIS = "#475569"
+    # A 3D scene takes no paper shapes, which is why the factor scatter used
+    # translucent mesh planes to mark the origin — and why they dimmed the
+    # markers behind them. These two let the scene's own axes carry it instead
+    # (#335): the zero line bright enough to read against `TRANSPARENT` at the
+    # default camera, the wall edge a step below it so the box reads as a frame
+    # rather than as three more zero lines.
+    CHART_ZERO_LINE = "#94a3b8"
+    CHART_AXIS_LINE = "#334155"
     CHART_TEXT = "#cbd5e1"
     CHART_TITLE = "#f9fafb"
     CHART_HOVER_BG = "#1f2937"
@@ -136,6 +144,25 @@ CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 #: re-tuning at a terminal's fonts now that the table is full width.
 CATALOG_TABLE_HEIGHT: str = "506px"
 
+
+#: How tall the Platform analytics card's row stands: the active chart's box
+#: **and** the points table beside it, both this exact value (#331 dec. 7).
+#:
+#: Fixed rather than stretched, which is the `CATALOG_TABLE_HEIGHT` lesson one
+#: block up: stretching lets whichever box holds more content set the row, so
+#: a long points list would grow the chart and a tall chart would stretch a
+#: three-row table. The chart's own `height` in `_chart_layout` follows this
+#: token, so the figure fills its box rather than sitting in the top of it.
+#:
+#: Sized to sit a little under the table above it — the card is the second
+#: thing on the tab, and a chart as tall as the catalog pushes the page.
+ANALYTICS_HEIGHT: str = "420px"
+
+#: How wide the points table beside the chart stands. A fixed basis, so a wide
+#: chart pushes nothing off: the chart takes the remaining width (`flex: 1 1 0%`
+#: **and** `min-width: 0`, the #280 pair) and a long strategy name wraps or
+#: ellipsizes inside this rather than widening the column set.
+ANALYTICS_TABLE_WIDTH: str = "360px"
 
 #: How tall a `section_panel`'s container stands in the commentary block — the
 #: Leaderboard's and the QIS Bulletin's, both from this one token, so neither

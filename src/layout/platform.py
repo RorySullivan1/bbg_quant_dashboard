@@ -19,392 +19,65 @@ passed by hand.
 from __future__ import annotations
 
 import traceback
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import ipywidgets as W
 import pandas as pd
-import plotly.graph_objects as go
 
 from ..config import (
     CATALOG_SCORE_MIN_SAMPLE_DAYS,
-    HALF_YEAR_WINDOW,
+    DEFAULT_RANKING_METRIC,
+    DRILL_LEAF_LEVEL,
     REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
-    SHORT_WINDOW_OPTIONS,
+    STRIP_DAYS,
     TRADING_DAYS_PER_YEAR,
-    WEEK_WINDOW,
     LevelRegime,
     TercileRegime,
+    analytics_levels,
+    drill_level_label,
+    drill_levels,
+    rankable_metric_chips,
     stat_window_years,
-    sunburst_levels,
+    stat_windows,
+    universe_grid_default_window,
 )
 from ..stats import (
+    color_key,
     daily_returns,
+    drill_points,
     equity_risk_premium,
-    factor_beta,
-    platform_sunburst_frame,
+    icicle_frame,
+    node_paths,
+    recent_daily_returns,
+    regime_factor_frame,
     regime_mask,
-    regime_risk_return,
     rolling_autocorr,
     rolling_metric_zscore,
     tercile_bounds,
     term_premium,
-    trend_returns,
 )
-from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
-from .chrome import _make_tab_button, _style_tab_button
-from .filters import _section_label
-from .grids import zscore_column_name
+from ..style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
+from .drill import Drill
+from .grids import ChartPointsGrid, zscore_column_name
 from .html import STYLE_CTX, render_template
-from .rails import ChipGroup
-from .theme import _chart_layout, _short_ticker
+from .platform_charts import (
+    IcicleChart,
+    RegimeFactorScatter,
+    StripChart,
+    asset_class_colors,
+    group_colors,
+)
+from .rails import Breadcrumb, ChipGroup, RailSection, control_bar
+from .theme import _short_ticker
 
 if TYPE_CHECKING:
     # No cycle today, but `state.py` is one import away from reaching this
     # module, and the annotation never needs the symbol at runtime. Guarded
     # like `filter_panel` / `single_strategy`, where the cycle is real.
     from .state import DashboardState
-
-
-def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
-    """Distinct color per asset class for the factor scatter legend.
-
-    Curated `ASSET_CLASS_COLORS` tokens come first; any class not in that map
-    is assigned the next unused `LINE_PALETTE` color (so an unmapped class still
-    renders distinctly rather than collapsing onto the grey fallback), and only
-    falls back to `ASSET_CLASS_FALLBACK_COLOR` once the palette is exhausted.
-    Deterministic in the sorted order of the present classes."""
-    used = set(ASSET_CLASS_COLORS.values())
-    spare = [c for c in LINE_PALETTE if c not in used]
-    out: dict[str, str] = {}
-    for ac in sorted({str(c) for c in classes}):
-        if ac in ASSET_CLASS_COLORS:
-            out[ac] = ASSET_CLASS_COLORS[ac]
-        elif spare:
-            out[ac] = spare.pop(0)
-        else:
-            out[ac] = ASSET_CLASS_FALLBACK_COLOR
-    return out
-
-
-_FACTOR_HOVER = (
-    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}"
-    "<br>Trend β %{{z:.2f}}<extra></extra>"
-)
-
-# Opacity of the factor scatter's translucent zero-reference planes (x=0, y=0,
-# z=0). Faint enough to read the marker cloud through, solid enough to locate 0.
-_ZERO_PLANE_OPACITY = 0.20
-
-
-def _axis_bounds(
-    values: pd.Series, *, pad: float = 0.1, fallback: float = 1.0
-) -> tuple[float, float]:
-    """``(low, high)`` span for one factor axis, always bracketing 0 and padded.
-
-    The span is stretched to include 0 (so a zero plane sits inside it) then
-    padded by ``pad`` on each side; a degenerate span (single point / all-equal /
-    all-zero betas) falls back to ``±fallback`` so the plane stays visible.
-    """
-    lo = min(float(values.min()), 0.0)
-    hi = max(float(values.max()), 0.0)
-    span = hi - lo
-    if span <= 0:
-        return (-fallback, fallback)
-    margin = span * pad
-    return (lo - margin, hi + margin)
-
-
-def _quad_mesh(
-    name: str, xs: list[float], ys: list[float], zs: list[float]
-) -> go.Mesh3d:
-    """A flat 4-vertex quad (two triangles) as a translucent reference plane."""
-    return go.Mesh3d(
-        name=name,
-        x=xs,
-        y=ys,
-        z=zs,
-        i=[0, 0],
-        j=[1, 2],
-        k=[2, 3],
-        color=Color.CHART_AXIS.value,
-        opacity=_ZERO_PLANE_OPACITY,
-        flatshading=True,
-        hoverinfo="skip",
-        showlegend=False,
-    )
-
-
-def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
-    """Three translucent zero-reference planes (x=0, y=0, z=0), sized to the
-    point cloud, so the origin is legible in every dimension of the 3D scatter.
-
-    Each plane spans the padded data bounds of its other two axes (see
-    ``_axis_bounds``), so it covers the marker cloud and crosses 0.
-    """
-    xlo, xhi = _axis_bounds(frame["x"])
-    ylo, yhi = _axis_bounds(frame["y"])
-    zlo, zhi = _axis_bounds(frame["z"])
-    return [
-        # x = 0: spans y × z
-        _quad_mesh("x=0", [0, 0, 0, 0], [ylo, yhi, yhi, ylo], [zlo, zlo, zhi, zhi]),
-        # y = 0: spans x × z
-        _quad_mesh("y=0", [xlo, xhi, xhi, xlo], [0, 0, 0, 0], [zlo, zlo, zhi, zhi]),
-        # z = 0: spans x × y
-        _quad_mesh("z=0", [xlo, xhi, xhi, xlo], [ylo, ylo, yhi, yhi], [0, 0, 0, 0]),
-    ]
-
-
-# Sunburst node-id separator (one segment per configured level), diverging
-# the per-node hover. The colorscale matches the all-catalog grid's
-# red<0 → neutral → green>0 sentiment and is token-driven (no inline hex). The
-# hover is a `.format()` template — `metric_label` is user-selected at render
-# time (the literal plotly `%{...}` placeholders are doubled to survive
-# `.format()`); `percentParent` is the segment's gross-|z| share of its ring.
-_SUNBURST_SEP = " / "
-_SUNBURST_COLORSCALE = [
-    [0.0, Color.RED_600.value],
-    [0.5, Color.SLATE_500.value],
-    [1.0, Color.GREEN_600.value],
-]
-_SUNBURST_HOVER = (
-    "%{{label}}<br>z({metric_label}) %{{color:.2f}}"
-    "<br>%{{percentParent:.0%}} of parent<extra></extra>"
-)
-# Minimum visible arc, as a fraction of the max |z|, so a near-average (|z|≈0)
-# ticker stays visible. Lower = more contrast.
-_SUNBURST_SIZE_FLOOR = 0.02
-
-
-def _sunburst_leaf_sizes(z: pd.Series) -> pd.Series:
-    """Per-ticker arc value = |z| (gross magnitude), plus a small floor so a
-    near-average (|z|≈0) ticker stays visible. With ``branchvalues="total"`` each
-    ring's arc is then its gross-|z| share of its parent, at every level.
-    All-zero (or empty) input falls back to uniform arcs."""
-    mag = z.abs()
-    hi = float(mag.max()) if len(mag) else 0.0
-    if hi <= 0:
-        return pd.Series(1.0, index=z.index)
-    return mag + _SUNBURST_SIZE_FLOOR * hi
-
-
-def _factor_beta_scatter() -> go.FigureWidget:
-    """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
-    term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
-    marker per strategy (colored by asset class). Built empty;
-    `_update_factor_scatter` fills it — markers plus three translucent
-    zero-reference planes (x=0/y=0/z=0) that mark the origin in every
-    dimension. No in-figure title — the "Factor exposures" section header stands
-    alone. The legend is on (unlike the pane charts, this chart has no
-    grid legend to key its asset-class colors); each scene axis also carries a
-    zero line on the scene wall (paper shapes don't apply to a 3D scene)."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            showlegend=True,
-            legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            scene=dict(
-                xaxis=dict(title="Equity risk-premium β", zeroline=True),
-                yaxis=dict(title="Term-premium β", zeroline=True),
-                zaxis=dict(title="Trend Exposure", zeroline=True),
-            ),
-        )
-    )
-
-
-def _update_factor_scatter(
-    fig: go.FigureWidget,
-    arp_prices: pd.DataFrame,
-    universe_prices: pd.DataFrame,
-    meta: pd.DataFrame,
-    *,
-    years: float,
-    returns: pd.DataFrame | None = None,
-) -> None:
-    """Populate the 3D factor-beta scatter from the cached prices: per-strategy
-    betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
-    series, one trace per asset class (so the colors carry a legend), over three
-    translucent zero-reference planes (x=0/y=0/z=0) that mark the origin in every
-    dimension. No BQL — pure compute over the already-fetched cache."""
-    if arp_prices.empty or universe_prices.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    erp = equity_risk_premium(universe_prices)
-    tp = term_premium(universe_prices)
-    trend = trend_returns(universe_prices)
-    rets = daily_returns(arp_prices) if returns is None else returns
-    frame = pd.DataFrame(
-        {
-            "x": factor_beta(rets, erp, years),
-            "y": factor_beta(rets, tp, years),
-            "z": factor_beta(rets, trend, years),
-        }
-    ).dropna()
-
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    ac_map = meta.set_index("ticker")["asset_class"] if "ticker" in meta else None
-    frame["ac"] = [
-        (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
-    ]
-
-    color_for = _asset_class_colors(frame["ac"])
-    traces = []
-    for ac, grp in frame.groupby("ac"):
-        traces.append(
-            go.Scatter3d(
-                mode="markers",
-                name=str(ac),
-                x=grp["x"].to_numpy(),
-                y=grp["y"].to_numpy(),
-                z=grp["z"].to_numpy(),
-                marker=dict(
-                    size=5,
-                    color=color_for[str(ac)],
-                    line=dict(width=0),
-                ),
-                text=[_short_ticker(t) for t in grp.index],
-                hovertemplate=_FACTOR_HOVER.format(ac=str(ac)),
-            )
-        )
-
-    with fig.batch_update():
-        fig.data = ()
-        # Planes first so the markers render over them.
-        fig.add_traces([*_zero_planes(frame), *traces])
-
-
-def _sunburst() -> go.FigureWidget:
-    """The `config.SUNBURST_LEVELS` hierarchy down to ticker leaves (inside
-    out), arcs sized by each ring's gross-|z| share and colored by the
-    (level-averaged) metric z-score.
-    Built empty; `_update_sunburst` fills it. No in-figure title — the
-    "Risk-adjusted strength map" section header stands alone; the
-    diverging colorbar is the color legend."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            margin=dict(t=44, b=10, l=10, r=10),
-        )
-    )
-
-
-def _update_sunburst(
-    fig: go.FigureWidget,
-    prices: pd.DataFrame,
-    meta: pd.DataFrame,
-    *,
-    metric: str,
-    window: int,
-    lookback: int,
-    label: str,
-) -> None:
-    """Populate the sunburst from `platform_sunburst_frame`: one ring per
-    `config.SUNBURST_LEVELS` entry over the ticker leaves, so reconfiguring the
-    hierarchy — two levels today, the three framework tiers if that is what the
-    catalog should show — needs no edit here. Each arc is sized by |z| (so with
-    `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
-    colored by the metric z-score, averaged up each level (parent color = mean of
-    its descendant tickers' z). `maxdepth` shows the grouping rings up front; the
-    ticker ring appears when the user clicks into one (client-side drill-down).
-    `label` (e.g. "1W Sharpe") titles the colorbar + hover. No BQL — pure compute
-    over the already-fetched cache."""
-    frame = platform_sunburst_frame(
-        prices, meta, metric=metric, window=window, lookback=lookback
-    ).dropna(subset=["z"])
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    levels = list(sunburst_levels())
-    frame = frame.copy()
-    for level in levels:
-        frame[level] = frame[level].fillna("Other").astype(str)
-    # Arc value = |z| (gross magnitude) + floor; parents sum to the gross-|z|
-    # share at each ring. Color is the signed z (below), averaged up each level.
-    frame["size"] = _sunburst_leaf_sizes(frame["z"])
-
-    ids: list[str] = []
-    labels: list[str] = []
-    parents: list[str] = []
-    values: list[float] = []
-    colors: list[float] = []
-
-    def _emit(group: pd.DataFrame, depth: int, parent_id: str) -> float:
-        """Emit one subtree's nodes, returning its total arc value.
-
-        Depth-first and bottom-up: a node's value is the sum its children
-        actually reported, not a second aggregation of the same rows, so
-        ``branchvalues="total"`` holds exactly at every ring however many there
-        are. ``parent_id`` is "" at the top, which is Plotly's root.
-        """
-        if depth == len(levels):
-            for ticker, row in group.iterrows():
-                ids.append(ticker)
-                labels.append(_short_ticker(ticker))
-                parents.append(parent_id)
-                values.append(float(row["size"]))
-                colors.append(float(row["z"]))
-            return float(group["size"].sum())
-
-        total = 0.0
-        for value, sub in group.groupby(levels[depth]):
-            # Ids are the path, so the same leaf label under two different
-            # parents stays two nodes.
-            node_id = f"{parent_id}{_SUNBURST_SEP}{value}" if parent_id else str(value)
-            subtotal = _emit(sub, depth + 1, node_id)
-            ids.append(node_id)
-            labels.append(str(value))
-            parents.append(parent_id)
-            values.append(subtotal)
-            colors.append(float(sub["z"].mean()))
-            total += subtotal
-        return total
-
-    _emit(frame, 0, "")
-
-    sunburst = go.Sunburst(
-        ids=ids,
-        labels=labels,
-        parents=parents,
-        values=values,
-        branchvalues="total",
-        # Show one ring per configured level from the current center, so the
-        # ticker ring stays hidden until the user clicks into a grouping node to
-        # drill in (client-side zoom, no recompute).
-        maxdepth=len(levels),
-        insidetextorientation="radial",
-        marker=dict(
-            colors=colors,
-            colorscale=_SUNBURST_COLORSCALE,
-            cmid=0,
-            cmin=-2,
-            cmax=2,
-            line=dict(width=1, color=Color.CHART_BG.value),
-            showscale=True,
-            colorbar=dict(title=dict(text=f"z({label})")),
-        ),
-        hovertemplate=_SUNBURST_HOVER.format(metric_label=label),
-    )
-    with fig.batch_update():
-        fig.data = ()
-        fig.add_traces([sunburst])
-
-
-# --- Regime Analysis: regime-conditioned risk/return scatter ----------------
-
-_REGIME_RR_HOVER = (
-    "%{{text}}<br>{ac}<br>Vol %{{x:.1%}}<br>Return %{{y:.1%}}"
-    "<br>Sharpe %{{customdata:.2f}}<extra></extra>"
-)
 
 
 def _regime_window_mask(
@@ -421,90 +94,6 @@ def _regime_window_mask(
     return regime_mask(indicator.reindex(index), low, high)
 
 
-def _regime_scatter() -> go.FigureWidget:
-    """Regime-conditioned risk/return scatter — annualized vol (x) vs return (y)
-    over only the selected regime bucket's days, one marker per strategy colored
-    by asset class. Built empty; `_update_regime_scatter` fills it. No in-figure
-    title — the section header + regime controls stand alone."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            showlegend=True,
-            legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            hovermode="closest",
-            xaxis=dict(
-                title="Annualized volatility", tickformat=".0%", rangemode="tozero"
-            ),
-            yaxis=dict(title="Annualized return", tickformat=".0%"),
-        )
-    )
-
-
-def _update_regime_scatter(
-    fig: go.FigureWidget,
-    arp_prices: pd.DataFrame,
-    indicator: pd.Series | None,
-    meta: pd.DataFrame,
-    *,
-    low: float | None,
-    high: float | None,
-    lookback: int,
-    returns: pd.DataFrame | None = None,
-) -> None:
-    """Populate the regime risk/return scatter: per-strategy vol/return/Sharpe
-    over the lookback window restricted to the regime-bucket days (mean-based
-    annualization via `regime_risk_return`), one trace per asset class. No BQL.
-
-    ``returns`` (the shared ``universe_rets``) avoids re-deriving daily returns:
-    ``daily_returns(arp).tail(lookback - 1)`` is exactly ``daily_returns(arp.tail(
-    lookback))`` — a ``lookback``-row price slice yields ``lookback - 1`` returns,
-    the same trailing rows as slicing the full-history returns."""
-    if arp_prices.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    if returns is None:
-        rets = daily_returns(arp_prices.tail(lookback))
-    else:
-        rets = returns.tail(lookback - 1)
-    mask = _regime_window_mask(indicator, rets.index, low, high)
-    frame = regime_risk_return(rets, mask).dropna(subset=["vol", "ret"])
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    ac_map = meta.set_index("ticker")["asset_class"] if "ticker" in meta else None
-    frame = frame.copy()
-    frame["ac"] = [
-        (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
-    ]
-    color_for = _asset_class_colors(frame["ac"])
-    traces = []
-    for ac, grp in frame.groupby("ac"):
-        traces.append(
-            go.Scatter(
-                mode="markers",
-                name=str(ac),
-                x=grp["vol"].to_numpy(),
-                y=grp["ret"].to_numpy(),
-                marker=dict(size=8, color=color_for[str(ac)], line=dict(width=0)),
-                text=[_short_ticker(t) for t in grp.index],
-                customdata=grp["sharpe"].to_numpy(),
-                hovertemplate=_REGIME_RR_HOVER.format(ac=str(ac)),
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        fig.add_traces(traces)
-
-
-# --- Platform-analytics orchestration -----------------------------------------
-# ``DashboardApp`` constructs one ``PlatformAnalytics``, calls ``wire`` with a
-# catalog provider, and mounts ``.card``. Every render reads the cache on
-# ``state``.
-
-
 @contextmanager
 def _guard_render(state: DashboardState, label: str):
     """Route any exception raised in the block into ``state.init_errors`` labeled
@@ -515,6 +104,50 @@ def _guard_render(state: DashboardState, label: str):
         yield
     except Exception:
         state.init_errors.append(f"{label} failed:\n{traceback.format_exc()}")
+
+
+def _with_names(points: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
+    """Give each point the display name its hover and the table should show.
+
+    A strategy takes its catalog name; a group is named by its own label,
+    because a group has no name beyond what it is.
+    """
+    if points.empty:
+        return points.assign(name=pd.Series(dtype=object))
+    names = (
+        meta.set_index("ticker")["name"]
+        if {"ticker", "name"} <= set(meta.columns)
+        else pd.Series(dtype=object)
+    )
+    out = points.copy()
+    out["name"] = [
+        names.get(label, _short_ticker(str(label))) if count == 1 else str(label)
+        for label, count in zip(out["label"], out["count"], strict=True)
+    ]
+    return out
+
+
+def _color_values_of(points: pd.DataFrame) -> list[str]:
+    """The colour-key value of each point: its parent at the root, else itself."""
+    depth = max(len(points["path"].iloc[0]) - 1, 0)
+    if depth == 0:
+        return [str(v) for v in points["label"]]
+    return [str(p[0]) if len(p) else "Other" for p in points["path"]]
+
+
+def _colors_for(points: pd.DataFrame, key: str) -> dict[str, str]:
+    """The palette for the points shown.
+
+    Curated only when the key is the hierarchy's first level — that is where
+    the asset-class identity colours belong, and a family called "Momentum"
+    has no claim on Equity's blue.
+    """
+    if points.empty:
+        return {}
+    values = _color_values_of(points)
+    if key == analytics_levels()[0]:
+        return asset_class_colors(values)
+    return group_colors(values)
 
 
 def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
@@ -565,6 +198,7 @@ class PlatformAnalytics:
         *,
         z_metric_chips: ChipGroup,
         window_chips: ChipGroup,
+        on_open_strategy: Callable[[str], None] | None = None,
     ) -> None:
         self.state = state
         # The all-catalog grid's ranking controls live with the table, not in
@@ -579,60 +213,43 @@ class PlatformAnalytics:
         # window and no lookback: the score is measured over the period the row
         # is being read at, against a fixed `SCORE_SAMPLE_DAYS` sample.
         self.z_metric_chips = z_metric_chips
+        #: How a strategy row leaves the card. The app passes the same
+        #: method the catalog table and the leaderboard use, so the three
+        #: entry points into Single Strategy cannot diverge (#286's rule).
+        self._on_open_strategy = on_open_strategy
         self.window_chips = window_chips
+        #: Resolved at fire time, never captured (#242). `wire` sets it.
+        self._current_meta: Callable[[], pd.DataFrame] | None = None
 
-        # Shared 6M/1Y/3Y/5Y lookback — drives all three tabs. Value is a
-        # trading-day count, like z_lookback_chips; the factor scatter converts it
-        # to years. Re-slices the cache only (no BQL).
-        self.lookback_selector = W.ToggleButtons(
-            options=[
-                ("6M", HALF_YEAR_WINDOW),
-                ("1Y", TRADING_DAYS_PER_YEAR),
-                ("3Y", TRADING_DAYS_PER_YEAR * 3),
-                ("5Y", TRADING_DAYS_PER_YEAR * 5),
-            ],
-            value=TRADING_DAYS_PER_YEAR,
-            layout=W.Layout(width="auto"),
+        self.icicle = IcicleChart(on_drill=self._drill_from_chart)
+        self.scatter = RegimeFactorScatter(on_drill=self._drill_from_chart)
+        self.strip = StripChart(on_drill=self._drill_from_chart)
+
+        # --- the Chart view bar (#333) ---------------------------------------
+        #
+        # The card's own chips over the table's own option lists: the two
+        # surfaces can be read at different windows but cannot OFFER different
+        # things (#331 decision 1). Nothing here spells a label — Metric comes
+        # from `RANKABLE_METRICS`, Window from `stat_windows()`, Level from
+        # `drill_levels()` — so a relabelling reaches the card for free.
+        self.chart_chips = ChipGroup(
+            [("Icicle", "icicle"), ("Scatter", "scatter"), ("Strip", "strip")],
+            value="icicle",
+            row=True,
+        )
+        self.metric_chips = ChipGroup(
+            rankable_metric_chips(), value=DEFAULT_RANKING_METRIC, row=True
+        )
+        self.card_window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
+            value=universe_grid_default_window(),
+            row=True,
         )
 
-        self.sunburst_fig = _sunburst()
-        self.regime_scatter_fig = _regime_scatter()
-        self.factor_scatter_fig = _factor_beta_scatter()
-
-        # Sunburst Z-score controls (Metric · Window; the lookback is the shared
-        # toggle). The chosen z colors the arcs (averaged up each level) and its
-        # |z| drives each ring's gross-% sizing. `.value`s feed
-        # `rolling_metric_zscore`, the `.label`s the colorbar/hover.
-        self.sb_metric_dd = W.Dropdown(
-            options=[
-                ("Sharpe", "sharpe"),
-                ("Sortino", "sortino"),
-                ("Return", "return"),
-                ("Vol", "vol"),
-            ],
-            value="sharpe",
-            description="Metric",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="230px"),
-        )
-        self.sb_window_dd = W.Dropdown(
-            options=SHORT_WINDOW_OPTIONS,
-            value=WEEK_WINDOW,
-            description="Window",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="230px"),
-        )
-
-        self.regime_type_dd = W.Dropdown(
-            options=list(REGIME_SPECS.keys()),
-            value=next(iter(REGIME_SPECS)),
-            description="Type",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="240px"),
-        )
-        # Conditional indicator-source dropdown — benchmark for Trend, region
-        # for Rate-level; hidden (via `_sync_regime_controls`) for regimes with
-        # no selector.
+        self.regime_type_chips = ChipGroup(list(REGIME_SPECS.keys()), row=True)
+        # Source stays a dropdown: its options are the live benchmark registry
+        # or a region list, and a dropdown is the right control for a long list
+        # (#331 decision 13, #302's reasoning).
         self.regime_selector_dd = W.Dropdown(
             options=[("\u2014", "")],
             value="",
@@ -640,65 +257,65 @@ class PlatformAnalytics:
             style={"description_width": "60px"},
             layout=W.Layout(width="240px"),
         )
-        _init_buckets = regime_bucket_options(self.regime_type_dd.value)
-        self.regime_bucket_dd = W.Dropdown(
-            options=_init_buckets,
-            value=_init_buckets[0][1],
-            description="Bucket",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="240px"),
-        )
-
-        sunburst_controls = W.VBox(
-            [_section_label("Z-score"), self.sb_metric_dd, self.sb_window_dd],
-            layout=W.Layout(width="100%"),
+        _init_buckets = regime_bucket_options(self.regime_type_chips.value)
+        self.regime_bucket_chips = ChipGroup(
+            _init_buckets, value=_init_buckets[0][1], row=True
         )
         regime_controls = W.VBox(
-            [
-                _section_label("Regime"),
-                self.regime_type_dd,
-                self.regime_selector_dd,
-                self.regime_bucket_dd,
-            ],
-            layout=W.Layout(width="100%"),
-        )
-        factor_controls = W.VBox([], layout=W.Layout(width="100%"))
-
-        self.sunburst_pill = _make_tab_button(
-            "Sunburst", active=True, width="190px", height="34px"
-        )
-        self.regime_pill = _make_tab_button(
-            "Regime analysis", active=False, width="190px", height="34px"
-        )
-        self.factor_pill = _make_tab_button(
-            "Factor exposures", active=False, width="190px", height="34px"
-        )
-        analytics_tab_bar = W.HBox(
-            [self.sunburst_pill, self.regime_pill, self.factor_pill],
-            layout=W.Layout(width="100%", padding="2px 0 6px 0"),
+            [self.regime_type_chips, self.regime_selector_dd, self.regime_bucket_chips],
+            layout=W.Layout(width="auto"),
         )
 
-        #: Tab key -> (pill, its control column, its figure).
+        self.level_chips = ChipGroup(
+            [(drill_level_label(key), key) for key in drill_levels()],
+            value=drill_levels()[0],
+            row=True,
+        )
+        self.breadcrumb = Breadcrumb(on_pick=self._on_breadcrumb)
+
+        self.bar = control_bar(
+            RailSection("Chart", self.chart_chips),
+            RailSection("Metric", self.metric_chips),
+            RailSection("Window", self.card_window_chips),
+            RailSection("Regime", regime_controls),
+            RailSection("Level", self.level_chips),
+            RailSection("Scope", self.breadcrumb),
+            title="Chart view",
+        )
+
+        #: Chart key -> the figure (or placeholder) it mounts.
         self.analytics_tabs = {
-            "sunburst": (self.sunburst_pill, sunburst_controls, self.sunburst_fig),
-            "regime": (self.regime_pill, regime_controls, self.regime_scatter_fig),
-            "factor": (self.factor_pill, factor_controls, self.factor_scatter_fig),
+            "icicle": self.icicle.fig,
+            "scatter": self.scatter.fig,
+            "strip": self.strip.fig,
         }
 
-        # Shared lookback stacked on the active tab's controls (left column),
-        # beside a flex-grow chart box holding exactly one figure.
-        self.tab_controls_box = W.Box(
-            [sunburst_controls], layout=W.Layout(width="100%")
-        )
-        analytics_left_col = W.VBox(
-            [_section_label("Lookback"), self.lookback_selector, self.tab_controls_box],
-            layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
-        )
+        # Chart beside its own points, both at ONE fixed height (#331 dec. 7).
+        # Stretching is the wrong tool here for `CATALOG_TABLE_HEIGHT`'s reason
+        # (#298): whichever box held more content would set the row, so a long
+        # points list would grow the chart and a tall chart would stretch a
+        # three-row table.
+        #
+        # `flex: 1 1 0%` **and** `min-width: 0` on the chart, the #280 pair: a
+        # flex item will not shrink below its content without the second, so a
+        # wide legend would push the table off the row instead of fitting.
         self.chart_box = W.Box(
-            [self.sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%")
+            [self.icicle.fig],
+            layout=W.Layout(
+                flex="1 1 0%", width="100%", min_width="0", height=ANALYTICS_HEIGHT
+            ),
+        )
+        self.points_grid = ChartPointsGrid(on_pick=self._pick_point)
+        points_box = W.Box(
+            [self.points_grid.widget],
+            layout=W.Layout(
+                flex=f"0 0 {ANALYTICS_TABLE_WIDTH}",
+                width=ANALYTICS_TABLE_WIDTH,
+                height=ANALYTICS_HEIGHT,
+            ),
         )
         analytics_body = W.HBox(
-            [analytics_left_col, self.chart_box],
+            [self.chart_box, points_box],
             layout=W.Layout(width="100%", align_items="stretch"),
         )
 
@@ -709,17 +326,162 @@ class PlatformAnalytics:
                         "grid_header", **STYLE_CTX, text="Platform analytics"
                     )
                 ),
-                analytics_tab_bar,
+                self.bar,
                 analytics_body,
             ],
             layout=W.Layout(width="100%"),
         )
         self.card.add_class("bbg-card")
+        # A back-reference so a test (and a future sibling panel) can reach the
+        # controller from the widget tree without counting child indices, which
+        # move whenever the card is restyled.
+        self.card._analytics = self
 
-        #: Lazy-render state: the visible tab, and the tabs drawn against the
+        #: Where the user is. One object, replaced wholesale through
+        #: `set_drill`, read by every chart and (from #337) the points table.
+        self.drill = Drill()
+        #: Set while `set_drill` repaints the Level chips and the breadcrumb,
+        #: so their own observers do not re-enter it and render twice.
+        self._syncing_drill = False
+
+        #: Lazy-render state: the visible chart, and those drawn against the
         #: current data.
-        self.active_analytics: str = "sunburst"
+        self.active_analytics: str = "icicle"
         self.fresh: set[str] = set()
+        self._sync_sections()
+
+    def _restale_scatter(self) -> None:
+        """A regime control changed: the Scatter is stale, redraw it if shown.
+
+        Only the Scatter reads the regime, so this stales one chart rather
+        than all three — but it must stale it even while hidden, or selecting
+        it later would show the previous bucket.
+        """
+        self.fresh.discard("scatter")
+        if self.active_analytics == "scatter" and self._current_meta is not None:
+            self._render_tab(self._current_meta(), "scatter")
+
+    def _pick_point(self, row: pd.Series) -> None:
+        """A points-table row: narrow on a group, open a strategy (#331 dec. 19).
+
+        The row's **`leaf` flag** routes it. Neither of the two things that
+        could be inferred instead works: `count == 1` is a one-member *group*
+        as often as a strategy — 16 of the shipped catalog's 17 root points
+        are one-member categories — and a family node and a ticker under it
+        are both three path segments deep. Either inference would clear the
+        user's filters and then hand a category name to a ticker dropdown.
+        """
+        if bool(row["leaf"]):
+            if self._on_open_strategy is not None:
+                self._on_open_strategy(str(row["label"]))
+        else:
+            self._drill_from_chart(tuple(row["path"]))
+
+    def render_points(self) -> None:
+        """Show the active chart's own points beside it.
+
+        Runs after every chart render, so every drill change reaches it for
+        free: a marker click, a Level chip, a breadcrumb segment and the
+        icicle's own zoom all re-render the visible chart.
+        """
+        chart = {
+            "icicle": self.icicle,
+            "scatter": self.scatter,
+            "strip": self.strip,
+        }[self.active_analytics]
+        level = (
+            DRILL_LEAF_LEVEL if self.active_analytics == "icicle" else self.drill.level
+        )
+        self.points_grid.update(
+            chart.points(),
+            level_label=drill_level_label(level),
+            value_label=chart.value_label,
+            fmt=chart.value_format,
+        )
+
+    # --- the drill ------------------------------------------------------------
+
+    def set_drill(self, scope: tuple[str, ...], level: str) -> None:
+        """The one writer of `self.drill`.
+
+        Every entry point — a Level chip, a breadcrumb segment, and from
+        #334-#337 a marker click, an icicle zoom and a table row — lands here,
+        so no chart can hold a private focus (#331 decision 15). Repaints the
+        two controls that display the state with their observers suppressed,
+        then re-renders the visible chart once.
+        """
+        self.drill = Drill(scope=tuple(scope), level=level)
+        self._syncing_drill = True
+        try:
+            self.level_chips.value = self.drill.level
+            self.breadcrumb.set_path(self.drill.scope)
+        finally:
+            self._syncing_drill = False
+
+    def narrow_to(self, path: tuple[str, ...]) -> None:
+        """Move into ``path`` and show its children — what a click means."""
+        moved = self.drill.narrowed_to(tuple(path))
+        self.set_drill(moved.scope, moved.level)
+
+    def _drill_from_chart(self, path: tuple[str, ...]) -> None:
+        """A marker or icicle click: narrow, then redraw the visible chart.
+
+        The same door a Level chip and a breadcrumb segment use, so no chart
+        can hold a focus the others do not know about (#331 decision 15).
+        """
+        self.narrow_to(path)
+        self._render_current()
+
+    def _on_breadcrumb(self, prefix: tuple[str, ...]) -> None:
+        """A breadcrumb segment: back to that prefix, at the stop below it."""
+        if self._syncing_drill:
+            return
+        self.narrow_to(prefix)
+        self._render_current()
+
+    def _on_level_chip(self, _change=None) -> None:
+        """A Level chip sets the depth within the current scope."""
+        if self._syncing_drill:
+            return
+        self.set_drill(self.drill.scope, self.level_chips.value)
+        self._render_current()
+
+    def _render_current(self) -> None:
+        """Re-render the visible chart and mark the other two stale.
+
+        Every control that reaches here — Metric, Window, a Level chip, a
+        breadcrumb segment, a marker click — changes what **all three** charts
+        would draw, but only one is on screen. Staling the hidden two is what
+        makes `activate`'s `fresh` skip safe: without it, switching charts
+        shows one drawn at the previous metric or the previous scope, with the
+        bar above it describing something else.
+
+        `_current_meta` is set by `wire`; before that the card has not been
+        wired to a catalog and there is nothing to draw.
+        """
+        self.fresh.clear()
+        if self._current_meta is not None:
+            self._render_tab(self._current_meta(), self.active_analytics)
+
+    # --- conditional sections -------------------------------------------------
+
+    def _sync_sections(self) -> None:
+        """Show only the sections the active chart reads (#331 decision 3).
+
+        Hiding rather than rebuilding, so a chip keeps its selection across a
+        chart switch: the Strip does not read Metric, but coming back to the
+        Scatter should find the metric the user last chose still chosen.
+        """
+        # Keyed to `active_analytics`, not to the chip: the chip drives
+        # `activate`, which sets it, so they agree in the app — and a direct
+        # `activate` call stays self-consistent instead of syncing the sections
+        # against whatever the chip happened to hold.
+        chart = self.active_analytics
+        self.bar.show("Regime", chart == "scatter")
+        self.bar.show("Metric", chart != "strip")
+        self.bar.show("Window", chart != "strip")
+        self.bar.show("Level", chart != "icicle")
+        self.bar.show("Scope", chart != "icicle")
 
     # --- per-chart renders ----------------------------------------------------
 
@@ -758,56 +520,115 @@ class PlatformAnalytics:
                 zname=zscore_column_name(self.z_metric_chips.label, window_label),
             )
 
-    def render_factor_scatter(self, meta: pd.DataFrame) -> None:
-        """Render the 3D factor-beta scatter at the selected lookback, live from
-        the fetched cache (no BQL)."""
+    def render_icicle(self, meta: pd.DataFrame) -> None:
+        """Draw the hierarchy from the Metric / Window chips, live from cache."""
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "icicle render"):
+            metric = self.metric_chips.value
+            names = (
+                meta.set_index("ticker")["name"]
+                if {"ticker", "name"} <= set(meta.columns)
+                else None
+            )
+            self.icicle.update(
+                icicle_frame(
+                    state.arp_universe_prices,
+                    meta,
+                    metric=metric,
+                    window=_window_days(self.card_window_chips.value),
+                    returns=state.universe_rets,
+                ),
+                metric=metric,
+                metric_label=(
+                    f"{self.card_window_chips.label} {self.metric_chips.label}"
+                ),
+                names=names,
+                scope=self.drill.scope,
+            )
+
+    def render_scatter(self, meta: pd.DataFrame) -> None:
+        """One scatter for the regime view and the factor view (#331 dec. 10).
+
+        They were two charts answering halves of one question. Betas and the
+        metric are now measured over the same sample — the Window's days
+        restricted to the regime bucket — so Y is the metric, X the
+        term-premium β and Z the equity-risk-premium β over one set of days.
+
+        The mask is applied to the **leaves**, before the drill aggregates
+        them, so a category's point is the mean of its members' bucket values
+        rather than the bucket value of their mean (#331 decision 18).
+        """
         state = self.state
         if state.arp_universe_prices.empty or state.universe_prices.empty:
             return
-        with _guard_render(state, "factor-beta scatter render"):
-            _update_factor_scatter(
-                self.factor_scatter_fig,
-                state.arp_universe_prices,
-                state.universe_prices,
-                meta,
-                years=self.lookback_selector.value / TRADING_DAYS_PER_YEAR,
-                returns=state.universe_rets,
-            )
+        with _guard_render(state, "regime factor scatter render"):
+            rets = state.universe_rets
+            if rets is None or rets.empty:
+                rets = daily_returns(state.arp_universe_prices)
+            rets = rets.tail(_window_days(self.card_window_chips.value))
 
-    def render_sunburst(self, meta: pd.DataFrame) -> None:
-        """Render the `SUNBURST_LEVELS` -> ticker sunburst from the Metric/Window
-        Z-score controls + the shared lookback, live from the ARP-only cache."""
-        state = self.state
-        if state.arp_universe_prices.empty:
-            return
-        with _guard_render(state, "sunburst render"):
-            _update_sunburst(
-                self.sunburst_fig,
-                state.arp_universe_prices,
-                meta,
-                metric=self.sb_metric_dd.value,
-                window=self.sb_window_dd.value,
-                lookback=self.lookback_selector.value,
-                label=f"{self.sb_window_dd.label} {self.sb_metric_dd.label}",
-            )
-
-    def render_regime_scatter(self, meta: pd.DataFrame) -> None:
-        """Render the regime risk/return scatter at the current regime / source /
-        bucket + lookback, live from the cache (no BQL)."""
-        state = self.state
-        if state.arp_universe_prices.empty:
-            return
-        with _guard_render(state, "regime scatter render"):
             low, high = self.resolve_regime_bucket()
-            _update_regime_scatter(
-                self.regime_scatter_fig,
-                state.arp_universe_prices,
-                self.regime_indicator(),
+            mask = _regime_window_mask(self.regime_indicator(), rets.index, low, high)
+            erp = equity_risk_premium(state.universe_prices).reindex(rets.index)
+            tp = term_premium(state.universe_prices).reindex(rets.index)
+
+            metric = self.metric_chips.value
+            points = _with_names(
+                drill_points(
+                    regime_factor_frame(rets, mask, erp, tp, metric=metric),
+                    node_paths(meta),
+                    scope=self.drill.scope,
+                    level=self.drill.level,
+                ),
                 meta,
-                low=low,
-                high=high,
-                lookback=self.lookback_selector.value,
+            )
+            key = color_key(self.drill.scope, self.drill.level)
+            self.scatter.update(
+                points,
+                metric=metric,
+                metric_label=(
+                    f"{self.card_window_chips.label} {self.metric_chips.label}"
+                ),
+                color_key=key,
+                colors=_colors_for(points, key),
+            )
+
+    def render_strip(self, meta: pd.DataFrame) -> None:
+        """Five dates of 1D returns at the current drill, live from cache.
+
+        Reads neither Metric nor Window: its metric is the 1D return and its
+        window is `STRIP_DAYS` (#331 decision 12). A change to either therefore
+        must not redraw it, which the bar enforces by hiding both.
+        """
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "strip render"):
+            recent = recent_daily_returns(
+                state.arp_universe_prices,
+                days=STRIP_DAYS,
                 returns=state.universe_rets,
+            )
+            if recent.empty:
+                self.strip.clear()
+                return
+            points = _with_names(
+                drill_points(
+                    recent.T,  # dates x tickers -> tickers x dates
+                    node_paths(meta),
+                    scope=self.drill.scope,
+                    level=self.drill.level,
+                ),
+                meta,
+            )
+            key = color_key(self.drill.scope, self.drill.level)
+            self.strip.update(
+                points,
+                list(recent.index),
+                color_key=key,
+                colors=_colors_for(points, key),
             )
 
     # --- regime resolution ----------------------------------------------------
@@ -815,7 +636,7 @@ class PlatformAnalytics:
     def regime_indicator(self) -> pd.Series | None:
         """The regime indicator series from the cache, per the active regime's
         shape, or None when its ticker(s) are absent (-> unconditioned view)."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if spec is None:
             return None
         prices = self.state.universe_prices
@@ -842,15 +663,16 @@ class PlatformAnalytics:
         read the tuple off the bucket dropdown; tercile regimes derive it from
         the live indicator's 1/3 & 2/3 quantiles over the lookback.
         ``(None, None)`` when no indicator is available."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if isinstance(spec, LevelRegime):
-            low, high = self.regime_bucket_dd.value
+            low, high = self.regime_bucket_chips.value
             return (low, high)
         indicator = self.regime_indicator()
         if indicator is None:
             return (None, None)
         return tercile_bounds(
-            indicator.tail(self.lookback_selector.value), self.regime_bucket_dd.value
+            indicator.tail(_window_days(self.card_window_chips.value)),
+            self.regime_bucket_chips.value,
         )
 
     def regime_selector_options(self) -> list[tuple[str, object]]:
@@ -860,7 +682,7 @@ class PlatformAnalytics:
         one frozen into `REGIME_SPECS` at import, so a benchmark added at
         runtime is offered here too. Rate-level carries a literal `selector`;
         a fixed-level regime has one ticker and so offers no source at all."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if not isinstance(spec, TercileRegime):
             return []
         if spec.selector_source == "benchmarks":
@@ -887,13 +709,13 @@ class PlatformAnalytics:
             self.regime_selector_dd.layout.display = ""
         else:
             self.regime_selector_dd.layout.display = "none"
-        options = regime_bucket_options(self.regime_type_dd.value)
+        options = regime_bucket_options(self.regime_type_chips.value)
         # Preserve the active bucket across a registry change for the same reason.
-        prev_bucket = self.regime_bucket_dd.value
+        prev_bucket = self.regime_bucket_chips.value
         bucket_values = [value for _, value in options]
-        self.regime_bucket_dd.options = options
-        self.regime_bucket_dd.value = (
-            prev_bucket if prev_bucket in bucket_values else options[0][1]
+        self.regime_bucket_chips.set_options(
+            options,
+            value=prev_bucket if prev_bucket in bucket_values else options[0][1],
         )
 
     # --- lazy tab rendering ---------------------------------------------------
@@ -901,12 +723,16 @@ class PlatformAnalytics:
     def _render_tab(self, meta: pd.DataFrame, which: str) -> None:
         """Render one analytics tab and mark it fresh."""
         renderer = {
-            "sunburst": self.render_sunburst,
-            "regime": self.render_regime_scatter,
-            "factor": self.render_factor_scatter,
+            "icicle": self.render_icicle,
+            "scatter": self.render_scatter,
+            "strip": self.render_strip,
         }[which]
         renderer(meta)
         self.fresh.add(which)
+        # The table reads whatever the chart just drew, so it follows every
+        # render rather than being driven separately from each control.
+        if which == self.active_analytics:
+            self.render_points()
 
     def render_active(self, meta: pd.DataFrame) -> None:
         """Render whichever tab is shown — called on load and Refresh so only
@@ -921,24 +747,24 @@ class PlatformAnalytics:
         self.render_active(meta)
 
     def activate(self, meta: pd.DataFrame, which: str) -> None:
-        """Switch to tab ``which``: render it first if it isn't fresh (lazy
-        first-view), restyle the pills, and swap the left-column controls and
-        the chart."""
+        """Switch to chart ``which``: render it first if it isn't fresh (lazy
+        first-view), show the sections it reads, and swap the figure.
+
+        The Chart chips paint their own active state, so unlike the pill row
+        they replace there is nothing to restyle here."""
         self.active_analytics = which
         if which not in self.fresh:
             self._render_tab(meta, which)
-        for key, (pill, _controls, _fig) in self.analytics_tabs.items():
-            _style_tab_button(pill, active=(key == which))
-        _pill, controls, fig = self.analytics_tabs[which]
-        self.tab_controls_box.children = (controls,)
-        self.chart_box.children = (fig,)
+        self._sync_sections()
+        self.chart_box.children = (self.analytics_tabs[which],)
+        self.render_points()
 
     # --- wiring ---------------------------------------------------------------
 
     def wire(self, current_meta: Callable[[], pd.DataFrame]) -> None:
-        """Wire every observer: the ranking Metric, the three tab pills, the
-        regime dropdowns, the shared lookback, and the sunburst's own controls.
-        Each re-renders live from the cache, no BQL.
+        """Wire every observer: the table's ranking Metric, and the card's own
+        Chart / Metric / Window / Regime / Level controls. Each re-renders live
+        from the cache, no BQL.
 
         Takes a **callable**, not a frame (#242). `build_app` re-points its
         `meta` to the recent-performance-pruned catalog after every load, so an
@@ -947,6 +773,8 @@ class PlatformAnalytics:
         into the grid. Resolving it at fire time makes that impossible, and
         needs nothing remembered at the prune sites.
         """
+        self._current_meta = current_meta
+
         # Only the Metric is wired here. The Window has a second job — which
         # performance columns are visible — so `DashboardApp._on_window_change`
         # owns it and does both, the way it owns the grouping chips (#324).
@@ -954,35 +782,32 @@ class PlatformAnalytics:
             lambda _c: self.render_universe_grid(current_meta()), names="value"
         )
 
-        self.sunburst_pill.on_click(
-            lambda _b: self.activate(current_meta(), "sunburst")
+        self.chart_chips.observe(
+            lambda c: self.activate(current_meta(), c["new"]), names="value"
         )
-        self.regime_pill.on_click(lambda _b: self.activate(current_meta(), "regime"))
-        self.factor_pill.on_click(lambda _b: self.activate(current_meta(), "factor"))
 
         def _on_regime_type(_change=None):
             self.sync_regime_controls()
-            self._render_tab(current_meta(), "regime")
+            self.fresh.discard("scatter")
+            if self.active_analytics == "scatter":
+                self._render_tab(current_meta(), "scatter")
 
-        self.regime_type_dd.observe(_on_regime_type, names="value")
+        self.regime_type_chips.observe(_on_regime_type, names="value")
         self.regime_selector_dd.observe(
-            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
+            lambda _c: self._restale_scatter(), names="value"
         )
-        self.regime_bucket_dd.observe(
-            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
-        )
-
-        # The shared lookback drives all three tabs — mark them stale and
-        # re-render only the visible one; the hidden two refresh on activation.
-        self.lookback_selector.observe(
-            lambda _c: self.invalidate(current_meta()), names="value"
+        self.regime_bucket_chips.observe(
+            lambda _c: self._restale_scatter(), names="value"
         )
 
-        # The sunburst's own Metric/Window controls re-render only the sunburst.
-        for _dd in (self.sb_metric_dd, self.sb_window_dd):
-            _dd.observe(
-                lambda _c: self._render_tab(current_meta(), "sunburst"), names="value"
-            )
+        # Metric and Window re-render the visible chart and **stale the other
+        # two**. `activate` skips a chart that is still `fresh`, so without
+        # this a switch would show a chart drawn at the previous metric while
+        # the chips above it said otherwise.
+        for chips in (self.metric_chips, self.card_window_chips):
+            chips.observe(lambda _c: self._render_current(), names="value")
+
+        self.level_chips.observe(self._on_level_chip, names="value")
 
         self.sync_regime_controls()
 
