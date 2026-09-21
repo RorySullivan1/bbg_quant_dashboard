@@ -154,16 +154,26 @@ CATALOG_TABLE_HEIGHT: str = "506px"
 #: three-row table. The chart's own `height` in `_chart_layout` follows this
 #: token, so the figure fills its box rather than sitting in the top of it.
 #:
-#: Sized to sit a little under the table above it — the card is the second
-#: thing on the tab, and a chart as tall as the catalog pushes the page.
-#: Raised 20% from 420px in v0.9.27: the Icicle draws four levels plus the
-#: ticker leaves, and five rows in 420px read as a squeezed band.
+#: **Height is the Icicle's only lever, which is why this is the big number
+#: on the card.** Its `tiling.orientation="h"` runs *depth* left to right, one
+#: column per level, so the width is divided four ways whatever the catalog
+#: holds — while the height is divided among **siblings**, every strategy in
+#: the pinned solution stacked in the last column. Widening the card does
+#: nothing for that; only this does.
+#:
+#: 420px (v0.9.24) → 504px (v0.9.27) → 720px (v0.9.28), each raise from the
+#: same terminal reading: the cells were still too short to carry their
+#: labels. It now stands *above* `CATALOG_TABLE_HEIGHT` rather than a little
+#: under it. That inverts the original "a chart as tall as the catalog pushes
+#: the page" sizing, deliberately: the table's height is a scroll viewport
+#: onto rows that keep their size, and the chart's is the whole drawing.
 #:
 #: **The figures are built at this height too** (`ANALYTICS_HEIGHT_PX`). They
-#: were not: `_chart_layout`'s default is the app-wide `CHART_HEIGHT`, which
-#: at 520px was *taller* than the 420px box, so the card clipped every chart
-#: it drew and the comment here claiming otherwise was wrong.
-ANALYTICS_HEIGHT: str = "504px"
+#: were not until v0.9.27: `_chart_layout`'s default is the app-wide
+#: `CHART_HEIGHT`, which at 520px was *taller* than the 420px box, so the card
+#: clipped every chart it drew and the comment here claiming otherwise was
+#: wrong.
+ANALYTICS_HEIGHT: str = "720px"
 ANALYTICS_HEIGHT_PX: int = int(ANALYTICS_HEIGHT.removesuffix("px"))
 
 #: The analytics card's chart:table split, as flex bases rather than pixels —

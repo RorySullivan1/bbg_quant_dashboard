@@ -253,7 +253,10 @@ content set the row — **and the figures are built at that height too**
 (`ANALYTICS_HEIGHT_PX`, v0.9.27), which the token's comment had claimed since
 v0.9.24 without it being true: the charts took the app-wide `CHART_HEIGHT`, 100px
 taller than their box, so the card clipped every one it drew. The box is also
-20% taller than it was, because the Icicle draws five rows. They split **60:40**
+the card's **big number** (420 → 504 → **720px**, v0.9.28), because height is
+the Icicle's only lever: `tiling.orientation="h"` runs depth left to right, so
+the width is split four ways whatever the catalog holds while the *height* is
+split among siblings. They split **60:40**
 as flex shares with `min-width: 0`,
 the `COMMENTARY_*_SHARE` pattern: the 360px basis this replaced squeezed the
 table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-itable`**;
@@ -261,7 +264,7 @@ table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-it
 
 ## Current version
 
-`v0.9.27` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.28` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

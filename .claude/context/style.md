@@ -325,10 +325,23 @@ to each `_chart_layout`. Left to its default, `_chart_layout` takes the
 app-wide `CHART_HEIGHT` (520px), which was *taller* than the 420px box, so the
 card clipped every chart it drew. The box is fixed rather than stretched for
 `CATALOG_TABLE_HEIGHT`'s reason: stretching lets whichever box holds more
-content set the row. It went 420px → **504px** (+20%) in v0.9.27 because the
-Icicle draws four levels plus the ticker leaves and five rows in 420px read as
-a squeezed band — a band the `pathbar` was making one row shorter still, which
-is why it is now off (see `architecture.md`). The width is `ANALYTICS_CHART_SHARE` /
+content set the row.
+
+**Height is the Icicle's only lever**, which is why this token has moved three
+times — 420px (v0.9.24) → 504px (v0.9.27) → **720px** (v0.9.28), each raise
+from the same terminal reading: the cells were still too short to carry their
+labels. `tiling.orientation="h"` runs *depth* left to right, one column per
+level, so the chart's **width** is divided four ways whatever the catalog
+holds, and its **height** is divided among **siblings** — every strategy in
+the pinned solution stacked in the last column. Widening the card does nothing
+for that; only this does. The `pathbar` was taking a band off the top too,
+which is why it is now off (see `architecture.md`).
+
+At 720px the card stands *above* `CATALOG_TABLE_HEIGHT` rather than a little
+under it, inverting the original "a chart as tall as the catalog pushes the
+page" sizing. Deliberately: the table's height is a **scroll viewport** onto
+rows that keep their size whatever it is, while the chart's height **is** the
+drawing. The width is `ANALYTICS_CHART_SHARE` /
 `ANALYTICS_TABLE_SHARE` as flex bases, the `COMMENTARY_*_SHARE` pattern
 (v0.9.25). The 360px basis this replaced held the table at one width whatever
 the screen, so it read as a squeezed strip on anything wide. Both boxes carry

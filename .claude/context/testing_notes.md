@@ -237,7 +237,7 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - The "Recently launched" bullet should fire for any index whose `live_date`
   is within `NEW_LAUNCH_DAYS` of today.
 
-### Manual checklist — the Platform analytics card (v0.9.27, epic #331)
+### Manual checklist — the Platform analytics card (v0.9.28, epic #331)
 
 The card below the catalog table. Three charts, a drill and a points table —
 and almost none of it is something a widget-tree assertion can see, which is
@@ -273,10 +273,14 @@ catalog is the real test of how the charts read.
 
 **The Icicle**
 
-- The chart fills a box **20% taller** than the rest of v0.9.26's card
-  (`ANALYTICS_HEIGHT` 504px), and the figure is **the same height as its box**
+- The chart fills a box **taller than the catalog table above it**
+  (`ANALYTICS_HEIGHT` 720px), and the figure is **the same height as its box**
   — no clipped bottom row, no inner scrollbar. Check the Scatter and the Strip
-  too; all three are built at the token.
+  too; all three are built at the token, and the points table beside them takes
+  it as well.
+- The cells in the **last column are tall enough to carry their labels**. That
+  column holds one cell per sibling, so it is what the height buys — if the
+  labels are still clipped or rotated, this token is the lever, not the width.
 - **No grey ancestor bar** above the cells. Plotly's `pathbar` is off — the
   Scope breadcrumb is the only thing saying where you are.
 - The **top row is the pinned Solution alone**, not one cell per solution, and
