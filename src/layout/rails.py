@@ -220,10 +220,20 @@ class MultiChipGroup(_ChipStack):
 
 
 class RailSection(NamedTuple):
-    """One headed block of a bar: what it is called, and the control itself."""
+    """One headed block of a bar: what it is called, and the control itself.
+
+    `share` opts the block out of sizing to its contents and into a flex share
+    of the bar's width — `"20%"`, `"80%"`. A bar's sections normally take the
+    room their chips need and no more, which is right for a handful of short
+    options; the Multi-Strategy filter bar's two sections are a fixed set of
+    seven dimension chips beside *that dimension's* values, which can be forty
+    long, and their split is a proportion of the screen rather than a number of
+    pixels (the `COMMENTARY_*_SHARE` argument).
+    """
 
     heading: str
     control: W.Widget
+    share: str | None = None
 
 
 def _rail_heading(text: str) -> W.HTML:
@@ -379,7 +389,14 @@ def control_bar(*sections: RailSection, title: str | None = None) -> ControlBar:
     for section in sections:
         block = W.VBox(
             [_rail_heading(section.heading), section.control],
-            layout=W.Layout(flex="0 0 auto", margin="0 18px 0 0"),
+            layout=W.Layout(
+                flex=("0 0 auto" if section.share is None else f"1 1 {section.share}"),
+                # A flex item refuses to shrink below its content without this,
+                # so a shared block holding forty chips would grow the bar
+                # instead of scrolling inside its share.
+                min_width="0",
+                margin="0 18px 0 0",
+            ),
         )
         block.add_class("bbg-rail-block")
         blocks.append(block)

@@ -15,7 +15,13 @@ from __future__ import annotations
 
 import ipywidgets as W
 import pytest
-from src.layout.app import SELECTION_TITLE, DashboardApp
+from src.layout.app import (
+    FILTER_BAR_TITLE,
+    FILTER_DIMENSION_HEADING,
+    FILTER_VALUES_HEADING,
+    SELECTION_TITLE,
+    DashboardApp,
+)
 
 
 @pytest.fixture
@@ -55,7 +61,45 @@ def test_the_tab_is_a_section_a_bar_and_the_basket_table(app):
         "Window",
         "Benchmark",
     ], "the bar reads in the order the controls act in"
-    assert "Filter" not in headings
+    # The filter is its own bar on the row below, with its own title.
+    assert FILTER_BAR_TITLE not in headings
+
+
+def test_the_filter_row_says_what_its_two_halves_are(app):
+    """Unlabelled, the row was fourteen identical chips (v0.9.32).
+
+    Seven of them chose *which* dimension was being filtered and seven chose
+    values inside it, in the same chrome, with nothing on screen to say so —
+    or to say that either row was a filter at all.
+    """
+    _mount_multi_strategy(app.root)
+    headings = [w.value for w in _walk(app.filter_bar) if isinstance(w, W.HTML)]
+    assert headings[:3] == [
+        FILTER_BAR_TITLE,
+        FILTER_DIMENSION_HEADING,
+        FILTER_VALUES_HEADING,
+    ]
+    # And the words do not collide with the two already on screen: *Group by*
+    # one row up is the table's row grouping, and *Category* is a
+    # classification tier.
+    assert FILTER_DIMENSION_HEADING not in {"Group by", "Group", "Category"}
+
+
+def test_each_half_of_the_filter_bar_takes_its_own_share(app):
+    """20:80 as flex shares, carried on the sections themselves."""
+    from src.layout.app import FILTER_CHIPS_SHARE, FILTER_VALUES_SHARE
+
+    blocks = [
+        app.filter_bar.section(FILTER_DIMENSION_HEADING),
+        app.filter_bar.section(FILTER_VALUES_HEADING),
+    ]
+    assert [b.layout.flex for b in blocks] == [
+        f"1 1 {FILTER_CHIPS_SHARE}",
+        f"1 1 {FILTER_VALUES_SHARE}",
+    ]
+    # Without this a block refuses to shrink below its content, and forty
+    # value chips grow the bar instead of scrolling inside their share.
+    assert all(b.layout.min_width == "0" for b in blocks)
 
 
 def test_the_retired_idioms_are_gone_from_the_multi_strategy_assembly(app):

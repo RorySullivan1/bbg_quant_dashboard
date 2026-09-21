@@ -63,7 +63,8 @@ Everything the analytics card builds has been run through that and is valid on
 `level` / `tiling.orientation` / the marker's colorscale, `cmid`, `cmin`,
 `cmax` and `colorbar.title.text`), the `Scatter3d` scene axes (`zeroline*`,
 `showline`, `linecolor`, `gridcolor`, `backgroundcolor`, `aspectmode`), and
-the Strip's numeric axis with `tickmode="array"` plus its dashed zero shape.
+the Strip's numeric axis with `tickmode="array"` and `showgrid=False`, plus its
+dashed zero shape and the `layer="below"` day dividers added in v0.9.32.
 
 `tests/test_platform.py` holds an allowlist of the `hoverlabel` properties old
 enough for it, so a newer one cannot be added silently — but the allowlist is

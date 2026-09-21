@@ -29,7 +29,7 @@ from ..style import (
     Color,
 )
 from .charts import Chart
-from .theme import _chart_layout, _h_ref, _short_ticker
+from .theme import _chart_layout, _h_ref, _short_ticker, _v_divider
 
 #: Path separator inside a node id. The id is the path, so the same label under
 #: two parents stays two cells — the reason `stats.drill.node_paths` exists.
@@ -606,7 +606,12 @@ class StripChart(Chart):
                 # categorical one: Plotly puts every marker of a category on
                 # one line, so a group of ten strategies would draw as a
                 # single dot. The jitter below needs somewhere to move to.
-                xaxis=dict(title="", tickmode="array"),
+                # `showgrid=False` because the only vertical lines on this
+                # chart should be the day dividers: the template's x gridlines
+                # land on the tickvals, which are the column *centres*, so a
+                # line ran down the middle of each day's cloud while the
+                # boundary between two days was unmarked (v0.9.32).
+                xaxis=dict(title="", tickmode="array", showgrid=False),
                 yaxis=dict(title="1D return", tickformat=".1%", zeroline=True),
             )
         )
@@ -690,7 +695,14 @@ class StripChart(Chart):
         with self.fig.batch_update():
             self.fig.data = ()
             self.fig.add_traces(traces)
-            self.fig.layout.shapes = (_h_ref(0.0),)
+            # The zero line, then a rule between every pair of days (v0.9.32).
+            # The columns are one apart on a numeric axis, so the boundaries
+            # are the half-integers between them — and the axis range already
+            # ends on one at each edge, which the plot frame draws.
+            self.fig.layout.shapes = (
+                _h_ref(0.0),
+                *(_v_divider(offset + 0.5) for offset in range(len(dates) - 1)),
+            )
             self.fig.layout.xaxis.tickvals = list(range(len(dates)))
             self.fig.layout.xaxis.ticktext = labels
             self.fig.layout.xaxis.range = [-0.5, len(dates) - 0.5]

@@ -270,6 +270,26 @@ def test_perf_renderers_dash_on_numeric_without_heatmap():
     assert _text_value_expr(r[PERF_COLOR_COLUMN_NAME]) == ""
 
 
+def test_every_stat_column_is_rendered_at_two_decimals():
+    """No stat column falls out of the chain and prints its raw float.
+
+    `_STAT_SUFFIXES` is what the table's other four behaviours key off — the
+    uniform width, the comparison filter, the Window chip's hiding, the
+    heat ramp — and until v0.9.32 the renderer keyed off `_is_percent_col`
+    instead. Sortino, Calmar, Beta and Treynor are the suffixes that are
+    neither a percentage nor Sharpe, so all sixteen of the selection table's
+    quant columns rendered as `1.2345678901234` in an 82px cell.
+    """
+    from src.layout.grids import _STAT_SUFFIXES
+
+    cols = pd.Index([f"1Y{suffix}" for suffix in _STAT_SUFFIXES] + ["Name"])
+    renderers = _perf_renderers(cols)
+    for name in cols[:-1]:
+        assert renderers[name].format in (".2f", ".2%"), name
+    # A descriptive column is left alone: it has no number to round.
+    assert renderers["Name"].format is None
+
+
 def test_the_two_grids_read_different_field_tuples():
     """The trap #282 closed: each tuple feeds exactly one grid, and the names
     now say which. `PerfGrid` keeps Return Type; the catalog table dropped it.

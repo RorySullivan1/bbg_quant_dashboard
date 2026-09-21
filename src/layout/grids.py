@@ -480,6 +480,13 @@ def _perf_renderers(
             renderers[col] = sharpe_renderer
         elif _is_percent_col(name):
             renderers[col] = pct
+        elif _is_stat_col(name):
+            # A stat that is neither a percentage nor Sharpe reads as a ratio
+            # at 2dp, the same as its twin in the itables tables. Without this
+            # it fell to `text`, which carries no format at all — the
+            # ipydatagrid half of the bug `_catalog_table_options` had
+            # (v0.9.32).
+            renderers[col] = f2
         else:
             renderers[col] = text
     return renderers
@@ -1237,9 +1244,20 @@ def _catalog_table_options(
                     "createdCell": _js_heat_cell(_SHARPE_HEAT_THRESHOLDS),
                 }
             )
-        elif _is_percent_col(name):
+        elif _is_stat_col(name):
+            # **Every** stat column, not just the percent ones (v0.9.32). The
+            # branch used to be `_is_percent_col`, so the four quant metrics —
+            # Sortino, Calmar, Beta, Treynor, the only stat suffixes that are
+            # neither a percentage nor Sharpe — fell through it and out of the
+            # chain entirely, and DataTables printed the stored float at full
+            # precision: `1.2345678901234` in an 82px column. The predicate is
+            # the one `_STAT_SUFFIXES` drives, so a metric added there is
+            # rendered without a fifth branch.
             column_defs.append(
-                {"targets": [position], "render": _js_number_render(percent=True)}
+                {
+                    "targets": [position],
+                    "render": _js_number_render(percent=_is_percent_col(name)),
+                }
             )
     options: dict = {
         "columnDefs": column_defs,

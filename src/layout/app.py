@@ -159,6 +159,21 @@ SELECTION_TITLE = "Selected Strategies"
 FILTER_CHIPS_SHARE = "20%"
 FILTER_VALUES_SHARE = "80%"
 
+#: The filter row's own title and its two headings (v0.9.32). The row used to
+#: carry no words at all: two rows of chips in identical chrome, one of which
+#: chose *what* was being filtered and the other *to what* — and nothing on
+#: screen said which was which, or that either of them was a filter. So the row
+#: is now a bar like the one above it, titled, with each half headed.
+#:
+#: **Not "Group" and "Selection"**, which is how the behaviour reads in
+#: conversation. *Group by* is the heading one row up, where it means the
+#: table's row grouping, and *Category* is a classification tier — both words
+#: are already spoken for, and re-using either here would name two different
+#: things the same thing on one screen.
+FILTER_BAR_TITLE = "Filter"
+FILTER_DIMENSION_HEADING = "Dimension"
+FILTER_VALUES_HEADING = "Values"
+
 
 class DashboardApp:
     """The dashboard: its widgets, its session state, and its orchestration.
@@ -335,32 +350,29 @@ class DashboardApp:
         # that wants them. Side by side, the sentence is one line: *this
         # dimension, these values*.
         #
-        # The chips wrap into the left share (a 2xN / 3xN grid, however many
-        # fit) and the values scroll in the right one, so a dimension with
-        # forty values cannot push the chips off screen or grow the row.
+        # **And the row says so** (v0.9.32). One row of chips picking a
+        # dimension beside another row of chips picking that dimension's values
+        # is one sentence only to someone who already knows it: in the same
+        # chrome, unlabelled, the two halves read as fourteen equal chips. So
+        # the row is a `control_bar` like the one above it, titled *Filter*,
+        # with each half headed and a rule between them — the demarcation is
+        # `.bbg-rail-block`'s, which is where every other bar in the app draws
+        # the line between one control and the next.
+        #
+        # The shares ride on the sections (`RailSection.share`): the chips wrap
+        # into the left one, the values scroll in the right, so a dimension
+        # with forty values cannot push the chips off screen or grow the bar.
         self.filter_dim_chips.layout.width = "auto"
-        filter_row = W.HBox(
-            [
-                W.Box(
-                    [self.filter_dim_chips],
-                    layout=W.Layout(
-                        flex=f"1 1 {FILTER_CHIPS_SHARE}",
-                        min_width="0",
-                        overflow="auto",
-                    ),
-                ),
-                W.Box(
-                    [self.filter_strip.root],
-                    layout=W.Layout(
-                        flex=f"1 1 {FILTER_VALUES_SHARE}",
-                        min_width="0",
-                        overflow="auto",
-                    ),
-                ),
-            ],
-            layout=W.Layout(width="100%", align_items="stretch"),
+        self.filter_bar = control_bar(
+            RailSection(
+                FILTER_DIMENSION_HEADING, self.filter_dim_chips, FILTER_CHIPS_SHARE
+            ),
+            RailSection(
+                FILTER_VALUES_HEADING, self.filter_strip.root, FILTER_VALUES_SHARE
+            ),
+            title=FILTER_BAR_TITLE,
         )
-        filter_row.add_class("bbg-filter-row-pair")
+        self.filter_bar.add_class("bbg-filter-bar")
         self.basket_bar = control_bar(
             RailSection("Group by", self.basket_group_chips),
             RailSection("Window", self.basket_window_chips),
@@ -369,7 +381,7 @@ class DashboardApp:
         )
         self.basket_section = section_panel(
             "Strategy selection",
-            W.VBox([self.basket_bar, filter_row]),
+            W.VBox([self.basket_bar, self.filter_bar]),
             self.basket_grid.widget,
             height=CATALOG_TABLE_HEIGHT,
         )

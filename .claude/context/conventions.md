@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.31`.
+- **Current version**: `v0.9.32`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -344,6 +344,22 @@ CSS, style tokens — live in `style.md`.)
   built-once guard counts inputs rather than testing for the row, so a future
   version of that pass degrades to a rebuild on the next draw rather than to a
   blank row that never comes back.
+
+- **Every stat in a table reads at two decimals (v0.9.32)** — `0.00%` or
+  `0.00`, on both table stacks. What decides is `_STAT_SUFFIXES`: the same
+  tuple the uniform stat width, the comparison filter and the Window chip's
+  hiding all key off, so a metric added there is rendered without a branch of
+  its own. It is worth stating as a rule because both renderers had drifted off
+  it. `_catalog_table_options` keyed its `render` off `_is_percent_col`, so the
+  four quant metrics — Sortino, Calmar, Beta, Treynor, the only stat suffixes
+  that are neither a percentage nor Sharpe — matched no branch of the chain at
+  all; DataTables prints an unrendered column exactly as the frame stores it,
+  so all sixteen showed a full-precision float in an 82px cell. The
+  ipydatagrid half had the same hole one `elif` lower, where those columns fell
+  to the formatless `text` renderer. **A missing branch here is silent**: the
+  cell still draws, with a number in it, and nothing raises — which is why the
+  guard is written over `_STAT_SUFFIXES` in both `test_grids.py` and
+  `test_catalog_table.py` rather than over a list of today's columns.
 
 - **A number column filters by comparison, not by substring (v0.9.21 #297)**:
   every column in the catalog table carries a filter box, but the stat and

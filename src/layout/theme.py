@@ -6,8 +6,9 @@ navy through-color, tokenized grid/axis/text colors, and a uniform height — an
 accepts overrides for the per-chart bits.
 
 Also holds the small helpers that must agree across every figure: `_h_ref` /
-`_v_ref` for zero-reference lines, `_palette_color` for positional series
-colors, and `_short_ticker` for axis and legend labels.
+`_v_ref` for zero-reference lines, `_v_divider` for the rule between two
+columns, `_palette_color` for positional series colors, and `_short_ticker` for
+axis and legend labels.
 """
 
 from __future__ import annotations
@@ -91,6 +92,34 @@ def _h_ref(y: float) -> dict:
         y0=y,
         y1=y,
         line=dict(color=Color.CHART_AXIS.value, dash="dash", width=1),
+    )
+
+
+def _v_divider(x: float) -> dict:
+    """A solid vertical rule at ``x``, dividing one column from the next.
+
+    Not `_v_ref`: that one is a dashed hairline in the axis colour, for marking
+    a *value* on a continuous axis. This one is chrome — it says where one
+    column ends and the next begins, so it is solid, brighter and twice the
+    width. The Strip's six weekdays sat in one undivided field of markers
+    until v0.9.32, with nothing but the tick labels to say which cloud was
+    which day.
+
+    Drawn **below** the traces. The jitter keeps every marker within
+    `StripChart.JITTER` of its column's centre, so a boundary at the halfway
+    point can never be crossed by a point — but a rule painted over the data
+    is a rule that can hide it, and there is nothing to gain by risking it.
+    """
+    return dict(
+        type="line",
+        xref="x",
+        x0=x,
+        x1=x,
+        yref="paper",
+        y0=0,
+        y1=1,
+        layer="below",
+        line=dict(color=Color.CHART_ZERO_LINE.value, width=2),
     )
 
 
