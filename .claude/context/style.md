@@ -271,3 +271,56 @@ wrapper from adding spacing of its own. The **datalist popup** a browser renders
 for a combobox is not styleable from page CSS — that is a browser limitation,
 so the suggestion list appears in the browser's own chrome rather than the dark
 theme.
+
+
+## The Platform analytics card (v0.9.24, epic #331)
+
+**`.bbg-itable` vs `.bbg-catalog`.** There are two `ITable`s now — the catalog
+and the chart's points — so the dark-table chrome is `.bbg-itable`, which both
+wear. `.bbg-catalog` keeps only what belongs to the catalog alone: the nested
+group bands RowGroup draws, and the per-column filter row. A test fails if a
+rule that is not about either ends up back on `.bbg-catalog`.
+
+**Two new chart tokens**, `CHART_ZERO_LINE` and `CHART_AXIS_LINE`. A 3D scene
+takes no paper shapes, which is why the factor scatter marked its origin with
+translucent `Mesh3d` planes — and why those planes dimmed the markers behind
+them, the thing the chart is for. The scene's own axes carry it instead: the
+zero line bright enough to read against `TRANSPARENT` at the default camera,
+the wall edge a step below it so the box reads as a frame rather than as three
+more zero lines.
+
+**The Icicle's ramp is symmetric and data-derived.** Same red → neutral →
+green diverging scale, `cmid=0`, but `cmin` / `cmax` are ± a high percentile
+(95th) of |value| over the leaves rather than the fixed ±2 that a z-score
+justified. Symmetric because the ramp's midpoint means "average": an
+asymmetric range would put zero off-centre and colour a flat strategy as
+though it were good or bad. Clipped because one outlier otherwise flattens
+every other cell to the middle of the scale.
+
+**The Strip is `go.Scatter` with a computed jitter**, not the hidden-box
+construction a strip plot usually uses: a drillable marker needs a point index
+and `customdata` the kernel controls. Its X axis is **numeric wearing the
+dates as tick labels**, because a categorical axis puts every marker of a
+column on one line and the jitter would have nowhere to move to. The jitter is
+spread evenly across the column and derived from the point's position, never
+drawn at random — a redraw must not reshuffle the cloud and read as movement
+in the data.
+
+**`group_colors` and the colour rule.** The drill re-keys the colours at every
+depth, so the palette has to serve families and tickers, not just asset
+classes. `group_colors(keys, curated=…)` takes the curated map first — which
+is how asset classes keep their identity colours at the root, and why a family
+called "Momentum" has no claim on Equity's blue — then `LINE_PALETTE` in
+sorted order, **cycling** rather than collapsing to the grey fallback once the
+palette runs out: a family larger than the palette should still draw
+distinguishable neighbours, and the legend and hover name every point whatever
+the hue. The rule for *which* level the colours key to lives once, in
+`stats.drill.color_key`: the hierarchy's first level at the root, the points'
+own level below it.
+
+**One height for the card's row.** `ANALYTICS_HEIGHT` sets the chart's box and
+the table's, and the chart's own `height`; `ANALYTICS_TABLE_WIDTH` is the
+table's fixed basis. Fixed rather than stretched for `CATALOG_TABLE_HEIGHT`'s
+reason: stretching lets whichever box holds more content set the row. The
+chart takes the remaining width with `flex: 1 1 0%` **and** `min-width: 0` —
+the #280 pair — so a wide legend fits rather than pushing the table off.

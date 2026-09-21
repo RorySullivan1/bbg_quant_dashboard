@@ -43,8 +43,8 @@ for the grid it feeds, #282),
 `PROFILE_CARD_FIELDS` (the Single Strategy profile card),
 `LAUNCH_CARD_META_FIELDS` (the New-Launch cards' meta line). The filter pills
 come from `filter_dimensions()` and the Platform sunburst's rings from
-`SUNBURST_LEVELS`. `catalog_field`, `field_label`, `tier_fields`,
-`filterable_fields`, `filter_dimensions` and `sunburst_levels` are the
+`ANALYTICS_LEVELS`. `catalog_field`, `field_label`, `tier_fields`,
+`filterable_fields`, `filter_dimensions`, `analytics_levels` and `drill_levels` are the
 accessors consumers read — nobody indexes the schema tuple by hand, and nobody
 respells a label.
 
@@ -159,3 +159,40 @@ Project-specific hooks:
   unresolvable tickers can't blank the load. Only when *every* batch fails does
   the fetch raise. `_reshape_bql_response` pivots each batch's long-form response
   (casting the ID column to `category` first to shrink the pivot).
+
+
+## The analytics hierarchy and the drill (v0.9.24, epic #331)
+
+`ANALYTICS_LEVELS` is the one tree the Platform card draws: the Icicle's
+levels, what the Scatter and the Strip aggregate over, and what the drill
+walks. `DRILL_LEVELS` is the drill's **stops** within it — validated at the
+call as a suffix of `ANALYTICS_LEVELS` after its first element, because the
+first level is the colour key at the root rather than somewhere to stand.
+`drill_levels()` returns those stops plus the ticker leaf, whose label lives
+in `DRILL_LEAF_LABEL` because `ticker` is derived from the catalog's keys and
+is not a schema field `field_label` could name.
+
+**`solution` is deliberately absent**, though it is `CLASSIFICATION_TIERS`'
+top tier and the catalog table groups on it. Epic #331 ships Category →
+Family → Strategy and names a solution stop a non-goal, on the reading that
+asset class and solution are two ways to cut the catalog rather than one
+nesting. Adding it later is the two tuples and no renderer change, and the
+sample catalog says it is safe: **no category there spans more than one
+solution**, so inserting it only nests, and a nesting level that never splits
+a group cannot break the row contiguity RowGroup needs.
+
+**A node is a path, never a bare label.** *Emerging Markets* sits under two
+asset classes in the shipped catalog and *S&P US Sector* under two categories,
+so a label alone would merge two unrelated groups into one point and average
+across them. `stats.drill.node_paths` gives every ticker a full path, bucketing
+a missing level as `"Other"` so a path is never ragged — which is what lets
+`drill_points` group on a fixed-width prefix.
+
+One thing the shipped catalog **cannot** test: grouped to family it yields 18
+nodes for 18 tickers, so every family is a singleton and a "mean" there is a
+mean of one. The drill's aggregation tests therefore use synthetic fixtures,
+and a test fails the day a family grows a second member — so the day the real
+data can carry those tests is noticed rather than missed.
+
+`STRIP_DAYS` (5) is read by the Strip's stats function, its chart and its
+column header rather than typed at three sites.

@@ -177,12 +177,47 @@ A sample too short to be a five-year sample **renders a dash** rather than
 standardizing against the little it has (`CATALOG_SCORE_MIN_SAMPLE_DAYS`), so
 at the `5Y` window an index needs roughly 7.5 years of history to be ranked.
 And **Vol is not rankable here**: the ramp and the sort both say *higher is
-better*, which volatility is not — it stays on the sunburst and the
-Quantitative filter, where nothing claims a direction for it.
+better*, which volatility is not — it stays on the Quantitative filter, where
+nothing claims a direction for it. The analytics card offered it too until
+epic #331, which is the "its own issue" #321 named.
+
+The analytics card below the table is **a chart beside its own points** (epic
+#331, v0.9.24). Its controls are a second `control_bar` in the same chrome —
+*Chart view*: **Chart · Metric · Window · Regime · Level · Scope** — and
+Metric and Window are the table's own option lists, so the two surfaces can be
+read at different windows but cannot *offer* different things. Sections the
+active chart does not read are **hidden, not rebuilt**, so a chip keeps its
+selection across a chart switch.
+
+Three charts, each a `Chart` that also exposes **`points()`** — the frame it
+drew, as `path` / `label` / `name` / `value` / `count`. The **Icicle** draws
+the hierarchy sized by *strategy count* and coloured by mean metric on a ramp
+whose range comes from the data; the **Scatter** is the regime view and the
+factor view merged, Y the metric and X / Z the term- and equity-risk-premium
+betas over one sample — the Window's days inside the regime bucket; the
+**Strip** is five dates of 1D returns, the only view that can draw *this week*.
+
+All three **drill**. One frozen `Drill(scope, level)` (`src/layout/drill.py`)
+is written through **one setter**, and a marker click, an icicle zoom, a Level
+chip, a breadcrumb segment and a table row all go through it — so no chart
+holds a private focus. A node is a **path**, never a bare label, because
+*Emerging Markets* sits under two asset classes in the shipped catalog and a
+label alone would average two unrelated groups into one point. A group's value
+is the **equal-weight mean** of its members, taken after the regime mask, and
+colour **keys to the points shown**: asset class at the root, the points' own
+level below it, because a key that stops varying stops informing.
+
+The points table reads `points()` and never a figure's traces, and a row click
+routes on **`count`**: a group narrows the drill, a strategy opens in Single
+Strategy through the same `_show_in_single_strategy` the catalog grid and the
+leaderboard use. Chart and table stand at one fixed `ANALYTICS_HEIGHT` for
+`CATALOG_TABLE_HEIGHT`'s reason — stretching lets whichever box holds more
+content set the row. Both `ITable`s now wear a shared **`.bbg-itable`**;
+`.bbg-catalog` keeps only the group bands and the filter row.
 
 ## Current version
 
-`v0.9.23` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.24` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

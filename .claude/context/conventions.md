@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.23`.
+- **Current version**: `v0.9.24`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -68,7 +68,7 @@ CSS, style tokens — live in `style.md`.)
   request at load time (deduped, order-preserving) and caches the result on
   `DashboardState.universe_prices`. Every visualization — including the
   all-catalog grid, the commentary, the Rolling Correlation / Rolling Beta
-  tabs, the v0.7.0 Platform factor scatter + the v0.8.x sunburst, and the v0.8.5
+  tabs, the v0.9.24 Platform charts, and the v0.8.5
   Regime Analysis charts — slices from that cache. The `FACTOR_TICKERS` (v0.7.0: a
   long-Treasury + short-rate TR proxy, the equity leg reuses `SPXFP Index`
   (`EQUITY_FACTOR_TICKER`, also a benchmark); v0.7.1 adds
@@ -177,7 +177,7 @@ CSS, style tokens — live in `style.md`.)
 - **A shared option list is shared; widen a copy, not the original (v0.9.22
   #306).** The leaderboard's windows gained `1Y` as a new
   `LEADERBOARD_WINDOW_OPTIONS` built *from* `SHORT_WINDOW_OPTIONS`, because
-  that constant also drives the Platform sunburst's z-control and the
+  that constant also drives the
   Quantitative Z-Score window — neither of which asked for a year. A test pins
   both at four options, so the one-line edit to the shared list is caught.
 - **Rank by the number you show (v0.9.22 #310).** The leaderboard ranks by the
@@ -186,7 +186,7 @@ CSS, style tokens — live in `style.md`.)
   agree; when they were the raw metric that was automatic, and now it is the
   score, the display had to follow. Note that this z-score is against an
   index's **own** trailing history — a different figure from the
-  **asset-class-demeaned** z-score on the Platform sunburst and the catalog
+  **asset-class-demeaned** z-score on the catalog
   column, which compares an index to its peers.
 - **Authored data is data, so render it as data (v0.9.22 #307).** A note's
   `text` is escaped *and then* split into paragraphs. Escaping first makes it
@@ -609,3 +609,28 @@ CSS, style tokens — live in `style.md`.)
   in `architecture.md` (#179); Refresh stays threaded.
 - **New top-level files require updating the architecture map** (in
   `architecture.md`).
+
+
+## The Platform card's two rules (v0.9.24, epic #331)
+
+**A chart owns its figure *and* its points.** Every `Chart` on the analytics
+card exposes `points()` — the frame it drew, as `path` / `label` / `name` /
+`value` / `count` — plus the label and format its value column should carry.
+The points table reads that and never reaches into a figure's traces, so the
+chart-to-table pairing is structural rather than something a call site has to
+remember. It is the same argument as the #223 figure-updater rule one block
+up: the thing that knows is the thing that is asked.
+
+Its corollary: **one number, three places.** A point's value is computed once,
+and the axis position, the cell colour and the table cell are all that one
+number. A renderer that recomputes it is the defect, because the two readings
+can then disagree by a rounding or by a window.
+
+**One `Drill`, read everywhere, written in one place.** `Drill(scope, level)`
+is frozen and replaced wholesale through `PlatformAnalytics.set_drill`. A
+marker click, an icicle zoom, a Level chip, a breadcrumb segment and a points
+row all go through that one setter, so no chart can hold a private focus. The
+setter repaints the two controls that *display* the state — the Level chips
+and the breadcrumb — with their observers suppressed; without that guard a
+drill change renders twice, and a breadcrumb click takes its level from the
+chip it has just repainted rather than from the prefix that was clicked.
