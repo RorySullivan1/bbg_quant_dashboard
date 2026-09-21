@@ -32,7 +32,7 @@ import traitlets
 
 from ..config import MAX_SELECTED_STRATEGIES
 from ..stats import BasketWindow
-from ..style import ASSET_CLASS_FALLBACK_COLOR
+from ..style import ASSET_CLASS_FALLBACK_COLOR, BASKET_TAG_WIDTH
 from .platform_charts import asset_class_colors
 from .theme import _short_ticker
 
@@ -281,9 +281,12 @@ class BasketCards(W.Box):
         of what is selected, not a row of metadata — the table above it has the
         names, and the tooltip carries one for the card.
 
-        The asset-class colour survives as the card's **left edge**, which is a
-        border rather than a child, so it costs no width and cannot displace
-        anything. Same for the binding marker: an accent edge, not a glyph.
+        The asset-class colour is a **block down the card's leading edge**
+        (v0.9.31), not the 3px hairline it started as — the point of the colour
+        is to tell one card from another at a glance, and a hairline reads as
+        trim. It is still a border rather than a child, so it costs no width
+        and cannot displace the x. The binding marker keeps a thin accent edge
+        on the other three sides, which cannot be confused with it.
         """
         colour = palette.get(classes.get(ticker, ""), ASSET_CLASS_FALLBACK_COLOR)
         open_btn = W.Button(description=_short_ticker(ticker))
@@ -299,7 +302,8 @@ class BasketCards(W.Box):
         remove.on_click(lambda _b, t=ticker: self.basket.remove(t))
 
         card = W.Box(
-            [open_btn, remove], layout=W.Layout(border_left=f"3px solid {colour}")
+            [open_btn, remove],
+            layout=W.Layout(border_left=f"{BASKET_TAG_WIDTH} solid {colour}"),
         )
         card.add_class("bbg-basket-card")
         if ticker == self._binding:

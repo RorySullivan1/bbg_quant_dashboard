@@ -206,6 +206,14 @@ COMMENTARY_BOX_HEIGHT: str = "300px"
 #: strip scrolls rather than growing the page.
 BASKET_STRIP_HEIGHT: str = "104px"
 
+#: How wide the asset-class colour block on a selected-strategy card is.
+#:
+#: 3px when the cards shipped, which read as trim rather than as the card's
+#: colour — the whole job of the block is to say *which strategy is which* at
+#: a glance across a wrapping strip. A border rather than a child element, so
+#: widening it cannot displace the ticker or the x.
+BASKET_TAG_WIDTH: str = "10px"
+
 #: The commentary block's 60:40 split, as flex bases rather than pixels: the
 #: leaderboard's four columns have to stay readable at a terminal width, and a
 #: pixel basis would hold its width while the pane beside it took whatever was

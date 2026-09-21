@@ -228,6 +228,16 @@ unrelated groups into one point. A group's value is the **equal-weight mean**
 of its members, taken after the regime mask, and colour **keys to the points
 shown** — their own level, because a key that stops varying stops informing.
 
+**That rule has one implementation** (`platform_charts.color_values`,
+v0.9.31). It had two: the charts keyed off the level's *name*, the palette
+builder off the path's *depth*. They agreed only while the card was based at
+the root — v0.9.27 based it at a solution, so every point sat at depth 1, the
+palette was built for the parent (`ARP`) while the charts looked up the label
+(`Equity`), every lookup missed and the Scatter and the Strip each drew a
+single grey trace. The curated `ASSET_CLASS_COLORS` had stopped applying for
+the same shape of reason: it was keyed on `analytics_levels()[0]`, which
+stopped being asset class when `solution` took the lead.
+
 **The Icicle's zoom is the drill, which means it must be re-asserted.** A cell
 click zooms Plotly client-side *and* re-renders the trace from the kernel; a
 trace built without `level` renders at the root, so the zoom was undone the
@@ -289,7 +299,10 @@ tick became **its own column** rather than a class on the Ticker cell, because
 Select draws its checkbox as a pseudo-element and sharing a cell put the two
 on top of each other at some widths and beside each other at others. The cards
 lost their names, which were long enough to push the **×** off the end of the
-card so it stopped rendering at all. And **Refresh prices went**, with its
+card so it stopped rendering at all; what identifies a card now is its
+asset-class colour, a `BASKET_TAG_WIDTH` block down its leading edge (10px
+since v0.9.31 — at 3px it read as trim, where the block's whole job is to say
+which strategy is which across a wrapping strip). And **Refresh prices went**, with its
 overlay: selection never needed it — the startup fetch pulls every catalog
 series — so a button whose one effect was a loading overlay taught the user
 that picking a strategy costs a round trip. The cost is deliberate: **prices
@@ -333,10 +346,14 @@ means only what it says, and sits on the section's title line rather than among
 the settings.
 
 Two more, on the filters: **structure in the bar, text and numbers in the
-table.** *Filter* names a dimension and a `FilterStrip` below the bar shows its
-values as chips (one control per dimension, swapped by `display`, so switching
-dimensions keeps every dimension's ticks; a chip badge counts the active ones,
-because a hidden selection is otherwise invisible). And the nine quant
+table.** *Filter* names a dimension and a `FilterStrip` beside it shows that
+dimension's values as chips, the two sharing one row at **20:80**
+(`FILTER_CHIPS_SHARE` / `_VALUES_SHARE`, v0.9.31 — shares rather than the
+280px column they started as, because the chip set is always the same seven
+while a dimension can carry forty values). One control per dimension, swapped
+by `display`, so switching dimensions keeps every dimension's ticks; a chip
+badge counts the active ones, because a hidden selection is otherwise
+invisible. And the nine quant
 thresholds became **columns** — Sortino · Calmar · Beta · Treynor, named
 `"{window} {metric}"` so the Window chip hides them and the comparison filter
 row filters them with no new branches. `QuantColumns` is the one place both
@@ -352,7 +369,7 @@ caller now.
 
 ## Current version
 
-`v0.9.30` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.31` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

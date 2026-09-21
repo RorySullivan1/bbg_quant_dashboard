@@ -69,6 +69,7 @@ from .platform_charts import (
     RegimeFactorScatter,
     StripChart,
     asset_class_colors,
+    color_values,
     group_colors,
 )
 from .rails import Breadcrumb, ChipGroup, RailSection, control_bar, drill_bar
@@ -128,25 +129,30 @@ def _with_names(points: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _color_values_of(points: pd.DataFrame) -> list[str]:
-    """The colour-key value of each point: its parent at the root, else itself."""
-    depth = max(len(points["path"].iloc[0]) - 1, 0)
-    if depth == 0:
-        return [str(v) for v in points["label"]]
-    return [str(p[0]) if len(p) else "Other" for p in points["path"]]
+#: The level the curated `ASSET_CLASS_COLORS` map is keyed by. Named rather
+#: than positional: it was `analytics_levels()[0]` while the hierarchy led with
+#: asset class, and it has not since v0.9.25.
+CURATED_COLOR_LEVEL: str = "asset_class"
 
 
 def _colors_for(points: pd.DataFrame, key: str) -> dict[str, str]:
     """The palette for the points shown.
 
-    Curated only when the key is the hierarchy's first level — that is where
-    the asset-class identity colours belong, and a family called "Momentum"
-    has no claim on Equity's blue.
+    **The values come from `color_values`, the same function the charts key
+    their markers by.** A second copy lived here and keyed off the path's
+    *depth* instead of the level's name; the two agreed only while the card
+    was based at the root (v0.9.30 fix).
+
+    Curated at the **asset-class** level, which is what `ASSET_CLASS_COLORS`
+    is keyed by — a family called "Momentum" has no claim on Equity's blue.
+    That used to be `analytics_levels()[0]`, which stopped being asset class
+    when `solution` took the lead in v0.9.25, so the identity colours had
+    quietly stopped applying anywhere.
     """
     if points.empty:
         return {}
-    values = _color_values_of(points)
-    if key == analytics_levels()[0]:
+    values = [str(v) for v in color_values(points, key)]
+    if key == CURATED_COLOR_LEVEL:
         return asset_class_colors(values)
     return group_colors(values)
 

@@ -816,25 +816,50 @@ def test_hover_labels_set_only_properties_old_enough_for_the_terminal():
     forbidden — it is forbidden *silently*, and adding it here is how it stops
     being silent.
     """
-    from src.layout.platform_charts import _HOVER_LABEL
+    from src.layout.theme import _chart_layout
 
-    settled_since_plotly_3 = {"align", "bgcolor", "bordercolor", "font", "namelength"}
-    assert set(_HOVER_LABEL) <= settled_since_plotly_3, (
-        f"{sorted(set(_HOVER_LABEL) - settled_since_plotly_3)} may not exist in "
+    settled_since_plotly_3 = {
+        "align",
+        "bgcolor",
+        "bordercolor",
+        "font",
+        "font_family",
+        "font_color",
+        "namelength",
+    }
+    # The whole app's treatment lives in the theme since v0.9.31, so this is
+    # the one dict to police rather than one per chart module.
+    used = set(_chart_layout(title="")["hoverlabel"])
+    assert used <= settled_since_plotly_3, (
+        f"{sorted(used - settled_since_plotly_3)} may not exist in "
         "the terminal's plotly; verifying `_valid_props` here proves nothing "
         "about there"
     )
 
 
-def test_every_card_chart_shares_one_hover_label_treatment():
-    """One of them drifting from the others is how the Strip spent a version
-    without the alignment the Scatter had."""
-    from src.layout.platform_charts import _HOVER_LABEL
+def test_every_chart_in_the_app_shares_one_hover_label_treatment():
+    """One drifting from the others is how the Strip spent a version without
+    the alignment the Scatter had — and how the Scatter spent one without the
+    dark tokens, because its own `hoverlabel=` **replaced** the theme's dict
+    rather than merging into it (v0.9.31).
 
-    for chart in (RegimeFactorScatter(), StripChart()):
+    The Multi-Strategy and Single Strategy panes are in here too: copying the
+    Scatter's treatment to them was the ask, and the theme is where one copy
+    reaches all of them.
+    """
+    from src.layout.charts import DrawdownChart, LineChart
+    from src.layout.theme import _chart_layout
+
+    expected = _chart_layout(title="")["hoverlabel"]
+    charts = [RegimeFactorScatter(), StripChart(), LineChart(), DrawdownChart()]
+    for chart in charts:
         label = chart.fig.layout.hoverlabel
-        assert label.align == _HOVER_LABEL["align"], type(chart).__name__
-        assert label.namelength == _HOVER_LABEL["namelength"], type(chart).__name__
+        name = type(chart).__name__
+        assert label.align == expected["align"], name
+        assert label.namelength == expected["namelength"], name
+        # The tokens the Scatter's override used to drop.
+        assert label.bgcolor == expected["bgcolor"], name
+        assert label.bordercolor == expected["bordercolor"], name
 
 
 # --- the points table (#337) ------------------------------------------------
@@ -1046,7 +1071,7 @@ def test_colour_keys_to_the_points_own_level_below_the_root():
     Reading the parent at every depth collapses a whole scope to one colour
     and one legend entry — which is what the review found.
     """
-    from src.layout.platform_charts import _color_values
+    from src.layout.platform_charts import color_values
 
     inside = pd.DataFrame(
         {
@@ -1054,12 +1079,12 @@ def test_colour_keys_to_the_points_own_level_below_the_root():
             "label": ["Momentum", "Value"],
         }
     )
-    assert list(_color_values(inside, "category")) == ["Momentum", "Value"]
+    assert list(color_values(inside, "category")) == ["Momentum", "Value"]
     # And at the root too, now that the root draws solutions rather than
     # categories: the points all sit under one scope, so their own level is
     # the only thing that varies among them.
     roots = pd.DataFrame({"path": [("Beta",), ("ARP",)], "label": ["Beta", "ARP"]})
-    assert list(_color_values(roots, "solution")) == ["Beta", "ARP"]
+    assert list(color_values(roots, "solution")) == ["Beta", "ARP"]
 
 
 def test_the_strip_separates_two_nodes_that_share_a_label():
