@@ -370,6 +370,10 @@ def drill_levels() -> tuple[str, ...]:
 
     Derived rather than declared for that reason: a second tuple could only
     disagree with this one.
+
+    The Platform card bases its drill at the first level and offers
+    ``drill_levels()[1:]`` as stops (v0.9.27) — that is how one surface chooses
+    to browse the tree, not a property of the tree, so it lives there.
     """
     return (*analytics_levels(), DRILL_LEAF_LEVEL)
 

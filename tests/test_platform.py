@@ -1128,15 +1128,14 @@ def test_the_drill_survives_a_round_trip_through_the_card():
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
     pa.wire(lambda: pd.DataFrame())
+    pa.solution_chips.set_options([("Beta", "Beta")], value="Beta")
 
     pa.narrow_to(("Beta", "Equity"))
     assert pa.drill.scope == ("Beta", "Equity")
     assert pa.level_chips.value == "category"
-    assert [b.description for b in pa.breadcrumb.children] == [
-        "QIS Strategy",
-        "Beta",
-        "Equity",
-    ]
+    # The pinned Solution is the breadcrumb's ROOT, not a segment: the card
+    # draws one solution at a time since v0.9.27.
+    assert [b.description for b in pa.breadcrumb.children] == ["Beta", "Equity"]
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
@@ -1333,6 +1332,7 @@ def test_invalidate_marks_every_chart_stale():
 def test_set_drill_is_the_only_writer_and_repaints_both_displays():
     """#331 decision 15: no chart holds a private focus."""
     pa = _analytics()
+    pa.solution_chips.set_options([("Beta", "Beta")], value="Beta")
     pa.set_drill(("Beta", "Equity"), "category")
 
     assert pa.drill.scope == ("Beta", "Equity")
@@ -1340,11 +1340,7 @@ def test_set_drill_is_the_only_writer_and_repaints_both_displays():
     # The two controls that DISPLAY the state follow it, rather than each
     # holding a copy that could disagree.
     assert pa.level_chips.value == "category"
-    assert [b.description for b in pa.breadcrumb.children] == [
-        "QIS Strategy",
-        "Beta",
-        "Equity",
-    ]
+    assert [b.description for b in pa.breadcrumb.children] == ["Beta", "Equity"]
 
 
 def test_narrowing_moves_one_stop_down_and_bottoms_out_at_the_leaf():
@@ -1367,15 +1363,18 @@ def test_a_breadcrumb_segment_returns_to_its_prefix():
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
     pa.wire(lambda: pd.DataFrame())
+    pa.solution_chips.set_options([("Beta", "Beta")], value="Beta")
     pa.set_drill(("Beta", "Equity"), "category")
 
-    pa.breadcrumb.children[1].click()  # "Beta"
+    # Segment 0 is the pinned solution (the root), segment 1 is Equity.
+    pa.breadcrumb.children[0].click()  # back to the base
     assert pa.drill.scope == ("Beta",)
     assert pa.drill.level == "asset_class"  # the stop below a solution
 
-    pa.breadcrumb.children[0].click()  # "QIS Strategy" — the root
-    assert pa.drill.scope == ()
-    assert pa.drill.level == "solution"
+    # And the base is as far back as it goes: the Solution chips are the only
+    # way out of a solution, so a breadcrumb click cannot leave the filter.
+    pa.breadcrumb.children[0].click()
+    assert pa.drill.scope == ("Beta",)
 
 
 def test_a_level_chip_sets_the_depth_within_the_current_scope():
@@ -1402,7 +1401,7 @@ def test_syncing_the_displays_does_not_re_enter_the_setter():
     pa.wire(lambda: pd.DataFrame())
     pa._render_tab = lambda meta, which: renders.append(which)  # type: ignore
 
-    pa.breadcrumb.children[0].click()  # "All" — one drill change
+    pa.breadcrumb.children[0].click()  # back to the root — one drill change
     assert len(renders) == 1
 
 

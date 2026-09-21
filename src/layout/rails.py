@@ -304,8 +304,24 @@ class Breadcrumb(W.HBox):
         self.add_class("bbg-chip-row")
         self.set_path(())
 
+    @property
+    def root_label(self) -> str:
+        """What the leftmost segment says — the un-narrowed state's name."""
+        return self._root_label
+
+    @root_label.setter
+    def root_label(self, text: str) -> None:
+        self._root_label = text
+
     def set_path(self, path: tuple[str, ...]) -> None:
-        """Redraw for ``path``; the last segment is where the user is now."""
+        """Redraw for ``path``; the last segment is where the user is now.
+
+        ``path`` is **relative to the root**, so a caller that pins a base —
+        the Platform card pins the chosen Solution — passes only what lies
+        below it and names the base through `root_label`. The root segment is
+        still clickable and still means "all the way back", which is as far
+        back as there is when a base is pinned.
+        """
         labels = [self._root_label, *path]
         chips = []
         for index, label in enumerate(labels):

@@ -156,7 +156,15 @@ CATALOG_TABLE_HEIGHT: str = "506px"
 #:
 #: Sized to sit a little under the table above it — the card is the second
 #: thing on the tab, and a chart as tall as the catalog pushes the page.
-ANALYTICS_HEIGHT: str = "420px"
+#: Raised 20% from 420px in v0.9.27: the Icicle draws four levels plus the
+#: ticker leaves, and five rows in 420px read as a squeezed band.
+#:
+#: **The figures are built at this height too** (`ANALYTICS_HEIGHT_PX`). They
+#: were not: `_chart_layout`'s default is the app-wide `CHART_HEIGHT`, which
+#: at 520px was *taller* than the 420px box, so the card clipped every chart
+#: it drew and the comment here claiming otherwise was wrong.
+ANALYTICS_HEIGHT: str = "504px"
+ANALYTICS_HEIGHT_PX: int = int(ANALYTICS_HEIGHT.removesuffix("px"))
 
 #: The analytics card's chart:table split, as flex bases rather than pixels —
 #: the `COMMENTARY_*_SHARE` pattern, and for the same reason. The 360px basis
