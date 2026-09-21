@@ -524,6 +524,31 @@ div.itables_anywidget.bbg-catalog {
   border-radius: 6px;
   overflow: hidden;
 }
+/* The strips DataTables draws around the table — the search row above and the
+   row-count readout below — are the CONTAINER showing through where the table
+   does not cover it. Every rule below paints the table's own elements, so
+   none of them reached it, and it rendered light under text already themed
+   for navy: muted blue-grey on white (#340).
+
+   It is not an unset background. The bundle paints it, from its own property:
+
+     :root, :host       { --dt-html-background: white }
+     div.dt-container   { background-color: var(--dt-html-background) }
+     .itables_anywidget { background-color: var(--dt-html-background) }
+
+   So redefining that property is the fix at its source — the bundle's own
+   rules keep painting, in our colour, and the others keyed to it follow
+   without being named here. The explicit `background-color` beside it is the
+   belt, for a bundle that stopped reading the property.
+
+   `chrome_bg`, not `surface`: this is the table's own base, so the strips
+   read as part of the table rather than as a band of header colour. */
+.bbg-app div.itables_anywidget,
+div.itables_anywidget.bbg-catalog,
+div.itables_anywidget.bbg-catalog .dt-container {
+  --dt-html-background: {{chrome_bg}};
+  background-color: {{chrome_bg}} !important;
+}
 /* The catalog table fills its width (#280; the whole panel width since #326,
    when the rail beside it went). The widget's own width is set in
    `UniverseGrid`, because it belongs to the ipywidgets layout rather than to

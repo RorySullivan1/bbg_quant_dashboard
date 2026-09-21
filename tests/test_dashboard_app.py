@@ -11,6 +11,8 @@ so rebuilding it per test would dominate the suite's runtime.
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import pytest
 from src.config import (
@@ -362,10 +364,29 @@ def test_the_bar_holds_the_very_chips_the_analytics_reads(app):
 
 
 def _declarations(css: str, selector: str) -> list[str]:
-    """The property declarations of one rule, with comment text left out."""
-    body = css.split(selector + " {")[1].split("}")[0]
-    lines = [line.strip() for line in body.splitlines()]
-    return [line for line in lines if line.endswith(";") and ":" in line]
+    """Every declaration the cascade gives `selector`, comment text left out.
+
+    All of its rules, not the first: a selector legitimately carries more than
+    one (#340 painted wrappers that already had layout rules), and taking the
+    first made an unrelated addition look like a deleted declaration.
+    """
+    plain = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found: list[str] = []
+    for rule in plain.split("}"):
+        if "{" not in rule:
+            continue
+        prelude, body = rule.split("{", 1)
+        # `selector` is either one selector out of the rule's list, or the
+        # whole list as written — both are used by callers here.
+        parts = [" ".join(s.split()) for s in prelude.split(",")]
+        if " ".join(selector.split()) not in parts + [" ".join(prelude.split())]:
+            continue
+        found += [
+            line.strip()
+            for line in body.splitlines()
+            if line.strip().endswith(";") and ":" in line
+        ]
+    return found
 
 
 def test_the_table_stands_at_a_fixed_height(app):
