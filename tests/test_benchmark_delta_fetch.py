@@ -166,6 +166,7 @@ def test_adding_a_ticker_fetches_only_that_ticker(monkeypatch, captured):
 def test_an_added_benchmark_becomes_selectable_everywhere(captured):
     app = build_app(verbose=False)
     _click(app, "Multi-Strategy")
+    _click(app, "Single Strategy")
     _click(app, "Quantitative")
 
     _selectors(app)[0]._box.value = "newbm"

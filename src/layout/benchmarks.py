@@ -327,7 +327,7 @@ class BenchmarkSelect(W.HBox):
     ``options`` trait of ``(label, value)`` pairs and a ``value`` trait holding
     a **resolved ticker** — so every existing `bench_dd.value` read and
     ``observe(..., names="value")`` keeps working unchanged. Same reason
-    ``CheckboxMultiSelect`` wraps checkboxes behind a ``SelectMultiple``
+    ``MultiChipGroup`` wraps chips behind a ``SelectMultiple``
     surface.
 
     A raw ``Combobox`` could not be dropped in directly:

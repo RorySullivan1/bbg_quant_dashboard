@@ -16,7 +16,14 @@ import plotly.graph_objects as go
 from src.config import BENCHMARK_TICKERS, DEFAULT_BENCHMARK
 from src.layout import build_app
 from src.layout.benchmarks import BenchmarkSelect
-from src.layout.filters import CheckboxMultiSelect
+
+
+def _basket(root):
+    """The app's `Basket` — the tab's only selection state since #341."""
+    from src.layout.basket import BasketCards
+
+    cards = next(w for w in _walk(root) if isinstance(w, BasketCards))
+    return cards.basket
 
 
 def _walk(widget):
@@ -126,8 +133,7 @@ def test_benchmark_change_is_noop_without_selection(monkeypatch):
 
     # Clear the selection, then click Refresh prices so the recompute runs the
     # empty-selection branch (which sets `state.cur_prep = None`).
-    ticker_w = next(w for w in _walk(app) if isinstance(w, CheckboxMultiSelect))
-    ticker_w.value = ()
+    _basket(app).clear()
     refresh_btn = next(
         w
         for w in _walk(app)

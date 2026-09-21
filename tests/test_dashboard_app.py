@@ -47,7 +47,7 @@ def test_build_app_returns_the_controller_s_root():
 
 def test_default_selection_picks_five_from_the_options(app):
     sel = app._default_selection()
-    options = [o[1] if isinstance(o, tuple) else o for o in app.state.ticker_w.options]
+    options = [str(x) for x in app.meta["ticker"]]
     assert 0 < len(sel) <= 5
     assert set(sel) <= set(options)
     assert len(set(sel)) == len(sel)  # no duplicates
@@ -55,7 +55,7 @@ def test_default_selection_picks_five_from_the_options(app):
 
 def test_default_selection_is_empty_without_options(app, monkeypatch):
     # No catalog -> no selection, rather than an index error on the fallback.
-    monkeypatch.setattr(app.state.ticker_w, "options", [])
+    monkeypatch.setattr(app, "meta", app.meta.iloc[:0])
     assert app._default_selection() == ()
 
 
@@ -63,7 +63,7 @@ def test_default_selection_falls_back_when_the_zscore_is_unavailable(app, monkey
     # A degenerate/empty price cache must still yield a usable starting basket.
     monkeypatch.setattr(app.state, "arp_universe_prices", pd.DataFrame())
     sel = app._default_selection()
-    options = [o[1] if isinstance(o, tuple) else o for o in app.state.ticker_w.options]
+    options = [str(x) for x in app.meta["ticker"]]
     assert list(sel) == options[: len(sel)]
 
 
@@ -734,7 +734,11 @@ def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app
     ]
     # The shared list, and both controls built from it, stop at six months.
     assert [label for label, _ in SHORT_WINDOW_OPTIONS] == ["1W", "1M", "3M", "6M"]
-    assert [label for label, _ in app.filter_panel.quant.z_window_dd.options] == [
+    # Single Strategy's panel: the Multi tab's was retired with its thresholds
+    # (#345), so this is the one `QuantFilter` left.
+    assert [
+        label for label, _ in app.single_strategy.filters.quant.z_window_dd.options
+    ] == [
         "1W",
         "1M",
         "3M",

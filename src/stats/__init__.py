@@ -9,11 +9,13 @@ from ``src.stats`` and never from a submodule.
 from __future__ import annotations
 
 from ._common import (
+    BasketWindow,
     _benchmark_series,
     _has_enough_history,
     _slice_last_years,
     active_columns,
     asset_class_demeaned_zscore,
+    basket_window,
     common_window_bounds,
     daily_returns,
     drawdown_series,
@@ -126,6 +128,8 @@ __all__ = [
     "calendar_summary_columns",
     "calmar_ratio",
     "color_key",
+    "BasketWindow",
+    "basket_window",
     "common_window_bounds",
     "compounded_return",
     "corr_matrix",

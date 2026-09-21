@@ -430,6 +430,7 @@ def section_panel(
     *,
     height: str,
     note: str | None = None,
+    actions: W.Widget | None = None,
 ) -> W.VBox:
     """A titled section: a heading line, a row of controls, then a boxed body.
 
@@ -450,6 +451,12 @@ def section_panel(
     `note` is an optional muted caption beside the title, for a section whose
     heading alone does not say enough to read it by.
 
+    `actions` is an optional widget pushed to the **right end of the title
+    line** — where Multi-Strategy's *Refresh prices* sits (#344). It belongs on
+    the title rather than in the bar because the bar carries settings that
+    re-slice the cache, and this is the one control on the tab that fetches:
+    putting it among them would read as a fourth chip group.
+
     **`height` is required.** The component owns the shape; the caller owns the
     size. A default sized for the commentary block would quietly impose that
     number on a Platform caller, which wants `CATALOG_TABLE_HEIGHT` instead.
@@ -464,7 +471,20 @@ def section_panel(
         layout=W.Layout(width="100%", height=height, min_height="0"),
     )
     box.add_class("bbg-section-box")
+    heading: W.Widget = _section_title(title, note)
+    if actions is not None:
+        # `justify_content="space-between"` rather than a spacer widget: the
+        # title is an HTML block of its own width, and a flex gap is one
+        # property against an empty box nobody can see in the widget tree.
+        heading = W.HBox(
+            [heading, actions],
+            layout=W.Layout(
+                width="100%",
+                align_items="center",
+                justify_content="space-between",
+            ),
+        )
     return W.VBox(
-        [_section_title(title, note), bar, box],
+        [heading, bar, box],
         layout=W.Layout(width="100%", min_width="0"),
     )

@@ -123,8 +123,17 @@ LEADERBOARD_ROWS = 3
 #: Hard cap on the Multi-Strategy selection. Analysis over the selected set is
 #: O(n²) in the number of picks, so the picker is bounded to keep it fast and
 #: the heatmaps legible; a further pick is rejected with an error popup.
-#: See `CheckboxMultiSelect(max_selected=...)`.
+#: Enforced by `Basket`, which is the only thing that can write a selection.
 MAX_SELECTED_STRATEGIES = 25
+
+#: How long a basket change waits before the analytics re-slice (#347).
+#:
+#: *Select all shown* of 25 arrives as one `selected_rows` change but a group
+#: header's worth can arrive as several, and a 25-name `SelectionSlice.build`
+#: is well under a second — so the debounce is not there to make the work
+#: cheap, it is there to make sure it happens **once**. Short enough that a
+#: single tick reads as immediate.
+RESLICE_DEBOUNCE_S: float = 0.3
 
 # Short metric windows (trading days) for the Platform z-score views.
 WEEK_WINDOW = 5

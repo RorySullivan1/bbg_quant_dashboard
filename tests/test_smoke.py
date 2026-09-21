@@ -12,7 +12,6 @@ from __future__ import annotations
 import ipywidgets as W
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
-from src.layout.filters import CheckboxMultiSelect
 from src.layout.html import STYLE_CTX, render_template
 from src.style import Color
 
@@ -262,7 +261,9 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     )
     ms.click()
     panel = app.children[5].children[0]
-    ticker_w = next(w for w in _walk(panel) if isinstance(w, CheckboxMultiSelect))
+    from src.layout.basket import BasketCards
+
+    basket = next(w for w in _walk(panel) if isinstance(w, BasketCards)).basket
 
     # Expected: the top-5 (capped) by z(1W Sharpe, 1Y) over the fetched universe.
     meta = load_metadata()
@@ -273,12 +274,12 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
         px, metric="sharpe", window=WEEK_WINDOW, zscore_window=TRADING_DAYS_PER_YEAR
     ).dropna()
     expected = set(z.nlargest(5).index)
-    assert set(ticker_w.value) == expected
-    assert 1 <= len(ticker_w.value) <= 5
+    assert set(basket.value) == expected
+    assert 1 <= len(basket.value) <= 5
 
     # The selected-strategy perf grid is populated on load (one row per pick).
     grid = next(w for w in _walk(panel) if w.__class__.__name__ == "DataGrid")
-    assert grid.data.shape[0] == len(ticker_w.value)
+    assert grid.data.shape[0] == len(basket.value)
     # Both panes' mounted figures carry data without a Refresh click.
     figs = [w for w in _walk(panel) if isinstance(w, go.FigureWidget)]
     assert sum(1 for f in figs if f.data) >= 1
@@ -301,10 +302,13 @@ def test_quant_zscore_row_has_window_dropdown():
         "RSI",
     ]
     app = build_app(verbose=False)
+    # **Single Strategy**, not Multi: the Multi tab's thresholds became table
+    # columns and its cross-sectional Z threshold was retired outright (#345),
+    # so this row lives in the one `FilterPanel` that is left.
     ms = next(
         b
         for b in app.children[4].children
-        if isinstance(b, W.Button) and "Multi-Strategy" in b.description
+        if isinstance(b, W.Button) and "Single Strategy" in b.description
     )
     ms.click()
     panel = app.children[5].children[0]

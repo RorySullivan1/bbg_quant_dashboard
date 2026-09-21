@@ -368,18 +368,18 @@ class FilterPanel:
     widgets (launch-date range + currency), and a `QuantFilter`, and answers
     `matching(meta, state)`.
 
-    The Single Strategy tab takes the default (`build_root=True`) and drops
-    `root` straight in. The Multi-Strategy tab composes the pieces itself — it
-    passes its **Refresh prices** button as `leading_actions` (prepended to the
-    action row), a `right_panel_layout` (its 60%/bordered box), and
-    `build_root=False`, then mounts `right_panel` beside its Strategies picker.
+    **Single Strategy is the accordion's only caller** since #344: the
+    Multi-Strategy tab's picker is the catalog table now, and the panel
+    survives there unmounted, as the reducer that narrows the table's frame
+    (`apply_categorical`) until #345 moves the dimensions into its bar.
+    `leading_actions` went with that tab's action row — it carried its
+    *Refresh prices* button, which now sits on the section's title line.
     """
 
     def __init__(
         self,
         meta: pd.DataFrame,
         *,
-        leading_actions: tuple[W.Widget, ...] = (),
         right_panel_layout: W.Layout | None = None,
         build_root: bool = True,
         registry: BenchmarkRegistry | None = None,
@@ -463,9 +463,8 @@ class FilterPanel:
         self.clear_section_btn.on_click(lambda _b=None: self.clear_section())
         self.clear_all_btn.on_click(lambda _b=None: self.clear_all())
 
-        # Callers (Multi-Strategy) may prepend their own action (Refresh prices).
         action_row = W.HBox(
-            [*leading_actions, self.clear_section_btn, self.clear_all_btn],
+            [self.clear_section_btn, self.clear_all_btn],
             layout=W.Layout(width="100%", margin="0 0 6px 0"),
         )
         self.right_panel = W.VBox(
@@ -573,7 +572,6 @@ class FilterPanel:
 def make_filter_panel(
     meta: pd.DataFrame,
     *,
-    leading_actions: tuple[W.Widget, ...] = (),
     right_panel_layout: W.Layout | None = None,
     build_root: bool = True,
     registry: BenchmarkRegistry | None = None,
@@ -584,7 +582,6 @@ def make_filter_panel(
     """
     return FilterPanel(
         meta,
-        leading_actions=leading_actions,
         right_panel_layout=right_panel_layout,
         build_root=build_root,
         registry=registry,

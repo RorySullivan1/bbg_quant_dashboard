@@ -216,3 +216,24 @@ data can carry those tests is noticed rather than missed.
 
 `STRIP_DAYS` (5) is read by the Strip's stats function, its chart and its
 column header rather than typed at three sites.
+
+## The quant columns' naming (v0.9.29, #345)
+
+The Multi-Strategy tab's nine `≥ / ≤` thresholds became **columns** of the
+basket table. Seven survive — Sortino · Calmar · Beta · Treynor · Jensen α ·
+VaR · RSI — and each is named **`"{window} {metric}"`**, exactly as the
+performance columns are (`"1Y Sharpe"`).
+
+That is not cosmetic. Four behaviours key off the `"<window> "` prefix and the
+metric suffix, and naming the columns this way buys all four with no new
+branches anywhere: `_window_of` puts them under the Window chip (so switching
+windows hides them rather than recomputing), `_is_stat_col` gives them a
+**comparison** filter instead of a substring one, `_is_percent_col` carries the
+×100 for the two that are stored as fractions — **VaR** (a daily loss fraction)
+and **Jensen α** (annualized) — and the numeric renderer formats them.
+
+Two deliberate absences. **Vol** is not here and not rankable on the Platform
+tab either: the ramp and the sort both say *higher is better*, which volatility
+is not. And the cross-sectional **Z threshold** is gone outright — a z-score is
+a ranking, and the Platform tab's ranking column is where a ranking belongs.
+`QuantFilter` keeps both for Single Strategy, where nothing claims a direction.

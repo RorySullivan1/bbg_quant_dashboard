@@ -8,6 +8,8 @@ use ``max_drawdown`` without creating a circular import.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -167,6 +169,62 @@ def common_window_bounds(
     if pd.isna(start) or pd.isna(end) or start > end:
         return (None, None)
     return (start, end)
+
+
+@dataclass(frozen=True)
+class BasketWindow:
+    """The window a basket's analytics run over, and who decided it.
+
+    `binding_start` / `binding_end` name the members that set each edge — the
+    strategy with the shortest history, and the one that has gone stale. That
+    is the whole reason this exists rather than `common_window_bounds` alone:
+    with the date pickers retired (#341 dec. 12) the overlap is not a bound the
+    user can argue with, so the app has to say which member is shortening the
+    sample. Naming it turns "why is this only 2 years?" into one click.
+
+    `start` / `end` are `None` when the basket is empty or its members share no
+    dates; the names are `None` with them.
+    """
+
+    start: pd.Timestamp | None
+    end: pd.Timestamp | None
+    binding_start: str | None = None
+    binding_end: str | None = None
+
+    @property
+    def years(self) -> float:
+        """The span in years, for the readout. Zero when there is no window."""
+        if self.start is None or self.end is None:
+            return 0.0
+        return (self.end - self.start).days / 365.25
+
+
+def basket_window(prices: pd.DataFrame) -> BasketWindow:
+    """`common_window_bounds`, plus the member at each edge.
+
+    The window is the **intersection** of the members' histories: it starts at
+    the *latest* first-valid date and ends at the *earliest* last-valid date,
+    so every day in it is a day every member traded. (The brief called it a
+    union; the computation is the intersection, which is what "only overlap
+    counts" means.)
+
+    Ties are broken by column order, which is basket order — with two members
+    starting on the same date, the one the user added first is named. Either is
+    correct and the choice only has to be stable.
+    """
+    start, end = common_window_bounds(prices)
+    if start is None or end is None:
+        return BasketWindow(None, None)
+    firsts = _first_valid_index(prices)
+    lasts = _last_valid_index(prices)
+    at_start = [str(c) for c in firsts.index[firsts == start]]
+    at_end = [str(c) for c in lasts.index[lasts == end]]
+    return BasketWindow(
+        start=start,
+        end=end,
+        binding_start=at_start[0] if at_start else None,
+        binding_end=at_end[0] if at_end else None,
+    )
 
 
 def active_columns(prices: pd.DataFrame, *, window_days: int = 21) -> list[str]:

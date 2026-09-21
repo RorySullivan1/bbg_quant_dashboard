@@ -11,7 +11,7 @@ The entry UX for #189. A plain `W.Combobox` could not be dropped in where the
 
 ``BenchmarkSelect`` therefore wraps a Combobox behind the surface the app
 already reads — ``options`` pairs in, a **resolved ticker** out — the same
-trick `CheckboxMultiSelect` plays for `SelectMultiple`.
+trick `MultiChipGroup` plays for `SelectMultiple`.
 
 Two properties carry most of the risk and are pinned hardest here: a commit is
 a deliberate act (never a keystroke), and an unknown ticker is refused rather
@@ -252,12 +252,29 @@ def _selectors(app) -> list[BenchmarkSelect]:
     return [w for w in _walk(app) if isinstance(w, BenchmarkSelect)]
 
 
+def _all_selectors(app) -> list[BenchmarkSelect]:
+    """Every selector in the app, gathered by mounting each tab.
+
+    Accumulated rather than read off one mount: a tab that is not showing is
+    swapped out of the widget tree, so a single walk sees only the tab it is
+    on. The selectors are the same objects across mounts, so `id` dedups them.
+    """
+    found: dict[int, BenchmarkSelect] = {}
+    for tab in ("Platform", "Multi-Strategy", "Single Strategy"):
+        _click(app, tab)
+        if tab == "Single Strategy":
+            # Its threshold rows sit behind the Quantitative pill; the Multi
+            # tab's one selector is in the bar, visible on mount (#345).
+            _click(app, "Quantitative")
+        for sel in _selectors(app):
+            found[id(sel)] = sel
+    return list(found.values())
+
+
 def test_every_benchmark_selector_is_editable():
     app = build_app(verbose=False)
-    _click(app, "Multi-Strategy")
-    _click(app, "Quantitative")
+    selectors = _all_selectors(app)
 
-    selectors = _selectors(app)
     assert len(selectors) >= 11
     for sel in selectors:
         assert sel._box.ensure_option is False
@@ -269,13 +286,10 @@ def test_the_width_variants_survive_the_swap():
     # The panes use 320px, the quant filter rows 200px, and the Single-Strategy
     # shared selector 100%. A composite that lost those would wreck the layout.
     app = build_app(verbose=False)
-    _click(app, "Multi-Strategy")
-    _click(app, "Quantitative")
-    widths = {sel.layout.width for sel in _selectors(app)}
-    assert {"320px", "200px"} <= widths
-
-    _click(app, "Single Strategy")
-    assert "100%" in {sel.layout.width for sel in _selectors(app)}
+    widths = {sel.layout.width for sel in _all_selectors(app)}
+    # 320px the panes, 200px the basket bar and the quant rows, 100% the
+    # Single-Strategy shared selector.
+    assert {"320px", "200px", "100%"} <= widths
 
 
 def test_picking_a_curated_benchmark_still_works_end_to_end():
