@@ -33,26 +33,47 @@ numbers, which is what makes an off-terminal before/after comparison meaningful.
 every restart showed different numbers.)
 
 
-## A limit of the off-terminal render (found v0.9.24, epic #331)
+## The terminal runs plotly 5.23.0 — this environment does not (v0.9.26)
 
-**Plotly `FigureWidget` figures do not draw under a headless local Voila.**
-The widget's div is created and the layout is applied — axes, grid, the dark
-theme — but no trace reaches it: the browser's `div.data` is empty and the
-chart area shows an empty cartesian plot whatever the figure holds.
+`hoverlabel.showarrow` is valid here and **not** in 5.23.0, where it raises
+`Invalid property specified for object of type plotly.graph_objs.layout.Hoverlabel: 'showarrow'`
+while the figure is being built. Under Voila that is a blank page, not a chart
+that looks wrong: the notebook is executed to completion and the page is
+assembled from the result, so a raise inside `build_app()` takes the whole
+dashboard down.
 
-Checked both ways before it was believed: the same probe against `v0.9.23`,
-before any of epic #331's charts existed, finds the **sunburst** equally
-blank. So it is the environment, not a regression, and it predates the epic
-by a long way.
+The trap is that it *was* checked. Enumerating `_valid_props` here proves a
+property exists **here**, and the suite runs against the same local plotly, so
+neither says anything about the terminal.
 
-The `ipydatagrid` and `itables` widgets are unaffected — the catalog table and
-the chart's points table both render — so an off-terminal pass is still worth
-running for everything that is not a plotly figure. What it cannot do is
-confirm a chart, which is precisely the class of defect a widget-tree
-assertion cannot see either (#255). **For the Platform card's charts, a
-terminal is the only evidence**, and `testing_notes.md`'s checklist for that
-card should be read as terminal-only.
+**Check against 5.23.0 directly instead.** It installs side by side without
+disturbing this environment:
 
-Not yet diagnosed. The most likely cause is the one #269 records for widget
-packages generally: a labextension is enumerated once at server startup, and
-`jupyterlab-plotly` may not be reaching this Voila the way `anywidget` does.
+```bash
+pip install --target /tmp/plotly523 plotly==5.23.0
+python3 - <<'EOF'
+import sys; sys.path.insert(0, "/tmp/plotly523")
+import plotly.graph_objects as go
+go.Figure(layout=dict(hoverlabel=dict(showarrow=False)))   # raises on 5.23.0
+EOF
+```
+
+Everything the analytics card builds has been run through that and is valid on
+5.23.0: the full `go.Icicle` (ids / parents / `branchvalues` / `maxdepth` /
+`level` / `tiling.orientation` / the marker's colorscale, `cmid`, `cmin`,
+`cmax` and `colorbar.title.text`), the `Scatter3d` scene axes (`zeroline*`,
+`showline`, `linecolor`, `gridcolor`, `backgroundcolor`, `aspectmode`), and
+the Strip's numeric axis with `tickmode="array"` plus its dashed zero shape.
+
+`tests/test_platform.py` holds an allowlist of the `hoverlabel` properties old
+enough for it, so a newer one cannot be added silently — but the allowlist is
+a backstop for one object. The command above is the check for anything else.
+
+**Also on the terminal, and unrelated:** plotly figures do not draw under a
+*headless local* Voila here — the widget's div and layout appear but no trace
+reaches it. Checked against `v0.9.23`, where the sunburst is equally blank, so
+it predates epic #331. `ipydatagrid` and `itables` are unaffected, so an
+off-terminal pass is still worth running for everything that is not a plotly
+figure. What it cannot do is confirm a chart, which is exactly the class of
+defect a widget-tree assertion cannot see either (#255). **For the Platform
+card's charts, a terminal is the only evidence.**

@@ -340,10 +340,13 @@ rather than scrolling — a full path is five segments plus the Level chips.
 
 ## Hover labels on the analytics card (v0.9.25)
 
-**A 3D scene gives no anchor for its hover label.** `layout.hoverlabel` offers
-`align`, `namelength` and `showarrow` and nothing that puts the box on one
-side of the marker, so the label's **footprint** is the only lever on how much
-of the cloud it hides. The Scatter's hover is therefore three short lines —
+**Nothing anchors a hover label.** There is no property that puts the box on
+a chosen side of the marker, in a 3D scene or anywhere else, so the label's
+**footprint** is the only lever on how much of the cloud it hides. What the
+card's charts set is `_HOVER_LABEL` — `align` and `namelength`, shared so one
+chart cannot drift from the others, and held to properties old enough for the
+terminal's plotly (`showarrow` was not, and took the app down: see
+`run_instructions.md`). The Scatter's hover is therefore three short lines —
 name, the metric, then both betas side by side — where it was five.
 
 **A group's hover says "mean of N", never a bare count.** It rendered
