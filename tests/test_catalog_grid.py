@@ -1306,6 +1306,32 @@ def test_a_numeric_filter_box_reads_as_one_and_flags_what_it_cannot_parse():
     assert ".bbg-filter-input.bbg-filter-invalid" in css
 
 
+def test_the_dark_table_chrome_is_shared_and_only_the_grouping_is_not():
+    """#337 — two `ITable`s now, so the chrome cannot be spelled per table.
+
+    `.bbg-itable` carries everything both wear. What stays on `.bbg-catalog`
+    is what the points table does not have: the nested group bands RowGroup
+    draws, and the per-column filter row.
+    """
+    from src.layout.grids import CATALOG_TABLE_CLASS, ITABLE_CLASS
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = re.sub(r"/\*.*?\*/", "", render_template("app_css", **STYLE_CTX), flags=re.S)
+    assert ITABLE_CLASS == "bbg-itable" and CATALOG_TABLE_CLASS == "bbg-catalog"
+
+    catalog_rules = [
+        rule.split("{", 1)[0]
+        for rule in css.split("}")
+        if "{" in rule and ".bbg-catalog" in rule.split("{", 1)[0]
+    ]
+    assert catalog_rules, "the catalog keeps its own rules"
+    for selectors in catalog_rules:
+        assert "dtrg-group" in selectors or "bbg-filter-row" in selectors, (
+            f"{selectors.strip()!r} is not catalog-specific — it belongs on "
+            f".{ITABLE_CLASS}, which the points table wears too"
+        )
+
+
 def test_the_strips_around_the_table_are_painted_with_the_table():
     """#340 — the search row and row-count readout sat on the bundle's white.
 
@@ -1385,7 +1411,7 @@ def test_the_table_fills_its_cell_from_the_inside_too():
     rule = next(
         r
         for r in css.split("}")
-        if "div.itables_anywidget.bbg-catalog," in r and "width: 100%" in r
+        if "div.itables_anywidget.bbg-itable," in r and "width: 100%" in r
     )
     assert ".dt-container" in rule and "table.dataTable" in rule
     assert "width: 100% !important" in rule

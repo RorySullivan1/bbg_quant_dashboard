@@ -145,6 +145,25 @@ CATALOG_HEADER_ROW_HEIGHT: str = "30px"
 CATALOG_TABLE_HEIGHT: str = "506px"
 
 
+#: How tall the Platform analytics card's row stands: the active chart's box
+#: **and** the points table beside it, both this exact value (#331 dec. 7).
+#:
+#: Fixed rather than stretched, which is the `CATALOG_TABLE_HEIGHT` lesson one
+#: block up: stretching lets whichever box holds more content set the row, so
+#: a long points list would grow the chart and a tall chart would stretch a
+#: three-row table. The chart's own `height` in `_chart_layout` follows this
+#: token, so the figure fills its box rather than sitting in the top of it.
+#:
+#: Sized to sit a little under the table above it — the card is the second
+#: thing on the tab, and a chart as tall as the catalog pushes the page.
+ANALYTICS_HEIGHT: str = "420px"
+
+#: How wide the points table beside the chart stands. A fixed basis, so a wide
+#: chart pushes nothing off: the chart takes the remaining width (`flex: 1 1 0%`
+#: **and** `min-width: 0`, the #280 pair) and a long strategy name wraps or
+#: ellipsizes inside this rather than widening the column set.
+ANALYTICS_TABLE_WIDTH: str = "360px"
+
 #: How tall a `section_panel`'s container stands in the commentary block — the
 #: Leaderboard's and the QIS Bulletin's, both from this one token, so neither
 #: can set the row for the other (the `CATALOG_TABLE_HEIGHT` argument, one

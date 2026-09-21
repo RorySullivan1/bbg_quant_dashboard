@@ -102,7 +102,7 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     assert headings == ["Chart", "Metric", "Window", "Regime", "Level", "Scope"]
     assert not [w for w in _walk(analytics_card) if isinstance(w, W.ToggleButtons)]
 
-    (chart_box,) = body.children
+    chart_box, points_box = body.children
     # The card's Metric and Window offer the table's option lists, so the two
     # surfaces can be read at different windows but cannot offer different
     # things (#331 decision 1).
@@ -151,7 +151,7 @@ def test_regime_analysis_section_conditions_live():
     pa = analytics_card._analytics
     pa.chart_chips.value = "scatter"  # the Regime section shows on the Scatter
 
-    (chart_box,) = body.children
+    chart_box, _points_box = body.children
     # Type and Bucket are chips since #333; Source stays a dropdown because its
     # options are a long live list (#331 decision 13).
     regime_type, bucket_dd = pa.regime_type_chips, pa.regime_bucket_chips

@@ -412,8 +412,8 @@ def test_the_table_s_internals_fill_its_box_rather_than_capping_a_cell(app):
     # `min-height: 0` at every level, or a flex child refuses to shrink below
     # its content and the body pushes the box open instead of scrolling.
     for selector in (
-        "div.itables_anywidget.bbg-catalog .dt-container",
-        "div.itables_anywidget.bbg-catalog .dt-layout-row.dt-layout-table",
+        "div.itables_anywidget.bbg-itable .dt-container",
+        "div.itables_anywidget.bbg-itable .dt-layout-row.dt-layout-table",
     ):
         assert any(d.startswith("min-height: 0") for d in _declarations(css, selector))
     assert "overflow: auto;" in cell

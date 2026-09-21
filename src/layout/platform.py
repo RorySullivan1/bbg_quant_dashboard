@@ -29,6 +29,7 @@ import pandas as pd
 from ..config import (
     CATALOG_SCORE_MIN_SAMPLE_DAYS,
     DEFAULT_RANKING_METRIC,
+    DRILL_LEAF_LEVEL,
     REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
     STRIP_DAYS,
@@ -58,8 +59,9 @@ from ..stats import (
     tercile_bounds,
     term_premium,
 )
+from ..style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
 from .drill import Drill
-from .grids import zscore_column_name
+from .grids import ChartPointsGrid, zscore_column_name
 from .html import STYLE_CTX, render_template
 from .platform_charts import (
     IcicleChart,
@@ -196,6 +198,7 @@ class PlatformAnalytics:
         *,
         z_metric_chips: ChipGroup,
         window_chips: ChipGroup,
+        on_open_strategy: Callable[[str], None] | None = None,
     ) -> None:
         self.state = state
         # The all-catalog grid's ranking controls live with the table, not in
@@ -210,6 +213,10 @@ class PlatformAnalytics:
         # window and no lookback: the score is measured over the period the row
         # is being read at, against a fixed `SCORE_SAMPLE_DAYS` sample.
         self.z_metric_chips = z_metric_chips
+        #: How a strategy row leaves the card. The app passes the same
+        #: method the catalog table and the leaderboard use, so the three
+        #: entry points into Single Strategy cannot diverge (#286's rule).
+        self._on_open_strategy = on_open_strategy
         self.window_chips = window_chips
         #: Resolved at fire time, never captured (#242). `wire` sets it.
         self._current_meta: Callable[[], pd.DataFrame] | None = None
@@ -283,11 +290,32 @@ class PlatformAnalytics:
             "strip": self.strip.fig,
         }
 
+        # Chart beside its own points, both at ONE fixed height (#331 dec. 7).
+        # Stretching is the wrong tool here for `CATALOG_TABLE_HEIGHT`'s reason
+        # (#298): whichever box held more content would set the row, so a long
+        # points list would grow the chart and a tall chart would stretch a
+        # three-row table.
+        #
+        # `flex: 1 1 0%` **and** `min-width: 0` on the chart, the #280 pair: a
+        # flex item will not shrink below its content without the second, so a
+        # wide legend would push the table off the row instead of fitting.
         self.chart_box = W.Box(
-            [self.icicle.fig], layout=W.Layout(flex="1 1 0%", width="100%")
+            [self.icicle.fig],
+            layout=W.Layout(
+                flex="1 1 0%", width="100%", min_width="0", height=ANALYTICS_HEIGHT
+            ),
+        )
+        self.points_grid = ChartPointsGrid(on_pick=self._pick_point)
+        points_box = W.Box(
+            [self.points_grid.widget],
+            layout=W.Layout(
+                flex=f"0 0 {ANALYTICS_TABLE_WIDTH}",
+                width=ANALYTICS_TABLE_WIDTH,
+                height=ANALYTICS_HEIGHT,
+            ),
         )
         analytics_body = W.HBox(
-            [self.chart_box],
+            [self.chart_box, points_box],
             layout=W.Layout(width="100%", align_items="stretch"),
         )
 
@@ -321,6 +349,39 @@ class PlatformAnalytics:
         self.active_analytics: str = "icicle"
         self.fresh: set[str] = set()
         self._sync_sections()
+
+    def _pick_point(self, row: pd.Series) -> None:
+        """A points-table row: narrow on a group, open a strategy (#331 dec. 19).
+
+        `count` is what routes it, not the level: a row that stands for one
+        strategy IS that strategy, whatever depth the chart is drawn at.
+        """
+        if int(row["count"]) > 1:
+            self._drill_from_chart(tuple(row["path"]))
+        elif self._on_open_strategy is not None:
+            self._on_open_strategy(str(row["label"]))
+
+    def render_points(self) -> None:
+        """Show the active chart's own points beside it.
+
+        Runs after every chart render, so every drill change reaches it for
+        free: a marker click, a Level chip, a breadcrumb segment and the
+        icicle's own zoom all re-render the visible chart.
+        """
+        chart = {
+            "icicle": self.icicle,
+            "scatter": self.scatter,
+            "strip": self.strip,
+        }[self.active_analytics]
+        level = (
+            DRILL_LEAF_LEVEL if self.active_analytics == "icicle" else self.drill.level
+        )
+        self.points_grid.update(
+            chart.points(),
+            level_label=drill_level_label(level),
+            value_label=chart.value_label,
+            fmt=chart.value_format,
+        )
 
     # --- the drill ------------------------------------------------------------
 
@@ -644,6 +705,10 @@ class PlatformAnalytics:
         }[which]
         renderer(meta)
         self.fresh.add(which)
+        # The table reads whatever the chart just drew, so it follows every
+        # render rather than being driven separately from each control.
+        if which == self.active_analytics:
+            self.render_points()
 
     def render_active(self, meta: pd.DataFrame) -> None:
         """Render whichever tab is shown — called on load and Refresh so only
@@ -668,6 +733,7 @@ class PlatformAnalytics:
             self._render_tab(meta, which)
         self._sync_sections()
         self.chart_box.children = (self.analytics_tabs[which],)
+        self.render_points()
 
     # --- wiring ---------------------------------------------------------------
 

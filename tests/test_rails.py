@@ -351,7 +351,7 @@ def test_the_box_wears_the_catalog_table_s_chrome_and_not_a_card_s():
     # of container standing beside the table.
     assert "border-radius: 6px;" in box
     assert "border-radius: 6px;" in _declarations(
-        css, "div.itables_anywidget.bbg-catalog"
+        css, "div.itables_anywidget.bbg-itable"
     )
     assert "border-radius: 8px;" in _declarations(css, ".bbg-app .bbg-card")
     # A fixed height alone does not scroll a flex child: without `min-height`

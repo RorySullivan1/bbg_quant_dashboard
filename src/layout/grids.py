@@ -45,7 +45,7 @@ from ..config import (
     universe_grid_default_window,
     universe_grid_group_fields,
 )
-from ..style import CATALOG_TABLE_HEIGHT, Color
+from ..style import ANALYTICS_HEIGHT, CATALOG_TABLE_HEIGHT, Color
 from .theme import _palette_color
 
 
@@ -606,6 +606,16 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
 #: The class the dark-chrome CSS hangs off. The itables container's own class
 #: is `itables_anywidget` (NOT `itables`), and the stylesheet must outrank
 #: DataTables' bundled one — see the `.bbg-catalog` block in `app_css.html`.
+#: The dark-table chrome both s wear — the catalog's and the chart's
+#: points table. Hoisted out of  in #337, which keeps only what
+#: is catalog-specific: the group bands and the filter row.
+ITABLE_CLASS: str = "bbg-itable"
+
+#: The dark-table chrome both `ITable`s wear — the catalog's and the chart's
+#: points table. Hoisted out of `.bbg-catalog` in #337, which keeps only what
+#: is catalog-specific: the group bands and the filter row.
+ITABLE_CLASS: str = "bbg-itable"
+
 CATALOG_TABLE_CLASS: str = "bbg-catalog"
 
 # The catalog scrolls rather than pages, but that scrolling is done in CSS
@@ -1119,6 +1129,27 @@ def _catalog_table_options(
     return options
 
 
+def picked_row(change: dict, size: int) -> int | None:
+    """The row position a `selected_rows` change picked, or None for a non-event.
+
+    Two non-events are swallowed deliberately, and both tables that observe
+    `selected_rows` need the same treatment — so this is a function rather
+    than a rule each of them re-implements.
+
+    A **deselection** arrives as an empty list and must do nothing: clearing
+    the panes because the user clicked the selected row again would be worse
+    than useless. And a row position **outside the current frame** is reachable
+    whenever a re-render lands between the click and the callback, so it is
+    guarded rather than left to raise inside traitlets, where the exception
+    surfaces as a dead widget rather than as an error anyone can act on.
+    """
+    rows = change.get("new") or []
+    if not rows:
+        return None
+    row = rows[0]
+    return row if 0 <= row < size else None
+
+
 class UniverseGrid:
     """The all-catalog Platform grid — every in-universe index with its
     metadata, 1Y/3Y/5Y performance and the selectable Z-Score column, with the
@@ -1139,6 +1170,8 @@ class UniverseGrid:
         self.widget = ITable(
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
+        self.widget.add_class(ITABLE_CLASS)
+        self.widget.add_class(ITABLE_CLASS)
         self.widget.add_class(CATALOG_TABLE_CLASS)
         # Full width since #326, where the rail beside it was removed: the
         # table is a child of the Platform column now, not of a row it had to
@@ -1177,22 +1210,11 @@ class UniverseGrid:
         self.widget.observe(self._forward_pick, names="selected_rows")
 
     def _forward_pick(self, change: dict) -> None:
-        """Translate a clicked row into a ticker and hand it to `on_pick`.
-
-        Two non-events are swallowed deliberately. A **deselection** arrives as
-        an empty list and must do nothing — clearing the panes because the user
-        clicked the selected row again would be worse than useless. And a row
-        position **outside the current frame** is reachable whenever a re-render
-        lands between the click and this callback, so it is guarded rather than
-        left to raise inside traitlets, where the exception would surface as a
-        dead widget rather than as an error anyone can act on.
-        """
-        rows = change.get("new") or []
-        if not rows or self._on_pick is None:
+        """Translate a clicked row into a ticker and hand it to `on_pick`."""
+        picked = picked_row(change, len(self._tickers))
+        if picked is None or self._on_pick is None:
             return
-        row = rows[0]
-        if 0 <= row < len(self._tickers):
-            self._on_pick(self._tickers[row])
+        self._on_pick(self._tickers[picked])
 
     def update(
         self,
@@ -1374,3 +1396,116 @@ def _group_ordered(
     return ranked.sort_values(
         [*by, z_key], ascending=[*ascending, False], na_position="last"
     ).drop(columns=[c for c in ranked.columns if c.startswith(_GROUP_RANK_PREFIX)])
+
+
+def _points_table_options(frame: pd.DataFrame, fmt: str) -> dict:
+    """DataTable options for the chart's points table.
+
+    Shares `_catalog_table_options`' renderer helpers and nothing else. The
+    catalog's table is grouped, searched and filtered because it is the thing
+    the user browses; this one *reports* whatever the chart beside it drew, so
+    a search box that could hide a point the chart still shows would be a way
+    for the two to disagree.
+    """
+    value_column = len(frame.columns) - 1
+    return {
+        "columnDefs": [
+            {
+                "targets": [value_column],
+                "render": _js_number_render(percent=fmt.endswith("%")),
+                "className": "dt-body-right",
+            }
+        ],
+        # Sorted by the frame, not by DataTables: the order is part of what the
+        # chart handed over, and re-sorting here would let the table disagree
+        # with the legend's reading order.
+        "order": [],
+        "paging": False,
+        # Slots cleared through `layout`, not through `searching` / `info`:
+        # this bundle's ITable does not carry those two options and warns that
+        # it is passing them through undocumented. `None` → JSON `null` is how
+        # a slot is removed, the way `_catalog_table_options` clears `topEnd`.
+        #
+        # There is no search box and no row-count readout because this table
+        # *reports* what the chart beside it drew: a filter that could hide a
+        # point the chart still shows would be a way for the two to disagree.
+        "layout": {
+            "topStart": None,
+            "topEnd": None,
+            "bottomStart": None,
+            "bottomEnd": None,
+        },
+        "select": {"style": "single"},
+        "scrollY": ANALYTICS_HEIGHT,
+        "scrollCollapse": False,
+        "autoWidth": True,
+    }
+
+
+class ChartPointsGrid:
+    """The active chart's own points, as a table beside it.
+
+    Hover was the only way to read a value — one point at a time, with no way
+    to sort and no path from a point to the strategy it stands for. This is
+    that path: the table shows whatever `points()` the visible chart drew, and
+    a click on a row goes where a click on the marker would (#331 dec. 6, 19).
+
+    A sibling of `UniverseGrid` rather than a subclass: they share an `ITable`,
+    the numeric renderers and the dark chrome, but nothing of the grouping,
+    the filter row or the window-visibility machinery that makes the catalog
+    table what it is.
+    """
+
+    def __init__(self, on_pick: Callable[[pd.Series], None] | None = None) -> None:
+        self.widget = ITable(
+            pd.DataFrame(), **_points_table_options(pd.DataFrame(), "")
+        )
+        self.widget.add_class(ITABLE_CLASS)
+        self.widget.layout = W.Layout(
+            width="100%", min_width="0", height=ANALYTICS_HEIGHT
+        )
+        #: The rows as last rendered, so a click can be answered with the whole
+        #: row — its path and its count — rather than just a label.
+        self._rows: pd.DataFrame = pd.DataFrame()
+        self._on_pick = on_pick
+        self.widget.observe(self._forward_pick, names="selected_rows")
+
+    def _forward_pick(self, change: dict) -> None:
+        picked = picked_row(change, len(self._rows))
+        if picked is None or self._on_pick is None:
+            return
+        self._on_pick(self._rows.iloc[picked])
+
+    def update(
+        self,
+        points: pd.DataFrame,
+        *,
+        level_label: str,
+        value_label: str,
+        fmt: str,
+    ) -> None:
+        """Render `points` as `<level_label>` · Name · `<value_label>`.
+
+        A **Count** column appears only when some row stands for more than one
+        strategy: at the leaf level every row is one strategy, and a column of
+        1s would be noise. Sorted by value descending with NaN last, so a
+        strategy with no history sinks rather than topping the table.
+        """
+        if points.empty:
+            self.clear()
+            return
+        self._rows = points.sort_values("value", ascending=False, na_position="last")
+        display = pd.DataFrame(
+            {
+                level_label: [str(v) for v in self._rows["label"]],
+                "Name": [str(v) for v in self._rows["name"]],
+            }
+        )
+        if (self._rows["count"] > 1).any():
+            display["Count"] = self._rows["count"].to_numpy()
+        display[value_label] = self._rows["value"].to_numpy()
+        self.widget.update(display, **_points_table_options(display, fmt))
+
+    def clear(self) -> None:
+        self._rows = pd.DataFrame()
+        self.widget.update(pd.DataFrame(), **_points_table_options(pd.DataFrame(), ""))

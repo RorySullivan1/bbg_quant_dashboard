@@ -21,6 +21,7 @@ from src.config import (
     TercileRegime,
 )
 from src.data import load_metadata
+from src.layout.grids import ChartPointsGrid
 from src.layout.platform import (
     PlatformAnalytics,
     regime_bucket_options,
@@ -494,7 +495,7 @@ def test_regime_bucket_options_by_spec_type():
     ]
 
 
-def _analytics() -> PlatformAnalytics:
+def _analytics(on_open_strategy=None) -> PlatformAnalytics:
     """A `PlatformAnalytics` over a stub state — enough for the pure resolvers."""
     # Two options, so a test can actually change the value and fire observers.
     chips = lambda: ChipGroup([("a", 1), ("b", 2)], value=1)  # noqa: E731
@@ -511,6 +512,7 @@ def _analytics() -> PlatformAnalytics:
         # The table's own Window, carrying stats-window labels since #324 — the
         # score is measured over whichever window the table is showing.
         window_chips=ChipGroup(["1Y", "3Y"], value="1Y"),
+        on_open_strategy=on_open_strategy,
     )
 
 
@@ -743,6 +745,133 @@ def test_a_metric_or_window_change_does_not_render_the_strip():
     # reach them — this pins that the wiring agrees with the chrome.
     assert pa.bar.section("Metric").layout.display == "none"
     assert pa.bar.section("Window").layout.display == "none"
+
+
+# --- the points table (#337) ------------------------------------------------
+
+
+def _points_frame(counts=(3, 1)) -> pd.DataFrame:
+    labels = ["Equity", "Fixed Income"]
+    return pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": ["Equity basket", "Credit basket"],
+            "count": list(counts),
+            "value": [0.5, 1.5],
+        },
+        index=labels,
+    )
+
+
+def test_the_points_table_heads_its_columns_from_the_chart_and_the_level():
+    """The first column says what a row *is*; the last, in the chart's own
+    units, says what it is worth. Neither label is spelled here (#337)."""
+    grid = ChartPointsGrid()
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    assert list(grid.widget.df.columns) == [
+        "Category",
+        "Name",
+        "Count",
+        "1Y Sharpe",
+    ]
+
+
+def test_the_points_table_sorts_by_value_descending_with_blanks_last():
+    grid = ChartPointsGrid()
+    frame = _points_frame()
+    frame.loc["Equity", "value"] = float("nan")
+    grid.update(frame, level_label="Category", value_label="1Y Sharpe", fmt=".2f")
+    # A strategy with no history sinks rather than topping the table.
+    assert list(grid.widget.df["Category"]) == ["Fixed Income", "Equity"]
+
+
+def test_the_count_column_appears_only_above_the_leaf():
+    """At the leaf every row is one strategy, and a column of 1s is noise."""
+    grid = ChartPointsGrid()
+    grid.update(
+        _points_frame(counts=(1, 1)),
+        level_label="Strategy",
+        value_label="1Y Sharpe",
+        fmt=".2f",
+    )
+    assert "Count" not in grid.widget.df.columns
+
+    grid.update(
+        _points_frame(counts=(4, 1)),
+        level_label="Category",
+        value_label="1Y Sharpe",
+        fmt=".2f",
+    )
+    assert "Count" in grid.widget.df.columns
+
+
+def test_a_points_row_click_hands_over_the_whole_row():
+    picked: list[pd.Series] = []
+    grid = ChartPointsGrid(on_pick=picked.append)
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    # Sorted descending, so row 0 is Fixed Income.
+    grid._forward_pick({"new": [0]})
+    assert picked and picked[0]["label"] == "Fixed Income"
+    assert picked[0]["path"] == ("Fixed Income",)
+
+
+def test_a_points_deselection_and_a_stale_row_do_nothing():
+    picked: list[pd.Series] = []
+    grid = ChartPointsGrid(on_pick=picked.append)
+    grid.update(
+        _points_frame(), level_label="Category", value_label="1Y Sharpe", fmt=".2f"
+    )
+    grid._forward_pick({"new": []})  # deselection
+    grid._forward_pick({"new": [99]})  # a re-render landed between click and callback
+    assert picked == []
+
+
+def test_a_group_row_narrows_and_a_strategy_row_opens_single_strategy():
+    """#331 decision 19 — `count` routes it, not the level: a row that stands
+    for one strategy IS that strategy, whatever depth the chart is drawn at."""
+    opened: list[str] = []
+    pa = _analytics(on_open_strategy=opened.append)
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    pa._pick_point(_points_frame().loc["Equity"])  # count 3 → narrow
+    assert pa.drill.scope == ("Equity",)
+    assert opened == []
+
+    pa._pick_point(_points_frame().loc["Fixed Income"])  # count 1 → open
+    assert opened == ["Fixed Income"]
+
+
+def test_the_points_table_follows_every_chart_render():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    seen: list[str] = []
+    pa.render_points = lambda: seen.append(pa.active_analytics)  # type: ignore
+
+    pa.fresh.update({"icicle", "scatter", "strip"})
+    pa.activate(pd.DataFrame(), "scatter")
+    assert seen == ["scatter"]
+
+
+def test_chart_and_table_stand_at_one_height():
+    """#331 decision 7 — stretching would let whichever box holds more content
+    set the row (the #298 lesson)."""
+    from src.style import ANALYTICS_HEIGHT, ANALYTICS_TABLE_WIDTH
+
+    pa = _analytics()
+    chart_box, points_box = pa.card.children[2].children
+    assert chart_box.layout.height == ANALYTICS_HEIGHT
+    assert points_box.layout.height == ANALYTICS_HEIGHT
+    # A wide chart pushes nothing off: it takes the remaining width and its
+    # own content scrolls inside it (the #280 pair).
+    assert chart_box.layout.flex == "1 1 0%"
+    assert chart_box.layout.min_width == "0"
+    assert points_box.layout.flex == f"0 0 {ANALYTICS_TABLE_WIDTH}"
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
