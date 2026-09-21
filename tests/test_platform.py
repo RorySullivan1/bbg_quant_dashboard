@@ -23,14 +23,14 @@ from src.config import (
 from src.data import load_metadata
 from src.layout.platform import (
     PlatformAnalytics,
-    _asset_class_colors,
-    _factor_beta_scatter,
-    _regime_scatter,
-    _update_factor_scatter,
-    _update_regime_scatter,
     regime_bucket_options,
 )
-from src.layout.platform_charts import IcicleChart
+from src.layout.platform_charts import (
+    IcicleChart,
+    RegimeFactorScatter,
+    asset_class_colors,
+    group_colors,
+)
 from src.layout.rails import ChipGroup
 from src.layout.theme import _v_ref
 from src.stats import daily_returns, tercile_bounds
@@ -75,101 +75,148 @@ def test_v_ref_is_vertical_paper_height_line():
     assert shape["yref"] == "paper" and shape["y0"] == 0 and shape["y1"] == 1
 
 
-def test_update_factor_scatter_one_trace_per_asset_class():
-    fig = _factor_beta_scatter()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+def _scatter_points(n_groups=2, counts=(3, 1)) -> pd.DataFrame:
+    """An aggregated points frame of the shape `drill_points` returns."""
+    labels = ["Equity", "Fixed Income"][:n_groups]
+    return pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": labels,
+            "count": list(counts)[:n_groups],
+            "value": [1.5, -0.5][:n_groups],
+            "x": [0.2, -0.1][:n_groups],
+            "z": [0.9, 0.3][:n_groups],
+        },
+        index=labels,
+    )
 
-    # No in-figure title (v0.7.1) — the section header stands alone.
-    assert not fig.layout.title.text
-    # AAA → Equity, BBB → Fixed Income → one marker trace each (the figure also
-    # holds the three Mesh3d zero planes, filtered out here).
-    by_name = {tr.name: tr for tr in fig.data if isinstance(tr, go.Scatter3d)}
+
+def test_the_scatter_draws_one_trace_per_colour_key():
+    chart = RegimeFactorScatter()
+    points = _scatter_points()
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+
+    assert not chart.fig.layout.title.text
+    by_name = {tr.name: tr for tr in chart.fig.data}
     assert set(by_name) == {"Equity", "Fixed Income"}
+    assert all(isinstance(tr, go.Scatter3d) for tr in chart.fig.data)
     assert by_name["Equity"].marker.color == ASSET_CLASS_COLORS["Equity"]
-    assert by_name["Fixed Income"].marker.color == ASSET_CLASS_COLORS["Fixed Income"]
-    # 3D marker traces — one strategy each, finite betas on all three axes.
-    for tr in by_name.values():
-        assert len(tr.x) == 1 and len(tr.y) == 1 and len(tr.z) == 1
-        assert np.isfinite(tr.x[0]) and np.isfinite(tr.y[0]) and np.isfinite(tr.z[0])
 
 
-def _scatter_xyz(fig) -> dict:
-    """{trace name: (x, y, [z])} for the marker traces, for equality checks."""
-    out = {}
-    for tr in fig.data:
-        if isinstance(tr, (go.Scatter, go.Scatter3d)):
-            coords = [tuple(tr.x), tuple(tr.y)]
-            if isinstance(tr, go.Scatter3d):
-                coords.append(tuple(tr.z))
-            out[tr.name] = coords
-    return out
-
-
-def test_factor_scatter_returns_arg_matches_recompute():
-    # v0.9.13 #166: threading the shared universe_rets must produce a byte-
-    # identical scatter to letting the updater re-derive daily_returns.
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    fig_a = _factor_beta_scatter()
-    _update_factor_scatter(fig_a, arp, universe, _meta(), years=1)
-    fig_b = _factor_beta_scatter()
-    _update_factor_scatter(
-        fig_b, arp, universe, _meta(), years=1, returns=daily_returns(arp)
+def test_the_scatter_puts_the_metric_on_y_and_the_betas_on_x_and_z():
+    """#331 decision 10 — the axes are the merge, so they are pinned."""
+    chart = RegimeFactorScatter()
+    points = _scatter_points(n_groups=1, counts=(3,))
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+
+    (trace,) = chart.fig.data
+    assert trace.y[0] == points.loc["Equity", "value"]
+    assert trace.x[0] == points.loc["Equity", "x"]  # term premium
+    assert trace.z[0] == points.loc["Equity", "z"]  # equity risk premium
+    scene = chart.fig.layout.scene
+    assert scene.xaxis.title.text == "Term-premium β"
+    assert scene.yaxis.title.text == "1Y Sharpe"
+    assert scene.zaxis.title.text == "Equity risk-premium β"
 
 
-def test_regime_scatter_returns_arg_matches_recompute():
-    # v0.9.13 #166: daily_returns(arp).tail(lookback - 1) is exactly
-    # daily_returns(arp.tail(lookback)), so the threaded path matches.
-    arp, vix = _regime_universe()
-    fig_a = _regime_scatter()
-    _update_regime_scatter(
-        fig_a, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
+def test_the_origin_is_drawn_by_the_axes_and_the_planes_are_gone():
+    """The translucent Mesh3d planes dimmed the markers they framed (#331
+    decision 11). A scene takes no paper shapes, but its axes carry a zero
+    line and a wall edge, which is enough."""
+    from src.style import Color
+
+    chart = RegimeFactorScatter()
+    chart.update(
+        _scatter_points(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    fig_b = _regime_scatter()
-    _update_regime_scatter(
-        fig_b,
-        arp,
-        vix,
-        _regime_meta(),
-        low=15.0,
-        high=25.0,
-        lookback=200,
-        returns=daily_returns(arp),
+
+    assert not [tr for tr in chart.fig.data if isinstance(tr, go.Mesh3d)]
+    assert all(isinstance(tr, go.Scatter3d) for tr in chart.fig.data)
+    scene = chart.fig.layout.scene
+    for axis in (scene.xaxis, scene.yaxis, scene.zaxis):
+        assert axis.zeroline is True
+        assert axis.zerolinecolor == Color.CHART_ZERO_LINE.value
+        assert axis.zerolinewidth == 3
+        assert axis.showline is True
+        assert axis.linecolor == Color.CHART_AXIS_LINE.value
+    # The three axes stay comparable, so a beta of 0.2 looks the same size
+    # whichever axis it is on.
+    assert scene.aspectmode == "cube"
+
+
+def test_a_group_marker_is_bigger_than_a_strategy_marker():
+    chart = RegimeFactorScatter()
+    chart.update(
+        _scatter_points(counts=(9, 1)),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
     )
-    assert _scatter_xyz(fig_a) == _scatter_xyz(fig_b)
+    by_name = {tr.name: tr for tr in chart.fig.data}
+    assert by_name["Equity"].marker.size[0] > by_name["Fixed Income"].marker.size[0]
 
 
-def test_factor_scatter_has_three_zero_planes():
-    fig = _factor_beta_scatter()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_factor_scatter(fig, arp, universe, _meta(), years=1)
+def test_clicking_a_group_marker_narrows_and_a_strategy_marker_does_not():
+    got: list[tuple[str, ...]] = []
+    chart = RegimeFactorScatter(on_drill=got.append)
+    chart.update(
+        _scatter_points(counts=(3, 1)),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    by_name = {tr.name: tr for tr in chart.fig.data}
 
-    planes = {tr.name: tr for tr in fig.data if isinstance(tr, go.Mesh3d)}
-    assert set(planes) == {"x=0", "y=0", "z=0"}
-    # Each plane is a faint, legend-less, non-hovering reference surface.
-    for tr in planes.values():
-        assert tr.showlegend is False
-        assert 0 < tr.opacity < 1
+    chart._clicked(by_name["Equity"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
 
-    # Each plane is constant 0 on its own axis...
-    assert all(v == 0 for v in planes["x=0"].x)
-    assert all(v == 0 for v in planes["y=0"].y)
-    assert all(v == 0 for v in planes["z=0"].z)
+    # A leaf has no children; the table row is the way into Single Strategy.
+    chart._clicked(by_name["Fixed Income"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
 
-    # ...and spans (covers) the marker cloud on its other two axes.
-    markers = [tr for tr in fig.data if isinstance(tr, go.Scatter3d)]
-    xs = [v for tr in markers for v in tr.x]
-    ys = [v for tr in markers for v in tr.y]
-    zs = [v for tr in markers for v in tr.z]
-    assert min(planes["x=0"].y) <= min(ys) and max(planes["x=0"].y) >= max(ys)
-    assert min(planes["x=0"].z) <= min(zs) and max(planes["x=0"].z) >= max(zs)
-    assert min(planes["y=0"].x) <= min(xs) and max(planes["y=0"].x) >= max(xs)
-    assert min(planes["z=0"].x) <= min(xs) and max(planes["z=0"].x) >= max(xs)
+
+def test_every_trace_carries_the_click_handler_not_just_the_first():
+    chart = RegimeFactorScatter(on_drill=lambda _p: None)
+    chart.update(
+        _scatter_points(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    assert len(chart.fig.data) == 2
+    assert all(tr._click_callbacks for tr in chart.fig.data)
+
+
+def test_the_scatter_empty_clears_traces():
+    chart = RegimeFactorScatter()
+    chart.update(
+        pd.DataFrame(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors={},
+    )
+    assert chart.fig.data == ()
 
 
 def test_catalog_asset_classes_get_distinct_non_fallback_colors():
@@ -177,7 +224,7 @@ def test_catalog_asset_classes_get_distinct_non_fallback_colors():
     color — guards against the all-grey legend (driven off the loaded metadata,
     so future catalog additions are covered too)."""
     classes = sorted(load_metadata()["asset_class"].dropna().unique())
-    colors = _asset_class_colors(classes)
+    colors = asset_class_colors(classes)
     assert set(colors) == set(classes)
     assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
     assert len(set(colors.values())) == len(classes)  # all distinct
@@ -186,16 +233,31 @@ def test_catalog_asset_classes_get_distinct_non_fallback_colors():
 def test_asset_class_colors_unmapped_class_avoids_fallback():
     """An unmapped class still gets a distinct palette color, not the grey
     fallback, as long as the palette isn't exhausted."""
-    colors = _asset_class_colors(["Equity", "Crypto"])
+    colors = asset_class_colors(["Equity", "Crypto"])
     assert colors["Equity"] == ASSET_CLASS_COLORS["Equity"]
     assert colors["Crypto"] != ASSET_CLASS_FALLBACK_COLOR
     assert colors["Crypto"] != colors["Equity"]
 
 
-def test_update_factor_scatter_empty_clears_traces():
-    fig = _factor_beta_scatter()
-    _update_factor_scatter(fig, pd.DataFrame(), pd.DataFrame(), _meta(), years=1)
-    assert fig.data == ()
+def test_group_colors_serves_keys_that_are_not_asset_classes():
+    """The drill re-keys colours at every depth (#331 decision 17), so the
+    palette has to serve families and tickers too — with no curated map, and
+    with no claim on an asset class's identity colour."""
+    colors = group_colors(["Momentum", "Carry", "Value"])
+    assert len(set(colors.values())) == 3
+    assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
+
+
+def test_group_colors_cycles_rather_than_collapsing_to_grey():
+    """A family larger than the palette should still draw distinguishable
+    neighbours; the legend and hover name every point whatever the hue."""
+    from src.style import LINE_PALETTE
+
+    keys = [f"k{i:02d}" for i in range(len(LINE_PALETTE) + 3)]
+    colors = group_colors(keys)
+    assert set(colors) == set(keys)
+    assert ASSET_CLASS_FALLBACK_COLOR not in colors.values()
+    assert len(set(colors.values())) == len(LINE_PALETTE)
 
 
 def _treemap_meta() -> pd.DataFrame:
@@ -521,59 +583,43 @@ def _regime_meta() -> pd.DataFrame:
     )
 
 
-def test_update_regime_scatter_one_trace_per_asset_class():
-    fig = _regime_scatter()
+def test_the_regime_mask_conditions_the_scatter_s_sample():
+    """What the old regime scatter tested, at the level it now lives.
+
+    The chart no longer owns the conditioning: `_regime_window_mask` picks the
+    days and `regime_factor_frame` measures all three axes over them, so the
+    behaviour is pinned on the pair rather than on a figure's coordinates.
+    """
+    from src.layout.platform import _regime_window_mask
+    from src.stats import daily_returns, regime_factor_frame
+
     arp, vix = _regime_universe()
-    _update_regime_scatter(
-        fig, arp, vix, _regime_meta(), low=15.0, high=25.0, lookback=200
-    )
-    assert not fig.layout.title.text
-    by_name = {tr.name: tr for tr in fig.data}
-    assert set(by_name) == {"Equity", "Fixed Income"}
-    for tr in fig.data:
-        assert isinstance(tr, go.Scatter)
-        assert len(tr.x) == len(tr.y) >= 1
-        assert all(np.isfinite(v) for v in tr.x)
+    rets = daily_returns(arp).tail(200)
+    erp = pd.Series(0.001, index=rets.index)
+    tp = pd.Series(0.0005, index=rets.index)
 
-
-def test_update_regime_scatter_unconditioned_when_no_indicator():
-    # A scaffolded regime passes no indicator / no bucket → all-days view.
-    fig = _regime_scatter()
-    arp, _ = _regime_universe()
-    _update_regime_scatter(
-        fig, arp, None, _regime_meta(), low=None, high=None, lookback=200
-    )
-    assert fig.data  # renders over the full window
-
-
-def test_update_regime_scatter_empty_clears():
-    fig = _regime_scatter()
-    _update_regime_scatter(
-        fig, pd.DataFrame(), None, _regime_meta(), low=15.0, high=25.0, lookback=200
-    )
-    assert fig.data == ()
-
-
-def test_update_regime_scatter_tercile_bounds_condition_differently():
-    # The tercile modes derive (low, high) from the indicator's quantiles; the
-    # low and high thirds of the VIX-like series condition on disjoint day sets,
-    # so the scatter coordinates differ.
-    arp, vix = _regime_universe()
     lo_low, lo_high = tercile_bounds(vix.tail(200), "low")
     hi_low, hi_high = tercile_bounds(vix.tail(200), "high")
+    low_mask = _regime_window_mask(vix, rets.index, lo_low, lo_high)
+    high_mask = _regime_window_mask(vix, rets.index, hi_low, hi_high)
 
-    fig_low = _regime_scatter()
-    _update_regime_scatter(
-        fig_low, arp, vix, _regime_meta(), low=lo_low, high=lo_high, lookback=200
-    )
-    fig_high = _regime_scatter()
-    _update_regime_scatter(
-        fig_high, arp, vix, _regime_meta(), low=hi_low, high=hi_high, lookback=200
-    )
-    assert fig_low.data and fig_high.data
-    low_xy = [tuple(tr.x) for tr in fig_low.data]
-    high_xy = [tuple(tr.x) for tr in fig_high.data]
-    assert low_xy != high_xy
+    # Disjoint day sets, so the two buckets describe the catalog differently.
+    assert not (low_mask & high_mask).any()
+    low = regime_factor_frame(rets, low_mask, erp, tp, metric="sharpe")
+    high = regime_factor_frame(rets, high_mask, erp, tp, metric="sharpe")
+    assert not low.empty and not high.empty
+    assert not low["value"].equals(high["value"])
+
+
+def test_a_scaffolded_regime_is_the_unconditioned_view():
+    # A regime with no indicator in the cache must not blank the chart; it
+    # falls back to every day in the window, as it did before the merge.
+    from src.layout.platform import _regime_window_mask
+
+    arp, _ = _regime_universe()
+    index = daily_returns(arp).tail(200).index
+    mask = _regime_window_mask(None, index, None, None)
+    assert mask.all()
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
@@ -683,7 +729,7 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
     from src.layout import build_app
 
     calls = {"icicle": 0, "scatter": 0}
-    methods = {"icicle": "render_icicle", "scatter": "render_regime_scatter"}
+    methods = {"icicle": "render_icicle", "scatter": "render_scatter"}
 
     def _spy(name, real):
         def render(self, meta):
@@ -746,7 +792,7 @@ def test_activate_swaps_the_chart():
     pa.fresh.update({"icicle", "scatter", "strip"})
     pa.activate(pd.DataFrame(), "scatter")
     assert pa.active_analytics == "scatter"
-    assert pa.chart_box.children == (pa.regime_scatter_fig,)
+    assert pa.chart_box.children == (pa.scatter.fig,)
     pa.activate(pd.DataFrame(), "strip")
     assert pa.chart_box.children == (pa.strip_placeholder,)
 

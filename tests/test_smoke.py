@@ -168,15 +168,15 @@ def test_regime_analysis_section_conditions_live():
     ]
     assert selector_dd.layout.display == "none"
 
-    # The chart is a 2D risk/return scatter conditioned on the default VIX bucket.
+    # One 3D scatter since #335: Y the metric, X the term-premium β, Z the
+    # equity-risk-premium β, all over the bucket's days. The regime view and
+    # the factor view were two charts answering halves of one question.
     scatter_fig = chart_box.children[0]
     assert isinstance(scatter_fig, go.FigureWidget)
     assert scatter_fig.data
-    assert all(
-        isinstance(t, go.Scatter) and not isinstance(t, go.Scatter3d)
-        for t in scatter_fig.data
-    )
-    vol_bucketed = [tuple(t.x) for t in scatter_fig.data]
+    assert all(isinstance(t, go.Scatter3d) for t in scatter_fig.data)
+    assert not [t for t in scatter_fig.data if isinstance(t, go.Mesh3d)]
+    vol_bucketed = [tuple(t.y) for t in scatter_fig.data]
 
     # Trend: a benchmark dropdown appears, buckets become terciles, and the
     # conditioning visibly changes the scatter (no traceback).
@@ -184,10 +184,10 @@ def test_regime_analysis_section_conditions_live():
     assert selector_dd.layout.display == ""
     assert [key for _, key in bucket_dd.options] == ["low", "mid", "high"]
     assert scatter_fig.data
-    trend_low = [tuple(t.x) for t in scatter_fig.data]
+    trend_low = [tuple(t.y) for t in scatter_fig.data]
     assert trend_low != vol_bucketed
     bucket_dd.value = "high"
-    assert [tuple(t.x) for t in scatter_fig.data] != trend_low
+    assert [tuple(t.y) for t in scatter_fig.data] != trend_low
 
     # Rate-level: a region dropdown (US / EU / JP) appears with terciles.
     regime_type.value = "Rate-level"

@@ -19,13 +19,12 @@ passed by hand.
 from __future__ import annotations
 
 import traceback
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import ipywidgets as W
 import pandas as pd
-import plotly.graph_objects as go
 
 from ..config import (
     CATALOG_SCORE_MIN_SAMPLE_DAYS,
@@ -35,6 +34,7 @@ from ..config import (
     TRADING_DAYS_PER_YEAR,
     LevelRegime,
     TercileRegime,
+    analytics_levels,
     drill_level_label,
     drill_levels,
     rankable_metric_chips,
@@ -43,225 +43,36 @@ from ..config import (
     universe_grid_default_window,
 )
 from ..stats import (
+    color_key,
     daily_returns,
+    drill_points,
     equity_risk_premium,
-    factor_beta,
     icicle_frame,
+    node_paths,
+    regime_factor_frame,
     regime_mask,
-    regime_risk_return,
     rolling_autocorr,
     rolling_metric_zscore,
     tercile_bounds,
     term_premium,
-    trend_returns,
 )
-from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
 from .drill import Drill
 from .grids import zscore_column_name
 from .html import STYLE_CTX, render_template
-from .platform_charts import IcicleChart
+from .platform_charts import (
+    IcicleChart,
+    RegimeFactorScatter,
+    asset_class_colors,
+    group_colors,
+)
 from .rails import Breadcrumb, ChipGroup, RailSection, control_bar
-from .theme import _chart_layout, _short_ticker
+from .theme import _short_ticker
 
 if TYPE_CHECKING:
     # No cycle today, but `state.py` is one import away from reaching this
     # module, and the annotation never needs the symbol at runtime. Guarded
     # like `filter_panel` / `single_strategy`, where the cycle is real.
     from .state import DashboardState
-
-
-def _asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
-    """Distinct color per asset class for the factor scatter legend.
-
-    Curated `ASSET_CLASS_COLORS` tokens come first; any class not in that map
-    is assigned the next unused `LINE_PALETTE` color (so an unmapped class still
-    renders distinctly rather than collapsing onto the grey fallback), and only
-    falls back to `ASSET_CLASS_FALLBACK_COLOR` once the palette is exhausted.
-    Deterministic in the sorted order of the present classes."""
-    used = set(ASSET_CLASS_COLORS.values())
-    spare = [c for c in LINE_PALETTE if c not in used]
-    out: dict[str, str] = {}
-    for ac in sorted({str(c) for c in classes}):
-        if ac in ASSET_CLASS_COLORS:
-            out[ac] = ASSET_CLASS_COLORS[ac]
-        elif spare:
-            out[ac] = spare.pop(0)
-        else:
-            out[ac] = ASSET_CLASS_FALLBACK_COLOR
-    return out
-
-
-_FACTOR_HOVER = (
-    "%{{text}}<br>{ac}<br>Equity β %{{x:.2f}}<br>Term β %{{y:.2f}}"
-    "<br>Trend β %{{z:.2f}}<extra></extra>"
-)
-
-# Opacity of the factor scatter's translucent zero-reference planes (x=0, y=0,
-# z=0). Faint enough to read the marker cloud through, solid enough to locate 0.
-_ZERO_PLANE_OPACITY = 0.20
-
-
-def _axis_bounds(
-    values: pd.Series, *, pad: float = 0.1, fallback: float = 1.0
-) -> tuple[float, float]:
-    """``(low, high)`` span for one factor axis, always bracketing 0 and padded.
-
-    The span is stretched to include 0 (so a zero plane sits inside it) then
-    padded by ``pad`` on each side; a degenerate span (single point / all-equal /
-    all-zero betas) falls back to ``±fallback`` so the plane stays visible.
-    """
-    lo = min(float(values.min()), 0.0)
-    hi = max(float(values.max()), 0.0)
-    span = hi - lo
-    if span <= 0:
-        return (-fallback, fallback)
-    margin = span * pad
-    return (lo - margin, hi + margin)
-
-
-def _quad_mesh(
-    name: str, xs: list[float], ys: list[float], zs: list[float]
-) -> go.Mesh3d:
-    """A flat 4-vertex quad (two triangles) as a translucent reference plane."""
-    return go.Mesh3d(
-        name=name,
-        x=xs,
-        y=ys,
-        z=zs,
-        i=[0, 0],
-        j=[1, 2],
-        k=[2, 3],
-        color=Color.CHART_AXIS.value,
-        opacity=_ZERO_PLANE_OPACITY,
-        flatshading=True,
-        hoverinfo="skip",
-        showlegend=False,
-    )
-
-
-def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
-    """Three translucent zero-reference planes (x=0, y=0, z=0), sized to the
-    point cloud, so the origin is legible in every dimension of the 3D scatter.
-
-    Each plane spans the padded data bounds of its other two axes (see
-    ``_axis_bounds``), so it covers the marker cloud and crosses 0.
-    """
-    xlo, xhi = _axis_bounds(frame["x"])
-    ylo, yhi = _axis_bounds(frame["y"])
-    zlo, zhi = _axis_bounds(frame["z"])
-    return [
-        # x = 0: spans y × z
-        _quad_mesh("x=0", [0, 0, 0, 0], [ylo, yhi, yhi, ylo], [zlo, zlo, zhi, zhi]),
-        # y = 0: spans x × z
-        _quad_mesh("y=0", [xlo, xhi, xhi, xlo], [0, 0, 0, 0], [zlo, zlo, zhi, zhi]),
-        # z = 0: spans x × y
-        _quad_mesh("z=0", [xlo, xhi, xhi, xlo], [ylo, ylo, yhi, yhi], [0, 0, 0, 0]),
-    ]
-
-
-# Sunburst node-id separator (one segment per configured level), diverging
-# the per-node hover. The colorscale matches the all-catalog grid's
-# red<0 → neutral → green>0 sentiment and is token-driven (no inline hex). The
-# hover is a `.format()` template — `metric_label` is user-selected at render
-# time (the literal plotly `%{...}` placeholders are doubled to survive
-# `.format()`); `percentParent` is the segment's gross-|z| share of its ring.
-def _factor_beta_scatter() -> go.FigureWidget:
-    """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
-    term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
-    marker per strategy (colored by asset class). Built empty;
-    `_update_factor_scatter` fills it — markers plus three translucent
-    zero-reference planes (x=0/y=0/z=0) that mark the origin in every
-    dimension. No in-figure title — the "Factor exposures" section header stands
-    alone. The legend is on (unlike the pane charts, this chart has no
-    grid legend to key its asset-class colors); each scene axis also carries a
-    zero line on the scene wall (paper shapes don't apply to a 3D scene)."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            showlegend=True,
-            legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            scene=dict(
-                xaxis=dict(title="Equity risk-premium β", zeroline=True),
-                yaxis=dict(title="Term-premium β", zeroline=True),
-                zaxis=dict(title="Trend Exposure", zeroline=True),
-            ),
-        )
-    )
-
-
-def _update_factor_scatter(
-    fig: go.FigureWidget,
-    arp_prices: pd.DataFrame,
-    universe_prices: pd.DataFrame,
-    meta: pd.DataFrame,
-    *,
-    years: float,
-    returns: pd.DataFrame | None = None,
-) -> None:
-    """Populate the 3D factor-beta scatter from the cached prices: per-strategy
-    betas to the equity-risk-premium (x), term-premium (y), and trend (z) factor
-    series, one trace per asset class (so the colors carry a legend), over three
-    translucent zero-reference planes (x=0/y=0/z=0) that mark the origin in every
-    dimension. No BQL — pure compute over the already-fetched cache."""
-    if arp_prices.empty or universe_prices.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    erp = equity_risk_premium(universe_prices)
-    tp = term_premium(universe_prices)
-    trend = trend_returns(universe_prices)
-    rets = daily_returns(arp_prices) if returns is None else returns
-    frame = pd.DataFrame(
-        {
-            "x": factor_beta(rets, erp, years),
-            "y": factor_beta(rets, tp, years),
-            "z": factor_beta(rets, trend, years),
-        }
-    ).dropna()
-
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    ac_map = meta.set_index("ticker")["asset_class"] if "ticker" in meta else None
-    frame["ac"] = [
-        (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
-    ]
-
-    color_for = _asset_class_colors(frame["ac"])
-    traces = []
-    for ac, grp in frame.groupby("ac"):
-        traces.append(
-            go.Scatter3d(
-                mode="markers",
-                name=str(ac),
-                x=grp["x"].to_numpy(),
-                y=grp["y"].to_numpy(),
-                z=grp["z"].to_numpy(),
-                marker=dict(
-                    size=5,
-                    color=color_for[str(ac)],
-                    line=dict(width=0),
-                ),
-                text=[_short_ticker(t) for t in grp.index],
-                hovertemplate=_FACTOR_HOVER.format(ac=str(ac)),
-            )
-        )
-
-    with fig.batch_update():
-        fig.data = ()
-        # Planes first so the markers render over them.
-        fig.add_traces([*_zero_planes(frame), *traces])
-
-
-# --- Regime Analysis: regime-conditioned risk/return scatter ----------------
-
-_REGIME_RR_HOVER = (
-    "%{{text}}<br>{ac}<br>Vol %{{x:.1%}}<br>Return %{{y:.1%}}"
-    "<br>Sharpe %{{customdata:.2f}}<extra></extra>"
-)
 
 
 def _regime_window_mask(
@@ -278,90 +89,6 @@ def _regime_window_mask(
     return regime_mask(indicator.reindex(index), low, high)
 
 
-def _regime_scatter() -> go.FigureWidget:
-    """Regime-conditioned risk/return scatter — annualized vol (x) vs return (y)
-    over only the selected regime bucket's days, one marker per strategy colored
-    by asset class. Built empty; `_update_regime_scatter` fills it. No in-figure
-    title — the section header + regime controls stand alone."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            showlegend=True,
-            legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-            hovermode="closest",
-            xaxis=dict(
-                title="Annualized volatility", tickformat=".0%", rangemode="tozero"
-            ),
-            yaxis=dict(title="Annualized return", tickformat=".0%"),
-        )
-    )
-
-
-def _update_regime_scatter(
-    fig: go.FigureWidget,
-    arp_prices: pd.DataFrame,
-    indicator: pd.Series | None,
-    meta: pd.DataFrame,
-    *,
-    low: float | None,
-    high: float | None,
-    lookback: int,
-    returns: pd.DataFrame | None = None,
-) -> None:
-    """Populate the regime risk/return scatter: per-strategy vol/return/Sharpe
-    over the lookback window restricted to the regime-bucket days (mean-based
-    annualization via `regime_risk_return`), one trace per asset class. No BQL.
-
-    ``returns`` (the shared ``universe_rets``) avoids re-deriving daily returns:
-    ``daily_returns(arp).tail(lookback - 1)`` is exactly ``daily_returns(arp.tail(
-    lookback))`` — a ``lookback``-row price slice yields ``lookback - 1`` returns,
-    the same trailing rows as slicing the full-history returns."""
-    if arp_prices.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-    if returns is None:
-        rets = daily_returns(arp_prices.tail(lookback))
-    else:
-        rets = returns.tail(lookback - 1)
-    mask = _regime_window_mask(indicator, rets.index, low, high)
-    frame = regime_risk_return(rets, mask).dropna(subset=["vol", "ret"])
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    ac_map = meta.set_index("ticker")["asset_class"] if "ticker" in meta else None
-    frame = frame.copy()
-    frame["ac"] = [
-        (ac_map.get(t, "Other") if ac_map is not None else "Other") for t in frame.index
-    ]
-    color_for = _asset_class_colors(frame["ac"])
-    traces = []
-    for ac, grp in frame.groupby("ac"):
-        traces.append(
-            go.Scatter(
-                mode="markers",
-                name=str(ac),
-                x=grp["vol"].to_numpy(),
-                y=grp["ret"].to_numpy(),
-                marker=dict(size=8, color=color_for[str(ac)], line=dict(width=0)),
-                text=[_short_ticker(t) for t in grp.index],
-                customdata=grp["sharpe"].to_numpy(),
-                hovertemplate=_REGIME_RR_HOVER.format(ac=str(ac)),
-            )
-        )
-    with fig.batch_update():
-        fig.data = ()
-        fig.add_traces(traces)
-
-
-# --- Platform-analytics orchestration -----------------------------------------
-# ``DashboardApp`` constructs one ``PlatformAnalytics``, calls ``wire`` with a
-# catalog provider, and mounts ``.card``. Every render reads the cache on
-# ``state``.
-
-
 @contextmanager
 def _guard_render(state: DashboardState, label: str):
     """Route any exception raised in the block into ``state.init_errors`` labeled
@@ -372,6 +99,50 @@ def _guard_render(state: DashboardState, label: str):
         yield
     except Exception:
         state.init_errors.append(f"{label} failed:\n{traceback.format_exc()}")
+
+
+def _with_names(points: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
+    """Give each point the display name its hover and the table should show.
+
+    A strategy takes its catalog name; a group is named by its own label,
+    because a group has no name beyond what it is.
+    """
+    if points.empty:
+        return points.assign(name=pd.Series(dtype=object))
+    names = (
+        meta.set_index("ticker")["name"]
+        if {"ticker", "name"} <= set(meta.columns)
+        else pd.Series(dtype=object)
+    )
+    out = points.copy()
+    out["name"] = [
+        names.get(label, _short_ticker(str(label))) if count == 1 else str(label)
+        for label, count in zip(out["label"], out["count"], strict=True)
+    ]
+    return out
+
+
+def _color_values_of(points: pd.DataFrame) -> list[str]:
+    """The colour-key value of each point: its parent at the root, else itself."""
+    depth = max(len(points["path"].iloc[0]) - 1, 0)
+    if depth == 0:
+        return [str(v) for v in points["label"]]
+    return [str(p[0]) if len(p) else "Other" for p in points["path"]]
+
+
+def _colors_for(points: pd.DataFrame, key: str) -> dict[str, str]:
+    """The palette for the points shown.
+
+    Curated only when the key is the hierarchy's first level — that is where
+    the asset-class identity colours belong, and a family called "Momentum"
+    has no claim on Equity's blue.
+    """
+    if points.empty:
+        return {}
+    values = _color_values_of(points)
+    if key == analytics_levels()[0]:
+        return asset_class_colors(values)
+    return group_colors(values)
 
 
 def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
@@ -441,8 +212,7 @@ class PlatformAnalytics:
         self._current_meta: Callable[[], pd.DataFrame] | None = None
 
         self.icicle = IcicleChart(on_drill=self._drill_from_chart)
-        self.regime_scatter_fig = _regime_scatter()
-        self.factor_scatter_fig = _factor_beta_scatter()
+        self.scatter = RegimeFactorScatter(on_drill=self._drill_from_chart)
         # A placeholder until #336 builds the chart. The Chart chip's three
         # keys are final from here, so the bar and its wiring do not change
         # again when the figure arrives.
@@ -515,7 +285,7 @@ class PlatformAnalytics:
         #: Chart key -> the figure (or placeholder) it mounts.
         self.analytics_tabs = {
             "icicle": self.icicle.fig,
-            "scatter": self.regime_scatter_fig,
+            "scatter": self.scatter.fig,
             "strip": self.strip_placeholder,
         }
 
@@ -671,22 +441,6 @@ class PlatformAnalytics:
                 zname=zscore_column_name(self.z_metric_chips.label, window_label),
             )
 
-    def render_factor_scatter(self, meta: pd.DataFrame) -> None:
-        """Render the 3D factor-beta scatter at the selected lookback, live from
-        the fetched cache (no BQL)."""
-        state = self.state
-        if state.arp_universe_prices.empty or state.universe_prices.empty:
-            return
-        with _guard_render(state, "factor-beta scatter render"):
-            _update_factor_scatter(
-                self.factor_scatter_fig,
-                state.arp_universe_prices,
-                state.universe_prices,
-                meta,
-                years=stat_window_years(self.card_window_chips.value),
-                returns=state.universe_rets,
-            )
-
     def render_icicle(self, meta: pd.DataFrame) -> None:
         """Draw the hierarchy from the Metric / Window chips, live from cache."""
         state = self.state
@@ -715,23 +469,51 @@ class PlatformAnalytics:
                 scope=self.drill.scope,
             )
 
-    def render_regime_scatter(self, meta: pd.DataFrame) -> None:
-        """Render the regime risk/return scatter at the current regime / source /
-        bucket + lookback, live from the cache (no BQL)."""
+    def render_scatter(self, meta: pd.DataFrame) -> None:
+        """One scatter for the regime view and the factor view (#331 dec. 10).
+
+        They were two charts answering halves of one question. Betas and the
+        metric are now measured over the same sample — the Window's days
+        restricted to the regime bucket — so Y is the metric, X the
+        term-premium β and Z the equity-risk-premium β over one set of days.
+
+        The mask is applied to the **leaves**, before the drill aggregates
+        them, so a category's point is the mean of its members' bucket values
+        rather than the bucket value of their mean (#331 decision 18).
+        """
         state = self.state
-        if state.arp_universe_prices.empty:
+        if state.arp_universe_prices.empty or state.universe_prices.empty:
             return
-        with _guard_render(state, "regime scatter render"):
+        with _guard_render(state, "regime factor scatter render"):
+            rets = state.universe_rets
+            if rets is None or rets.empty:
+                rets = daily_returns(state.arp_universe_prices)
+            rets = rets.tail(_window_days(self.card_window_chips.value))
+
             low, high = self.resolve_regime_bucket()
-            _update_regime_scatter(
-                self.regime_scatter_fig,
-                state.arp_universe_prices,
-                self.regime_indicator(),
+            mask = _regime_window_mask(self.regime_indicator(), rets.index, low, high)
+            erp = equity_risk_premium(state.universe_prices).reindex(rets.index)
+            tp = term_premium(state.universe_prices).reindex(rets.index)
+
+            metric = self.metric_chips.value
+            points = _with_names(
+                drill_points(
+                    regime_factor_frame(rets, mask, erp, tp, metric=metric),
+                    node_paths(meta),
+                    scope=self.drill.scope,
+                    level=self.drill.level,
+                ),
                 meta,
-                low=low,
-                high=high,
-                lookback=_window_days(self.card_window_chips.value),
-                returns=state.universe_rets,
+            )
+            key = color_key(self.drill.scope, self.drill.level)
+            self.scatter.update(
+                points,
+                metric=metric,
+                metric_label=(
+                    f"{self.card_window_chips.label} {self.metric_chips.label}"
+                ),
+                color_key=key,
+                colors=_colors_for(points, key),
             )
 
     # --- regime resolution ----------------------------------------------------
@@ -827,7 +609,7 @@ class PlatformAnalytics:
         """Render one analytics tab and mark it fresh."""
         renderer = {
             "icicle": self.render_icicle,
-            "scatter": self.render_regime_scatter,
+            "scatter": self.render_scatter,
             "strip": lambda _meta: None,  # #336 builds it
         }[which]
         renderer(meta)

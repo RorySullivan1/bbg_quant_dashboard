@@ -13,12 +13,19 @@ the table reads `points()`, never a figure's traces.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
 from ..config import analytics_levels
-from ..style import Color
+from ..style import (
+    ASSET_CLASS_COLORS,
+    ASSET_CLASS_FALLBACK_COLOR,
+    LINE_PALETTE,
+    Color,
+)
 from .charts import Chart
 from .theme import _chart_layout, _short_ticker
 
@@ -59,6 +66,45 @@ def symmetric_range(values: pd.Series) -> tuple[float, float]:
 def value_format(metric: str) -> str:
     """The d3 format a metric's numbers are read in."""
     return ".2%" if metric == "return" else ".2f"
+
+
+def group_colors(
+    keys: Iterable[str], *, curated: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """A distinct colour per key, deterministic in sorted order.
+
+    The generalization of the asset-class-only helper this replaces. The drill
+    re-keys the colours at every depth — asset class at the root, family inside
+    a category, strategy inside a family (#331 decision 17) — so the palette
+    has to serve keys that are not asset classes at all.
+
+    ``curated`` wins where it has an entry, which is how asset classes keep
+    their identity colours at the root. Everything else takes the next unused
+    `LINE_PALETTE` colour, and **cycles** once the palette runs out rather than
+    collapsing onto the fallback: a family larger than the palette should still
+    draw distinguishable neighbours, and the legend and hover name every point
+    whatever the hue. The fallback survives for a key the cycle cannot reach.
+    """
+    mapping = dict(curated or {})
+    used = set(mapping.values())
+    spare = [c for c in LINE_PALETTE if c not in used]
+    out: dict[str, str] = {}
+    unmapped = 0
+    for key in sorted({str(k) for k in keys}):
+        if key in mapping:
+            out[key] = mapping[key]
+            continue
+        if spare:
+            out[key] = spare[unmapped % len(spare)]
+            unmapped += 1
+        else:
+            out[key] = ASSET_CLASS_FALLBACK_COLOR
+    return out
+
+
+def asset_class_colors(classes: Iterable[str]) -> dict[str, str]:
+    """`group_colors` with the curated asset-class map — the root's colours."""
+    return group_colors(classes, curated=ASSET_CLASS_COLORS)
 
 
 class IcicleChart(Chart):
@@ -254,3 +300,195 @@ class IcicleChart(Chart):
         with self.fig.batch_update():
             self.fig.data = ()
         self._points = pd.DataFrame(columns=["path", "label", "name", "value", "count"])
+
+
+class RegimeFactorScatter(Chart):
+    """The regime view and the factor view, merged into one 3D scatter.
+
+    They were two charts answering halves of one question: both per-strategy
+    scatters coloured by asset class, one with the regime filter and no factor
+    axes, the other with the axes and no filter. Here **Y is the metric over
+    the Window, X the term-premium β and Z the equity-risk-premium β**, all
+    measured over the same sample — the Window's days restricted to the regime
+    bucket (#331 decision 10).
+
+    The points are whatever the drill says: one marker per category at the
+    root, per family inside a category, per strategy inside a family, each the
+    equal-weight mean of its members.
+    """
+
+    def __init__(self, *, on_drill=None) -> None:
+        self._on_drill = on_drill
+        self._points = pd.DataFrame()
+        self._value_label = ""
+        self._metric = "sharpe"
+        super().__init__()
+
+    def _build(self) -> go.FigureWidget:
+        """The scene, with the origin drawn by the axes rather than by planes.
+
+        The translucent `Mesh3d` zero planes this replaces dimmed the markers
+        behind them — the thing the chart is for. A scene axis takes no paper
+        shape, but it does take its own `zeroline`, wall `line` and `gridcolor`,
+        which is enough to carry the origin without covering anything.
+        `aspectmode="cube"` keeps the three axes comparable.
+        """
+        return go.FigureWidget(
+            layout=_chart_layout(
+                title="",
+                showlegend=True,
+                legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
+                scene=dict(
+                    aspectmode="cube",
+                    xaxis=_scene_axis("Term-premium β"),
+                    yaxis=_scene_axis(""),
+                    zaxis=_scene_axis("Equity risk-premium β"),
+                ),
+            )
+        )
+
+    @property
+    def value_label(self) -> str:
+        return self._value_label
+
+    @property
+    def value_format(self) -> str:
+        return value_format(self._metric)
+
+    def points(self) -> pd.DataFrame:
+        return self._points
+
+    def update(
+        self,
+        points: pd.DataFrame,
+        *,
+        metric: str,
+        metric_label: str,
+        color_key: str,
+        colors: Mapping[str, str],
+    ) -> None:
+        """Draw the aggregated frame `stats.drill.drill_points` returned.
+
+        ``colors`` maps each colour-key value to its hue and ``color_key`` names
+        the level they key to, so the chart never decides either — that rule
+        lives once, in `stats.drill.color_key` (#331 decision 17).
+        """
+        self._metric = metric
+        self._value_label = metric_label
+        self._points = points
+        if points.empty:
+            self.clear()
+            return
+
+        fmt = value_format(metric)
+        traces = []
+        for key, group in points.groupby(_color_values(points, color_key)):
+            counts = group["count"].to_numpy()
+            traces.append(
+                go.Scatter3d(
+                    mode="markers",
+                    name=str(key),
+                    x=group["x"].to_numpy(),
+                    y=group["value"].to_numpy(),
+                    z=group["z"].to_numpy(),
+                    marker=dict(
+                        # A group's marker grows with how many strategies it
+                        # stands for; a strategy is always the base size.
+                        size=_marker_sizes(counts),
+                        color=colors.get(str(key), ASSET_CLASS_FALLBACK_COLOR),
+                        line=dict(width=0),
+                    ),
+                    customdata=np.column_stack(
+                        [
+                            group["name"].astype(str).to_numpy(),
+                            counts,
+                            [_path_key(p) for p in group["path"]],
+                        ]
+                    ),
+                    hovertemplate=(
+                        "%{customdata[0]}<br>"
+                        + str(key)
+                        + f"<br>{metric_label} "
+                        + "%{y:"
+                        + fmt
+                        + "} %{customdata[1]}"
+                        "<br>Term β %{x:.2f}<br>Equity β %{z:.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+        with self.fig.batch_update():
+            self.fig.data = ()
+            self.fig.add_traces(traces)
+            self.fig.layout.scene.yaxis.title.text = metric_label
+            self.fig.layout.scene.yaxis.tickformat = fmt
+        self._attach_clicks()
+
+    def _attach_clicks(self) -> None:
+        """Every trace narrows on click, not just the first."""
+        if self._on_drill is None:
+            return
+        for trace in self.fig.data:
+            if hasattr(trace, "on_click"):  # pragma: no branch
+                trace.on_click(self._clicked)
+
+    def _clicked(self, trace, points, _state) -> None:
+        """Narrow to the clicked marker's path.
+
+        At the leaf level a click does nothing: a strategy has no children, and
+        the table row beside the chart is the way into Single Strategy.
+        """
+        if self._on_drill is None or not getattr(points, "point_inds", None):
+            return
+        index = points.point_inds[0]
+        row = trace.customdata[index]
+        count = float(row[1])
+        if count <= 1:
+            return
+        self._on_drill(tuple(str(row[2]).split(PATH_SEP)))
+
+    def clear(self) -> None:
+        with self.fig.batch_update():
+            self.fig.data = ()
+        self._points = pd.DataFrame()
+
+
+def _scene_axis(title: str) -> dict:
+    """One scene axis carrying the origin and its wall edge."""
+    return dict(
+        title=title,
+        zeroline=True,
+        zerolinecolor=Color.CHART_ZERO_LINE.value,
+        zerolinewidth=3,
+        showline=True,
+        linecolor=Color.CHART_AXIS_LINE.value,
+        linewidth=2,
+        gridcolor=Color.CHART_GRID.value,
+        backgroundcolor=Color.TRANSPARENT.value,
+    )
+
+
+def _color_values(points: pd.DataFrame, color_key: str) -> pd.Series:
+    """The value each point is coloured by.
+
+    At the root that is the point's parent (its path's first segment); below
+    it, the point is its own key. Reading it off the **path** rather than
+    re-joining metadata is what keeps the colour and the position describing
+    the same node.
+    """
+    if color_key in points.columns:
+        return points[color_key].astype(str)
+    depth = 0 if not len(points) else max(len(points["path"].iloc[0]) - 1, 0)
+    if depth == 0:
+        return points["label"].astype(str)
+    return points["path"].map(lambda p: str(p[0]) if p else "Other")
+
+
+def _marker_sizes(counts: np.ndarray) -> np.ndarray:
+    """Base size for a strategy, growing with the members a group stands for."""
+    return 5.0 + 3.0 * np.sqrt(np.maximum(counts.astype(float), 1.0) - 1.0)
+
+
+def _path_key(path) -> str:
+    """A path as one string, so it survives a numpy `customdata` column."""
+    return PATH_SEP.join(str(segment) for segment in path)

@@ -63,6 +63,14 @@ class Color(StrEnum):
     TRANSPARENT = "rgba(0,0,0,0)"
     CHART_GRID = "#1f2937"
     CHART_AXIS = "#475569"
+    # A 3D scene takes no paper shapes, which is why the factor scatter used
+    # translucent mesh planes to mark the origin — and why they dimmed the
+    # markers behind them. These two let the scene's own axes carry it instead
+    # (#335): the zero line bright enough to read against `TRANSPARENT` at the
+    # default camera, the wall edge a step below it so the box reads as a frame
+    # rather than as three more zero lines.
+    CHART_ZERO_LINE = "#94a3b8"
+    CHART_AXIS_LINE = "#334155"
     CHART_TEXT = "#cbd5e1"
     CHART_TITLE = "#f9fafb"
     CHART_HOVER_BG = "#1f2937"
