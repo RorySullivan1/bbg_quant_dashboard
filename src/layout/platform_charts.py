@@ -41,6 +41,20 @@ _RAMP = [
     [1.0, Color.GREEN_600.value],
 ]
 
+#: The hover label's treatment, shared by the card's charts so one of them
+#: cannot quietly drift from the others.
+#:
+#: Deliberately minimal. A label's **position** is not settable — plotly has
+#: no anchor property for one — so its size is the only lever, and that lives
+#: in each chart's `hovertemplate`. What is set here has to be old enough for
+#: the terminal's plotly, which is **5.23.0** where this environment's is 7.x.
+#: `align` and `namelength` are valid there; `showarrow` is not, and raised
+#: `Invalid property ... showarrow` at figure-build time, which under Voila is
+#: a blank dashboard rather than a bad-looking chart (v0.9.26). Checking
+#: `_valid_props` here proves nothing about there — `run_instructions.md` has
+#: the one-liner that checks against 5.23.0 properly.
+_HOVER_LABEL = dict(align="left", namelength=-1)
+
 #: Where the colour range is clipped, as a percentile of |value| over the
 #: leaves. A single outlier otherwise flattens every other cell to the middle
 #: of the ramp; the fixed ±2 this replaces was a z-score's range, which a raw
@@ -369,10 +383,9 @@ class RegimeFactorScatter(Chart):
                 title="",
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-                # `align` and `showarrow` are all a 3D scene offers here —
-                # there is no anchor property to put the label on one side of
+                # No anchor property exists to put the label on one side of
                 # the marker, so the template above keeps it small instead.
-                hoverlabel=dict(align="left", namelength=-1, showarrow=False),
+                hoverlabel=_HOVER_LABEL,
                 scene=dict(
                     aspectmode="cube",
                     xaxis=_scene_axis("Term-premium β"),
@@ -572,6 +585,7 @@ class StripChart(Chart):
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
                 hovermode="closest",
+                hoverlabel=_HOVER_LABEL,
                 # A numeric axis wearing the dates as tick labels, NOT a
                 # categorical one: Plotly puts every marker of a category on
                 # one line, so a group of ten strategies would draw as a

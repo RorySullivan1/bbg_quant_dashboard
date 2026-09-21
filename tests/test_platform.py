@@ -802,6 +802,41 @@ def test_the_scatter_hover_stays_small_enough_to_see_past():
     assert chart.fig.layout.hoverlabel.align == "left"
 
 
+def test_hover_labels_set_only_properties_old_enough_for_the_terminal():
+    """v0.9.26 — `hoverlabel.showarrow` took the app down on the terminal.
+
+    It is valid in this environment's plotly (7.x) and not in the terminal's
+    (**5.23.0**), so it raised `Invalid property ... showarrow` while the
+    figure was being built — which under Voila is a blank page rather than a
+    bad-looking chart. The suite was green throughout, because the suite runs
+    against the local plotly.
+
+    So the allowlist is the test: anything a chart sets on a hover label has
+    to be a property that has been there since plotly 3.x. A newer one is not
+    forbidden — it is forbidden *silently*, and adding it here is how it stops
+    being silent.
+    """
+    from src.layout.platform_charts import _HOVER_LABEL
+
+    settled_since_plotly_3 = {"align", "bgcolor", "bordercolor", "font", "namelength"}
+    assert set(_HOVER_LABEL) <= settled_since_plotly_3, (
+        f"{sorted(set(_HOVER_LABEL) - settled_since_plotly_3)} may not exist in "
+        "the terminal's plotly; verifying `_valid_props` here proves nothing "
+        "about there"
+    )
+
+
+def test_every_card_chart_shares_one_hover_label_treatment():
+    """One of them drifting from the others is how the Strip spent a version
+    without the alignment the Scatter had."""
+    from src.layout.platform_charts import _HOVER_LABEL
+
+    for chart in (RegimeFactorScatter(), StripChart()):
+        label = chart.fig.layout.hoverlabel
+        assert label.align == _HOVER_LABEL["align"], type(chart).__name__
+        assert label.namelength == _HOVER_LABEL["namelength"], type(chart).__name__
+
+
 # --- the points table (#337) ------------------------------------------------
 
 

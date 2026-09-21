@@ -243,7 +243,7 @@ table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-it
 
 ## Current version
 
-`v0.9.25` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.26` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
