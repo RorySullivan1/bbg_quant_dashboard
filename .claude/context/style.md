@@ -374,3 +374,41 @@ name, the metric, then both betas side by side — where it was five.
 `1Y Sharpe 1.23 3`. The value on these charts is an equal-weight mean of the
 node's members and the hover has to say so, or the number reads as the node's
 own. A leaf says nothing at all: "mean of 1" is true and useless.
+
+## The Basket strip and the filter strip (v0.9.29, epic #341)
+
+**A card exists whether or not the table has a row for it.** That is the whole
+reason the basket is drawn as cards rather than read off the ticks: a pick the
+filters have hidden is still in the basket, and the strip is where it stays
+visible. `.bbg-basket-card` is a flex row — a colour edge, a mono ticker
+button, a muted truncated name, an optional binding marker, an **×** — wrapping
+inside `.bbg-basket-cards` at a fixed `BASKET_STRIP_HEIGHT`. Fixed for
+`CATALOG_TABLE_HEIGHT`'s reason and one more of its own: a box sized to its
+content would collapse to nothing the moment the last card was removed and
+shift everything below it.
+
+**The tag's colour is never a literal.** It is set inline per card from
+`group_colors`' curated asset-class map — the same helper the Platform charts
+key their palette from — so the two surfaces cannot disagree about what Equity
+looks like. The CSS rule owns the shape (4px, left-rounded, 22px tall) and
+nothing else.
+
+The **`.bbg-window-readout`** is mono, in the rail's type, and is *not* a
+control: nothing observes it, and nothing on the tab can move the window it
+reports. Its empty states are two different sentences — *Add strategies to set
+the window* before there is anything to measure, *No overlapping history* when
+the members share no dates — because those are two different facts.
+
+**`.bbg-filter-strip`** is subordinate to the bar above it the way
+`.bbg-drill-bar` is: no box of its own, a rule above instead, tighter rhythm.
+The bar carries **settings**; the strip carries the **values** one of them
+selects, and two kinds of control should not read as one row of equals.
+
+**The basket table's group headers advertise that they are hit areas** —
+pointer cursor and an accent hover, scoped to `.bbg-basket-table` so the
+Platform's headers, which are not clickable, do not make the same promise. The
+tick is Select's own `select-checkbox`, drawn into the **first visible column**
+rather than a column of its own: a prepended column would shift every position
+`_catalog_table_options` is keyed to — the hidden group targets,
+`rowGroup.dataSrc`, the window targets, the ranking column's five behaviours
+and the filter row's indices.

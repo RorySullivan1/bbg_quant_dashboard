@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.28`.
+- **Current version**: `v0.9.29`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -634,3 +634,53 @@ setter repaints the two controls that *display* the state — the Level chips
 and the breadcrumb — with their observers suppressed; without that guard a
 drill change renders twice, and a breadcrumb click takes its level from the
 chip it has just repainted rather than from the prefix that was clicked.
+
+
+## The basket tab's four rules (v0.9.29, epic #341)
+
+**The basket is the source of truth, and it is written in one place.** A row
+tick, a group header, *Select all shown*, a card's **×**, *Clear all* and
+`_default_selection` all go through `Basket`; the grid and the cards are views
+of it. The cap is **its** rule, checked before every assignment and enforced
+again by a `@validate("value")`, so there is no path to a 26th name. A rejected
+write changes nothing and fires no observer — a grid re-tick and an analytics
+re-slice for a change that did not happen are both worse than the rejection.
+
+Its corollary: **positions are worthless across a rebuild.** itables destroys
+and re-news the table on every options change (`destroy()` then `new`), so a
+row position from the previous frame lands on a different row in the next one.
+Everything that crosses that boundary is a **ticker**: `BasketGrid` diffs by
+ticker, pushes `positions_of(basket.value)` after each write, and `_set_data`
+clears `selected_rows` *before* the write because itables validates them
+against the incoming frame and raises on any narrowing filter.
+
+**The kernel never guesses what the browser is showing.** The search text and
+the per-column filter row live in the browser by design (#285) — no traitlet
+carries typed text to the kernel — so anything that depends on *which rows are
+on show* runs as a DataTables action and comes back as positions: *Select all
+shown* over `{search: "applied"}`, and a group header's click walking the DOM.
+The kernel's job is to accept or reject what arrives, not to predict it.
+
+That walk has a second dependency: **row contiguity at every grouping level**
+(#261). RowGroup only brackets adjacent rows, so a header owns the rows between
+it and the next header at its level or nearer the root — which is its group
+only if the frame is `_group_ordered`. `group_member_rows` is that rule in
+Python, tested, with `_JS_GROUP_SELECT` as its transcription; the browser is
+not available to a unit test and a rule nobody can test is a rule that drifts.
+
+**The analysis window is derived, not chosen.** `basket_window` is the
+intersection of the members' histories — latest first-valid to earliest
+last-valid — and it names the member binding each edge. Nothing on the tab can
+move it. The two date pickers that used to narrow inside it are gone with
+`last_sel_key`, `sync_guard` and `cur_bound_*`: nothing on screen said where
+their bounds came from or which member set them, so the control invited
+second-guessing a number the tab never explained. The readout says it, the
+binding member's card is marked, and shortening the sample is one click.
+
+**No BQL from a control.** A chip, a filter, a tick, a header or a card
+re-slices the cache; only *Refresh prices* fetches. The re-slice is debounced
+(`RESLICE_DEBOUNCE_S`) so a 25-name selection is one recompute, and **deferred
+by re-arming** while `refresh_inflight` is set — both write `state.cur_prep`
+and the panes, and re-arming rather than queueing means the later run reads the
+basket as it is when it fires. With no frontend it runs synchronously, so a
+test observes the render immediately after the write with no thread to join.

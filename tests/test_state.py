@@ -10,12 +10,13 @@ from __future__ import annotations
 import pandas as pd
 from src.config import filter_dimensions
 from src.layout.state import DashboardState
+from src.stats import BasketWindow
 
 
 def _make(**overrides) -> DashboardState:
     """A DashboardState with throwaway handles (no real widgets needed)."""
     handles = dict(
-        ticker_w=object(),
+        basket=object(),
         status_w=object(),
         overlay_w=object(),
         universe_grid=object(),
@@ -32,8 +33,10 @@ def test_defaults():
     s = _make()
     # The panel opens on the first filter dimension, which is the top tier.
     assert s.active_filter == filter_dimensions()[0].key == "solution"
-    assert s.sync_guard is False
-    assert s.last_sel_key is None
+    # The window is derived, never chosen (#341 dec. 12): `sync_guard`,
+    # `last_sel_key` and `cur_bound_*` went with the date pickers.
+    assert s.basket_window.start is None and s.basket_window.end is None
+    assert s.basket_window.binding_start is None
     assert s.init_errors == []
     assert isinstance(s.universe_prices, pd.DataFrame) and s.universe_prices.empty
     assert (
@@ -55,17 +58,16 @@ def test_mutable_defaults_are_per_instance():
 def test_fields_are_assignable():
     s = _make()
     s.active_filter = "return_type"
-    s.sync_guard = True
-    s.last_sel_key = ("AAA Index", "BBB Index")
-    assert (s.active_filter, s.sync_guard, s.last_sel_key) == (
-        "return_type",
-        True,
-        ("AAA Index", "BBB Index"),
+    s.basket_window = BasketWindow(
+        pd.Timestamp("2021-01-04"), pd.Timestamp("2026-01-02"), "AAA Index", "BBB Index"
     )
+    assert s.active_filter == "return_type"
+    assert s.basket_window.binding_start == "AAA Index"
+    assert s.basket_window.binding_end == "BBB Index"
 
 
 def test_holds_the_passed_widget_handles():
-    ticker, status = object(), object()
-    s = _make(ticker_w=ticker, status_w=status)
-    assert s.ticker_w is ticker
+    basket, status = object(), object()
+    s = _make(basket=basket, status_w=status)
+    assert s.basket is basket
     assert s.status_w is status

@@ -197,6 +197,15 @@ ANALYTICS_TABLE_SHARE: str = "40%"
 #: it has been seen at a terminal's fonts — which is where it should be tuned.
 COMMENTARY_BOX_HEIGHT: str = "300px"
 
+#: How tall the Multi-Strategy Basket strip stands (#346).
+#:
+#: Fixed for `CATALOG_TABLE_HEIGHT`'s reason and one more of its own: an empty
+#: basket has no cards, and a box that sized itself to its content would
+#: collapse to nothing and shift everything below it the moment the last card
+#: was removed. Tall enough for two rows of cards at the cap; beyond that the
+#: strip scrolls rather than growing the page.
+BASKET_STRIP_HEIGHT: str = "104px"
+
 #: The commentary block's 60:40 split, as flex bases rather than pixels: the
 #: leaderboard's four columns have to stay readable at a terminal width, and a
 #: pixel basis would hold its width while the pane beside it took whatever was

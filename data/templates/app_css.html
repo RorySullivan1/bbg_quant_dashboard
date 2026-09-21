@@ -141,18 +141,10 @@
   100% { opacity: 0; pointer-events: none; }
 }
 
-/* Strategy-selection cap (v0.9.13 #181): a live count above the picker, and a
-   fixed top-centre auto-fading error popup when a pick over the cap is rejected. */
-.bbg-strat-count {
-  font-family: {{mono}};
-  font-size: {{caption_size}};
-  color: {{text_muted}};
-  padding: 2px 0 5px 0;
-}
-.bbg-strat-count.is-full {
-  color: {{red}};
-  font-weight: 700;
-}
+/* Strategy-selection cap (v0.9.13 #181): a fixed top-centre auto-fading error
+   popup when a pick over the cap is rejected. The live count that stood above
+   the old checkbox picker went with it (#344) — the Basket strip's note says
+   `n / 25 selected` beside its title now. */
 .bbg-limit-popup {
   position: fixed;
   top: 24px;
@@ -748,6 +740,141 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
   color: {{text_color}} !important;
   font-weight: 600 !important;
   padding-left: 58px !important;
+}
+/* --- The Basket strip (#346) -----------------------------------------------
+   The selection as a wrapping row of cards, one per member. A card exists
+   whether or not the table has a row for it, which is the whole point: a pick
+   the filters have hidden is still in the basket and has to be visible
+   somewhere. */
+.bbg-basket-cards {
+  align-content: flex-start;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 8px;
+  width: 100%;
+}
+.bbg-basket-card {
+  align-items: center;
+  background: {{surface2}};
+  border: 1px solid {{border_color}};
+  border-radius: 3px;
+  display: flex;
+  gap: 6px;
+  max-width: 260px;
+  padding: 2px 6px 2px 0;
+}
+.bbg-basket-card:hover {
+  border-color: {{accent}};
+}
+/* The asset-class colour edge. Its hue comes from the one palette helper, set
+   inline per card, so the cards and the Platform charts cannot disagree about
+   what Equity looks like — this rule owns only the shape. */
+.bbg-basket-card .bbg-basket-tag {
+  border-radius: 3px 0 0 3px;
+  height: 22px;
+  width: 4px;
+}
+.bbg-basket-card .bbg-basket-ticker {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: {{text_color}} !important;
+  font-family: {{mono}} !important;
+  font-size: {{micro_size}} !important;
+  font-weight: 600 !important;
+  height: 22px !important;
+  line-height: 22px !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  width: auto !important;
+}
+.bbg-basket-card .bbg-basket-ticker:hover {
+  color: {{accent}} !important;
+  text-decoration: underline;
+}
+.bbg-basket-name {
+  color: {{text_muted}};
+  font-size: {{micro_size}};
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The member that sets the analysis start, marked so the readout above and the
+   card point at each other. */
+.bbg-basket-binding {
+  color: {{accent2}};
+  font-size: {{micro_size}};
+}
+.bbg-basket-card .bbg-basket-remove {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: {{text_muted}} !important;
+  font-size: {{micro_size}} !important;
+  height: 20px !important;
+  line-height: 20px !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  width: 18px !important;
+}
+.bbg-basket-card .bbg-basket-remove:hover {
+  color: {{accent}} !important;
+}
+.bbg-basket-card .bbg-basket-ticker:focus-visible,
+.bbg-basket-card .bbg-basket-remove:focus-visible {
+  outline: 1px solid {{accent}};
+  outline-offset: 1px;
+}
+.bbg-basket-empty {
+  color: {{text_muted}};
+  font-size: {{micro_size}};
+  font-style: italic;
+}
+/* The analysis window readout. Not a control — nothing observes it, and
+   nothing on the tab can move the window except changing the basket. */
+.bbg-window-readout .bbg-window-text {
+  color: {{text_color}};
+  font-family: {{mono}};
+  font-size: {{micro_size}};
+}
+.bbg-window-readout .bbg-window-empty {
+  color: {{text_muted}};
+  font-size: {{micro_size}};
+  font-style: italic;
+}
+/* The filter value strip, under the Table view bar (#345). Subordinate to the
+   bar the way the drill strip is: no box of its own, a rule above instead. */
+.bbg-filter-strip {
+  border: none !important;
+  border-top: 1px solid {{border_color}} !important;
+  margin: -6px 0 6px 0 !important;
+  padding: 6px 8px !important;
+}
+.bbg-filter-strip .bbg-strip-dash {
+  color: {{text_muted}};
+  padding: 0 6px;
+}
+
+/* The basket table's group headers are hit areas (#343): a click takes every
+   shown row under the header, at any level. The handler is installed by the
+   same `drawCallback` that builds the filter row; this is what says so on
+   screen. Scoped to `.bbg-basket-table` so the Platform's headers, which are
+   not clickable, do not advertise that they are. */
+div.itables_anywidget.bbg-basket-table table.dataTable tr.dtrg-group th,
+div.itables_anywidget.bbg-basket-table table.dataTable tr.dtrg-group td {
+  cursor: pointer !important;
+  user-select: none !important;
+}
+div.itables_anywidget.bbg-basket-table table.dataTable tr.dtrg-group:hover th,
+div.itables_anywidget.bbg-basket-table table.dataTable tr.dtrg-group:hover td {
+  color: {{accent}} !important;
+  box-shadow: inset 2px 0 0 {{accent}} !important;
+}
+/* The tick, drawn by the Select extension into the first visible column (see
+   `_catalog_table_options` for why it is not a column of its own). */
+div.itables_anywidget.bbg-basket-table table.dataTable td.bbg-tick-cell {
+  cursor: pointer !important;
 }
 /* Selected row (the Select extension) — the hook #265 builds on. */
 div.itables_anywidget table.dataTable tbody tr.selected td {

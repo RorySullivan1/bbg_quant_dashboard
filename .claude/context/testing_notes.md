@@ -355,6 +355,90 @@ catalog is the real test of how the charts read.
 - At the default BQuant viewport there is **no page-level horizontal
   scrollbar** with the Scatter active — it has the widest legend.
 
+### Manual checklist — the Multi-Strategy basket tab (v0.9.29, epic #341)
+
+The tab is the catalog table with ticks. Almost none of this is something a
+widget-tree assertion can see — the group-header click, *Select all shown* and
+the tick column all live in the browser — which is why they are here.
+
+**Read the mock catalog as shapes, not as findings:** the pruned mock leaves
+~7 rows, so *Select all shown* is comfortably under the cap of 25 and the
+rejection path cannot be reached from the UI here. The terminal catalog is the
+real test of it.
+
+**The shell**
+
+- Top to bottom: *Strategy selection* with **Refresh prices** right-aligned on
+  its title line; a *Table view* bar reading **Group by · Window · Benchmark ·
+  Filter**; the filter value strip; the table; the **Basket** strip; the perf
+  grid; the two panes.
+- **No accordion, no pill-tab bar, no 240px checkbox list, no analysis date
+  pickers.** The only date pickers on the tab are the strip's *Launch date* —
+  a characteristic of a strategy, not the analysis range.
+- The bar and the table read as the Platform tab's: same chrome, same chips,
+  same search box top-left, same per-column filter row.
+
+**The table**
+
+- The tick column draws, and clicking **anywhere on a row** toggles it — the
+  tick is the affordance, not the only hit area.
+- Group headers show a **pointer and an accent hover**. Clicking a category
+  header ticks every row under it; clicking it again unticks them. A family
+  header inside it takes only that family. A **Solution** header takes
+  everything nested under it, at every depth.
+- Type in the search box, then click a group header: it takes **only the rows
+  still shown**, not the ones the search removed.
+- ***Select all shown*** selects every row the search and the filter row leave.
+  ***Select none*** empties the visible members only — a basket member the
+  filters are hiding keeps its card.
+- Over the cap — from a row, a header or Select all — **nothing changes**, the
+  ticks snap back to what the basket holds, and the popup names the count
+  (*32 selected — the cap is 25*).
+- Change Group by, Window, Benchmark or a filter value: the table rebuilds and
+  **the ticked rows that survive are still ticked**. This is the one to watch —
+  it is re-derived from tickers, so a rebuild that loses ticks means the push
+  is racing the widget's own re-send.
+- The seven quant columns are there for the visible window
+  (Sortino · Calmar · Beta · Treynor · Jensen · VaR · RSI), each with a
+  comparison box in the filter row. Type `>1` under **1Y Sortino**: it filters
+  in the units shown. Under **1Y VaR**, `>1` means 1%, not 1.0.
+- Change **Benchmark**: Beta, Treynor and Jensen move; nothing else does.
+
+**The filters**
+
+- The bar's *Filter* chip picks a dimension and the strip below shows its
+  values. Tick two Family values, switch to Asset Class, switch back —
+  **the two are still ticked**.
+- A dimension with active values carries a count badge (*Family · 2*), which
+  is the only evidence of a filter whose chips are off screen.
+
+**The basket**
+
+- One card per member, in the order they were added: colour tag, ticker, name,
+  **×**. The tag's colour is the asset class's, the same hue the Platform
+  charts use.
+- **×** removes the card and unticks the row if it is shown. Clicking the
+  **ticker** opens that strategy in Single Strategy, with the filters cleared —
+  the same as clicking a catalog row.
+- *Clear all* empties it; the note reads `n / 25 selected` and tracks every
+  change. An empty basket shows a placeholder line and the strip **does not
+  collapse**.
+- The **Analysis window** readout reads `start → end · N.NY · start set by
+  XYZ`, and that member's card carries a small marker. Remove it: the start
+  moves **earlier** and the readout follows. A basket whose members share no
+  dates reads *No overlapping history*.
+
+**Live analytics**
+
+- Tick a row: the perf grid and both panes re-render within a moment, **with
+  no overlay and no fetch**. This is the headline change — it used to need
+  Refresh.
+- *Select all shown* is **one** recompute, not one per row.
+- **Refresh prices** still refetches (the overlay appears) and re-renders the
+  **same** basket — it never seeds or replaces it. A ticker the refetch prunes
+  as stale loses its card and its tick.
+- Single Strategy is unchanged: its accordion, its pickers, its live narrowing.
+
 ### Manual checklist — the commentary block (v0.9.22, epic #303)
 
 The block above the tab bar, on every tab. This is the part no unit test

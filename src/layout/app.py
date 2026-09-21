@@ -21,6 +21,7 @@ Whether the overlay paints meanwhile follows `_OVERLAY_PAINT_DELAY_S`.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 import traceback
@@ -45,6 +46,7 @@ from ..config import (
     MAX_SELECTED_STRATEGIES,
     PERFORMANCE_DISCLAIMER_PATH,
     REGIME_TICKERS,
+    RESLICE_DEBOUNCE_S,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
@@ -58,42 +60,44 @@ from ..config import (
 )
 from ..data import load_metadata
 from ..stats import (
+    BasketWindow,
     active_columns,
-    common_window_bounds,
+    basket_window,
     daily_returns,
     rolling_metric_zscore,
     universe_perf,
 )
 from ..style import (
+    BASKET_STRIP_HEIGHT,
+    CATALOG_TABLE_HEIGHT,
     COMMENTARY_BOX_HEIGHT,
     COMMENTARY_BULLETIN_SHARE,
     COMMENTARY_LEADERBOARD_SHARE,
-    Color,
     StatusTone,
 )
 from ..user_benchmarks import load_user_benchmarks, save_user_benchmarks
+from .basket import Basket, BasketCards, WindowReadout
 from .benchmarks import BenchmarkRegistry
 from .chrome import (
     _app_css,
     _banner,
     _loading_overlay,
+    _make_chip,
     _make_tab_button,
     _render_limit_popup,
     _render_overlay,
     _render_status,
-    _render_strat_count,
     _selection_limit_popup,
     _status_banner,
     _style_tab_button,
 )
 from .commentary_pane import CommentaryPane
-from .filter_panel import make_filter_panel
+from .filter_strip import FilterStrip
 from .filters import (
-    CheckboxMultiSelect,
-    _section_label,
     _ticker_options,
 )
 from .grids import (
+    BasketGrid,
     PerfGrid,
     UniverseGrid,
 )
@@ -111,12 +115,14 @@ from .multi_strategy import (
     clear_pane,
     render_pane,
 )
-from .panes import SingleAnalysisPane, _make_analysis_pane
+from .panes import SingleAnalysisPane, _make_analysis_pane, _make_benchmark_dropdown
 from .platform import PlatformAnalytics
+from .quant_columns import QUANT_METRICS, QuantColumns, quant_column_name
 from .rails import (
     ChipGroup,
     MultiChipGroup,
     RailSection,
+    _section_title,
     control_bar,
     section_panel,
 )
@@ -200,71 +206,32 @@ class DashboardApp:
         self._set_progress(25, f"Loaded {len(self.meta)} indices")
 
     def _build_selection_column(self) -> None:
-        """The Multi-Strategy tab's selection side: search, the capped Strategies picker, the analysis date-range row, and the Filters accordion."""
-        self._build_strategy_picker()
-        self._build_analysis_range()
+        """The Multi-Strategy tab's selection surface: the basket, its table
+        and the *Table view* bar over it."""
+        self.basket = Basket(MAX_SELECTED_STRATEGIES)
+        #: The pending debounced re-slice, cancelled and re-armed by the next
+        #: basket write (#347).
+        self._reslice_timer: threading.Timer | None = None
+        #: Set while the load or a Refresh owns the render. Seeding the basket
+        #: from `_default_selection` is a basket write like any other, so
+        #: without this every load and every Refresh would build the selection
+        #: slice **twice** — once for the write, once for the `_recompute` that
+        #: follows it — and the second would throw the first away.
+        self._reslice_suspended = False
+        self._build_refresh_button()
         self._build_benchmarks_and_filters()
-        self._assemble_filters_accordion()
+        self._build_basket_section()
 
-    def _build_strategy_picker(self) -> None:
-        """Search box, the cap-guarded Strategies picker, and its live count."""
-        self.search_w = W.Text(
-            placeholder="Search ticker or name…",
-            layout=W.Layout(flex="1 1 auto"),
-        )
-        # A "Clear" button to the right of the search box wipes the strategy
-        # *selection* (distinct from "Clear all", which resets the filters/search
-        # but deliberately keeps the picked strategies).
-        clear_sel_btn = W.Button(
-            description="Clear",
-            tooltip="Clear the strategy selection",
-            layout=W.Layout(width="auto", margin="0 0 0 6px"),
-        )
-        clear_sel_btn.add_class("bbg-btn-secondary")
-        self.search_row = W.HBox(
-            [self.search_w, clear_sel_btn], layout=W.Layout(width="100%")
-        )
-        # Selection cap: the picker is hard-capped at
-        # MAX_SELECTED_STRATEGIES (correlation/analysis over the selected set is
-        # O(n²)); a pick over the cap is rejected with a fixed auto-fading error
-        # popup, and a live "Selected Strategies: n/cap" count sits above the list.
+    def _build_refresh_button(self) -> None:
+        """*Refresh prices* — the one control on this tab that fetches.
+
+        It sits on the section's **title line**, not in the bar: the bar holds
+        settings that re-slice the cache, and a fetch among them would read as
+        a fourth chip group (#341 dec. 11).
+        """
         self.limit_popup_w = _selection_limit_popup()
         self._limit_nonce = [0]
-
-        # The picker is a scrollable checkbox list (CheckboxMultiSelect), capped at
-        # the same 240px as the categorical filter groups on the right
-        # (`_checkbox_group`) so the two panels match; longer catalogs scroll inside
-        # the box (`overflow="auto"`) rather than growing to fill the panel.
-        self.ticker_w = CheckboxMultiSelect(
-            options=_ticker_options(self.meta),
-            value=tuple(self.meta["ticker"].head(5)),
-            max_selected=MAX_SELECTED_STRATEGIES,
-            on_limit=self._show_limit_popup,
-            layout=W.Layout(width="100%", max_height="240px", overflow="auto"),
-        )
-        clear_sel_btn.on_click(lambda _b: setattr(self.ticker_w, "value", ()))
-
-        # Live count above the picker; updates on every selection change.
-        self.strat_count_w = W.HTML(
-            _render_strat_count(len(self.ticker_w.value), MAX_SELECTED_STRATEGIES)
-        )
-
-        self.ticker_w.observe(self._update_strat_count, names="value")
-
-    def _build_analysis_range(self) -> None:
-        """The analysis date-range boxes and the Refresh-prices button."""
-        self.range_min_box = W.DatePicker(layout=W.Layout(width="160px"))
-        self.range_max_box = W.DatePicker(layout=W.Layout(width="160px"))
-        # `state.sync_guard` suppresses the bidirectional observers during
-        # programmatic updates; `state.last_sel_key` tracks the ticker set rendered
-        # on the last recompute — when it changes the box bounds + values reset to
-        # the new overlap, when it's unchanged (same basket, user only narrowed the
-        # range) the range is preserved. Both live on `DashboardState` (built below).
-
-        self.apply_btn = W.Button(
-            description="Refresh prices",
-            layout=W.Layout(flex="1 1 auto"),
-        )
+        self.apply_btn = W.Button(description="Refresh prices")
         # Green primary action (`.bbg-btn`, GREEN_600) with hover/active/focus
         # states — styled via CSS class, not inline `.style`, so `:hover` works.
         self.apply_btn.add_class("bbg-btn")
@@ -285,96 +252,286 @@ class DashboardApp:
         # dropped stale/flat indices — a dead index makes a poor benchmark.
         self.benchmarks.set_catalog(_ticker_options(self.meta))
 
-        # Multi-Strategy composes the shared `make_filter_panel` with its own
-        # Strategies picker, Refresh button, and date-range row — hence the leading
-        # action, the custom right-panel layout, and `build_root=False`, which lets
-        # it wrap the pieces in its own "Filters" accordion below.
-        self.filter_panel = make_filter_panel(
-            self.meta,
-            leading_actions=(self.apply_btn,),
-            registry=self.benchmarks,
-            right_panel_layout=W.Layout(
-                width="60%", padding="8px", border=f"1px solid {Color.BORDER}"
-            ),
-            build_root=False,
-        )
-
-        self.filter_panel.clear_all_btn.on_click(self._clear_all_extra)
-
+        # **Single Strategy is `FilterPanel`'s only caller now** (#341 dec. 10).
+        # The Multi tab composed one with its own picker, Refresh button and
+        # date-range row; every one of those is gone, and what it wanted from
+        # the panel — a reducer over the catalog — is `FilterStrip.apply`, over
+        # values picked in the bar instead of in a 240px checkbox column.
         self.status_w = _status_banner()
 
-        # --- Analysis date-range box plumbing --------------------------------
+    def _build_basket_section(self) -> None:
+        """The Multi-Strategy selection surface: the *Table view* bar over the
+        basket table, in the Platform tab's chrome (#344).
 
-        self.range_min_box.observe(
-            lambda c: self._on_range_box(c, is_min=True), names="value"
+        What this replaced was the v0.8 idiom the rest of the app had left
+        behind — a *Filters* accordion holding a 240px checkbox list of the
+        whole catalog beside pill-tabs over more checkbox groups, with the
+        analysis date range below it. The catalog it was picking from is the
+        one the Platform tab draws grouped, with performance columns, one tab
+        away; this is that table with ticks.
+        """
+        self.basket_grid = BasketGrid(self.basket, on_limit=self._on_basket_limit)
+        self.basket_group_chips = MultiChipGroup(
+            [(field_label(key), key) for key in universe_grid_groupable_fields()],
+            value=universe_grid_group_fields(),
+            row=True,
         )
-        self.range_max_box.observe(
-            lambda c: self._on_range_box(c, is_min=False), names="value"
+        self.basket_group_chips.observe(self._on_basket_grouping, names="value")
+        self.basket_window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
+            value=universe_grid_default_window(),
+            row=True,
+        )
+        self.basket_window_chips.observe(self._on_basket_window, names="value")
+        # The tab's **own** chips over the same option lists as the Platform's,
+        # so the two tables can be read at different windows but cannot offer
+        # different things.
+        #
+        # Benchmark is built here so the bar's shape is final; the quant
+        # columns that read it arrive in #345.
+        # A `BenchmarkSelect` through the one factory, not a bare `W.Dropdown`:
+        # **every** benchmark selector in the app is user-extensible (v0.9.14),
+        # and a control here that could not take a ticker off the list would be
+        # the single exception.
+        self.basket_benchmark_dd = _make_benchmark_dropdown(
+            "",
+            width="200px",
+            registry=self.benchmarks,
+        )
+        # One benchmark for Beta / Treynor / Jensen, where `QuantFilter` gave
+        # each its own: three benchmarks in one table is a comparison nobody
+        # asked for, and the bar has room for one control (#341 dec. 9).
+        self.basket_benchmark_dd.observe(self._on_basket_benchmark, names="value")
+        self.quant_columns = QuantColumns()
+        # Structure in the bar, text and numbers in the table (#341 dec. 8).
+        # *Filter* names a dimension; the strip below shows its values.
+        self.filter_strip = FilterStrip(self.meta, on_change=self._on_filter_change)
+        self.filter_dim_chips = ChipGroup(
+            [(self.filter_strip.chip_label(k), k) for k in self.filter_strip.keys],
+            value=self.filter_strip.keys[0],
+            row=True,
+        )
+        self.filter_dim_chips.observe(self._on_filter_dimension, names="value")
+        self.basket_bar = control_bar(
+            RailSection("Group by", self.basket_group_chips),
+            RailSection("Window", self.basket_window_chips),
+            RailSection("Benchmark", self.basket_benchmark_dd),
+            RailSection("Filter", self.filter_dim_chips),
+            title=TABLE_BAR_TITLE,
+        )
+        self.basket_section = section_panel(
+            "Strategy selection",
+            W.VBox([self.basket_bar, self.filter_strip.root]),
+            self.basket_grid.widget,
+            height=CATALOG_TABLE_HEIGHT,
+            actions=self.apply_btn,
         )
 
-    def _assemble_filters_accordion(self) -> None:
-        """Compose the selection column, filter panel and date row into the Filters accordion, and build the commentary widgets."""
-        left_panel = W.VBox(
+        # --- the Basket strip (#346) -----------------------------------------
+        self.basket_cards = BasketCards(
+            self.basket,
+            # A callable, never an attribute: the app re-points `meta` to the
+            # pruned catalog after every load (#242).
+            lambda: self.meta,
+            on_open=self._show_in_single_strategy,
+        )
+        self.window_readout = WindowReadout()
+        clear_basket_btn = _make_chip("Clear all", active=False)
+        clear_basket_btn.on_click(lambda _b: self.basket.clear())
+        self.basket_note_w = _section_title("Basket", self._basket_note())
+        self.basket_strip = W.VBox(
             [
-                _section_label("Strategies"),
-                self.search_row,
-                self.strat_count_w,
-                self.ticker_w,
-            ],
-            layout=W.Layout(
-                width="38%",
-                padding="8px",
-                border=f"1px solid {Color.BORDER}",
-                display="flex",
-                flex_flow="column",
-            ),
-        )
-
-        filter_box = W.HBox(
-            [left_panel, self.filter_panel.right_panel],
-            layout=W.Layout(width="100%", align_items="stretch"),
-        )
-        # Full-width analysis date-range row below the two panels: slider flanked
-        # by the two linked date boxes. Bounds fit the selected set's overlap
-        # window; the range scopes the selected-set charts + perf grid on the
-        # next Refresh prices.
-        date_range_filter_row = W.VBox(
-            [
-                _section_label("Analysis date range"),
-                W.HBox(
-                    [
-                        self.range_min_box,
-                        W.HTML("<div style='padding:0 6px;font-size:16px;'>–</div>"),
-                        self.range_max_box,
-                    ],
-                    layout=W.Layout(width="100%", align_items="center"),
+                self.basket_note_w,
+                control_bar(
+                    RailSection("Analysis window", self.window_readout),
+                    RailSection("Basket", clear_basket_btn),
+                    title="",
                 ),
+                self._strip_box(self.basket_cards),
             ],
-            layout=W.Layout(
-                width="100%",
-                padding="8px",
-                margin="6px 0 0 0",
-                border=f"1px solid {Color.BORDER}",
-            ),
+            layout=W.Layout(width="100%", min_width="0"),
         )
-        # The whole filter UI — the Strategies multi-select on the left, the
-        # filter options on the right, and the analysis date range below —
-        # collapses under a "Filters" accordion, expanded by default.
-        filters_inner = W.VBox(
-            [filter_box, date_range_filter_row],
-            layout=W.Layout(width="100%"),
-        )
-        self.filters_accordion = W.Accordion(
-            children=[filters_inner],
-            titles=("Filters",),
-            selected_index=0,
-            layout=W.Layout(width="100%"),
-        )
+        self.basket.observe(self._on_basket_changed, names="value")
 
         # Init/pane-error boxes. A sibling of the commentary block's two panes,
         # never inside one, so neither a window change nor a pane switch can wipe
         # an error off the screen.
         self.errors_w = W.HTML("")
+
+    @staticmethod
+    def _strip_box(body: W.Widget) -> W.Box:
+        """The cards' boxed, fixed-height container.
+
+        Fixed so an empty basket does not collapse the strip and shift
+        everything below it the moment the last card is removed.
+        """
+        box = W.Box(
+            [body],
+            layout=W.Layout(width="100%", height=BASKET_STRIP_HEIGHT, min_height="0"),
+        )
+        box.add_class("bbg-section-box")
+        return box
+
+    def _basket_note(self) -> str:
+        return f"{len(self.basket.value)} / {self.basket.cap} selected"
+
+    def _on_basket_changed(self, _change=None) -> None:
+        """A basket write: redraw the count, then schedule the re-slice.
+
+        The cards follow through their own `basket.observe` and the ticks
+        through the grid's; this is the controller's share.
+        """
+        self.basket_note_w.value = _section_title("Basket", self._basket_note()).value
+        self._schedule_reslice()
+
+    # --- the live re-slice (#347) --------------------------------------------
+
+    def _schedule_reslice(self) -> None:
+        """Re-render the perf grid and both panes, once, after a short pause.
+
+        **No BQL.** Every price the basket can need is already in
+        `universe_prices`; the tab used to reach the analytics only through
+        *Refresh prices*, which refetched a cache that already held the answer
+        (#341 dec. 11). Refresh now means only what it says.
+
+        The timer is cancelled and re-armed by the next write, so ten ticks
+        inside the interval produce one recompute.
+        """
+        if self._reslice_timer is not None:
+            self._reslice_timer.cancel()
+            self._reslice_timer = None
+        if self._reslice_suspended:
+            return
+        if get_ipython() is None:
+            # Headless / pytest: synchronous, so a caller observes the render
+            # immediately after the write with no thread to join.
+            self._run_reslice()
+            return
+        timer = threading.Timer(RESLICE_DEBOUNCE_S, self._run_reslice)
+        timer.daemon = True
+        self._reslice_timer = timer
+        timer.start()
+
+    def _run_reslice(self) -> None:
+        """The debounced body. Deferred while a Refresh is running.
+
+        Both write `state.cur_prep` and the panes, so they must not overlap.
+        Deferring **re-arms** rather than queueing: the basket is read when the
+        timer fires, so the later run sees the current one either way.
+        """
+        self._reslice_timer = None
+        if self.refresh_inflight["running"]:
+            self._schedule_reslice()
+            return
+        errors: list[str] = []
+        started = time.perf_counter()
+        self._render_selection(self._analytics_window_start(), errors)
+        self._render_window_readout()
+        if errors:
+            self.errors_w.value = "".join(_render_error(e) for e in errors)
+        self._log(f"basket re-sliced in {time.perf_counter() - started:.2f}s")
+
+    def _render_window_readout(self) -> None:
+        """The strip's window readout and the binding member's card marker.
+
+        Recomputed on every slice and never carried over: with the date
+        pickers gone there is no range to keep, so a stale window would be a
+        number with nothing behind it.
+        """
+        self.window_readout.update(
+            self.state.basket_window, empty=not self.basket.value
+        )
+        self.basket_cards.set_binding(self.state.basket_window.binding_start)
+
+    def _on_basket_limit(self, result) -> None:
+        """A rejected add — say how far over the cap the request was.
+
+        The count is what makes the message actionable: *32 shown, the cap is
+        25* tells the user how much to narrow by, where "maximum 25" only tells
+        them they failed.
+        """
+        self._limit_nonce[0] += 1
+        self.limit_popup_w.value = _render_limit_popup(
+            f"{result.shown} selected — the cap is {result.cap}. Narrow the table "
+            "or untick some rows.",
+            nonce=self._limit_nonce[0],
+            hidden=False,
+        )
+
+    def _on_filter_dimension(self, _change=None) -> None:
+        """A *Filter* chip: show that dimension's values. No re-render —
+        which dimension is on screen does not change what is filtered."""
+        self.filter_strip.show(self.filter_dim_chips.value)
+
+    def _sync_filter_badges(self) -> None:
+        """Re-label the Filter chips with their active-value counts.
+
+        `set_options` rebuilds the chips, so the current selection is carried
+        across explicitly — it is a relabel, not a change of what is on offer.
+        """
+        self.filter_dim_chips.set_options(
+            [(self.filter_strip.chip_label(k), k) for k in self.filter_strip.keys],
+            value=self.filter_dim_chips.value,
+        )
+
+    def _on_basket_benchmark(self, _change=None) -> None:
+        """A benchmark change moves Beta / Treynor / Jensen and nothing else."""
+        self._render_basket_grid()
+
+    def _on_basket_grouping(self, _change=None) -> None:
+        """Regroup the basket table. The ticks follow, by ticker."""
+        self.basket_grid.set_group_fields(tuple(self.basket_group_chips.value))
+        self._render_basket_grid()
+
+    def _on_basket_window(self, _change=None) -> None:
+        """Switch which stats window the basket table shows."""
+        self.basket_grid.set_window(self.basket_window_chips.value)
+        self._render_basket_grid()
+
+    def _basket_quant_frame(self, tickers: pd.Index) -> pd.DataFrame:
+        """The quant block for the basket table: seven metrics per window.
+
+        Every window is computed up front and the Window chip hides the rest,
+        which is the catalog table's own rule (#324) — so switching windows
+        never recomputes and never issues BQL.
+        """
+        arp = self.state.arp_universe_prices
+        if arp.empty:
+            return pd.DataFrame(index=tickers)
+        name = self.basket_benchmark_dd.value
+        series = self.state.universe_prices.get(name)
+        blocks: list[pd.DataFrame] = []
+        for label, days in stat_windows():
+            table = self.quant_columns.table(
+                arp,
+                years=days / TRADING_DAYS_PER_YEAR,
+                benchmark=series,
+                benchmark_name=name,
+                returns=self.state.universe_rets,
+            )
+            if table.empty:
+                continue
+            block = table.reindex(columns=list(QUANT_METRICS))
+            block.columns = [quant_column_name(label, m) for m in QUANT_METRICS]
+            blocks.append(block)
+        if not blocks:
+            return pd.DataFrame(index=tickers)
+        return pd.concat(blocks, axis=1).reindex(tickers)
+
+    def _render_basket_grid(self) -> None:
+        """Redraw the basket table from the cache. **No BQL** (#341).
+
+        The frame is narrowed by the filter panel's categorical reducer; since
+        #345 the dimensions it reads are the bar's Filter chips rather than the
+        retired accordion's checkbox groups, and the search box and the
+        per-column filter row narrow further in the browser.
+        """
+        narrowed = self.filter_strip.apply(self.meta)
+        self.basket_grid.update(
+            narrowed,
+            self.state.universe_up,
+            quant=self._basket_quant_frame(pd.Index(narrowed["ticker"])),
+        )
 
     def _build_commentary(self) -> None:
         """The all-catalog commentary block: the ranking window toggle, the
@@ -532,7 +689,7 @@ class DashboardApp:
         """The `DashboardState` every orchestration method reads and writes."""
         self.state = DashboardState(
             benchmarks=self.benchmarks,
-            ticker_w=self.ticker_w,
+            basket=self.basket,
             status_w=self.status_w,
             overlay_w=self.overlay_w,
             universe_grid=self.universe_grid,
@@ -644,7 +801,8 @@ class DashboardApp:
         )
         selected_panel = W.VBox(
             [
-                self.filters_accordion,
+                self.basket_section,
+                self.basket_strip,
                 self.selected_perf_section,
                 self.analysis_pane_row,
             ],
@@ -653,7 +811,7 @@ class DashboardApp:
 
         # The third top-level tab: a per-strategy deep-dive. Built here so
         # the tab wiring below can swap it in; its picker options are rebuilt against
-        # the pruned `meta` once the cache loads (alongside `ticker_w`).
+        # the pruned `meta` once the cache loads.
         self.single_strategy = SingleStrategyPanel(
             self.meta, self.state, registry=self.benchmarks
         )
@@ -736,10 +894,12 @@ class DashboardApp:
         self.benchmarks.set_persister(self._persist_benchmarks)
 
     def _wire_observers(self) -> None:
-        """Every live-narrowing, window-toggle and per-pane observer."""
-        for w in self.filter_panel.inputs:
-            w.observe(self._on_filter_change, names="value")
-        self.search_w.observe(self._on_filter_change, names="value")
+        """Every live-narrowing, window-toggle and per-pane observer.
+
+        The basket tab's filters wire themselves: `FilterStrip` takes the
+        handler at construction, because its controls are built with it rather
+        than collected afterwards.
+        """
 
         # Key Highlights depend on the whole catalog, not the selection, so they
         # change only on refetch. Memoized per window (the toggle offers four) and
@@ -836,35 +996,6 @@ class DashboardApp:
         # widget level, independent of any CSS.
         self.overlay_w.layout.display = "none" if hidden else ""
 
-    def _show_limit_popup(self, cap: int) -> None:
-        self._limit_nonce[0] += 1
-        self.limit_popup_w.value = _render_limit_popup(
-            f"Maximum {cap} strategies — deselect one to add another.",
-            nonce=self._limit_nonce[0],
-            hidden=False,
-        )
-
-    def _update_strat_count(self, _change=None) -> None:
-        self.strat_count_w.value = _render_strat_count(
-            len(self.ticker_w.value), MAX_SELECTED_STRATEGIES
-        )
-
-    def _clear_all_extra(self, _b=None) -> None:
-        # `make_filter_panel`'s Clear all resets the filter widgets (and fires the
-        # observers); Multi-Strategy additionally wipes the search box and snaps
-        # the analysis date range back to its full overlap span.
-        self.search_w.value = ""
-        if (
-            self.state.cur_bound_start is not None
-            and self.state.cur_bound_end is not None
-        ):
-            self.state.sync_guard = True
-            try:
-                self.range_min_box.value = self.state.cur_bound_start
-                self.range_max_box.value = self.state.cur_bound_end
-            finally:
-                self.state.sync_guard = False
-
     def _set_status(self, text: str, tone: StatusTone = StatusTone.INFO) -> None:
         self.state.status_w.value = _render_status(text, tone=tone)
 
@@ -893,61 +1024,6 @@ class DashboardApp:
             f"fetched from {src_label} in {elapsed:.1f}s",
             StatusTone.SUCCESS,
         )
-
-    def _set_date_bounds(self, index, reset: bool, *, keep=None) -> None:
-        """Set the two date boxes to the selection's overlap window. On
-        ``reset`` (or a missing/degenerate ``keep``) the range snaps to the full
-        span; otherwise the prior ``keep`` range is clamped into the window.
-        Guarded so the min ≤ max observers stay quiet. ``keep`` is a
-        ``(min, max)`` pair of ``datetime.date`` / ``None`` (the boxes' values).
-        """
-        self.state.sync_guard = True
-        try:
-            if index is None or len(index) == 0:
-                self.state.cur_bound_start = None
-                self.state.cur_bound_end = None
-                self.range_min_box.value = None
-                self.range_max_box.value = None
-                return
-            lo_b = pd.Timestamp(index[0]).date()
-            hi_b = pd.Timestamp(index[-1]).date()
-            self.state.cur_bound_start = lo_b
-            self.state.cur_bound_end = hi_b
-
-            def _clamp(d):
-                return min(max(d, lo_b), hi_b)
-
-            degenerate = keep is None or any(k is None or pd.isna(k) for k in keep)
-            if reset or degenerate:
-                lo, hi = lo_b, hi_b
-            else:
-                lo = _clamp(pd.Timestamp(keep[0]).date())
-                hi = _clamp(pd.Timestamp(keep[1]).date())
-                if lo > hi:
-                    lo, hi = lo_b, hi_b
-            self.range_min_box.value = lo
-            self.range_max_box.value = hi
-        finally:
-            self.state.sync_guard = False
-
-    def _on_range_box(self, change, *, is_min: bool) -> None:
-        # Keep min ≤ max: editing one box past the other drags the other to it.
-        # (DatePicker.min/max traits aren't relied on — the overlap window is
-        # enforced by `_set_date_bounds` on Refresh and by the `.loc` slice.)
-        if self.state.sync_guard or change["new"] is None:
-            return
-        lo = self.range_min_box.value
-        hi = self.range_max_box.value
-        if lo is None or hi is None or lo <= hi:
-            return
-        self.state.sync_guard = True
-        try:
-            if is_min:
-                self.range_max_box.value = lo
-            else:
-                self.range_min_box.value = hi
-        finally:
-            self.state.sync_guard = False
 
     def _activate_tab(self, which: str) -> None:
         _style_tab_button(self.platform_btn, active=which == "platform")
@@ -987,7 +1063,7 @@ class DashboardApp:
         z-score of (1W Sharpe, 1Y) over the fetched cache, so the Multi-Strategy
         views load populated. Falls back to the first available tickers when the
         z-score is unavailable/degenerate."""
-        opt = [o[1] if isinstance(o, tuple) else o for o in self.state.ticker_w.options]
+        opt = [str(t) for t in self.meta["ticker"]]
         if not opt:
             return ()
         if not self.state.arp_universe_prices.empty:
@@ -1107,33 +1183,20 @@ class DashboardApp:
             )
 
     def _on_filter_change(self, _change=None):
-        # Categorical + Characteristics via the shared panel; then the search
-        # substring; then the quant thresholds. Currently-selected tickers that
-        # still pass the categorical filter are unioned back so a live filter
-        # toggle never drops a picked strategy from the option list.
-        filtered = self.filter_panel.apply_categorical(self.meta)
-        query = (self.search_w.value or "").strip().lower()
-        if query:
-            mask = filtered["ticker"].str.lower().str.contains(
-                query, regex=False
-            ) | filtered["name"].str.lower().str.contains(query, regex=False)
-            visible = filtered.loc[mask]
-        else:
-            visible = filtered
+        """A filter moved — re-narrow the basket table's frame.
 
-        quant_keep = self.filter_panel.quant.keep(
-            pd.Index(visible["ticker"]), self.state
-        )
-        visible = visible.loc[visible["ticker"].isin(quant_keep)]
+        **The basket is not touched.** A member the filter hides keeps its
+        place and its card (#341 dec. 6); the grid simply has no row to tick
+        for it, and `push_ticks` re-derives the ticks from tickers after the
+        rebuild. The old code had to union the selected rows back into the
+        picker's options to stop them vanishing from the list — a symptom of
+        the picker being both the offer and the store.
 
-        selected = list(self.state.ticker_w.value)
-        keep_selected = filtered.loc[filtered["ticker"].isin(selected)]
-        combined = pd.concat([visible, keep_selected]).drop_duplicates(subset="ticker")
-        combined = combined.sort_values("ticker").reset_index(drop=True)
-        self.state.ticker_w.options = _ticker_options(combined)
-        self.state.ticker_w.value = tuple(
-            t for t in selected if t in combined["ticker"].values
-        )
+        The search box and the per-column filter row narrow further, in the
+        browser, and never reach here (#285).
+        """
+        self._sync_filter_badges()
+        self._render_basket_grid()
 
     def _render_leaderboard(self, window_days):
         """Render the whole-catalog leaderboard and launches at ``window_days``.
@@ -1186,6 +1249,19 @@ class DashboardApp:
         except Exception:
             self.state.errors_w.value += _render_error(traceback.format_exc())
 
+    @contextlib.contextmanager
+    def _owns_the_render(self):
+        """Suppress the debounced re-slice for the duration.
+
+        For a caller that seeds the basket **and** renders it — the initial
+        load and Refresh both do — so the slice is built once, by them.
+        """
+        self._reslice_suspended = True
+        try:
+            yield
+        finally:
+            self._reslice_suspended = False
+
     def _recompute(self, _btn=None):
         # A recompute rebuilds the selection slice (`cur_prep`), so every
         # memoized benchmark-dependent result is stale — drop them all. This is
@@ -1225,18 +1301,16 @@ class DashboardApp:
         become an attribute.
         """
         try:
-            tickers = list(self.state.ticker_w.value)
+            tickers = list(self.state.basket.value)
             if len(tickers) < 1:
-                self.state.last_sel_key = None
                 self.state.cur_prep = None
-                self._set_date_bounds(None, reset=True)
+                self.state.basket_window = BasketWindow(None, None)
                 self.state.selected_perf_grid.clear()
                 clear_pane(self.state.pane_left, self.meta)
                 clear_pane(self.state.pane_right, self.meta)
             elif self.state.universe_prices.empty:
-                self.state.last_sel_key = None
                 self.state.cur_prep = None
-                self._set_date_bounds(None, reset=True)
+                self.state.basket_window = BasketWindow(None, None)
                 pane_errors.append(
                     "Universe price cache is empty — initial BQL fetch returned no rows."
                 )
@@ -1247,9 +1321,8 @@ class DashboardApp:
                 sel_full = self.state.universe_prices.reindex(columns=tickers)
                 sel_5y = sel_full.loc[sel_full.index >= universe_window_start]
                 if sel_5y.dropna(how="all").empty:
-                    self.state.last_sel_key = None
                     self.state.cur_prep = None
-                    self._set_date_bounds(None, reset=True)
+                    self.state.basket_window = BasketWindow(None, None)
                     pane_errors.append(
                         f"No price data in the {LOOKBACK_YEARS}Y window for: {tickers}."
                     )
@@ -1268,22 +1341,24 @@ class DashboardApp:
     ) -> None:
         """Build the selection slice for a non-empty basket and draw both panes.
 
-        Re-bounds the analysis date boxes to the basket's overlap window first;
-        the slice and both panes then follow from the chosen sub-range.
+        **The window is the basket's overlap, and nothing else** (#341 dec.
+        12). It starts at the latest first-valid date among the members and
+        ends at the earliest last-valid date, so every day in it is a day every
+        member traded. The two date pickers that used to let the user narrow
+        inside that span are gone: nothing on screen said where the span came
+        from or which member set it, so the control was an invitation to
+        second-guess a number the tab never explained. `basket_window` names
+        the binding member instead, which makes shortening the sample a
+        one-click decision — remove that strategy — rather than a slider.
         """
-        bound_start, bound_end = common_window_bounds(sel_5y)
-        if bound_start is None:
-            bound_start, bound_end = sel_5y.index.min(), sel_5y.index.max()
-        window_index = sel_5y.loc[bound_start:bound_end].index
-        sel_key = tuple(tickers)
-        self._set_date_bounds(
-            window_index,
-            reset=(sel_key != self.state.last_sel_key),
-            keep=(self.range_min_box.value, self.range_max_box.value),
-        )
-        self.state.last_sel_key = sel_key
-        win_start = pd.Timestamp(self.range_min_box.value)
-        win_end = pd.Timestamp(self.range_max_box.value)
+        window = basket_window(sel_5y)
+        self.state.basket_window = window
+        if window.start is None or window.end is None:
+            # No overlap at all. The members have histories, just no shared
+            # day; the existing empty-slice path reports it.
+            win_start, win_end = sel_5y.index.min(), sel_5y.index.max()
+        else:
+            win_start, win_end = window.start, window.end
         sel_window = sel_5y.loc[win_start:win_end]
         # Compute the selected-set returns once and thread them into
         # the dependents (perf_table, sz_series, cm, rd_stats) rather
@@ -1311,9 +1386,18 @@ class DashboardApp:
     def _run_refresh(self):
         """The Refresh-prices blocking work: refetch, re-prune, recompute.
 
+        **It never seeds or replaces the basket** (#341 dec. 11) — it re-slices
+        the one it finds, dropping only the members the prune removed. The
+        re-slice is suspended throughout because the `_recompute` at the end is
+        the render, and a basket write here would otherwise queue a second.
+
         Split out of ``_refresh_prices`` so a live frontend can run it on a
         worker thread (see ``_refresh_prices``). Drives the overlay's staged
         progress from 60% (fetch) through dismissal at 100%."""
+        with self._owns_the_render():
+            self._run_refresh_body()
+
+    def _run_refresh_body(self):
         try:
             self.state.universe_prices, _ = fetch_prices(
                 self._fetch_tickers(), self.universe_start, self.today, use_cache=False
@@ -1338,6 +1422,14 @@ class DashboardApp:
             self.meta = self.meta_all[self.meta_all["ticker"].isin(live)].reset_index(
                 drop=True
             )
+            # **Re-seat the basket** (#347): a ticker the prune dropped has no
+            # prices left, so leaving it in would hand `basket_window` an
+            # all-NaN column and collapse the overlap to nothing — the whole
+            # analysis breaking because one index went stale. Through
+            # `basket.remove`, so the card and the tick go with it.
+            self.state.basket.remove(
+                [t for t in self.state.basket.value if t not in live]
+            )
             self._on_filter_change()
             self.single_strategy.picker.options = _ticker_options(self.meta)
             self.benchmarks.set_catalog(_ticker_options(self.meta))
@@ -1352,6 +1444,7 @@ class DashboardApp:
         try:
             self.state.universe_up = universe_perf(self.state.arp_universe_prices)
             self.analytics.render_universe_grid(self.meta)
+            self._render_basket_grid()
             # Fresh data → every analytics tab is stale; re-render the visible
             # one now, the hidden two lazily on next activation.
             self.analytics.invalidate(self.meta)
@@ -1392,6 +1485,12 @@ class DashboardApp:
             60, f"Fetching prices for {len(self._fetch_tickers())} indices…"
         )
 
+        # A pending re-slice is dropped rather than left to fire mid-fetch:
+        # `_run_refresh` ends by rendering the same basket, so the timer would
+        # only duplicate it — against a half-replaced cache.
+        if self._reslice_timer is not None:
+            self._reslice_timer.cancel()
+            self._reslice_timer = None
         if get_ipython() is None:
             # Headless / pytest: run synchronously so callers observe the
             # refetch immediately after `.click()` (no frontend to paint for).
@@ -1495,7 +1594,6 @@ class DashboardApp:
             self.meta = self.meta_all[self.meta_all["ticker"].isin(live)].reset_index(
                 drop=True
             )
-            self.state.ticker_w.options = _ticker_options(self.meta)
             self.single_strategy.picker.options = _ticker_options(self.meta)
             self.benchmarks.set_catalog(_ticker_options(self.meta))
             self._log(
@@ -1510,10 +1608,14 @@ class DashboardApp:
             self.state.universe_rets = daily_returns(self.state.arp_universe_prices)
             # Startup selection: top 5 by z(1W Sharpe, 1Y) so the Multi-Strategy
             # views load populated (the _recompute below reads this selection).
-            self.state.ticker_w.value = self._default_selection()
+            self._reslice_suspended = True
+            self.state.basket.replace(self._default_selection())
             try:
                 self.state.universe_up = universe_perf(self.state.arp_universe_prices)
                 self.analytics.render_universe_grid(self.meta)
+                # After the perf table, so the stats columns are there, and
+                # after the basket is seeded, so the seeded rows tick.
+                self._render_basket_grid()
                 # Only the visible analytics tab (Sunburst) computes on load; the
                 # hidden Regime / Factor tabs render on first pill click.
                 self.analytics.invalidate(self.meta)
@@ -1529,6 +1631,10 @@ class DashboardApp:
         # First render of the selected-set views + Single Strategy tab, then
         # dismiss the overlay. On a fatal fetch failure the error overlay stays
         # up (the traceback also renders in the commentary block).
+        #
+        # The seed above suspended the debounced re-slice; this is the render
+        # it was suspended for, and from here a basket write is the user's.
+        self._reslice_suspended = False
         self._recompute()
         self._render_single()
         if not self.state.universe_prices.empty:

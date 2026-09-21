@@ -21,7 +21,8 @@ between authored Commentary notes and New Launches) → a
 tabs — **Platform** (one control bar over a full-width all-catalog performance
 grid + a Platform-analytics card: a chart — Icicle / Scatter / Strip — beside
 a table of its own points), **Multi-Strategy**
-(a filter accordion, a selected-strategy perf grid, and two side-by-side
+(the same catalog table in multi-select over a **Basket**, a strip of basket
+cards, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
 live-narrowing filter accordion, a profile card + cumulative chart, a
 monthly-return calendar, and two analysis panes) → disclaimers. All compute
@@ -262,9 +263,74 @@ the `COMMENTARY_*_SHARE` pattern: the 360px basis this replaced squeezed the
 table into a strip on a wide screen. Both `ITable`s now wear a shared **`.bbg-itable`**;
 `.bbg-catalog` keeps only the group bands and the filter row.
 
+The Multi-Strategy tab is **the catalog table with ticks** (epic #341,
+v0.9.29). It was the v0.8 idiom the rest of the app had left behind: a
+*Filters* accordion holding a 240px checkbox list of the whole catalog beside
+pill-tabs over more checkbox groups, nine `≥ / ≤` threshold rows typed against
+numbers that appeared nowhere on screen, two date pickers over a window nothing
+explained — and a pick that reached the analytics only through **Refresh
+prices**, which refetched a cache already holding the answer. The catalog it
+was picking from is the one the Platform tab draws grouped, with performance
+columns, one tab away.
+
+Now it is that table: `section_panel` + a *Table view* `control_bar` reading
+**Group by · Window · Benchmark · Filter**, the same `ITable` in Select's
+`multi` style, then a **Basket strip** of cards, then the perf grid and the two
+panes. `CatalogTable` (`src/layout/grids.py`) is the base the Platform's
+`UniverseGrid` and the new `BasketGrid` share; what a click *means* is the
+subclass's, which is the only reason there are two.
+
+Four rules hold underneath.
+
+**The basket is the source of truth, not the table's selection.** `Basket`
+(`src/layout/basket.py`) holds an ordered ticker tuple and the cap, and the
+grid, the cards and the analytics are views of it. itables destroys and re-news
+the table on every options change, so a row *position* is worthless across a
+filter — the basket is what survives, and the grid re-derives its ticks from it
+after each rebuild. Every write checks the cap **before** assigning, so a
+rejection changes nothing and fires no observer; an over-cap add is rejected
+**whole**, because seating the first few in table order would be the app
+choosing a subset of what the user asked for. A member the filters hide is
+never touched by a table event and keeps its card.
+
+**The kernel never guesses what the browser is showing.** The search text and
+the per-column filter row live in the browser by design (#285), so *Select all
+shown* and a group-header click run as DataTables actions over the applied
+search and come back as positions. `group_member_rows` is the header's walking
+rule — data rows until the next header at that level or nearer the root — in
+Python, because the browser is not available to a unit test; `_JS_GROUP_SELECT`
+transcribes it.
+
+**The window is derived, not chosen.** `basket_window` is the **intersection**
+of the members' histories — the latest first-valid date to the earliest
+last-valid — and it names the member binding each edge. The two date pickers
+are gone: nothing said where their bounds came from, so the control invited
+second-guessing a number the tab never explained. The strip's readout says it
+instead, and the binding member's card carries a marker, which makes
+shortening the sample one click — remove that strategy.
+
+**No BQL from a control.** A chip, a filter, a tick, a header or a card
+re-slices the cache on a short debounce (`RESLICE_DEBOUNCE_S`), deferred while
+a Refresh is running because both write `state.cur_prep`. *Refresh prices*
+means only what it says, and sits on the section's title line rather than among
+the settings.
+
+Two more, on the filters: **structure in the bar, text and numbers in the
+table.** *Filter* names a dimension and a `FilterStrip` below the bar shows its
+values as chips (one control per dimension, swapped by `display`, so switching
+dimensions keeps every dimension's ticks; a chip badge counts the active ones,
+because a hidden selection is otherwise invisible). And the nine quant
+thresholds became **columns** — Sortino · Calmar · Beta · Treynor · Jensen α ·
+VaR · RSI, named `"{window} {metric}"` so the Window chip hides them and the
+comparison filter row filters them with no new branches. `QuantColumns` is the
+one place both tabs read, so the number on screen is the number the threshold
+compares. Vol and the cross-sectional Z stayed behind: the Platform tab ranks,
+this tab narrows. **Single Strategy keeps `FilterPanel`** and is its only
+caller now.
+
 ## Current version
 
-`v0.9.28` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.29` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

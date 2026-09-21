@@ -28,7 +28,7 @@ its filter's units — four wrong-looking columns and no error anywhere.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import ipywidgets as W
 import pandas as pd
@@ -46,6 +46,7 @@ from ..config import (
     universe_grid_group_fields,
 )
 from ..style import ANALYTICS_HEIGHT, CATALOG_TABLE_HEIGHT, Color
+from .basket import Basket
 from .theme import _palette_color
 
 
@@ -208,12 +209,40 @@ _TEXT_PAD: int = 24  # cell padding + a little header slack
 _TEXT_COL_MIN: int = 56
 _TEXT_COL_MAX: int = 340
 # Flat stat-column suffixes (a column is a "stat" if its name ends with one).
-_STAT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Sharpe", " Max DD")
+_STAT_SUFFIXES: tuple[str, ...] = (
+    " Return",
+    " Vol",
+    " Sharpe",
+    " Max DD",
+    # The basket table's quant block (#345). Listed here rather than given a
+    # test of their own so they inherit every behaviour the window stats have:
+    # hidden by the Window chip (`_window_of` matches the same prefix),
+    # comparison-filtered rather than substring-searched, and rendered as
+    # numbers. That is the whole reason they are named "<window> <metric>".
+    " Sortino",
+    " Calmar",
+    " Beta",
+    " Treynor",
+    " Jensen",
+    " VaR",
+    " RSI",
+)
 # The stat columns whose stored value is a fraction and whose rendered value is
 # a percentage. Read by both the catalog renderer and the numeric filter, so a
 # column cannot be rendered as a percentage and filtered as a fraction — which
 # would answer ">1" on a Return column with every row in the catalog.
-_PERCENT_SUFFIXES: tuple[str, ...] = (" Return", " Vol", " Max DD")
+#: VaR joins them: `historical_var` returns a positive daily loss *fraction*,
+#: so a cell reading "1.85%" stores 0.0185 and a filter that did not carry the
+#: x100 would answer ">1" with the whole catalog. Jensen alpha is annualized
+#: and also a fraction, for the same reason. The other five are ratios or
+#: index levels and are stored as they read.
+_PERCENT_SUFFIXES: tuple[str, ...] = (
+    " Return",
+    " Vol",
+    " Max DD",
+    " VaR",
+    " Jensen",
+)
 
 
 def _content_px(header: object, values: object) -> int:
@@ -614,6 +643,13 @@ ITABLE_CLASS: str = "bbg-itable"
 #: `app_css.html`.
 CATALOG_TABLE_CLASS: str = "bbg-catalog"
 
+
+#: The basket table's own hook, on top of `.bbg-catalog`. It carries only what
+#: multi-select adds — the group headers' pointer and hover, and the tick cell
+#: — so the Platform's headers, which are not hit areas, do not advertise that
+#: they are.
+BASKET_TABLE_CLASS: str = "bbg-basket-table"
+
 # The catalog scrolls rather than pages, but that scrolling is done in CSS
 # (`.bbg-catalog` in `app_css.html`), NOT by DataTables' `scrollY`.
 #
@@ -832,8 +868,99 @@ def _filter_kinds(
     return kinds
 
 
-def _js_filter_row(kinds: dict[int, str]) -> JavascriptFunction:
+def group_member_rows(levels: list[int | None], header: int) -> list[int]:
+    """The data rows a group header owns — **the specification the JS follows**.
+
+    `levels` is one entry per rendered row, top to bottom: a group header's
+    nesting level (`dtrg-level-N`), or `None` for a data row. `header` is the
+    position of the header that was clicked. The answer is every data row
+    below it up to the next header at the same level **or higher** (a smaller
+    number is closer to the root), which is exactly "this group and everything
+    nested inside it".
+
+    It is a Python function because the behaviour has to be testable and the
+    browser is not available to a unit test: `_js_group_select` transcribes
+    this loop, and `test_basket_grid.py` pins the rule here. The two are short
+    enough to read side by side, which is the point — a rule nobody can test is
+    a rule that drifts.
+
+    **It depends on row contiguity** (#261): RowGroup only brackets adjacent
+    rows, so a frame that is not `_group_ordered` would hand a header rows
+    belonging to another group. That is a correctness requirement of the
+    grouping itself, not something this walk can defend against.
+    """
+    if not 0 <= header < len(levels) or levels[header] is None:
+        return []
+    level = levels[header]
+    members: list[int] = []
+    for position in range(header + 1, len(levels)):
+        row_level = levels[position]
+        if row_level is None:
+            members.append(position)
+        elif row_level <= level:
+            break
+    return members
+
+
+_JS_GROUP_SELECT: str = (
+    # RowGroup emits no select event of its own, so the header is wired here —
+    # by the same `drawCallback` that builds the filter row, for the same
+    # reason (#285): it is the one itables option that reaches DataTables
+    # untouched. Delegated from the tbody so it survives a redraw, and marked
+    # so a second draw does not stack a second listener. If DataTables replaces
+    # the tbody outright the marker goes with it and the next draw re-installs,
+    # which is the behaviour we want either way.
+    "  var body = node.tBodies[0];"
+    "  if (body && !body.classList.contains('bbg-group-select')) {"
+    "    body.classList.add('bbg-group-select');"
+    "    var levelOf = function (row) {"
+    "      var found = -1;"
+    "      for (var i = 0; i < row.classList.length; i++) {"
+    r"        var m = /^dtrg-level-(\d+)$/.exec(row.classList[i]);"
+    "        if (m) { found = parseInt(m[1], 10); }"
+    "      }"
+    "      return found;"
+    "    };"
+    "    body.addEventListener('click', function (e) {"
+    "      var header = e.target && e.target.closest"
+    "        ? e.target.closest('tr.dtrg-group') : null;"
+    "      if (!header || !body.contains(header)) { return; }"
+    "      e.stopPropagation();"
+    "      var level = levelOf(header);"
+    # The walk `group_member_rows` specifies: data rows until the next header
+    # at this level or nearer the root.
+    "      var nodes = [];"
+    "      var row = header.nextElementSibling;"
+    "      while (row) {"
+    "        if (row.classList.contains('dtrg-group')) {"
+    "          if (levelOf(row) <= level) { break; }"
+    "        } else {"
+    "          nodes.push(row);"
+    "        }"
+    "        row = row.nextElementSibling;"
+    "      }"
+    "      if (!nodes.length) { return; }"
+    # Asked through the API rather than by reading the `selected` class off the
+    # rows: the class name is Select's to change, the index set is not.
+    "      var wanted = api.rows(nodes).indexes().toArray();"
+    "      var chosen = api.rows({selected: true}).indexes().toArray();"
+    "      var all = wanted.every(function (i) { return chosen.indexOf(i) !== -1; });"
+    "      if (all) { api.rows(nodes).deselect(); } else { api.rows(nodes).select(); }"
+    "    });"
+    "  }"
+)
+
+
+def _js_filter_row(
+    kinds: dict[int, str], *, group_select: bool = False
+) -> JavascriptFunction:
     """A `drawCallback` that builds the per-column filter row, once per table.
+
+    With `group_select` it also wires the row-group headers as hit areas
+    (`_JS_GROUP_SELECT`), because `drawCallback` takes **one** function and
+    this is the only option itables forwards to DataTables untouched. The two
+    jobs are unrelated; sharing a callback is the bundle's constraint, not a
+    design.
 
     **Why `drawCallback` and not `initComplete`.** The itables widget
     destructures `initComplete` out of the options and calls it *only* from
@@ -910,7 +1037,8 @@ def _js_filter_row(kinds: dict[int, str]) -> JavascriptFunction:
         "function (settings) {"
         "  var api = this.api();"
         "  var node = api.table().node();"
-        "  var head = node.tHead;"
+        + (_JS_GROUP_SELECT if group_select else "")
+        + "  var head = node.tHead;"
         "  if (!head) { return; }"
         f"  var textCols = {text_cols!r};"
         f"  var numberCols = {json.dumps(scales)};"
@@ -1006,6 +1134,8 @@ def _catalog_table_options(
     window: str | None = None,
     *,
     zscore_col: str | None = None,
+    select_style: str = "single",
+    select_buttons: bool = False,
 ) -> dict:
     """DataTable options for the catalog: hidden group columns surfaced as
     nested row-group headers, numeric renderers, and the Sharpe / Z-Score heat.
@@ -1028,6 +1158,15 @@ def _catalog_table_options(
     diverging ramp, its DataTables kind, its number renderer and the units its
     filter compares in. All five failed *silently* on a relabel, which is a
     poor way to hold a header still (#323).
+
+    `select_style` is DataTables Select's style — `"single"` for the Platform's
+    one-row pick, `"multi"` for the basket table, where the whole row is the
+    hit area and the tick column is the affordance rather than the only target
+    (#341 dec. 3). `select_buttons` puts Select's *Select all* / *Select none*
+    beside the search box. They run in the **browser**, over the rows the
+    applied search leaves, because the search text and the filter row live
+    there by design (#285) and only DataTables knows what is on show; the cap
+    stays the kernel's to enforce, on the positions that come back.
     """
     if window is None:
         window = universe_grid_default_window()
@@ -1035,6 +1174,21 @@ def _catalog_table_options(
     if groups:
         targets = list(range(len(groups)))
         column_defs.append({"targets": targets, "visible": False})
+    if select_style == "multi":
+        # The tick, on the **first visible column** rather than in a column of
+        # its own. Select draws its checkbox from this class, and a dedicated
+        # column would have to be prepended to the frame — which shifts every
+        # position the rest of this function is keyed to: the hidden group
+        # targets, `rowGroup.dataSrc`, the window targets, the ranking
+        # column's five behaviours and the filter row's indices. Every one of
+        # those would need an offset nobody reading them would expect. The
+        # group columns are hidden, so the first visible one is `len(groups)`.
+        column_defs.append(
+            {
+                "targets": [len(groups)],
+                "className": "select-checkbox bbg-tick-cell",
+            }
+        )
     hidden_windows = [
         position
         for position, name in enumerate(str(c) for c in frame.columns)
@@ -1072,9 +1226,11 @@ def _catalog_table_options(
         # The frame arrives already ordered (see `_group_ordered`); an initial
         # DataTables sort would undo the grouping contiguity it establishes.
         "order": [],
-        # One row at a time. Without this the Select extension is inert and
-        # `selected_rows` never changes, so the click handler below never runs.
-        "select": {"style": "single"},
+        # Without this the Select extension is inert and `selected_rows` never
+        # changes, so the click handler below never runs. `single` is one row
+        # at a time (the Platform's pick); `multi` is the basket's, where every
+        # click toggles its own row instead of replacing the selection.
+        "select": {"style": select_style},
         # The search box goes top-LEFT (#283). DataTables' default puts it at
         # `topEnd`, which is a default rather than a decision: the Platform tab
         # reads from the left rail inwards, so the table's own search was the
@@ -1085,7 +1241,11 @@ def _catalog_table_options(
         # layout the same way. `paging: False` already empties the two slots
         # below, and `bottomStart` keeps the row-count readout where it is.
         "layout": {
-            "topStart": "search",
+            "topStart": (
+                ["search", {"buttons": ["selectAll", "selectNone"]}]
+                if select_buttons
+                else "search"
+            ),
             "topEnd": None,
             "bottomStart": "info",
             "bottomEnd": None,
@@ -1105,7 +1265,10 @@ def _catalog_table_options(
         # inputs are not part of the frame. See `_js_filter_row` for why this
         # is a `drawCallback` and why the filter text lives on `window`.
         "drawCallback": _js_filter_row(
-            _filter_kinds(frame, groups, zscore_col=zscore_col)
+            _filter_kinds(frame, groups, zscore_col=zscore_col),
+            # Tied to the style rather than given a flag of its own: taking a
+            # whole group is meaningless where only one row can be selected.
+            group_select=select_style == "multi",
         ),
         # itables downsamples a table over ~64KB of JSON, keeping the head and
         # tail and dropping the middle. For a browse surface whose job is to
@@ -1146,25 +1309,51 @@ def picked_row(change: dict, size: int) -> int | None:
     return row if 0 <= row < size else None
 
 
-class UniverseGrid:
-    """The all-catalog Platform grid — every in-universe index with its
-    metadata, 1Y/3Y/5Y performance and the selectable Z-Score column, with the
-    classification tiers drawn as nested row-group headers.
+class CatalogTable:
+    """The catalog as a DataTables grid — the base the Platform's table and the
+    Multi-Strategy basket's are both built on.
 
     Deliberately not a `_Grid`: that base class exists to make ipydatagrid's
     theme-refresh invariant structural, and this table has no such invariant —
     its chrome is ordinary page CSS, which a data swap cannot reset. It keeps
     `update` / `clear` so its callers do not know the difference.
+
+    It owns everything the two tables share and nothing either one decides:
+    the `ITable` and its CSS hooks, the stats window and group fields, the
+    options builder, the **position ↔ ticker map**, and the `selected_rows`
+    observer as an overridable `_on_selected_rows`. What a click *means* is the
+    subclass's — the Platform opens a strategy, the basket ticks a row — which
+    is the only reason there are two of them (#341 dec. 13).
+
+    **Positions are worthless across a rebuild.** itables destroys and re-news
+    the table on every options change, so a position from the previous frame
+    lands on a different row in the next one. `positions_of` / `tickers_at`
+    are the translation, and both guard against a name or an index the current
+    frame does not hold — the #265 race, where a re-render lands between a
+    click and its callback.
     """
 
-    def __init__(self, on_pick: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        select_style: str = "single",
+        select_buttons: bool = False,
+    ) -> None:
         #: The stats window currently shown, and the fields currently grouped.
         #: Held on the object per the v0.9.16 object model — both are state, not
         #: something a caller threads through every `update`.
         self.window: str = universe_grid_default_window()
         self.group_fields: tuple[str, ...] = universe_grid_group_fields()
+        self._select_style = select_style
+        self._select_buttons = select_buttons
         self.widget = ITable(
-            pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
+            pd.DataFrame(),
+            **_catalog_table_options(
+                pd.DataFrame(),
+                [],
+                select_style=select_style,
+                select_buttons=select_buttons,
+            ),
         )
         self.widget.add_class(ITABLE_CLASS)
         self.widget.add_class(CATALOG_TABLE_CLASS)
@@ -1201,15 +1390,28 @@ class UniverseGrid:
         #: `_build_universe_frame` spelled it — the grid is told, it never
         #: reads it back off the header (#323).
         self._zscore_col: str | None = None
-        self._on_pick = on_pick
-        self.widget.observe(self._forward_pick, names="selected_rows")
+        self.widget.observe(self._on_selected_rows, names="selected_rows")
 
-    def _forward_pick(self, change: dict) -> None:
-        """Translate a clicked row into a ticker and hand it to `on_pick`."""
-        picked = picked_row(change, len(self._tickers))
-        if picked is None or self._on_pick is None:
-            return
-        self._on_pick(self._tickers[picked])
+    def _on_selected_rows(self, change: dict) -> None:
+        """What a selection change means. Subclasses override; the base
+        ignores it, so a table with no click behaviour needs no handler."""
+
+    # --- the position <-> ticker map ------------------------------------------
+
+    def positions_of(self, tickers: Iterable[str]) -> list[int]:
+        """Row positions for ``tickers`` in the frame currently rendered.
+
+        Names the frame does not hold are **skipped, not raised** — a basket
+        member hidden by the filters is the normal case, not an error, and it
+        keeps its card while the table simply has no row to tick.
+        """
+        index = {ticker: position for position, ticker in enumerate(self._tickers)}
+        return [index[t] for t in tickers if t in index]
+
+    def tickers_at(self, positions: Iterable[int]) -> list[str]:
+        """The tickers at ``positions``, skipping any outside the frame."""
+        size = len(self._tickers)
+        return [self._tickers[p] for p in positions if 0 <= p < size]
 
     def update(
         self,
@@ -1218,9 +1420,15 @@ class UniverseGrid:
         *,
         zcol: pd.Series | None = None,
         zname: str | None = None,
+        quant: pd.DataFrame | None = None,
     ) -> None:
         combined, zscore_col = _build_universe_frame(
-            meta, up, zcol=zcol, zname=zname, group_fields=self.group_fields
+            meta,
+            up,
+            zcol=zcol,
+            zname=zname,
+            group_fields=self.group_fields,
+            quant=quant,
         )
         self._set_data(combined, zscore_col=zscore_col)
 
@@ -1251,6 +1459,8 @@ class UniverseGrid:
             self._groups,
             self.window,
             zscore_col=self._zscore_col,
+            select_style=self._select_style,
+            select_buttons=self._select_buttons,
         )
 
     def set_window(self, window: str) -> None:
@@ -1286,6 +1496,154 @@ class UniverseGrid:
         self._set_data(pd.DataFrame())
 
 
+class UniverseGrid(CatalogTable):
+    """The all-catalog Platform grid — every in-universe index with its
+    metadata, 1Y/3Y/5Y performance and the selectable ranking column, with the
+    classification tiers drawn as nested row-group headers.
+
+    Single-select: one row at a time, and a click opens that strategy in
+    Single Strategy. Everything else is the base's.
+    """
+
+    def __init__(self, on_pick: Callable[[str], None] | None = None) -> None:
+        super().__init__()
+        self._on_pick = on_pick
+
+    def _on_selected_rows(self, change: dict) -> None:
+        """Translate a clicked row into a ticker and hand it to `on_pick`.
+
+        `picked_row` swallows the two non-events — a deselection, and a
+        position outside the current frame — which is what makes this
+        single-select rather than a toggle. The basket table needs the
+        opposite (an empty list there empties the basket), which is why the
+        two handlers are separate rather than one with a flag.
+        """
+        picked = picked_row(change, len(self._tickers))
+        if picked is None or self._on_pick is None:
+            return
+        self._on_pick(self._tickers[picked])
+
+
+class BasketGrid(CatalogTable):
+    """The catalog table as the Multi-Strategy picker (#341 dec. 2-6, #343).
+
+    The same rows, grouping, search and per-column filter row as the Platform's
+    table — in Select's `multi` style, with a tick column, *Select all shown* /
+    *Select none*, and row-group headers that take their whole group. What it
+    adds over the base is one rule: **the table and the basket are reconciled
+    by ticker, never by position**, because a position means nothing across the
+    rebuild that every options change forces.
+
+    Three things fall out of that and are worth stating, because each was a way
+    to lose a selection quietly:
+
+    - **A basket member the filters have hidden is not the table's business.**
+      The diff runs against `basket ∩ frame`, so a member with no row is
+      neither removed nor re-added; it keeps its card (#341 dec. 6).
+    - **A rejected add changes nothing, and the table is put back.** The
+      browser has already drawn the tick by the time the kernel sees it, so a
+      rejection has to re-send the previous positions or the table would show
+      a selection the basket does not hold.
+    - **One write, not two.** The adds and the removes resolve into a single
+      `replace`, so a change that would take the basket over the cap is
+      rejected *whole*. An earlier cut applied the removes first and let the
+      add fail behind them, which honoured half a gesture; it also meant the
+      cards and the analytics saw two events for one click.
+    """
+
+    def __init__(
+        self,
+        basket: Basket,
+        *,
+        on_limit: Callable[[object], None] | None = None,
+    ) -> None:
+        super().__init__(select_style="multi", select_buttons=True)
+        self.widget.add_class(BASKET_TABLE_CLASS)
+        self.basket = basket
+        self._on_limit = on_limit
+        #: Set while *we* are writing `selected_rows`, so the write is not read
+        #: back as a user edit. The widget re-sends its value after every
+        #: rebuild, and without this a push would diff against itself.
+        self._pushing = False
+        self.basket.observe(self._on_basket_change, names="value")
+
+    # --- the table writes the basket ------------------------------------------
+
+    def _on_selected_rows(self, change: dict) -> None:
+        """Reconcile the ticks with the basket, by ticker.
+
+        Unlike `UniverseGrid`, an **empty list is a real event** here: it is
+        *Select none*, or the last ticked row being untoggled, and it has to
+        empty the basket's in-frame members rather than be swallowed as a
+        deselection.
+        """
+        if self._pushing:
+            return
+        reported = self.tickers_at(change.get("new") or [])
+        ticked = set(reported)
+        in_frame = set(self._tickers)
+        held = self.basket.value
+
+        # Only in-frame members are the table's to drop: one the filters are
+        # hiding has no row here, so this change says nothing about it.
+        kept = [t for t in held if t in ticked or t not in in_frame]
+        added = [t for t in reported if t not in held]
+        target = (*kept, *added)
+        if target == held:
+            return
+
+        result = self.basket.replace(target)
+        if not result.accepted:
+            # The browser drew these ticks already; put the table back to what
+            # the basket actually holds and say why.
+            self.push_ticks()
+            if self._on_limit is not None:
+                self._on_limit(result)
+
+    # --- the basket writes the table ------------------------------------------
+
+    def _on_basket_change(self, _change=None) -> None:
+        """A card's **×**, *Clear all* or a default selection — follow it."""
+        if self._pushing:
+            return
+        self.push_ticks()
+
+    def push_ticks(self) -> None:
+        """Make the ticks say what the basket holds, for this frame.
+
+        Called after every write of the data as well as on a basket change:
+        the widget re-applies its own `selected_rows` when `_dt_args` changes,
+        and those are the *previous* frame's positions. This overwrites them
+        with the current frame's, derived from tickers.
+        """
+        self._pushing = True
+        try:
+            # Sorted: `positions_of` answers in *basket* order, and the widget
+            # holds a row set. Pushing an unsorted list would make an identical
+            # selection compare unequal to the one the widget sends back.
+            self.widget.selected_rows = sorted(self.positions_of(self.basket.value))
+        finally:
+            self._pushing = False
+
+    def _set_data(self, frame: pd.DataFrame, *, zscore_col: str | None = None) -> None:
+        """Write the frame, then re-derive the ticks for it.
+
+        **The old positions are dropped first.** itables validates
+        `selected_rows` against the incoming data and raises *Selected rows out
+        of range* when the new frame is shorter — which is every narrowing
+        filter. Clearing before the write and re-pushing after is the ordering
+        that survives a frame of any size; the guard is what stops the clear
+        being read back as the user emptying the basket.
+        """
+        self._pushing = True
+        try:
+            self.widget.selected_rows = []
+            super()._set_data(frame, zscore_col=zscore_col)
+        finally:
+            self._pushing = False
+        self.push_ticks()
+
+
 def _build_universe_frame(
     meta: pd.DataFrame,
     up: pd.DataFrame,
@@ -1293,6 +1651,7 @@ def _build_universe_frame(
     zcol: pd.Series | None = None,
     zname: str | None = None,
     group_fields: tuple[str, ...] | None = None,
+    quant: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str | None]:
     """Assemble the all-catalog grid's DataFrame (pure — no grid side effects),
     **and the name of the ranking column it inserted** (None when it did not).
@@ -1313,7 +1672,15 @@ def _build_universe_frame(
     column names downstream: this function is the only place that decides both
     *whether* there is a ranking column and *what it is called*, and a
     consumer re-deciding either from the string gets it wrong the moment the
-    header is relabelled (#323)."""
+    header is relabelled (#323).
+
+    `quant` is the basket table's extra block (#345): per-ticker Sortino /
+    Calmar / Beta / Treynor / Jensen / VaR / RSI, already named
+    `"<window> <metric>"` by `quant_column_name` and already widened across the
+    stat windows. It arrives assembled rather than being computed here because
+    the metrics need prices, a benchmark and a returns frame, none of which
+    this function has — and because the same table answers Single Strategy's
+    thresholds, so computing it twice would be two numbers for one fact."""
     if meta.empty:
         return pd.DataFrame(), None
     info = _build_info_block(meta, None, CATALOG_GRID_FIELDS, date_cols=("live_date",))
@@ -1334,6 +1701,11 @@ def _build_universe_frame(
         up_norm = up.reindex(columns=present, level=0).reindex(info.index)
         up_norm.columns = _flatten_perf_columns(up_norm.columns)
         blocks.append(up_norm)
+
+    if quant is not None and not quant.empty:
+        # After the performance block, so a window's columns read
+        # Return / Vol / Sharpe / Max DD and then the quant set.
+        blocks.append(quant.reindex(info.index))
 
     combined = pd.concat(blocks, axis=1) if len(blocks) > 1 else info
     combined = _group_ordered(combined, _catalog_group_labels(group_fields), z_key)

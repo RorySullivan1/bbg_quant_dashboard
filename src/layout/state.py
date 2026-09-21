@@ -15,6 +15,8 @@ import pandas as pd
 
 from ..cache import LRUCache
 from ..config import filter_dimensions
+from ..stats import BasketWindow
+from .basket import Basket
 from .benchmarks import BenchmarkRegistry
 from .grids import PerfGrid, UniverseGrid
 from .panes import AnalysisPane
@@ -46,7 +48,11 @@ class DashboardState:
     """
 
     # --- widget handles (set once at construction in build_app) ---
-    ticker_w: W.SelectMultiple
+    #: The Multi-Strategy selection. An **object, not a widget** (#341 dec. 1):
+    #: the picker used to be the store, so the cap lived in three places and a
+    #: row position had to survive a table rebuild, which it cannot. The grid,
+    #: the cards and the analytics are views of this.
+    basket: Basket
     status_w: W.HTML  # post-load summary toast
     overlay_w: W.HTML  # dimmed loading overlay + staged progress
     universe_grid: UniverseGrid
@@ -73,17 +79,15 @@ class DashboardState:
     #: Currently visible filter dimension, as a schema field key — drives
     #: "Clear section". Defaults to whichever dimension the panel opens on.
     active_filter: str = field(default_factory=lambda: filter_dimensions()[0].key)
-    #: The ticker set rendered on the last recompute; when it changes the
-    #: analysis date-range boxes reset to the new overlap window.
-    last_sel_key: tuple | None = None
-    #: Suppresses the bidirectional date-range observers during programmatic
-    #: box updates.
-    sync_guard: bool = False
-    #: The selection's current overlap-window bounds (datetime.date), set when
-    #: the date boxes are re-bounded on Refresh; `Clear all` snaps the boxes
-    #: back to this full span.
-    cur_bound_start: object | None = None
-    cur_bound_end: object | None = None
+    #: The window the selected-set analytics last ran over, and the members
+    #: that bound each edge. **Derived, never chosen** (#341 dec. 12): the two
+    #: date pickers and the `last_sel_key` / `sync_guard` / `cur_bound_*`
+    #: machinery that kept them in step are gone, because the overlap is a
+    #: fact about the basket and the tab never explained where it came from.
+    #: The strip's readout renders this.
+    basket_window: BasketWindow = field(
+        default_factory=lambda: BasketWindow(None, None)
+    )
     #: ``None`` means there is no valid selection, so the live observers no-op.
     #: The selected set's slice from the last recompute, window bounds
     #: included (#217 folded `cur_win_start` / `cur_win_end` into it). `None`
