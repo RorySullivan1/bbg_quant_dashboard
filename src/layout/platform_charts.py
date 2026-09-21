@@ -13,13 +13,14 @@ the table reads `points()`, never a figure's traces.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from ..config import analytics_levels
+from ..config import STRIP_DAYS, analytics_levels
+from ..stats import compounded_return
 from ..style import (
     ASSET_CLASS_COLORS,
     ASSET_CLASS_FALLBACK_COLOR,
@@ -27,7 +28,7 @@ from ..style import (
     Color,
 )
 from .charts import Chart
-from .theme import _chart_layout, _short_ticker
+from .theme import _chart_layout, _h_ref, _short_ticker
 
 #: Path separator inside a node id. The id is the path, so the same label under
 #: two parents stays two cells — the reason `stats.drill.node_paths` exists.
@@ -492,3 +493,167 @@ def _marker_sizes(counts: np.ndarray) -> np.ndarray:
 def _path_key(path) -> str:
     """A path as one string, so it survives a numpy `customdata` column."""
     return PATH_SEP.join(str(segment) for segment in path)
+
+
+class StripChart(Chart):
+    """Five dates of 1D returns, one marker per point per date.
+
+    The card's other views are all six months or more; nothing on it could
+    draw *this week*, which is what the QIS Bulletin talks about. X is a
+    **categorical** axis of the last five trading dates, Y the 1D return.
+
+    Built from `go.Scatter` with a computed jitter rather than the hidden-box
+    construction a strip plot usually uses (#331 decision 12): a drillable
+    marker needs a point index and `customdata` the kernel controls, which
+    `go.Box`'s own point scatter does not give.
+
+    Reads neither Metric nor Window — its metric is the 1D return and its
+    window is five days — which is why the bar hides both while it is active.
+    """
+
+    #: How far a marker may sit from its date's centre, as a share of the
+    #: column. Deterministic in the point's position, so a redraw does not
+    #: reshuffle the cloud and read as movement in the data.
+    JITTER = 0.28
+
+    def __init__(self, *, on_drill=None) -> None:
+        self._on_drill = on_drill
+        self._points = pd.DataFrame()
+        super().__init__()
+
+    def _build(self) -> go.FigureWidget:
+        return go.FigureWidget(
+            layout=_chart_layout(
+                title="",
+                showlegend=True,
+                legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
+                hovermode="closest",
+                # A numeric axis wearing the dates as tick labels, NOT a
+                # categorical one: Plotly puts every marker of a category on
+                # one line, so a group of ten strategies would draw as a
+                # single dot. The jitter below needs somewhere to move to.
+                xaxis=dict(title="", tickmode="array"),
+                yaxis=dict(title="1D return", tickformat=".1%", zeroline=True),
+            )
+        )
+
+    @property
+    def value_label(self) -> str:
+        """The table's column head: the five dots' honest single number."""
+        return f"{STRIP_DAYS}D Return"
+
+    @property
+    def value_format(self) -> str:
+        return ".2%"
+
+    def points(self) -> pd.DataFrame:
+        return self._points
+
+    def update(
+        self,
+        points: pd.DataFrame,
+        dates: Sequence,
+        *,
+        color_key: str,
+        colors: Mapping[str, str],
+    ) -> None:
+        """Draw the aggregated frame, one column per date.
+
+        ``points`` carries one column per date (the transposed daily returns,
+        run through `drill_points`) plus `path` / `label` / `name` / `count`.
+        Fewer than five dates draws what exists.
+        """
+        if points.empty or not len(dates):
+            self.clear()
+            return
+        labels = [_date_label(d) for d in dates]
+        keys = _color_values(points, color_key)
+        # Jitter is assigned over ALL the points, not per trace, so two groups
+        # drawn in different traces cannot land on the same spot.
+        slot = {label: index for index, label in enumerate(points["label"])}
+
+        traces = []
+        for key, group in points.groupby(keys):
+            xs: list[float] = []
+            ys: list[float] = []
+            custom: list[list] = []
+            for offset, date in enumerate(dates):
+                for _index, row in group.iterrows():
+                    xs.append(offset + _jitter(slot[row["label"]], len(points)))
+                    ys.append(float(row[date]))
+                    custom.append(
+                        [
+                            str(row["name"]),
+                            int(row["count"]),
+                            _path_key(row["path"]),
+                            labels[offset],
+                        ]
+                    )
+            traces.append(
+                go.Scatter(
+                    mode="markers",
+                    name=str(key),
+                    x=xs,
+                    y=ys,
+                    marker=dict(
+                        size=8,
+                        color=colors.get(str(key), ASSET_CLASS_FALLBACK_COLOR),
+                        line=dict(width=0),
+                    ),
+                    customdata=custom,
+                    hovertemplate=(
+                        "%{customdata[0]}<br>"
+                        + str(key)
+                        + "<br>%{customdata[3]} %{y:.2%}<extra></extra>"
+                    ),
+                )
+            )
+
+        with self.fig.batch_update():
+            self.fig.data = ()
+            self.fig.add_traces(traces)
+            self.fig.layout.shapes = (_h_ref(0.0),)
+            self.fig.layout.xaxis.tickvals = list(range(len(dates)))
+            self.fig.layout.xaxis.ticktext = labels
+            self.fig.layout.xaxis.range = [-0.5, len(dates) - 0.5]
+        self._attach_clicks()
+        self._points = points.assign(value=compounded_return(points[list(dates)].T))
+
+    def _attach_clicks(self) -> None:
+        if self._on_drill is None:
+            return
+        for trace in self.fig.data:
+            if hasattr(trace, "on_click"):  # pragma: no branch
+                trace.on_click(self._clicked)
+
+    def _clicked(self, trace, points, _state) -> None:
+        if self._on_drill is None or not getattr(points, "point_inds", None):
+            return
+        row = trace.customdata[points.point_inds[0]]
+        if float(row[1]) <= 1:
+            return
+        self._on_drill(tuple(str(row[2]).split(PATH_SEP)))
+
+    def clear(self) -> None:
+        with self.fig.batch_update():
+            self.fig.data = ()
+        self._points = pd.DataFrame()
+
+
+def _date_label(value) -> str:
+    """A date as its column heading."""
+    stamp = pd.Timestamp(value)
+    return stamp.strftime("%d %b")
+
+
+def _jitter(position: int, total: int) -> float:
+    """A point's stable offset from its date's centre.
+
+    Spread evenly across the column rather than drawn at random, so a redraw
+    cannot reshuffle the cloud and read as movement in the data, and two
+    points never overlap exactly. A single point sits on the centre line.
+    """
+    if total <= 1:
+        return 0.0
+    share = position / (total - 1) - 0.5
+    return share * 2.0 * StripChart.JITTER

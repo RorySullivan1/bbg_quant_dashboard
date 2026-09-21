@@ -31,6 +31,7 @@ from ..config import (
     DEFAULT_RANKING_METRIC,
     REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
+    STRIP_DAYS,
     TRADING_DAYS_PER_YEAR,
     LevelRegime,
     TercileRegime,
@@ -49,6 +50,7 @@ from ..stats import (
     equity_risk_premium,
     icicle_frame,
     node_paths,
+    recent_daily_returns,
     regime_factor_frame,
     regime_mask,
     rolling_autocorr,
@@ -62,6 +64,7 @@ from .html import STYLE_CTX, render_template
 from .platform_charts import (
     IcicleChart,
     RegimeFactorScatter,
+    StripChart,
     asset_class_colors,
     group_colors,
 )
@@ -213,16 +216,7 @@ class PlatformAnalytics:
 
         self.icicle = IcicleChart(on_drill=self._drill_from_chart)
         self.scatter = RegimeFactorScatter(on_drill=self._drill_from_chart)
-        # A placeholder until #336 builds the chart. The Chart chip's three
-        # keys are final from here, so the bar and its wiring do not change
-        # again when the figure arrives.
-        self.strip_placeholder = W.HTML(
-            render_template(
-                "empty_card",
-                **STYLE_CTX,
-                message="The Strip chart arrives in #336.",
-            )
-        )
+        self.strip = StripChart(on_drill=self._drill_from_chart)
 
         # --- the Chart view bar (#333) ---------------------------------------
         #
@@ -286,7 +280,7 @@ class PlatformAnalytics:
         self.analytics_tabs = {
             "icicle": self.icicle.fig,
             "scatter": self.scatter.fig,
-            "strip": self.strip_placeholder,
+            "strip": self.strip.fig,
         }
 
         self.chart_box = W.Box(
@@ -516,6 +510,42 @@ class PlatformAnalytics:
                 colors=_colors_for(points, key),
             )
 
+    def render_strip(self, meta: pd.DataFrame) -> None:
+        """Five dates of 1D returns at the current drill, live from cache.
+
+        Reads neither Metric nor Window: its metric is the 1D return and its
+        window is `STRIP_DAYS` (#331 decision 12). A change to either therefore
+        must not redraw it, which the bar enforces by hiding both.
+        """
+        state = self.state
+        if state.arp_universe_prices.empty:
+            return
+        with _guard_render(state, "strip render"):
+            recent = recent_daily_returns(
+                state.arp_universe_prices,
+                days=STRIP_DAYS,
+                returns=state.universe_rets,
+            )
+            if recent.empty:
+                self.strip.clear()
+                return
+            points = _with_names(
+                drill_points(
+                    recent.T,  # dates x tickers -> tickers x dates
+                    node_paths(meta),
+                    scope=self.drill.scope,
+                    level=self.drill.level,
+                ),
+                meta,
+            )
+            key = color_key(self.drill.scope, self.drill.level)
+            self.strip.update(
+                points,
+                list(recent.index),
+                color_key=key,
+                colors=_colors_for(points, key),
+            )
+
     # --- regime resolution ----------------------------------------------------
 
     def regime_indicator(self) -> pd.Series | None:
@@ -610,7 +640,7 @@ class PlatformAnalytics:
         renderer = {
             "icicle": self.render_icicle,
             "scatter": self.render_scatter,
-            "strip": lambda _meta: None,  # #336 builds it
+            "strip": self.render_strip,
         }[which]
         renderer(meta)
         self.fresh.add(which)

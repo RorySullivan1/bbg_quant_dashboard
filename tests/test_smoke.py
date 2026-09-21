@@ -126,11 +126,14 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # catalog rather than a sum of |z| (#331 decision 8).
     assert set(icicle.data[0].values) >= {1.0}
 
-    # The third chart is the Strip, a placeholder until #336. The 3D factor
-    # scatter that was the third pill is unmounted from here until #335 merges
-    # it with the regime scatter; its Mesh3d zero planes go with it.
+    # The third chart is the Strip: five dates of 1D returns, the only view on
+    # the card that can draw *this week*. The 3D factor scatter that was the
+    # third pill merged into the Scatter in #335, Mesh3d planes and all.
     pa.chart_chips.value = "strip"
-    assert chart_box.children[0] is pa.strip_placeholder
+    assert chart_box.children[0] is pa.strip.fig
+    # Five date columns of 1D returns, drawn as markers the kernel can index.
+    assert pa.strip.fig.data
+    assert all(isinstance(t, go.Scatter) for t in pa.strip.fig.data)
 
 
 def test_regime_analysis_section_conditions_live():

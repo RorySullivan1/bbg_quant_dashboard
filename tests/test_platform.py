@@ -28,6 +28,7 @@ from src.layout.platform import (
 from src.layout.platform_charts import (
     IcicleChart,
     RegimeFactorScatter,
+    StripChart,
     asset_class_colors,
     group_colors,
 )
@@ -622,6 +623,128 @@ def test_a_scaffolded_regime_is_the_unconditioned_view():
     assert mask.all()
 
 
+# --- the Strip (#336) -------------------------------------------------------
+
+
+def _strip_points(counts=(3, 1)) -> tuple[pd.DataFrame, list]:
+    """An aggregated points frame with one column per date."""
+    dates = list(pd.bdate_range("2026-09-14", periods=3))
+    labels = ["Equity", "Fixed Income"]
+    frame = pd.DataFrame(
+        {
+            "path": [(label,) for label in labels],
+            "label": labels,
+            "name": labels,
+            "count": list(counts),
+            dates[0]: [0.01, -0.02],
+            dates[1]: [0.02, 0.01],
+            dates[2]: [-0.01, 0.03],
+        },
+        index=labels,
+    )
+    return frame, dates
+
+
+def test_the_strip_draws_one_column_per_date_with_the_dates_as_labels():
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    assert chart.fig.data
+    axis = chart.fig.layout.xaxis
+    assert list(axis.tickvals) == [0, 1, 2]
+    assert list(axis.ticktext) == ["14 Sep", "15 Sep", "16 Sep"]
+    # A dashed zero reference, so a down day reads as down at a glance.
+    assert chart.fig.layout.shapes
+
+
+def test_the_strip_jitters_within_a_date_rather_than_stacking_on_it():
+    """A categorical axis puts every marker of a column on one line, so a
+    group of ten strategies would draw as a single dot."""
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    xs = [x for tr in chart.fig.data for x in tr.x]
+    # Two points per date, each offset from the date's centre, none overlapping.
+    first_column = sorted(x for x in xs if abs(x) < 0.5)
+    assert len(first_column) == 2
+    assert first_column[0] != first_column[1]
+    assert all(abs(x - round(x)) <= StripChart.JITTER + 1e-9 for x in xs)
+
+
+def test_the_strip_s_jitter_is_stable_across_redraws():
+    # Drawn at random it would reshuffle on every redraw and read as movement
+    # in the data.
+    points, dates = _strip_points()
+    first = StripChart()
+    first.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    second = StripChart()
+    second.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    assert [tuple(t.x) for t in first.fig.data] == [tuple(t.x) for t in second.fig.data]
+
+
+def test_the_strip_s_points_value_is_the_compounded_return_of_its_row():
+    """#331 decision 12 — a `label · name · value` row cannot hold five dots,
+    and what they add up to is the honest single number."""
+    from src.stats import compounded_return
+
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    drawn = chart.points()
+    expected = compounded_return(points[dates].T)
+    assert drawn.loc["Equity", "value"] == pytest.approx(expected["Equity"])
+    assert chart.value_label == "5D Return"
+    assert chart.value_format == ".2%"
+
+
+def test_clicking_a_strip_group_narrows_and_a_strategy_does_not():
+    got: list[tuple[str, ...]] = []
+    chart = StripChart(on_drill=got.append)
+    points, dates = _strip_points(counts=(3, 1))
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    by_name = {tr.name: tr for tr in chart.fig.data}
+    chart._clicked(by_name["Equity"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
+    chart._clicked(by_name["Fixed Income"], SimpleNamespace(point_inds=[0]), None)
+    assert got == [("Equity",)]
+
+
+def test_the_strip_draws_what_exists_below_five_days():
+    # A fresh mock, or a benchmark added mid-session as a delta.
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates[:2], color_key="asset_class", colors=ASSET_CLASS_COLORS)
+    assert list(chart.fig.layout.xaxis.tickvals) == [0, 1]
+
+
+def test_the_strip_empty_clears():
+    chart = StripChart()
+    chart.update(pd.DataFrame(), [], color_key="asset_class", colors={})
+    assert chart.fig.data == ()
+    assert chart.points().empty
+
+
+def test_a_metric_or_window_change_does_not_render_the_strip():
+    """The Strip's metric and window are fixed, so the controls that would
+    normally re-render the visible chart must not touch it (#331 dec. 3)."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    rendered: list[str] = []
+    pa._render_tab = lambda meta, which: rendered.append(which)  # type: ignore
+
+    pa.activate(pd.DataFrame(), "strip")
+    rendered.clear()
+    # Both sections are hidden while the Strip is active, so a user cannot
+    # reach them — this pins that the wiring agrees with the chrome.
+    assert pa.bar.section("Metric").layout.display == "none"
+    assert pa.bar.section("Window").layout.display == "none"
+
+
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------
 # The render/wire logic was extracted from build_app into platform.py; these
 # guard that build_app still wires it correctly end-to-end.
@@ -794,7 +917,7 @@ def test_activate_swaps_the_chart():
     assert pa.active_analytics == "scatter"
     assert pa.chart_box.children == (pa.scatter.fig,)
     pa.activate(pd.DataFrame(), "strip")
-    assert pa.chart_box.children == (pa.strip_placeholder,)
+    assert pa.chart_box.children == (pa.strip.fig,)
 
 
 def test_invalidate_marks_every_chart_stale():
