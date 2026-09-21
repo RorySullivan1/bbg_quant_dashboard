@@ -19,8 +19,8 @@ columns with clickable rows, beside the **QIS Bulletin**, which switches
 between authored Commentary notes and New Launches) → a
 **top-level pill-button tab bar** with three
 tabs — **Platform** (one control bar over a full-width all-catalog performance
-grid + a Platform-analytics card of Sunburst / Regime /
-Factor-exposure charts), **Multi-Strategy**
+grid + a Platform-analytics card: a chart — Icicle / Scatter / Strip — beside
+a table of its own points), **Multi-Strategy**
 (a filter accordion, a selected-strategy perf grid, and two side-by-side
 analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
 live-narrowing filter accordion, a profile card + cumulative chart, a
@@ -32,8 +32,8 @@ The catalog is described by a **declarative schema** (v0.9.15,
 internal key, the JSON keys it accepts, its **display label**, and its role. So
 **labels and column order are configuration, not code**: relabelling a column,
 reordering the three classification tiers (`CLASSIFICATION_TIERS` =
-Solution → Category → Family), adding a filter pill, or changing which rings
-the Platform sunburst draws (`SUNBURST_LEVELS`) is a `config.py` edit, not a
+Solution → Category → Family), adding a filter pill, or changing which levels
+the Platform analytics draw (`ANALYTICS_LEVELS`) is a `config.py` edit, not a
 sweep across renderers. Never re-spell a label or a tier order at a call site —
 read it through `field_label` / the per-renderer field tuples. See
 `.claude/context/data.md`.
@@ -112,8 +112,7 @@ while analytics stay at `LOOKBACK_YEARS = 5`; the raw value rides behind it in
 parentheses so a reader
 can see what was standardized, and the sentiment colour sits on the score, which
 is what the row is read by. The asset-class-demeaned z-score is a different
-figure and stays where it belongs, on the Platform sunburst and the Z-Score
-column. **Clicking any row opens that strategy in Single Strategy**, through the
+figure and stays where it belongs, on the catalog's Z-Score column. **Clicking any row opens that strategy in Single Strategy**, through the
 same `_show_in_single_strategy` the catalog grid uses, so the two entry points
 cannot diverge.
 
@@ -190,7 +189,7 @@ active chart does not read are **hidden, not rebuilt**, so a chip keeps its
 selection across a chart switch.
 
 Three charts, each a `Chart` that also exposes **`points()`** — the frame it
-drew, as `path` / `label` / `name` / `value` / `count`. The **Icicle** draws
+drew, as `path` / `label` / `name` / `value` / `count` / `leaf`. The **Icicle** draws
 the hierarchy sized by *strategy count* and coloured by mean metric on a ramp
 whose range comes from the data; the **Scatter** is the regime view and the
 factor view merged, Y the metric and X / Z the term- and equity-risk-premium
@@ -208,9 +207,14 @@ colour **keys to the points shown**: asset class at the root, the points' own
 level below it, because a key that stops varying stops informing.
 
 The points table reads `points()` and never a figure's traces, and a row click
-routes on **`count`**: a group narrows the drill, a strategy opens in Single
-Strategy through the same `_show_in_single_strategy` the catalog grid and the
-leaderboard use. Chart and table stand at one fixed `ANALYTICS_HEIGHT` for
+routes on the **`leaf` flag**: a group narrows the drill, a strategy opens in
+Single Strategy through the same `_show_in_single_strategy` the catalog grid
+and the leaderboard use. **Not on `count`** — a one-member *group* has a count
+of 1 too, and 16 of the shipped catalog's 17 root points are one-member
+categories, so that route clears the user's filters and then hands a category
+name to a ticker dropdown. The path cannot disambiguate them either: a family
+node and a ticker under it are both three segments deep. The flag is carried
+for exactly this reason. Chart and table stand at one fixed `ANALYTICS_HEIGHT` for
 `CATALOG_TABLE_HEIGHT`'s reason — stretching lets whichever box holds more
 content set the row. Both `ITable`s now wear a shared **`.bbg-itable`**;
 `.bbg-catalog` keeps only the group bands and the filter row.

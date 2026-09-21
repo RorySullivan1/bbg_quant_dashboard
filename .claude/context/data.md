@@ -42,7 +42,7 @@ filter pill) / `PERF_GRID_FIELDS` (the shared `PerfGrid`; each tuple is named
 for the grid it feeds, #282),
 `PROFILE_CARD_FIELDS` (the Single Strategy profile card),
 `LAUNCH_CARD_META_FIELDS` (the New-Launch cards' meta line). The filter pills
-come from `filter_dimensions()` and the Platform sunburst's rings from
+come from `filter_dimensions()` and the Platform analytics' levels from
 `ANALYTICS_LEVELS`. `catalog_field`, `field_label`, `tier_fields`,
 `filterable_fields`, `filter_dimensions`, `analytics_levels` and `drill_levels` are the
 accessors consumers read — nobody indexes the schema tuple by hand, and nobody
