@@ -413,28 +413,41 @@ def _analytics() -> PlatformAnalytics:
     )
 
 
+def _analytics_of(app) -> PlatformAnalytics:
+    """The live `PlatformAnalytics` inside a built app.
+
+    Reached through the card's own widgets rather than a child index, so a
+    layout change moves the test's footing once, here.
+    """
+    card = app.children[5].children[0].children[-1]
+    return next(
+        w._analytics for w in _walk(card) if getattr(w, "_analytics", None) is not None
+    )
+
+
 def test_regime_selector_options_by_spec_type():
     # Rate-level carries a literal source list; Trend defers to the live
     # benchmark registry (#190) so a runtime addition shows up in its picker;
     # a fixed-level regime has one ticker and so offers no source at all.
     pa = _analytics()
-    pa.regime_type_dd.value = "Volatility"
+    pa.regime_type_chips.value = "Volatility"
     assert pa.regime_selector_options() == []
-    pa.regime_type_dd.value = "Rate-level"
+    pa.regime_type_chips.value = "Rate-level"
     assert pa.regime_selector_options() == [
         ("US (FEDL01)", "FEDL01 Index"),
         ("EU (EONIA)", "EONIA Index"),
         ("JP (MUTKCALM)", "MUTKCALM Index"),
     ]
-    pa.regime_type_dd.value = "Trend"
+    pa.regime_type_chips.value = "Trend"
     assert pa.regime_selector_options() == [("SPX", "SPX Index")]
 
 
 def test_regime_selector_options_tolerates_an_unknown_regime():
     # An unknown regime type resolves to None upstream; it must not raise.
     pa = _analytics()
-    pa.regime_type_dd.options = [*pa.regime_type_dd.options, "Nope"]
-    pa.regime_type_dd.value = "Nope"
+    pa.regime_type_chips.set_options(
+        [*pa.regime_type_chips.options, ("Nope", "Nope")], value="Nope"
+    )
     assert pa.regime_selector_options() == []
     assert pa.regime_indicator() is None
 
@@ -536,85 +549,103 @@ def _walk(w):
         yield from _walk(c)
 
 
+def _chart_chip(card, label: str):
+    """The Chart section's chip named ``label`` (#333 retired the pill row)."""
+    import ipywidgets as W
+
+    return next(
+        b for b in _walk(card) if isinstance(b, W.Button) and b.description == label
+    )
+
+
 def test_platform_regime_controls_resync_on_type_change():
-    """The regime Type dropdown is wired (platform.wire_platform_analytics ->
-    _sync_regime_controls) to repopulate the Source / Bucket dropdowns: a
-    tercile regime (Trend) shows the Source dropdown and Low/Middle/High
-    buckets; Volatility hides the Source and uses fixed VIX-level buckets."""
+    """The regime Type chips repopulate the Source dropdown and Bucket chips.
+
+    A tercile regime (Trend) shows the Source dropdown and Low/Middle/High
+    buckets; Volatility hides the Source and uses fixed VIX-level buckets.
+    Type and Bucket are `ChipGroup`s since #333; Source stays a dropdown
+    because its options are a long live list (#331 decision 13).
+    """
     import ipywidgets as W
     from src.layout import build_app
 
     app = build_app(verbose=False)
     panel = app.children[5].children[0]  # Platform is the default tab
-    # Mount the Regime analytics tab so its controls are in the widget tree.
-    next(
-        b
-        for b in _walk(app)
-        if isinstance(b, W.Button) and b.description == "Regime analysis"
-    ).click()
-    type_dd = next(
-        w for w in _walk(panel) if isinstance(w, W.Dropdown) and w.description == "Type"
-    )
+    card = panel.children[-1]
+    pa = _analytics_of(app)
+
+    # The Regime section only shows on the Scatter, so select it first.
+    _chart_chip(card, "Scatter").click()
     source_dd = next(
         w
         for w in _walk(panel)
         if isinstance(w, W.Dropdown) and w.description == "Source"
     )
-    bucket_dd = next(
-        w
-        for w in _walk(panel)
-        if isinstance(w, W.Dropdown) and w.description == "Bucket"
-    )
 
-    assert type_dd.value == "Volatility"
+    assert pa.regime_type_chips.value == "Volatility"
     assert source_dd.layout.display == "none"  # no source for Volatility
-    vix_buckets = [o[0] for o in bucket_dd.options]
+    vix_buckets = [label for label, _ in pa.regime_bucket_chips.options]
 
-    type_dd.value = "Trend"  # tercile regime — wired observer re-syncs
+    pa.regime_type_chips.value = "Trend"  # tercile regime — observer re-syncs
     assert source_dd.layout.display != "none"
     assert len(source_dd.options) > 0
-    assert [o[0] for o in bucket_dd.options] != vix_buckets
+    assert [label for label, _ in pa.regime_bucket_chips.options] != vix_buckets
 
-    type_dd.value = "Volatility"  # back to fixed buckets, source hidden
+    pa.regime_type_chips.value = "Volatility"  # back to fixed buckets
     assert source_dd.layout.display == "none"
-    assert [o[0] for o in bucket_dd.options] == vix_buckets
+    assert [label for label, _ in pa.regime_bucket_chips.options] == vix_buckets
 
 
-def test_platform_analytics_tab_swap():
-    """Clicking the analytics pills swaps the chart shown in the card
-    (platform.activate_platform_tab, wired by build_app)."""
-    import ipywidgets as W
+def test_platform_chart_chips_swap_the_chart():
+    """The Chart chips are the selector the three pills used to be (#331 dec. 4)."""
     from src.layout import build_app
 
     app = build_app(verbose=False)
     panel = app.children[5].children[0]
-    analytics_card = panel.children[
-        -1
-    ]  # the card is last; #279 removed the row above the table
-    chart_box = analytics_card.children[2].children[1]  # analytics_body -> chart_box
-    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
+    card = panel.children[-1]
+    chart_box = card.children[2].children[0]
     first = chart_box.children[0]
-    pills["Factor exposures"].click()
-    assert chart_box.children[0] is not first  # swapped to the factor scatter
-    pills["Sunburst"].click()
-    assert chart_box.children[0] is first  # back to the sunburst
+
+    _chart_chip(card, "Scatter").click()
+    assert chart_box.children[0] is not first
+    _chart_chip(card, "Icicle").click()
+    assert chart_box.children[0] is first
+
+
+def test_the_bar_shows_only_the_sections_the_active_chart_reads():
+    """#331 decision 3 — and the chips keep their state across the switch."""
+    pa = _analytics()
+    pa.fresh.update({"icicle", "scatter", "strip"})
+
+    def shown(heading):
+        return pa.bar.section(heading).layout.display != "none"
+
+    pa.activate(pd.DataFrame(), "icicle")
+    # The Icicle draws every level at once and zooms itself, so a Level or a
+    # Scope would be describing a position it does not have.
+    assert not shown("Level") and not shown("Scope")
+    assert shown("Metric") and shown("Window")
+    assert not shown("Regime")
+
+    pa.metric_chips.value = "calmar"
+    pa.activate(pd.DataFrame(), "strip")
+    # The Strip's metric and window are fixed (1D returns over five days).
+    assert not shown("Metric") and not shown("Window")
+    assert shown("Level") and shown("Scope")
+
+    pa.activate(pd.DataFrame(), "scatter")
+    assert shown("Regime")
+    # Hidden, not rebuilt: the selection survives the round trip.
+    assert pa.metric_chips.value == "calmar"
 
 
 def test_platform_analytics_render_is_lazy(monkeypatch):
-    """v0.9.13 #168: only the visible (Sunburst) analytics tab renders on load;
-    Regime / Factor render on their pill's first activation and not again while
-    fresh."""
-    import ipywidgets as W
+    """v0.9.13 #168: only the visible chart renders on load; the others render
+    on their chip's first selection and not again while fresh."""
     from src.layout import build_app
 
-    calls = {"sunburst": 0, "regime": 0, "factor": 0}
-    # #219: the renderers are methods now, so spy on the class rather than on a
-    # module-level dispatch dict.
-    methods = {
-        "sunburst": "render_sunburst",
-        "regime": "render_regime_scatter",
-        "factor": "render_factor_scatter",
-    }
+    calls = {"icicle": 0, "scatter": 0}
+    methods = {"icicle": "render_sunburst", "scatter": "render_regime_scatter"}
 
     def _spy(name, real):
         def render(self, meta):
@@ -629,19 +660,15 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
         )
 
     app = build_app(verbose=False)
-    # On load only the visible Sunburst tab is computed.
-    assert calls == {"sunburst": 1, "regime": 0, "factor": 0}
+    assert calls == {"icicle": 1, "scatter": 0}
 
-    analytics_card = app.children[5].children[0].children[-1]
-    pills = {b.description: b for b in _walk(analytics_card) if isinstance(b, W.Button)}
-
-    pills["Factor exposures"].click()  # first activation → render once
-    assert calls["factor"] == 1
-    pills["Sunburst"].click()  # already fresh → no re-render
-    pills["Factor exposures"].click()  # still fresh → no re-render
-    assert calls["factor"] == 1
-    assert calls["sunburst"] == 1
-    assert calls["regime"] == 0  # never activated → never rendered
+    card = app.children[5].children[0].children[-1]
+    _chart_chip(card, "Scatter").click()  # first selection → render once
+    assert calls["scatter"] == 1
+    _chart_chip(card, "Icicle").click()  # already fresh → no re-render
+    _chart_chip(card, "Scatter").click()  # still fresh → no re-render
+    assert calls["scatter"] == 1
+    assert calls["icicle"] == 1
 
 
 def test_platform_analytics_owns_its_card_and_lazy_state():
@@ -652,13 +679,11 @@ def test_platform_analytics_owns_its_card_and_lazy_state():
     pa = _analytics()
     assert isinstance(pa.card, W.VBox)
     assert "bbg-card" in pa.card._dom_classes
-    assert set(pa.analytics_tabs) == {"sunburst", "regime", "factor"}
-    for key, (pill, controls, fig) in pa.analytics_tabs.items():
-        assert isinstance(pill, W.Button), key
-        assert isinstance(controls, W.Widget), key
-        assert isinstance(fig, go.FigureWidget), key
-    # Opens on Sunburst with nothing drawn yet — the lazy contract's start state.
-    assert pa.active_analytics == "sunburst"
+    assert set(pa.analytics_tabs) == {"icicle", "scatter", "strip"}
+    for key, mounted in pa.analytics_tabs.items():
+        assert isinstance(mounted, W.Widget), key
+    # Opens on the Icicle with nothing drawn yet — the lazy contract's start.
+    assert pa.active_analytics == "icicle"
     assert pa.fresh == set()
     assert pa.chart_box.children == (pa.sunburst_fig,)
 
@@ -667,35 +692,110 @@ def test_platform_analytics_instances_do_not_share_state():
     # `fresh` is a per-instance set, not a class attribute — the mutable-default
     # trap on a field `activate` / `invalidate` mutate constantly.
     a, b = _analytics(), _analytics()
-    a.fresh.add("regime")
-    a.active_analytics = "regime"
+    a.fresh.add("scatter")
+    a.active_analytics = "scatter"
     assert b.fresh == set()
-    assert b.active_analytics == "sunburst"
+    assert b.active_analytics == "icicle"
     assert a.sunburst_fig is not b.sunburst_fig
+    # The drill is per-instance too, for the same reason.
+    a.set_drill(("Equity",), "family")
+    assert b.drill.scope == ()
 
 
-def test_activate_swaps_controls_and_chart():
-    # The pill click's visible effect, independent of any rendering: the left
-    # column and the chart box follow the active tab.
+def test_activate_swaps_the_chart():
+    # The chip's visible effect, independent of any rendering.
     pa = _analytics()
-    pa.fresh.update({"sunburst", "regime", "factor"})  # skip the lazy render
-    pa.activate(pd.DataFrame(), "regime")
-    assert pa.active_analytics == "regime"
+    pa.fresh.update({"icicle", "scatter", "strip"})
+    pa.activate(pd.DataFrame(), "scatter")
+    assert pa.active_analytics == "scatter"
     assert pa.chart_box.children == (pa.regime_scatter_fig,)
-    assert pa.tab_controls_box.children == (pa.analytics_tabs["regime"][1],)
-    pa.activate(pd.DataFrame(), "factor")
-    assert pa.chart_box.children == (pa.factor_scatter_fig,)
+    pa.activate(pd.DataFrame(), "strip")
+    assert pa.chart_box.children == (pa.strip_placeholder,)
 
 
-def test_invalidate_marks_every_tab_stale():
-    # A data or lookback change stales all three; only the visible one redraws
-    # (the redraw itself no-ops here — the stub state has no prices).
+def test_invalidate_marks_every_chart_stale():
+    # A data change stales all three; only the visible one redraws (the redraw
+    # itself no-ops here — the stub state has no prices).
     pa = _analytics()
     pa.state.arp_universe_prices = pd.DataFrame()
-    pa.fresh.update({"sunburst", "regime", "factor"})
+    pa.fresh.update({"icicle", "scatter", "strip"})
     pa.invalidate(pd.DataFrame())
-    # `render_active` re-adds only the visible tab; the hidden two stay stale.
-    assert pa.fresh == {"sunburst"}
+    assert pa.fresh == {"icicle"}
+
+
+# --- the drill (#333) -------------------------------------------------------
+
+
+def test_set_drill_is_the_only_writer_and_repaints_both_displays():
+    """#331 decision 15: no chart holds a private focus."""
+    pa = _analytics()
+    pa.set_drill(("Equity", "Momentum"), "family")
+
+    assert pa.drill.scope == ("Equity", "Momentum")
+    assert pa.drill.level == "family"
+    # The two controls that DISPLAY the state follow it, rather than each
+    # holding a copy that could disagree.
+    assert pa.level_chips.value == "family"
+    assert [b.description for b in pa.breadcrumb.children] == [
+        "All",
+        "Equity",
+        "Momentum",
+    ]
+
+
+def test_narrowing_moves_one_stop_down_and_bottoms_out_at_the_leaf():
+    pa = _analytics()
+    pa.narrow_to(("Equity", "Momentum"))
+    assert pa.drill.level == "family"
+    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    assert pa.drill.level == "ticker"
+    # A click on a strategy is a no-op, not an error: the table row is the way
+    # into Single Strategy.
+    pa.narrow_to(("Equity", "Momentum", "Fast"))
+    assert pa.drill.level == "ticker"
+
+
+def test_a_breadcrumb_segment_returns_to_its_prefix():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()  # renders no-op
+    pa.wire(lambda: pd.DataFrame())
+    pa.set_drill(("Equity", "Momentum"), "family")
+
+    pa.breadcrumb.children[1].click()  # "Equity"
+    assert pa.drill.scope == ("Equity",)
+    assert pa.drill.level == "category"  # the stop below an asset class
+
+    pa.breadcrumb.children[0].click()  # "All"
+    assert pa.drill.scope == ()
+    assert pa.drill.level == "category"
+
+
+def test_a_level_chip_sets_the_depth_within_the_current_scope():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.set_drill(("Equity",), "category")
+
+    pa.level_chips.value = "ticker"
+    assert pa.drill.level == "ticker"
+    assert pa.drill.scope == ("Equity",), "the chip changes depth, not scope"
+
+
+def test_syncing_the_displays_does_not_re_enter_the_setter():
+    """`set_drill` repaints the Level chips; their observer must not fire back.
+
+    Without the guard a drill change renders twice — and a breadcrumb click
+    would set the level from the chip it had just repainted, not from the
+    prefix that was clicked.
+    """
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    renders: list[str] = []
+    pa.wire(lambda: pd.DataFrame())
+    pa._render_tab = lambda meta, which: renders.append(which)  # type: ignore
+
+    pa.breadcrumb.children[0].click()  # "All" — one drill change
+    assert len(renders) == 1
 
 
 def test_observers_render_against_the_current_catalog_not_the_wired_one():

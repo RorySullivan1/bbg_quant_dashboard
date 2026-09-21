@@ -524,20 +524,22 @@ def test_ranking_by_calmar_rescores_the_table(app):
     app.z_metric_chips.value = "sharpe"
 
 
-def test_the_sunburst_keeps_its_own_metric_list(app):
-    """#328 changed the catalog's chips, not every metric control in the app.
+def test_the_card_offers_the_rankable_metrics_and_not_vol(app):
+    """What #321 left for "its own issue" — epic #331 is that issue.
 
-    The sunburst colours its arcs on the same diverging scale and so carries
-    the same latent reading for Vol — but it is a different control on a
-    different surface, and #321 holds it out of scope deliberately rather than
-    fixing it quietly here.
+    The card used to carry its own Sharpe / Sortino / Return / **Vol** list.
+    Vol on a diverging red-to-green ramp reads as *green is good*, which
+    volatility is not (#328), and Calmar was missing from a card that ranks by
+    it everywhere else. The card's Metric is now the one rankable set, so the
+    board, the table and the chart cannot disagree about what is rankable.
     """
-    assert [label for label, _ in app.analytics.sb_metric_dd.options] == [
-        "Sharpe",
-        "Sortino",
-        "Return",
-        "Vol",
+    from src.config import RANKABLE_METRICS
+
+    assert [label for label, _ in app.analytics.metric_chips.options] == [
+        label for _key, label in RANKABLE_METRICS
     ]
+    assert "Vol" not in app.analytics.metric_chips.labels
+    assert "Calmar" in app.analytics.metric_chips.labels
 
 
 def test_the_catalog_has_no_lookback_and_no_second_window(app):
@@ -708,10 +710,11 @@ def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch)
 
 def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app):
     """#306 added 1Y to the board's chips. It is a list of its own, not an edit
-    to `SHORT_WINDOW_OPTIONS`, because that constant also drives the Platform
-    sunburst's Z-score control and the Multi-Strategy Quantitative Z-Score
-    window — neither of which was asked to grow a year. This is the test that
-    catches a future one-line edit to the shared list."""
+    to `SHORT_WINDOW_OPTIONS`, because that constant also drives the
+    Multi-Strategy Quantitative Z-Score window, which was not asked to grow a
+    year. This is the test that catches a future one-line edit to the shared
+    list. (The Platform card was its third consumer until #333 moved the card
+    onto `stat_windows()`.)"""
     from src.config import (
         LEADERBOARD_WINDOW_OPTIONS,
         SHORT_WINDOW_OPTIONS,
@@ -731,12 +734,6 @@ def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app
     ]
     # The shared list, and both controls built from it, stop at six months.
     assert [label for label, _ in SHORT_WINDOW_OPTIONS] == ["1W", "1M", "3M", "6M"]
-    assert [label for label, _ in app.analytics.sb_window_dd.options] == [
-        "1W",
-        "1M",
-        "3M",
-        "6M",
-    ]
     assert [label for label, _ in app.filter_panel.quant.z_window_dd.options] == [
         "1W",
         "1M",

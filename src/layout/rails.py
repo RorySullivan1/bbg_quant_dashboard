@@ -104,6 +104,31 @@ class _ChipStack(W.VBox):
         """Just the display texts, for a caller checking what is on offer."""
         return tuple(label for label, _ in self._pairs)
 
+    def set_options(self, options: Sequence[Any], *, value: Any = None) -> None:
+        """Replace the options, and with them the chips.
+
+        The dropdown surface `ChipGroup` stands in for allows `.options` to be
+        reassigned, and the regime Bucket control needs it: its buckets belong
+        to the regime type, so switching type replaces the whole list
+        (`sync_regime_controls`). Rebuilding the chips is the only way to
+        change them — a chip is a widget per option, not a rendered list.
+
+        ``value`` is applied after the rebuild, so a caller can carry a
+        surviving selection across in one step rather than assigning into a
+        window where the old value is not in the new options. Observers fire
+        only if the value actually changes, as they would on a dropdown.
+        """
+        pairs = _option_pairs(options)
+        if not pairs:
+            raise ValueError("a chip group needs at least one option")
+        self._pairs = pairs
+        self._chips = [_make_chip(label, active=False) for label, _ in pairs]
+        for index, chip in enumerate(self._chips):
+            chip.on_click(lambda _btn, i=index: self._clicked(i))
+        self.children = tuple(self._chips)
+        self.value = pairs[0][1] if value is None else value
+        self._sync()
+
     def _index_of(self, value: Any) -> int:
         for index, (_label, candidate) in enumerate(self._pairs):
             if candidate == value:
@@ -253,7 +278,70 @@ def _section_title(text: str, note: str | None = None) -> W.HTML:
     )
 
 
-def control_bar(*sections: RailSection, title: str | None = None) -> W.HBox:
+class Breadcrumb(W.HBox):
+    """The scope path as a row of buttons: ``All \u203a Equity \u203a Momentum``.
+
+    Plotly fires no event for a click on empty space, so a chart can narrow
+    but never widen; this is the way back up (#331 decision 16). Each segment
+    returns to that prefix, and *All* to the root.
+
+    A row of `Button`s rather than one `HTML`, for the Leaderboard's reason
+    (#288): a widget's description is one text node, and these need to be
+    individually clickable. Rebuilt on every change rather than diffed — a
+    path is at most four segments, and a rebuild cannot leave a stale handler
+    pointing at a prefix that is no longer on screen.
+    """
+
+    def __init__(self, *, on_pick, root_label: str = "All", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._on_pick = on_pick
+        self._root_label = root_label
+        self.layout.flex_flow = "row wrap"
+        self.layout.width = "auto"
+        self.add_class("bbg-chip-row")
+        self.set_path(())
+
+    def set_path(self, path: tuple[str, ...]) -> None:
+        """Redraw for ``path``; the last segment is where the user is now."""
+        labels = [self._root_label, *path]
+        chips = []
+        for index, label in enumerate(labels):
+            chip = _make_chip(label, active=index == len(labels) - 1)
+            # Default-arg binding, not a closure: a closure would leave every
+            # segment reporting the last prefix.
+            chip.on_click(lambda _btn, i=index: self._on_pick(tuple(path[:i])))
+            chips.append(chip)
+        self.children = tuple(chips)
+
+
+class ControlBar(W.HBox):
+    """A bar whose sections can be hidden without rebuilding it.
+
+    The Platform card shows six sections but never all six at once — Regime
+    belongs to the Scatter, Metric and Window mean nothing to the Strip, and
+    the Icicle draws every level at once so Level and Scope do not apply
+    (#331 decision 3). Hiding is `layout.display` on the section's block, so
+    a chip group keeps its state across a chart switch; a rebuilt bar would
+    reset every chip to its first option.
+
+    Sections are addressed by heading rather than by position, so a section
+    inserted later cannot silently re-point an existing `show` call.
+    """
+
+    def __init__(self, children, sections: dict[str, W.Widget], **kwargs) -> None:
+        super().__init__(list(children), **kwargs)
+        self._sections = sections
+
+    def section(self, heading: str) -> W.Widget:
+        """The block wrapping one section's heading and control."""
+        return self._sections[heading]
+
+    def show(self, heading: str, visible: bool) -> None:
+        """Show or hide one section, leaving its control's state alone."""
+        self.section(heading).layout.display = "" if visible else "none"
+
+
+def control_bar(*sections: RailSection, title: str | None = None) -> ControlBar:
     """A bar: its sections laid across in the order given, under an optional
     title.
 
@@ -266,6 +354,7 @@ def control_bar(*sections: RailSection, title: str | None = None) -> W.HBox:
     and border it defined are still `.bbg-rail`, which this carries.)
     """
     blocks: list[W.Widget] = []
+    named: dict[str, W.Widget] = {}
     if title is not None:
         blocks.append(_rail_title(title))
     for section in sections:
@@ -275,7 +364,10 @@ def control_bar(*sections: RailSection, title: str | None = None) -> W.HBox:
         )
         block.add_class("bbg-rail-block")
         blocks.append(block)
-    bar = W.HBox(blocks, layout=W.Layout(width="100%", align_items="flex-start"))
+        named[section.heading] = block
+    bar = ControlBar(
+        blocks, named, layout=W.Layout(width="100%", align_items="flex-start")
+    )
     bar.add_class("bbg-rail")
     bar.add_class("bbg-rail-bar")
     return bar

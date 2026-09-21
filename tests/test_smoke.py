@@ -69,6 +69,7 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     # toggle (sunburst default tab).
     import plotly.graph_objects as go
     from itables.widget import ITable
+    from src.config import RANKABLE_METRICS, stat_windows
     from src.layout.rails import ChipGroup, MultiChipGroup
 
     app = build_app(verbose=False)
@@ -86,46 +87,47 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
     ]
     assert [c.label for c in bar_chips if isinstance(c, ChipGroup)] == ["Sharpe", "1Y"]
 
-    # The analytics card is a bordered box: header, tab bar (pills only), then
-    # the body = HBox[left control column, chart box].
+    # The analytics card is a bordered box: header, the Chart view bar, then
+    # the body = HBox[chart box]. The pill row, the 260px control column and
+    # the shared Lookback toggle went in #333; the card's controls are chips
+    # in one `control_bar`, the catalog table's own chrome.
     assert analytics_card._dom_classes == ("bbg-card",)
-    _card_header, tab_bar, body = analytics_card.children
-    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
-    assert [p.description for p in pills] == [
-        "Sunburst",
-        "Regime analysis",
-        "Factor exposures",
+    _card_header, bar, body = analytics_card.children
+    assert "bbg-rail" in bar._dom_classes
+    headings = [
+        block.children[0].value
+        for block in bar.children
+        if "bbg-rail-block" in getattr(block, "_dom_classes", ())
     ]
-    assert [p.description for p in pills if "is-active" in p._dom_classes] == [
-        "Sunburst"
-    ]
-    left_col, chart_box = body.children
-    # The shared lookback toggle (defaults to 1Y) sits at the TOP of the left
-    # control column, above the active tab's controls box.
-    toggles = [c for c in left_col.children if isinstance(c, W.ToggleButtons)]
-    assert len(toggles) == 1 and toggles[0].label == "1Y"
-    tab_controls_box = left_col.children[-1]
+    assert headings == ["Chart", "Metric", "Window", "Regime", "Level", "Scope"]
+    assert not [w for w in _walk(analytics_card) if isinstance(w, W.ToggleButtons)]
 
-    # Default tab = sunburst: the controls box stacks Metric + Window (the
-    # lookback above is shared); the figure fills the rest with a Sunburst trace.
-    sb_dds = [
-        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
+    (chart_box,) = body.children
+    # The card's Metric and Window offer the table's option lists, so the two
+    # surfaces can be read at different windows but cannot offer different
+    # things (#331 decision 1).
+    pa = analytics_card._analytics
+    assert [label for label, _ in pa.metric_chips.options] == [
+        label for _key, label in RANKABLE_METRICS
     ]
-    assert [d.label for d in sb_dds] == ["Sharpe", "1W"]
+    assert [label for label, _ in pa.card_window_chips.options] == [
+        label for label, _years in stat_windows()
+    ]
+    assert [label for label, _ in pa.level_chips.options] == [
+        "Category",
+        "Family",
+        "Strategy",
+    ]
+
     sunburst = chart_box.children[0]
     assert isinstance(sunburst, go.FigureWidget)
     assert sunburst.data and isinstance(sunburst.data[0], go.Sunburst)
 
-    # Factor exposures tab: chart swaps to the 3D scatter (Scatter3d markers +
-    # the three Mesh3d zero planes); its controls box is empty (lookback only).
-    pills[2].click()
-    assert len(tab_controls_box.children[0].children) == 0
-    scatter = chart_box.children[0]
-    assert isinstance(scatter, go.FigureWidget)
-    assert [tr for tr in scatter.data if isinstance(tr, go.Scatter3d)]
-    planes = {tr.name for tr in scatter.data if isinstance(tr, go.Mesh3d)}
-    assert planes == {"x=0", "y=0", "z=0"}
-    assert not scatter.layout.title.text
+    # The third chart is the Strip, a placeholder until #336. The 3D factor
+    # scatter that was the third pill is unmounted from here until #335 merges
+    # it with the regime scatter; its Mesh3d zero planes go with it.
+    pa.chart_chips.value = "strip"
+    assert chart_box.children[0] is pa.strip_placeholder
 
 
 def test_regime_analysis_section_conditions_live():
@@ -139,17 +141,16 @@ def test_regime_analysis_section_conditions_live():
     app = build_app(verbose=False)
     platform_panel = app.children[5].children[0]
     analytics_card = platform_panel.children[-1]  # the analytics card is last (#279)
-    tab_bar, body = analytics_card.children[1], analytics_card.children[2]
-    pills = [c for c in tab_bar.children if isinstance(c, W.Button)]
-    pills[1].click()  # activate the Regime analysis tab
+    body = analytics_card.children[2]
+    pa = analytics_card._analytics
+    pa.chart_chips.value = "scatter"  # the Regime section shows on the Scatter
 
-    left_col, chart_box = body.children
-    tab_controls_box = left_col.children[-1]
-    regime_dds = [
-        c for c in tab_controls_box.children[0].children if isinstance(c, W.Dropdown)
-    ]
-    regime_type, selector_dd, bucket_dd = regime_dds
-    assert list(regime_type.options) == [
+    (chart_box,) = body.children
+    # Type and Bucket are chips since #333; Source stays a dropdown because its
+    # options are a long live list (#331 decision 13).
+    regime_type, bucket_dd = pa.regime_type_chips, pa.regime_bucket_chips
+    selector_dd = pa.regime_selector_dd
+    assert [label for label, _ in regime_type.options] == [
         "Volatility",
         "Trend",
         "Rate-level",

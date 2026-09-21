@@ -221,19 +221,23 @@ def test_adding_a_benchmark_preserves_every_current_selection(captured_registry)
     assert all(dd.value == other for dd in selectors)
 
 
-def _regime_dropdowns(app) -> tuple[W.Dropdown, W.Dropdown]:
-    """The regime type + indicator-source dropdowns, with the pill activated."""
+def _regime_dropdowns(app):
+    """The regime Type control and the indicator-source dropdown.
+
+    Type is a `ChipGroup` since #333 and lives in the Chart view bar's Regime
+    section, which shows on the Scatter; Source stays a dropdown because its
+    options are a long live list (#331 decision 13). Both still present the
+    `.value` / `.options` / `.observe` surface these tests drive.
+    """
     _click(app, "Platform")
-    _click(app, "Regime analysis")
-    type_dd = next(
-        w
-        for w in _walk(app)
-        if isinstance(w, W.Dropdown) and "Trend" in _option_values(w)
+    analytics = next(
+        w._analytics for w in _walk(app) if getattr(w, "_analytics", None) is not None
     )
+    analytics.chart_chips.value = "scatter"
     source_dd = next(
         w for w in _walk(app) if isinstance(w, W.Dropdown) and w.description == "Source"
     )
-    return type_dd, source_dd
+    return analytics.regime_type_chips, source_dd
 
 
 def test_trend_regime_source_tracks_the_registry(captured_registry):

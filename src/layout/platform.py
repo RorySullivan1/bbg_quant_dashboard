@@ -29,16 +29,19 @@ import plotly.graph_objects as go
 
 from ..config import (
     CATALOG_SCORE_MIN_SAMPLE_DAYS,
-    HALF_YEAR_WINDOW,
+    DEFAULT_RANKING_METRIC,
     REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
-    SHORT_WINDOW_OPTIONS,
     TRADING_DAYS_PER_YEAR,
-    WEEK_WINDOW,
     LevelRegime,
     TercileRegime,
     analytics_levels,
+    drill_level_label,
+    drill_levels,
+    rankable_metric_chips,
     stat_window_years,
+    stat_windows,
+    universe_grid_default_window,
 )
 from ..stats import (
     daily_returns,
@@ -54,11 +57,10 @@ from ..stats import (
     trend_returns,
 )
 from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE, Color
-from .chrome import _make_tab_button, _style_tab_button
-from .filters import _section_label
+from .drill import Drill
 from .grids import zscore_column_name
 from .html import STYLE_CTX, render_template
-from .rails import ChipGroup
+from .rails import Breadcrumb, ChipGroup, RailSection, control_bar
 from .theme import _chart_layout, _short_ticker
 
 if TYPE_CHECKING:
@@ -579,59 +581,48 @@ class PlatformAnalytics:
         # is being read at, against a fixed `SCORE_SAMPLE_DAYS` sample.
         self.z_metric_chips = z_metric_chips
         self.window_chips = window_chips
-
-        # Shared 6M/1Y/3Y/5Y lookback — drives all three tabs. Value is a
-        # trading-day count, like z_lookback_chips; the factor scatter converts it
-        # to years. Re-slices the cache only (no BQL).
-        self.lookback_selector = W.ToggleButtons(
-            options=[
-                ("6M", HALF_YEAR_WINDOW),
-                ("1Y", TRADING_DAYS_PER_YEAR),
-                ("3Y", TRADING_DAYS_PER_YEAR * 3),
-                ("5Y", TRADING_DAYS_PER_YEAR * 5),
-            ],
-            value=TRADING_DAYS_PER_YEAR,
-            layout=W.Layout(width="auto"),
-        )
+        #: Resolved at fire time, never captured (#242). `wire` sets it.
+        self._current_meta: Callable[[], pd.DataFrame] | None = None
 
         self.sunburst_fig = _sunburst()
         self.regime_scatter_fig = _regime_scatter()
         self.factor_scatter_fig = _factor_beta_scatter()
-
-        # Sunburst Z-score controls (Metric · Window; the lookback is the shared
-        # toggle). The chosen z colors the arcs (averaged up each level) and its
-        # |z| drives each ring's gross-% sizing. `.value`s feed
-        # `rolling_metric_zscore`, the `.label`s the colorbar/hover.
-        self.sb_metric_dd = W.Dropdown(
-            options=[
-                ("Sharpe", "sharpe"),
-                ("Sortino", "sortino"),
-                ("Return", "return"),
-                ("Vol", "vol"),
-            ],
-            value="sharpe",
-            description="Metric",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="230px"),
-        )
-        self.sb_window_dd = W.Dropdown(
-            options=SHORT_WINDOW_OPTIONS,
-            value=WEEK_WINDOW,
-            description="Window",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="230px"),
+        # A placeholder until #336 builds the chart. The Chart chip's three
+        # keys are final from here, so the bar and its wiring do not change
+        # again when the figure arrives.
+        self.strip_placeholder = W.HTML(
+            render_template(
+                "empty_card",
+                **STYLE_CTX,
+                message="The Strip chart arrives in #336.",
+            )
         )
 
-        self.regime_type_dd = W.Dropdown(
-            options=list(REGIME_SPECS.keys()),
-            value=next(iter(REGIME_SPECS)),
-            description="Type",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="240px"),
+        # --- the Chart view bar (#333) ---------------------------------------
+        #
+        # The card's own chips over the table's own option lists: the two
+        # surfaces can be read at different windows but cannot OFFER different
+        # things (#331 decision 1). Nothing here spells a label — Metric comes
+        # from `RANKABLE_METRICS`, Window from `stat_windows()`, Level from
+        # `drill_levels()` — so a relabelling reaches the card for free.
+        self.chart_chips = ChipGroup(
+            [("Icicle", "icicle"), ("Scatter", "scatter"), ("Strip", "strip")],
+            value="icicle",
+            row=True,
         )
-        # Conditional indicator-source dropdown — benchmark for Trend, region
-        # for Rate-level; hidden (via `_sync_regime_controls`) for regimes with
-        # no selector.
+        self.metric_chips = ChipGroup(
+            rankable_metric_chips(), value=DEFAULT_RANKING_METRIC, row=True
+        )
+        self.card_window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
+            value=universe_grid_default_window(),
+            row=True,
+        )
+
+        self.regime_type_chips = ChipGroup(list(REGIME_SPECS.keys()), row=True)
+        # Source stays a dropdown: its options are the live benchmark registry
+        # or a region list, and a dropdown is the right control for a long list
+        # (#331 decision 13, #302's reasoning).
         self.regime_selector_dd = W.Dropdown(
             options=[("\u2014", "")],
             value="",
@@ -639,65 +630,44 @@ class PlatformAnalytics:
             style={"description_width": "60px"},
             layout=W.Layout(width="240px"),
         )
-        _init_buckets = regime_bucket_options(self.regime_type_dd.value)
-        self.regime_bucket_dd = W.Dropdown(
-            options=_init_buckets,
-            value=_init_buckets[0][1],
-            description="Bucket",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="240px"),
-        )
-
-        sunburst_controls = W.VBox(
-            [_section_label("Z-score"), self.sb_metric_dd, self.sb_window_dd],
-            layout=W.Layout(width="100%"),
+        _init_buckets = regime_bucket_options(self.regime_type_chips.value)
+        self.regime_bucket_chips = ChipGroup(
+            _init_buckets, value=_init_buckets[0][1], row=True
         )
         regime_controls = W.VBox(
-            [
-                _section_label("Regime"),
-                self.regime_type_dd,
-                self.regime_selector_dd,
-                self.regime_bucket_dd,
-            ],
-            layout=W.Layout(width="100%"),
-        )
-        factor_controls = W.VBox([], layout=W.Layout(width="100%"))
-
-        self.sunburst_pill = _make_tab_button(
-            "Sunburst", active=True, width="190px", height="34px"
-        )
-        self.regime_pill = _make_tab_button(
-            "Regime analysis", active=False, width="190px", height="34px"
-        )
-        self.factor_pill = _make_tab_button(
-            "Factor exposures", active=False, width="190px", height="34px"
-        )
-        analytics_tab_bar = W.HBox(
-            [self.sunburst_pill, self.regime_pill, self.factor_pill],
-            layout=W.Layout(width="100%", padding="2px 0 6px 0"),
+            [self.regime_type_chips, self.regime_selector_dd, self.regime_bucket_chips],
+            layout=W.Layout(width="auto"),
         )
 
-        #: Tab key -> (pill, its control column, its figure).
+        self.level_chips = ChipGroup(
+            [(drill_level_label(key), key) for key in drill_levels()],
+            value=drill_levels()[0],
+            row=True,
+        )
+        self.breadcrumb = Breadcrumb(on_pick=self._on_breadcrumb)
+
+        self.bar = control_bar(
+            RailSection("Chart", self.chart_chips),
+            RailSection("Metric", self.metric_chips),
+            RailSection("Window", self.card_window_chips),
+            RailSection("Regime", regime_controls),
+            RailSection("Level", self.level_chips),
+            RailSection("Scope", self.breadcrumb),
+            title="Chart view",
+        )
+
+        #: Chart key -> the figure (or placeholder) it mounts.
         self.analytics_tabs = {
-            "sunburst": (self.sunburst_pill, sunburst_controls, self.sunburst_fig),
-            "regime": (self.regime_pill, regime_controls, self.regime_scatter_fig),
-            "factor": (self.factor_pill, factor_controls, self.factor_scatter_fig),
+            "icicle": self.sunburst_fig,
+            "scatter": self.regime_scatter_fig,
+            "strip": self.strip_placeholder,
         }
 
-        # Shared lookback stacked on the active tab's controls (left column),
-        # beside a flex-grow chart box holding exactly one figure.
-        self.tab_controls_box = W.Box(
-            [sunburst_controls], layout=W.Layout(width="100%")
-        )
-        analytics_left_col = W.VBox(
-            [_section_label("Lookback"), self.lookback_selector, self.tab_controls_box],
-            layout=W.Layout(flex="0 0 260px", width="260px", padding="2px 8px 2px 0"),
-        )
         self.chart_box = W.Box(
             [self.sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%")
         )
         analytics_body = W.HBox(
-            [analytics_left_col, self.chart_box],
+            [self.chart_box],
             layout=W.Layout(width="100%", align_items="stretch"),
         )
 
@@ -708,17 +678,96 @@ class PlatformAnalytics:
                         "grid_header", **STYLE_CTX, text="Platform analytics"
                     )
                 ),
-                analytics_tab_bar,
+                self.bar,
                 analytics_body,
             ],
             layout=W.Layout(width="100%"),
         )
         self.card.add_class("bbg-card")
+        # A back-reference so a test (and a future sibling panel) can reach the
+        # controller from the widget tree without counting child indices, which
+        # move whenever the card is restyled.
+        self.card._analytics = self
 
-        #: Lazy-render state: the visible tab, and the tabs drawn against the
+        #: Where the user is. One object, replaced wholesale through
+        #: `set_drill`, read by every chart and (from #337) the points table.
+        self.drill = Drill()
+        #: Set while `set_drill` repaints the Level chips and the breadcrumb,
+        #: so their own observers do not re-enter it and render twice.
+        self._syncing_drill = False
+
+        #: Lazy-render state: the visible chart, and those drawn against the
         #: current data.
-        self.active_analytics: str = "sunburst"
+        self.active_analytics: str = "icicle"
         self.fresh: set[str] = set()
+        self._sync_sections()
+
+    # --- the drill ------------------------------------------------------------
+
+    def set_drill(self, scope: tuple[str, ...], level: str) -> None:
+        """The one writer of `self.drill`.
+
+        Every entry point — a Level chip, a breadcrumb segment, and from
+        #334-#337 a marker click, an icicle zoom and a table row — lands here,
+        so no chart can hold a private focus (#331 decision 15). Repaints the
+        two controls that display the state with their observers suppressed,
+        then re-renders the visible chart once.
+        """
+        self.drill = Drill(scope=tuple(scope), level=level)
+        self._syncing_drill = True
+        try:
+            self.level_chips.value = self.drill.level
+            self.breadcrumb.set_path(self.drill.scope)
+        finally:
+            self._syncing_drill = False
+
+    def narrow_to(self, path: tuple[str, ...]) -> None:
+        """Move into ``path`` and show its children — what a click means."""
+        moved = self.drill.narrowed_to(tuple(path))
+        self.set_drill(moved.scope, moved.level)
+
+    def _on_breadcrumb(self, prefix: tuple[str, ...]) -> None:
+        """A breadcrumb segment: back to that prefix, at the stop below it."""
+        if self._syncing_drill:
+            return
+        self.narrow_to(prefix)
+        self._render_current()
+
+    def _on_level_chip(self, _change=None) -> None:
+        """A Level chip sets the depth within the current scope."""
+        if self._syncing_drill:
+            return
+        self.set_drill(self.drill.scope, self.level_chips.value)
+        self._render_current()
+
+    def _render_current(self) -> None:
+        """Re-render the visible chart from whatever `_current_meta` resolves to.
+
+        Set by `wire`; before that the card has not been wired to a catalog and
+        a drill change has nothing to draw.
+        """
+        if self._current_meta is not None:
+            self._render_tab(self._current_meta(), self.active_analytics)
+
+    # --- conditional sections -------------------------------------------------
+
+    def _sync_sections(self) -> None:
+        """Show only the sections the active chart reads (#331 decision 3).
+
+        Hiding rather than rebuilding, so a chip keeps its selection across a
+        chart switch: the Strip does not read Metric, but coming back to the
+        Scatter should find the metric the user last chose still chosen.
+        """
+        # Keyed to `active_analytics`, not to the chip: the chip drives
+        # `activate`, which sets it, so they agree in the app — and a direct
+        # `activate` call stays self-consistent instead of syncing the sections
+        # against whatever the chip happened to hold.
+        chart = self.active_analytics
+        self.bar.show("Regime", chart == "scatter")
+        self.bar.show("Metric", chart != "strip")
+        self.bar.show("Window", chart != "strip")
+        self.bar.show("Level", chart != "icicle")
+        self.bar.show("Scope", chart != "icicle")
 
     # --- per-chart renders ----------------------------------------------------
 
@@ -769,7 +818,7 @@ class PlatformAnalytics:
                 state.arp_universe_prices,
                 state.universe_prices,
                 meta,
-                years=self.lookback_selector.value / TRADING_DAYS_PER_YEAR,
+                years=stat_window_years(self.card_window_chips.value),
                 returns=state.universe_rets,
             )
 
@@ -784,9 +833,9 @@ class PlatformAnalytics:
                 self.sunburst_fig,
                 state.arp_universe_prices,
                 meta,
-                metric=self.sb_metric_dd.value,
-                window=self.sb_window_dd.value,
-                label=f"{self.sb_window_dd.label} {self.sb_metric_dd.label}",
+                metric=self.metric_chips.value,
+                window=_window_days(self.card_window_chips.value),
+                label=f"{self.card_window_chips.label} {self.metric_chips.label}",
             )
 
     def render_regime_scatter(self, meta: pd.DataFrame) -> None:
@@ -804,7 +853,7 @@ class PlatformAnalytics:
                 meta,
                 low=low,
                 high=high,
-                lookback=self.lookback_selector.value,
+                lookback=_window_days(self.card_window_chips.value),
                 returns=state.universe_rets,
             )
 
@@ -813,7 +862,7 @@ class PlatformAnalytics:
     def regime_indicator(self) -> pd.Series | None:
         """The regime indicator series from the cache, per the active regime's
         shape, or None when its ticker(s) are absent (-> unconditioned view)."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if spec is None:
             return None
         prices = self.state.universe_prices
@@ -840,15 +889,16 @@ class PlatformAnalytics:
         read the tuple off the bucket dropdown; tercile regimes derive it from
         the live indicator's 1/3 & 2/3 quantiles over the lookback.
         ``(None, None)`` when no indicator is available."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if isinstance(spec, LevelRegime):
-            low, high = self.regime_bucket_dd.value
+            low, high = self.regime_bucket_chips.value
             return (low, high)
         indicator = self.regime_indicator()
         if indicator is None:
             return (None, None)
         return tercile_bounds(
-            indicator.tail(self.lookback_selector.value), self.regime_bucket_dd.value
+            indicator.tail(_window_days(self.card_window_chips.value)),
+            self.regime_bucket_chips.value,
         )
 
     def regime_selector_options(self) -> list[tuple[str, object]]:
@@ -858,7 +908,7 @@ class PlatformAnalytics:
         one frozen into `REGIME_SPECS` at import, so a benchmark added at
         runtime is offered here too. Rate-level carries a literal `selector`;
         a fixed-level regime has one ticker and so offers no source at all."""
-        spec = REGIME_SPECS.get(self.regime_type_dd.value)
+        spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if not isinstance(spec, TercileRegime):
             return []
         if spec.selector_source == "benchmarks":
@@ -885,13 +935,13 @@ class PlatformAnalytics:
             self.regime_selector_dd.layout.display = ""
         else:
             self.regime_selector_dd.layout.display = "none"
-        options = regime_bucket_options(self.regime_type_dd.value)
+        options = regime_bucket_options(self.regime_type_chips.value)
         # Preserve the active bucket across a registry change for the same reason.
-        prev_bucket = self.regime_bucket_dd.value
+        prev_bucket = self.regime_bucket_chips.value
         bucket_values = [value for _, value in options]
-        self.regime_bucket_dd.options = options
-        self.regime_bucket_dd.value = (
-            prev_bucket if prev_bucket in bucket_values else options[0][1]
+        self.regime_bucket_chips.set_options(
+            options,
+            value=prev_bucket if prev_bucket in bucket_values else options[0][1],
         )
 
     # --- lazy tab rendering ---------------------------------------------------
@@ -899,9 +949,9 @@ class PlatformAnalytics:
     def _render_tab(self, meta: pd.DataFrame, which: str) -> None:
         """Render one analytics tab and mark it fresh."""
         renderer = {
-            "sunburst": self.render_sunburst,
-            "regime": self.render_regime_scatter,
-            "factor": self.render_factor_scatter,
+            "icicle": self.render_sunburst,
+            "scatter": self.render_regime_scatter,
+            "strip": lambda _meta: None,  # #336 builds it
         }[which]
         renderer(meta)
         self.fresh.add(which)
@@ -919,24 +969,23 @@ class PlatformAnalytics:
         self.render_active(meta)
 
     def activate(self, meta: pd.DataFrame, which: str) -> None:
-        """Switch to tab ``which``: render it first if it isn't fresh (lazy
-        first-view), restyle the pills, and swap the left-column controls and
-        the chart."""
+        """Switch to chart ``which``: render it first if it isn't fresh (lazy
+        first-view), show the sections it reads, and swap the figure.
+
+        The Chart chips paint their own active state, so unlike the pill row
+        they replace there is nothing to restyle here."""
         self.active_analytics = which
         if which not in self.fresh:
             self._render_tab(meta, which)
-        for key, (pill, _controls, _fig) in self.analytics_tabs.items():
-            _style_tab_button(pill, active=(key == which))
-        _pill, controls, fig = self.analytics_tabs[which]
-        self.tab_controls_box.children = (controls,)
-        self.chart_box.children = (fig,)
+        self._sync_sections()
+        self.chart_box.children = (self.analytics_tabs[which],)
 
     # --- wiring ---------------------------------------------------------------
 
     def wire(self, current_meta: Callable[[], pd.DataFrame]) -> None:
-        """Wire every observer: the ranking Metric, the three tab pills, the
-        regime dropdowns, the shared lookback, and the sunburst's own controls.
-        Each re-renders live from the cache, no BQL.
+        """Wire every observer: the table's ranking Metric, and the card's own
+        Chart / Metric / Window / Regime / Level controls. Each re-renders live
+        from the cache, no BQL.
 
         Takes a **callable**, not a frame (#242). `build_app` re-points its
         `meta` to the recent-performance-pruned catalog after every load, so an
@@ -945,6 +994,8 @@ class PlatformAnalytics:
         into the grid. Resolving it at fire time makes that impossible, and
         needs nothing remembered at the prune sites.
         """
+        self._current_meta = current_meta
+
         # Only the Metric is wired here. The Window has a second job — which
         # performance columns are visible — so `DashboardApp._on_window_change`
         # owns it and does both, the way it owns the grouping chips (#324).
@@ -952,35 +1003,32 @@ class PlatformAnalytics:
             lambda _c: self.render_universe_grid(current_meta()), names="value"
         )
 
-        self.sunburst_pill.on_click(
-            lambda _b: self.activate(current_meta(), "sunburst")
+        self.chart_chips.observe(
+            lambda c: self.activate(current_meta(), c["new"]), names="value"
         )
-        self.regime_pill.on_click(lambda _b: self.activate(current_meta(), "regime"))
-        self.factor_pill.on_click(lambda _b: self.activate(current_meta(), "factor"))
 
         def _on_regime_type(_change=None):
             self.sync_regime_controls()
-            self._render_tab(current_meta(), "regime")
+            self._render_tab(current_meta(), "scatter")
 
-        self.regime_type_dd.observe(_on_regime_type, names="value")
+        self.regime_type_chips.observe(_on_regime_type, names="value")
         self.regime_selector_dd.observe(
-            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
+            lambda _c: self._render_tab(current_meta(), "scatter"), names="value"
         )
-        self.regime_bucket_dd.observe(
-            lambda _c: self._render_tab(current_meta(), "regime"), names="value"
-        )
-
-        # The shared lookback drives all three tabs — mark them stale and
-        # re-render only the visible one; the hidden two refresh on activation.
-        self.lookback_selector.observe(
-            lambda _c: self.invalidate(current_meta()), names="value"
+        self.regime_bucket_chips.observe(
+            lambda _c: self._render_tab(current_meta(), "scatter"), names="value"
         )
 
-        # The sunburst's own Metric/Window controls re-render only the sunburst.
-        for _dd in (self.sb_metric_dd, self.sb_window_dd):
-            _dd.observe(
-                lambda _c: self._render_tab(current_meta(), "sunburst"), names="value"
+        # Metric and Window re-render only the VISIBLE chart. They are not a
+        # data change, so `invalidate` would be wrong: it would mark the hidden
+        # two stale and buy nothing, since they redraw on activation anyway.
+        for chips in (self.metric_chips, self.card_window_chips):
+            chips.observe(
+                lambda _c: self._render_tab(current_meta(), self.active_analytics),
+                names="value",
             )
+
+        self.level_chips.observe(self._on_level_chip, names="value")
 
         self.sync_regime_controls()
 
