@@ -35,7 +35,6 @@ from ..config import (
     TRADING_DAYS_PER_YEAR,
     LevelRegime,
     TercileRegime,
-    analytics_levels,
     drill_level_label,
     drill_levels,
     rankable_metric_chips,
@@ -60,6 +59,7 @@ from ..style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR, LINE_PALETTE
 from .drill import Drill
 from .grids import zscore_column_name
 from .html import STYLE_CTX, render_template
+from .platform_charts import IcicleChart
 from .rails import Breadcrumb, ChipGroup, RailSection, control_bar
 from .theme import _chart_layout, _short_ticker
 
@@ -165,33 +165,6 @@ def _zero_planes(frame: pd.DataFrame) -> list[go.Mesh3d]:
 # hover is a `.format()` template — `metric_label` is user-selected at render
 # time (the literal plotly `%{...}` placeholders are doubled to survive
 # `.format()`); `percentParent` is the segment's gross-|z| share of its ring.
-_SUNBURST_SEP = " / "
-_SUNBURST_COLORSCALE = [
-    [0.0, Color.RED_600.value],
-    [0.5, Color.SLATE_500.value],
-    [1.0, Color.GREEN_600.value],
-]
-_SUNBURST_HOVER = (
-    "%{{label}}<br>z({metric_label}) %{{color:.2f}}"
-    "<br>%{{percentParent:.0%}} of parent<extra></extra>"
-)
-# Minimum visible arc, as a fraction of the max |z|, so a near-average (|z|≈0)
-# ticker stays visible. Lower = more contrast.
-_SUNBURST_SIZE_FLOOR = 0.02
-
-
-def _sunburst_leaf_sizes(z: pd.Series) -> pd.Series:
-    """Per-ticker arc value = |z| (gross magnitude), plus a small floor so a
-    near-average (|z|≈0) ticker stays visible. With ``branchvalues="total"`` each
-    ring's arc is then its gross-|z| share of its parent, at every level.
-    All-zero (or empty) input falls back to uniform arcs."""
-    mag = z.abs()
-    hi = float(mag.max()) if len(mag) else 0.0
-    if hi <= 0:
-        return pd.Series(1.0, index=z.index)
-    return mag + _SUNBURST_SIZE_FLOOR * hi
-
-
 def _factor_beta_scatter() -> go.FigureWidget:
     """3D factor-beta scatter: x = β to the equity risk premium, y = β to the
     term premium, z = β to the cross-asset trend factor ("Trend Exposure"), one
@@ -281,123 +254,6 @@ def _update_factor_scatter(
         fig.data = ()
         # Planes first so the markers render over them.
         fig.add_traces([*_zero_planes(frame), *traces])
-
-
-def _sunburst() -> go.FigureWidget:
-    """The `config.ANALYTICS_LEVELS` hierarchy down to ticker leaves (inside
-    out), arcs sized by each ring's gross-|z| share and colored by the
-    (level-averaged) metric z-score.
-    Built empty; `_update_sunburst` fills it. No in-figure title — the
-    "Risk-adjusted strength map" section header stands alone; the
-    diverging colorbar is the color legend."""
-    return go.FigureWidget(
-        layout=_chart_layout(
-            title="",
-            margin=dict(t=44, b=10, l=10, r=10),
-        )
-    )
-
-
-def _update_sunburst(
-    fig: go.FigureWidget,
-    prices: pd.DataFrame,
-    meta: pd.DataFrame,
-    *,
-    metric: str,
-    window: int,
-    label: str,
-) -> None:
-    """Populate the sunburst from `icicle_frame`: one ring per
-    `config.ANALYTICS_LEVELS` entry over the ticker leaves, so reconfiguring the
-    hierarchy — two levels today, the three framework tiers if that is what the
-    catalog should show — needs no edit here. Each arc is sized by |z| (so with
-    `branchvalues="total"` a ring's arc is its gross-|z| share of its parent) and
-    colored by the metric z-score, averaged up each level (parent color = mean of
-    its descendant tickers' z). `maxdepth` shows the grouping rings up front; the
-    ticker ring appears when the user clicks into one (client-side drill-down).
-    `label` (e.g. "1W Sharpe") titles the colorbar + hover. No BQL — pure compute
-    over the already-fetched cache."""
-    frame = icicle_frame(prices, meta, metric=metric, window=window).dropna(
-        subset=["value"]
-    )
-    if frame.empty:
-        with fig.batch_update():
-            fig.data = ()
-        return
-
-    levels = list(analytics_levels())
-    frame = frame.copy()
-    for level in levels:
-        frame[level] = frame[level].fillna("Other").astype(str)
-    # Arc value = |z| (gross magnitude) + floor; parents sum to the gross-|z|
-    # share at each ring. Color is the signed z (below), averaged up each level.
-    frame["size"] = _sunburst_leaf_sizes(frame["value"])
-
-    ids: list[str] = []
-    labels: list[str] = []
-    parents: list[str] = []
-    values: list[float] = []
-    colors: list[float] = []
-
-    def _emit(group: pd.DataFrame, depth: int, parent_id: str) -> float:
-        """Emit one subtree's nodes, returning its total arc value.
-
-        Depth-first and bottom-up: a node's value is the sum its children
-        actually reported, not a second aggregation of the same rows, so
-        ``branchvalues="total"`` holds exactly at every ring however many there
-        are. ``parent_id`` is "" at the top, which is Plotly's root.
-        """
-        if depth == len(levels):
-            for ticker, row in group.iterrows():
-                ids.append(ticker)
-                labels.append(_short_ticker(ticker))
-                parents.append(parent_id)
-                values.append(float(row["size"]))
-                colors.append(float(row["value"]))
-            return float(group["size"].sum())
-
-        total = 0.0
-        for value, sub in group.groupby(levels[depth]):
-            # Ids are the path, so the same leaf label under two different
-            # parents stays two nodes.
-            node_id = f"{parent_id}{_SUNBURST_SEP}{value}" if parent_id else str(value)
-            subtotal = _emit(sub, depth + 1, node_id)
-            ids.append(node_id)
-            labels.append(str(value))
-            parents.append(parent_id)
-            values.append(subtotal)
-            colors.append(float(sub["value"].mean()))
-            total += subtotal
-        return total
-
-    _emit(frame, 0, "")
-
-    sunburst = go.Sunburst(
-        ids=ids,
-        labels=labels,
-        parents=parents,
-        values=values,
-        branchvalues="total",
-        # Show one ring per configured level from the current center, so the
-        # ticker ring stays hidden until the user clicks into a grouping node to
-        # drill in (client-side zoom, no recompute).
-        maxdepth=len(levels),
-        insidetextorientation="radial",
-        marker=dict(
-            colors=colors,
-            colorscale=_SUNBURST_COLORSCALE,
-            cmid=0,
-            cmin=-2,
-            cmax=2,
-            line=dict(width=1, color=Color.CHART_BG.value),
-            showscale=True,
-            colorbar=dict(title=dict(text=label)),
-        ),
-        hovertemplate=_SUNBURST_HOVER.format(metric_label=label),
-    )
-    with fig.batch_update():
-        fig.data = ()
-        fig.add_traces([sunburst])
 
 
 # --- Regime Analysis: regime-conditioned risk/return scatter ----------------
@@ -584,7 +440,7 @@ class PlatformAnalytics:
         #: Resolved at fire time, never captured (#242). `wire` sets it.
         self._current_meta: Callable[[], pd.DataFrame] | None = None
 
-        self.sunburst_fig = _sunburst()
+        self.icicle = IcicleChart(on_drill=self._drill_from_chart)
         self.regime_scatter_fig = _regime_scatter()
         self.factor_scatter_fig = _factor_beta_scatter()
         # A placeholder until #336 builds the chart. The Chart chip's three
@@ -658,13 +514,13 @@ class PlatformAnalytics:
 
         #: Chart key -> the figure (or placeholder) it mounts.
         self.analytics_tabs = {
-            "icicle": self.sunburst_fig,
+            "icicle": self.icicle.fig,
             "scatter": self.regime_scatter_fig,
             "strip": self.strip_placeholder,
         }
 
         self.chart_box = W.Box(
-            [self.sunburst_fig], layout=W.Layout(flex="1 1 0%", width="100%")
+            [self.icicle.fig], layout=W.Layout(flex="1 1 0%", width="100%")
         )
         analytics_body = W.HBox(
             [self.chart_box],
@@ -725,6 +581,15 @@ class PlatformAnalytics:
         """Move into ``path`` and show its children — what a click means."""
         moved = self.drill.narrowed_to(tuple(path))
         self.set_drill(moved.scope, moved.level)
+
+    def _drill_from_chart(self, path: tuple[str, ...]) -> None:
+        """A marker or icicle click: narrow, then redraw the visible chart.
+
+        The same door a Level chip and a breadcrumb segment use, so no chart
+        can hold a focus the others do not know about (#331 decision 15).
+        """
+        self.narrow_to(path)
+        self._render_current()
 
     def _on_breadcrumb(self, prefix: tuple[str, ...]) -> None:
         """A breadcrumb segment: back to that prefix, at the stop below it."""
@@ -822,20 +687,32 @@ class PlatformAnalytics:
                 returns=state.universe_rets,
             )
 
-    def render_sunburst(self, meta: pd.DataFrame) -> None:
-        """Render the `ANALYTICS_LEVELS` -> ticker sunburst from the Metric/Window
-        Z-score controls + the shared lookback, live from the ARP-only cache."""
+    def render_icicle(self, meta: pd.DataFrame) -> None:
+        """Draw the hierarchy from the Metric / Window chips, live from cache."""
         state = self.state
         if state.arp_universe_prices.empty:
             return
-        with _guard_render(state, "sunburst render"):
-            _update_sunburst(
-                self.sunburst_fig,
-                state.arp_universe_prices,
-                meta,
-                metric=self.metric_chips.value,
-                window=_window_days(self.card_window_chips.value),
-                label=f"{self.card_window_chips.label} {self.metric_chips.label}",
+        with _guard_render(state, "icicle render"):
+            metric = self.metric_chips.value
+            names = (
+                meta.set_index("ticker")["name"]
+                if {"ticker", "name"} <= set(meta.columns)
+                else None
+            )
+            self.icicle.update(
+                icicle_frame(
+                    state.arp_universe_prices,
+                    meta,
+                    metric=metric,
+                    window=_window_days(self.card_window_chips.value),
+                    returns=state.universe_rets,
+                ),
+                metric=metric,
+                metric_label=(
+                    f"{self.card_window_chips.label} {self.metric_chips.label}"
+                ),
+                names=names,
+                scope=self.drill.scope,
             )
 
     def render_regime_scatter(self, meta: pd.DataFrame) -> None:
@@ -949,7 +826,7 @@ class PlatformAnalytics:
     def _render_tab(self, meta: pd.DataFrame, which: str) -> None:
         """Render one analytics tab and mark it fresh."""
         renderer = {
-            "icicle": self.render_sunburst,
+            "icicle": self.render_icicle,
             "scatter": self.render_regime_scatter,
             "strip": lambda _meta: None,  # #336 builds it
         }[which]

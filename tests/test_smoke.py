@@ -119,9 +119,12 @@ def test_platform_panel_has_zscore_controls_and_factor_scatter():
         "Strategy",
     ]
 
-    sunburst = chart_box.children[0]
-    assert isinstance(sunburst, go.FigureWidget)
-    assert sunburst.data and isinstance(sunburst.data[0], go.Sunburst)
+    icicle = chart_box.children[0]
+    assert isinstance(icicle, go.FigureWidget)
+    assert icicle.data and isinstance(icicle.data[0], go.Icicle)
+    # Sized by count: every leaf is one strategy, so the root totals the
+    # catalog rather than a sum of |z| (#331 decision 8).
+    assert set(icicle.data[0].values) >= {1.0}
 
     # The third chart is the Strip, a placeholder until #336. The 3D factor
     # scatter that was the third pill is unmounted from here until #335 merges

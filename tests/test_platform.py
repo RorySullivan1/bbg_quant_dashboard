@@ -22,18 +22,15 @@ from src.config import (
 )
 from src.data import load_metadata
 from src.layout.platform import (
-    _SUNBURST_SIZE_FLOOR,
     PlatformAnalytics,
     _asset_class_colors,
     _factor_beta_scatter,
     _regime_scatter,
-    _sunburst,
-    _sunburst_leaf_sizes,
     _update_factor_scatter,
     _update_regime_scatter,
-    _update_sunburst,
     regime_bucket_options,
 )
+from src.layout.platform_charts import IcicleChart
 from src.layout.rails import ChipGroup
 from src.layout.theme import _v_ref
 from src.stats import daily_returns, tercile_bounds
@@ -216,120 +213,161 @@ def _treemap_meta() -> pd.DataFrame:
     )
 
 
-_SUNBURST_KW = dict(metric="sharpe", window=WEEK_WINDOW, label="1W Sharpe")
+_ICICLE_KW = dict(metric="sharpe", metric_label="1W Sharpe")
 
 
-def test_sunburst_leaf_sizes_magnitude_drives_arc():
-    # Arc = |z|: equal-magnitude +z/-z get equal arcs; near-zero lands on the
-    # floor; bigger |z| -> bigger arc. Sign is for color, not size.
-    z = pd.Series({"up": 2.0, "down": -2.0, "flat": 0.0})
-    sizes = _sunburst_leaf_sizes(z)
-    floor = _SUNBURST_SIZE_FLOOR * 2.0  # max |z| = 2.0
-    assert sizes["up"] == sizes["down"] == 2.0 + floor
-    assert sizes["flat"] == floor
-    assert sizes["up"] > 10 * sizes["flat"]
-    assert (sizes >= 0).all()
+def _icicle_frame(meta=None):
+    """`icicle_frame` over the seeded universe, restricted to the strategies."""
+    from src.stats import icicle_frame
+
+    meta = _treemap_meta() if meta is None else meta
+    arp = _universe()[["AAA Index", "BBB Index"]]
+    return icicle_frame(arp, meta, metric="sharpe", window=WEEK_WINDOW)
 
 
-def test_sunburst_leaf_sizes_all_zero_uniform():
-    # No deviation anywhere -> uniform fallback (avoids divide-by-zero floor).
-    sizes = _sunburst_leaf_sizes(pd.Series({"a": 0.0, "b": 0.0, "c": 0.0}))
-    assert (sizes == 1.0).all()
+def test_the_icicle_sizes_every_cell_by_its_strategy_count():
+    """#331 decision 8 — the change of meaning, not just of chart type.
+
+    The sunburst sized arcs by |z|: the gross magnitude of the very quantity
+    colour already encoded, so a ring's shares read as nothing. Counting makes
+    a cell's width its share of strategies, which is a question the catalog
+    does not otherwise answer visually.
+    """
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    (trace,) = chart.fig.data
+    assert isinstance(trace, go.Icicle)
+    assert trace.branchvalues == "total"
+    value = dict(zip(trace.ids, trace.values, strict=True))
+    # Two strategies, one asset class, two categories under it.
+    assert value["Equity"] == 2
+    assert value["Equity / Growth"] == 1
+    assert value["Equity / Growth / Momentum"] == 1
+    # Every leaf is exactly 1, whatever its metric says.
+    leaves = [v for node, v in value.items() if node.endswith(" Index")]
+    assert leaves == [1, 1]
 
 
-def test_update_sunburst_builds_the_configured_hierarchy():
-    fig = _sunburst()
-    universe = _universe()
-    arp = universe[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+def test_the_icicle_colours_a_parent_by_the_mean_of_its_leaves():
+    chart = IcicleChart()
+    frame = _icicle_frame()
+    chart.update(frame, **_ICICLE_KW)
 
-    # No in-figure title (v0.7.3) — the section header stands alone.
-    assert not fig.layout.title.text
-    assert len(fig.data) == 1
-    sb = fig.data[0]
-    assert isinstance(sb, go.Sunburst)
-    assert sb.branchvalues == "total"
-    # maxdepth == the number of configured levels, so the ticker ring stays
-    # hidden until the user drills into a grouping node. Three since #332,
-    # which took `ANALYTICS_LEVELS` down to the family tier.
-    assert sb.maxdepth == 3
-    nodes = dict(zip(sb.ids, sb.parents, strict=True))
-    # asset class is a root; category hangs off it, family off the category,
-    # and the ticker leaves off the families.
-    assert nodes["Equity"] == ""
-    assert nodes["Equity / Growth"] == "Equity"
-    assert nodes["Equity / Value"] == "Equity"
-    assert nodes["Equity / Growth / Momentum"] == "Equity / Growth"
-    assert nodes["AAA Index"] == "Equity / Growth / Momentum"
-    assert nodes["BBB Index"] == "Equity / Value / Carry"
-    # Arcs are non-negative; one color per node.
-    assert all(v >= 0 for v in sb.values)
-    assert len(sb.marker.colors) == len(sb.ids)
-    # branchvalues="total": the asset-class arc == the sum of its ticker leaves.
-    val = dict(zip(sb.ids, sb.values, strict=True))
-    assert val["Equity"] == pytest.approx(val["AAA Index"] + val["BBB Index"])
-    # Colorbar title reflects the selected metric label.
-    # The colorbar names the metric plainly: the cells carry the RAW metric
-    # since #332, not a z-score of it (#331 decision 2).
-    assert sb.marker.colorbar.title.text == "1W Sharpe"
+    (trace,) = chart.fig.data
+    colour = dict(zip(trace.ids, trace.marker.colors, strict=True))
+    assert colour["Equity"] == pytest.approx(frame["value"].mean())
 
 
-def test_update_sunburst_follows_a_three_level_config(monkeypatch):
-    # #213's acceptance: switching `ANALYTICS_LEVELS` to the framework tiers
-    # renders correctly with no code edit — three rings above the leaves, ids
-    # spelling the path, and parent value == Σ children at *every* level (what
-    # `branchvalues="total"` requires).
+def test_the_icicle_s_colour_range_is_symmetric_and_taken_from_the_data():
+    """The fixed ±2 it replaces was a z-score's range; a raw Sharpe has no
+    reason to share it, and an outlier must not flatten everything else."""
+    chart = IcicleChart()
+    frame = _icicle_frame()
+    frame.loc["AAA Index", "value"] = 40.0  # one wild outlier
+    chart.update(frame, **_ICICLE_KW)
+
+    marker = chart.fig.data[0].marker
+    assert marker.cmid == 0
+    assert marker.cmin == pytest.approx(-marker.cmax)
+    assert marker.cmax < 40.0, "the 95th percentile clips the outlier"
+
+
+def test_the_icicle_s_ids_are_paths_so_a_click_round_trips():
+    """A cell's id IS the path, so a click becomes a `Drill.scope` without
+    parsing anything the renderer invented."""
+    got: list[tuple[str, ...]] = []
+    chart = IcicleChart(on_drill=got.append)
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    trace = chart.fig.data[0]
+    index = list(trace.ids).index("Equity / Growth")
+    chart._clicked(trace, SimpleNamespace(point_inds=[index]), None)
+    assert got == [("Equity", "Growth")]
+
+
+def test_the_icicle_s_ids_keep_a_repeated_label_as_two_cells():
+    # The sample catalog's real case: one category under two asset classes.
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "BBB Index"],
+            "asset_class": ["Equity", "Fixed Income"],
+            "solution": ["ARP", "ARP"],
+            "category": ["Emerging Markets", "Emerging Markets"],
+            "family": ["MSCI", "Bloomberg"],
+        }
+    )
+    chart = IcicleChart()
+    chart.update(_icicle_frame(meta), **_ICICLE_KW)
+
+    ids = set(chart.fig.data[0].ids)
+    assert "Equity / Emerging Markets" in ids
+    assert "Fixed Income / Emerging Markets" in ids
+
+
+def test_the_icicle_s_points_are_its_leaves_under_the_scope():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW, scope=("Equity", "Growth"))
+
+    points = chart.points()
+    assert list(points.columns) == ["path", "label", "name", "value", "count"]
+    assert list(points["label"]) == ["AAA Index"]
+    assert (points["count"] == 1).all()
+    assert points.loc["AAA Index", "path"] == ("Equity", "Growth", "Momentum")
+
+
+def test_the_icicle_follows_a_reconfigured_hierarchy(monkeypatch):
+    # #213's acceptance, carried over: the chart walks `ANALYTICS_LEVELS`
+    # rather than naming its levels, so the tiers are a config flip.
     import src.config as cfg
 
     monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("solution", "category", "family"))
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
 
-    sb = fig.data[0]
-    assert sb.maxdepth == 3
-    nodes = dict(zip(sb.ids, sb.parents, strict=True))
+    trace = chart.fig.data[0]
+    assert trace.maxdepth == 3
+    nodes = dict(zip(trace.ids, trace.parents, strict=True))
     assert nodes["ARP"] == ""
     assert nodes["ARP / Growth"] == "ARP"
     assert nodes["ARP / Growth / Momentum"] == "ARP / Growth"
-    assert nodes["AAA Index"] == "ARP / Growth / Momentum"
-    assert nodes["BBB Index"] == "ARP / Value / Carry"
-
-    val = dict(zip(sb.ids, sb.values, strict=True))
-    children: dict[str, list[str]] = {}
-    for node, parent in nodes.items():
-        children.setdefault(parent, []).append(node)
-    for node, kids in children.items():
-        if node:  # "" is Plotly's root, not a node with a value
-            assert val[node] == pytest.approx(sum(val[k] for k in kids))
 
 
-def test_update_sunburst_buckets_a_missing_level_as_other(monkeypatch):
-    # A level absent from the metadata must not break the render.
+def test_the_icicle_buckets_a_missing_level_as_other(monkeypatch):
     import src.config as cfg
 
     monkeypatch.setattr(cfg, "ANALYTICS_LEVELS", ("asset_class", "return_type"))
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    _update_sunburst(fig, arp, _treemap_meta(), **_SUNBURST_KW)
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
 
-    nodes = dict(zip(fig.data[0].ids, fig.data[0].parents, strict=True))
+    nodes = dict(zip(chart.fig.data[0].ids, chart.fig.data[0].parents, strict=True))
     assert nodes["Equity / Other"] == "Equity"
-    assert nodes["AAA Index"] == "Equity / Other"
 
 
-def test_update_sunburst_label_drives_colorbar_title():
-    fig = _sunburst()
-    arp = _universe()[["AAA Index", "BBB Index"]]
-    kw = {**_SUNBURST_KW, "metric": "sortino", "label": "3M Sortino"}
-    _update_sunburst(fig, arp, _treemap_meta(), **kw)
-    assert fig.data[0].marker.colorbar.title.text == "3M Sortino"
+def test_the_icicle_label_drives_the_colorbar_and_the_value_label():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), metric="sortino", metric_label="3M Sortino")
+    assert chart.fig.data[0].marker.colorbar.title.text == "3M Sortino"
+    # #337's table reads this rather than spelling a label of its own.
+    assert chart.value_label == "3M Sortino"
+    assert chart.value_format == ".2f"
 
 
-def test_update_sunburst_empty_clears_traces():
-    fig = _sunburst()
-    _update_sunburst(fig, pd.DataFrame(), _treemap_meta(), **_SUNBURST_KW)
-    assert fig.data == ()
+def test_the_icicle_formats_a_return_as_a_percentage():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), metric="return", metric_label="1Y Return")
+    assert chart.value_format == ".2%"
+
+
+def test_the_icicle_empty_clears_traces_and_points():
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+    chart.update(
+        pd.DataFrame(columns=["asset_class", "category", "family", "value"]),
+        **_ICICLE_KW,
+    )
+    assert chart.fig.data == ()
+    assert chart.points().empty
 
 
 # --- Regime specs (#220) -----------------------------------------------------
@@ -645,7 +683,7 @@ def test_platform_analytics_render_is_lazy(monkeypatch):
     from src.layout import build_app
 
     calls = {"icicle": 0, "scatter": 0}
-    methods = {"icicle": "render_sunburst", "scatter": "render_regime_scatter"}
+    methods = {"icicle": "render_icicle", "scatter": "render_regime_scatter"}
 
     def _spy(name, real):
         def render(self, meta):
@@ -685,7 +723,7 @@ def test_platform_analytics_owns_its_card_and_lazy_state():
     # Opens on the Icicle with nothing drawn yet — the lazy contract's start.
     assert pa.active_analytics == "icicle"
     assert pa.fresh == set()
-    assert pa.chart_box.children == (pa.sunburst_fig,)
+    assert pa.chart_box.children == (pa.icicle.fig,)
 
 
 def test_platform_analytics_instances_do_not_share_state():
@@ -696,7 +734,7 @@ def test_platform_analytics_instances_do_not_share_state():
     a.active_analytics = "scatter"
     assert b.fresh == set()
     assert b.active_analytics == "icicle"
-    assert a.sunburst_fig is not b.sunburst_fig
+    assert a.icicle is not b.icicle
     # The drill is per-instance too, for the same reason.
     a.set_drill(("Equity",), "family")
     assert b.drill.scope == ()
