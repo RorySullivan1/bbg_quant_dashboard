@@ -17,6 +17,7 @@ evidence.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 import numpy as np
 import pandas as pd
@@ -1305,6 +1306,48 @@ def test_a_numeric_filter_box_reads_as_one_and_flags_what_it_cannot_parse():
     assert ".bbg-filter-input.bbg-filter-invalid" in css
 
 
+def test_the_strips_around_the_table_are_painted_with_the_table():
+    """#340 — the search row and row-count readout sat on the bundle's white.
+
+    They have no background of their own: they are the container showing
+    through where the table does not cover it. The widget bundle paints that
+    container from `--dt-html-background`, which its own stylesheet defines as
+    `white`, so the strips rendered light under text already themed for navy.
+
+    What is assertable here is that the rules exist and carry the table's own
+    colour. Whether the strips *draw* dark is a render question — the #255
+    lesson — so the screenshot on the PR is the other half of the evidence.
+    """
+    from src.layout.html import STYLE_CTX, render_template
+    from src.style import Color
+
+    # Comments go first: the rule's own commentary quotes the bundle's
+    # `--dt-html-background: white`, which a plain substring search would
+    # find before the declaration that overrides it.
+    css = re.sub(r"/\*.*?\*/", "", render_template("app_css", **STYLE_CTX), flags=re.S)
+
+    painted = [b for b in css.split("}") if "--dt-html-background" in b]
+    assert painted, "nothing redefines --dt-html-background; the bundle's white wins"
+    rule = painted[0]
+    # Redefining the bundle's property is the fix at its source: its own rules
+    # keep painting, in our colour. The explicit background beside it is the
+    # belt for a bundle that stopped reading the property.
+    assert f"--dt-html-background: {Color.CHROME_BG};" in rule
+    assert f"background-color: {Color.CHROME_BG} !important" in rule
+    # The container is painted too, not only the widget host — it is the
+    # element the strips actually sit on.
+    assert ".dt-container" in rule.split("{", 1)[0]
+    # `chrome_bg`, not `surface`: the strips read as part of the table, whose
+    # own base this is. A header-coloured band above and below would not.
+    assert Color.CHROME_BG != Color.SURFACE
+    # Preserved: the scroll cell keeps its own rules. It is the nearest
+    # scrolling ancestor of the sticky header, so a background must not have
+    # arrived with an `overflow` or a `height` beside it.
+    scroll = "div.itables_anywidget .dt-layout-row.dt-layout-table .dt-layout-cell"
+    assert scroll in css
+    assert "overflow: auto" in css.split(scroll, 1)[-1].split("}", 1)[0]
+
+
 # --- the table claims the width between the rails (#280) -------------------
 #
 # What is assertable here is that the rules exist and compose: the flex share,
@@ -1333,10 +1376,17 @@ def test_the_table_widget_takes_the_whole_width_and_can_shrink():
 def test_the_table_fills_its_cell_from_the_inside_too():
     from src.layout.html import STYLE_CTX, render_template
 
-    css = render_template("app_css", **STYLE_CTX)
-    rule = css.split("div.itables_anywidget.bbg-catalog,")[1].split("}")[0]
+    css = re.sub(r"/\*.*?\*/", "", render_template("app_css", **STYLE_CTX), flags=re.S)
     # The widget, DataTables' own wrapper, and the table itself. Widening the
     # outer widget alone moves the dead space rather than removing it.
+    #
+    # These selectors carry more than one rule — #340 paints them as well — so
+    # the width rule is the one to read, not whichever comes first.
+    rule = next(
+        r
+        for r in css.split("}")
+        if "div.itables_anywidget.bbg-catalog," in r and "width: 100%" in r
+    )
     assert ".dt-container" in rule and "table.dataTable" in rule
     assert "width: 100% !important" in rule
 
