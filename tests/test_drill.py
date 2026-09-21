@@ -96,7 +96,7 @@ def test_every_numeric_column_is_averaged_and_nothing_else_is(lumpy_leaves, lump
     """The Scatter hands in value/x/z, the Strip five dates — one rule for both."""
     paths = node_paths(lumpy_meta)
     points = drill_points(lumpy_leaves, paths, level="category")
-    assert list(points.columns) == ["path", "label", "count", "value", "x"]
+    assert list(points.columns) == ["path", "label", "count", "leaf", "value", "x"]
     assert points.loc["Momentum", "value"] == pytest.approx(3.0)
     assert points.loc["Value", "count"] == 1
 
@@ -106,6 +106,30 @@ def test_the_scope_filters_before_the_grouping(lumpy_leaves, lumpy_meta):
     inside = drill_points(lumpy_leaves, paths, scope=("Equity",), level="category")
     assert set(inside["label"]) == {"Momentum", "Value"}
     assert "Credit" not in set(inside["label"]), "Fixed Income is out of scope"
+
+
+def test_a_single_member_group_is_not_mistaken_for_a_strategy(lumpy_leaves, lumpy_meta):
+    """The `leaf` flag exists for exactly this case.
+
+    `count == 1` is a one-member *group* as often as a strategy — 16 of the
+    shipped catalog's 17 root points are one-member categories — and the path
+    cannot tell them apart either, since a family node and a ticker under it
+    are both three segments deep. Routing a click on either inference would
+    open a category in Single Strategy.
+    """
+    paths = node_paths(lumpy_meta)
+    groups = drill_points(lumpy_leaves, paths, scope=("Equity",), level="family")
+    cheap = groups.loc["Cheap"]
+    assert cheap["count"] == 1, "a one-member family"
+    assert not cheap["leaf"], "but not a strategy"
+    assert len(cheap["path"]) == 3, "and the same depth as a ticker row"
+
+    tickers = drill_points(
+        lumpy_leaves, paths, scope=("Equity", "Value", "Cheap"), level="ticker"
+    )
+    assert tickers.loc["D", "count"] == 1
+    assert tickers.loc["D", "leaf"]
+    assert len(tickers.loc["D", "path"]) == 3
 
 
 def test_the_leaf_level_is_one_row_per_ticker(lumpy_leaves, lumpy_meta):
@@ -140,7 +164,7 @@ def test_colour_keys_to_the_points_shown():
 def test_empty_inputs_return_the_columns_rather_than_raising(lumpy_meta):
     paths = node_paths(lumpy_meta)
     empty = drill_points(pd.DataFrame(), paths, level="category")
-    assert list(empty.columns) == ["path", "label", "count"]
+    assert list(empty.columns) == ["path", "label", "count", "leaf"]
     # A scope that matches nothing is a legitimate state: the user narrowed,
     # then changed the regime bucket out from under it.
     nothing = drill_points(

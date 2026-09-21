@@ -259,7 +259,9 @@ class IcicleChart(Chart):
         for position, value in enumerate(scope):
             inside = inside[inside[levels[position]] == value]
         if inside.empty:
-            return pd.DataFrame(columns=["path", "label", "name", "value", "count"])
+            return pd.DataFrame(
+                columns=["path", "label", "name", "value", "count", "leaf"]
+            )
         paths = [tuple(row) for row in inside[levels].to_numpy()]
         lookup = names if names is not None else pd.Series(dtype=object)
         return pd.DataFrame(
@@ -269,6 +271,7 @@ class IcicleChart(Chart):
                 "name": [lookup.get(t, _short_ticker(t)) for t in inside.index],
                 "value": inside["value"].to_numpy(),
                 "count": 1,
+                "leaf": True,
             },
             index=list(inside.index),
         )
@@ -290,12 +293,20 @@ class IcicleChart(Chart):
         trace.on_click(self._clicked)
 
     def _clicked(self, _trace, points, _state) -> None:
-        """Turn a clicked cell's id back into a path and narrow to it."""
+        """Turn a clicked cell's id back into a path and narrow to it.
+
+        A **ticker** cell is ignored. Its id carries the ticker as a fourth
+        segment, which is one deeper than the hierarchy the scope addresses,
+        so narrowing to it would raise — and a strategy has no children to
+        narrow into anyway. The points row is the way into Single Strategy.
+        """
         if self._on_drill is None or not getattr(points, "point_inds", None):
             return
         index = points.point_inds[0]
-        node_id = self.fig.data[0].ids[index]
-        self._on_drill(tuple(node_id.split(PATH_SEP)))
+        path = tuple(self.fig.data[0].ids[index].split(PATH_SEP))
+        if len(path) > len(analytics_levels()):
+            return
+        self._on_drill(path)
 
     def clear(self) -> None:
         with self.fig.batch_update():
@@ -404,6 +415,7 @@ class RegimeFactorScatter(Chart):
                             group["name"].astype(str).to_numpy(),
                             counts,
                             [_path_key(p) for p in group["path"]],
+                            group["leaf"].to_numpy(),
                         ]
                     ),
                     hovertemplate=(
@@ -437,14 +449,16 @@ class RegimeFactorScatter(Chart):
         """Narrow to the clicked marker's path.
 
         At the leaf level a click does nothing: a strategy has no children, and
-        the table row beside the chart is the way into Single Strategy.
+        the table row beside the chart is the way into Single Strategy. The
+        **flag** decides that, not the count — a one-member category has a
+        count of 1 too, and on the shipped catalog nearly every root marker is
+        one, so a count test would make the chart undrillable.
         """
         if self._on_drill is None or not getattr(points, "point_inds", None):
             return
         index = points.point_inds[0]
         row = trace.customdata[index]
-        count = float(row[1])
-        if count <= 1:
+        if _is_leaf(row[3]):
             return
         self._on_drill(tuple(str(row[2]).split(PATH_SEP)))
 
@@ -470,19 +484,23 @@ def _scene_axis(title: str) -> dict:
 
 
 def _color_values(points: pd.DataFrame, color_key: str) -> pd.Series:
-    """The value each point is coloured by.
+    """The value each point is coloured by, per `stats.drill.color_key`.
 
-    At the root that is the point's parent (its path's first segment); below
-    it, the point is its own key. Reading it off the **path** rather than
-    re-joining metadata is what keeps the colour and the position describing
-    the same node.
+    At the root the key is the hierarchy's first level, which for the points
+    drawn there is their **parent** — the path's first segment. Below the
+    root the key is the points' own level, so each point is its own key and
+    the members can be told apart. *A key that stops varying stops informing*
+    (#331 decision 17), which is what goes wrong if this reads the parent at
+    every depth: a whole scope collapses to one colour and one legend entry.
+
+    Read off the **path**, never by re-joining metadata, so the colour and the
+    position always describe the same node.
     """
-    if color_key in points.columns:
-        return points[color_key].astype(str)
-    depth = 0 if not len(points) else max(len(points["path"].iloc[0]) - 1, 0)
-    if depth == 0:
-        return points["label"].astype(str)
-    return points["path"].map(lambda p: str(p[0]) if p else "Other")
+    if points.empty:
+        return pd.Series(dtype=str)
+    if color_key == analytics_levels()[0]:
+        return points["path"].map(lambda p: str(p[0]) if len(p) else "Other")
+    return points["label"].astype(str)
 
 
 def _marker_sizes(counts: np.ndarray) -> np.ndarray:
@@ -570,7 +588,10 @@ class StripChart(Chart):
         keys = _color_values(points, color_key)
         # Jitter is assigned over ALL the points, not per trace, so two groups
         # drawn in different traces cannot land on the same spot.
-        slot = {label: index for index, label in enumerate(points["label"])}
+        # Keyed by PATH, not by label: two nodes can share a label — the
+        # shipped catalog has "S&P US Sector" under two categories — and
+        # keying by label would draw them on top of each other.
+        slot = {path: index for index, path in enumerate(points["path"])}
 
         traces = []
         for key, group in points.groupby(keys):
@@ -579,7 +600,7 @@ class StripChart(Chart):
             custom: list[list] = []
             for offset, date in enumerate(dates):
                 for _index, row in group.iterrows():
-                    xs.append(offset + _jitter(slot[row["label"]], len(points)))
+                    xs.append(offset + _jitter(slot[row["path"]], len(points)))
                     ys.append(float(row[date]))
                     custom.append(
                         [
@@ -587,6 +608,7 @@ class StripChart(Chart):
                             int(row["count"]),
                             _path_key(row["path"]),
                             labels[offset],
+                            bool(row["leaf"]),
                         ]
                     )
             traces.append(
@@ -630,7 +652,7 @@ class StripChart(Chart):
         if self._on_drill is None or not getattr(points, "point_inds", None):
             return
         row = trace.customdata[points.point_inds[0]]
-        if float(row[1]) <= 1:
+        if _is_leaf(row[4]):
             return
         self._on_drill(tuple(str(row[2]).split(PATH_SEP)))
 
@@ -657,3 +679,14 @@ def _jitter(position: int, total: int) -> float:
         return 0.0
     share = position / (total - 1) - 0.5
     return share * 2.0 * StripChart.JITTER
+
+
+def _is_leaf(flag) -> bool:
+    """Whether a `customdata` cell means "this row is a strategy".
+
+    `np.column_stack` casts a mixed block to strings, so a boolean arrives as
+    `"True"` / `"False"` rather than as a bool. Read through this rather than
+    trusting truthiness — `bool("False")` is `True`, which would make every
+    marker undrillable.
+    """
+    return str(flag).lower() in ("true", "1")

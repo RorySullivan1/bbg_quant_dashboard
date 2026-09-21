@@ -350,16 +350,32 @@ class PlatformAnalytics:
         self.fresh: set[str] = set()
         self._sync_sections()
 
+    def _restale_scatter(self) -> None:
+        """A regime control changed: the Scatter is stale, redraw it if shown.
+
+        Only the Scatter reads the regime, so this stales one chart rather
+        than all three — but it must stale it even while hidden, or selecting
+        it later would show the previous bucket.
+        """
+        self.fresh.discard("scatter")
+        if self.active_analytics == "scatter" and self._current_meta is not None:
+            self._render_tab(self._current_meta(), "scatter")
+
     def _pick_point(self, row: pd.Series) -> None:
         """A points-table row: narrow on a group, open a strategy (#331 dec. 19).
 
-        `count` is what routes it, not the level: a row that stands for one
-        strategy IS that strategy, whatever depth the chart is drawn at.
+        The row's **`leaf` flag** routes it. Neither of the two things that
+        could be inferred instead works: `count == 1` is a one-member *group*
+        as often as a strategy — 16 of the shipped catalog's 17 root points
+        are one-member categories — and a family node and a ticker under it
+        are both three path segments deep. Either inference would clear the
+        user's filters and then hand a category name to a ticker dropdown.
         """
-        if int(row["count"]) > 1:
+        if bool(row["leaf"]):
+            if self._on_open_strategy is not None:
+                self._on_open_strategy(str(row["label"]))
+        else:
             self._drill_from_chart(tuple(row["path"]))
-        elif self._on_open_strategy is not None:
-            self._on_open_strategy(str(row["label"]))
 
     def render_points(self) -> None:
         """Show the active chart's own points beside it.
@@ -431,11 +447,19 @@ class PlatformAnalytics:
         self._render_current()
 
     def _render_current(self) -> None:
-        """Re-render the visible chart from whatever `_current_meta` resolves to.
+        """Re-render the visible chart and mark the other two stale.
 
-        Set by `wire`; before that the card has not been wired to a catalog and
-        a drill change has nothing to draw.
+        Every control that reaches here — Metric, Window, a Level chip, a
+        breadcrumb segment, a marker click — changes what **all three** charts
+        would draw, but only one is on screen. Staling the hidden two is what
+        makes `activate`'s `fresh` skip safe: without it, switching charts
+        shows one drawn at the previous metric or the previous scope, with the
+        bar above it describing something else.
+
+        `_current_meta` is set by `wire`; before that the card has not been
+        wired to a catalog and there is nothing to draw.
         """
+        self.fresh.clear()
         if self._current_meta is not None:
             self._render_tab(self._current_meta(), self.active_analytics)
 
@@ -764,24 +788,24 @@ class PlatformAnalytics:
 
         def _on_regime_type(_change=None):
             self.sync_regime_controls()
-            self._render_tab(current_meta(), "scatter")
+            self.fresh.discard("scatter")
+            if self.active_analytics == "scatter":
+                self._render_tab(current_meta(), "scatter")
 
         self.regime_type_chips.observe(_on_regime_type, names="value")
         self.regime_selector_dd.observe(
-            lambda _c: self._render_tab(current_meta(), "scatter"), names="value"
+            lambda _c: self._restale_scatter(), names="value"
         )
         self.regime_bucket_chips.observe(
-            lambda _c: self._render_tab(current_meta(), "scatter"), names="value"
+            lambda _c: self._restale_scatter(), names="value"
         )
 
-        # Metric and Window re-render only the VISIBLE chart. They are not a
-        # data change, so `invalidate` would be wrong: it would mark the hidden
-        # two stale and buy nothing, since they redraw on activation anyway.
+        # Metric and Window re-render the visible chart and **stale the other
+        # two**. `activate` skips a chart that is still `fresh`, so without
+        # this a switch would show a chart drawn at the previous metric while
+        # the chips above it said otherwise.
         for chips in (self.metric_chips, self.card_window_chips):
-            chips.observe(
-                lambda _c: self._render_tab(current_meta(), self.active_analytics),
-                names="value",
-            )
+            chips.observe(lambda _c: self._render_current(), names="value")
 
         self.level_chips.observe(self._on_level_chip, names="value")
 

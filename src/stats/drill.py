@@ -72,8 +72,16 @@ def drill_points(
     grouping happens, so a strategy's value is its own.
 
     Returns ``path`` (the tuple), ``label`` (the node's last segment — the
-    ticker at the leaf), ``count`` (members) and the averaged numeric columns,
-    indexed by ticker at the leaf level and by node label above it.
+    ticker at the leaf), ``count`` (members), ``leaf`` (whether the row IS a
+    strategy) and the averaged numeric columns, indexed by ticker at the leaf
+    level and by node label above it.
+
+    ``leaf`` is carried rather than inferred, because neither of the two
+    things a caller might infer it from actually works. ``count == 1`` is a
+    single-member *group* as often as a strategy — 16 of the shipped catalog's
+    17 root points are one-member categories — and the path is no help either,
+    since a family node and a ticker under it are both three segments deep.
+    Routing a click on either would open a category in Single Strategy.
 
     Any regime mask belongs to the caller and must already be applied to
     ``leaves``: a group's value is the mean of its members' bucket values, not
@@ -82,15 +90,20 @@ def drill_points(
     keys = list(analytics_levels())
     stop = level or drill_levels()[0]
     depth = len(keys) if stop == DRILL_LEAF_LEVEL else keys.index(stop) + 1
+    is_leaf = stop == DRILL_LEAF_LEVEL
     numeric = leaves.select_dtypes("number")
     if numeric.empty or paths.empty:
-        return pd.DataFrame(columns=["path", "label", "count", *numeric.columns])
+        return pd.DataFrame(
+            columns=["path", "label", "count", "leaf", *numeric.columns]
+        )
 
     joined = numeric.join(paths, how="inner")
     for position, value in enumerate(scope):
         joined = joined[joined[keys[position]] == value]
     if joined.empty:
-        return pd.DataFrame(columns=["path", "label", "count", *numeric.columns])
+        return pd.DataFrame(
+            columns=["path", "label", "count", "leaf", *numeric.columns]
+        )
 
     prefix = keys[:depth]
     if stop == DRILL_LEAF_LEVEL:
@@ -107,7 +120,8 @@ def drill_points(
         out["label"] = out[prefix[-1]]
         out = out.drop(columns=prefix).set_index("label", drop=False)
         out.index.name = None
-    return out[["path", "label", "count", *numeric.columns]]
+    out["leaf"] = is_leaf
+    return out[["path", "label", "count", "leaf", *numeric.columns]]
 
 
 def color_key(

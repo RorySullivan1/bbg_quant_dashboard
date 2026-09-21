@@ -86,6 +86,7 @@ def _scatter_points(n_groups=2, counts=(3, 1)) -> pd.DataFrame:
             "label": labels,
             "name": labels,
             "count": list(counts)[:n_groups],
+            "leaf": [False, False][:n_groups],
             "value": [1.5, -0.5][:n_groups],
             "x": [0.2, -0.1][:n_groups],
             "z": [0.9, 0.3][:n_groups],
@@ -177,10 +178,18 @@ def test_a_group_marker_is_bigger_than_a_strategy_marker():
 
 
 def test_clicking_a_group_marker_narrows_and_a_strategy_marker_does_not():
+    """The `leaf` flag routes it, not the count.
+
+    A one-member category has a count of 1 too, and on the shipped catalog
+    nearly every root marker is one — a count test would make the chart
+    undrillable.
+    """
     got: list[tuple[str, ...]] = []
     chart = RegimeFactorScatter(on_drill=got.append)
+    points = _scatter_points(counts=(1, 1))
+    points["leaf"] = [False, True]  # a one-member GROUP, and a strategy
     chart.update(
-        _scatter_points(counts=(3, 1)),
+        points,
         metric="sharpe",
         metric_label="1Y Sharpe",
         color_key="asset_class",
@@ -189,7 +198,7 @@ def test_clicking_a_group_marker_narrows_and_a_strategy_marker_does_not():
     by_name = {tr.name: tr for tr in chart.fig.data}
 
     chart._clicked(by_name["Equity"], SimpleNamespace(point_inds=[0]), None)
-    assert got == [("Equity",)]
+    assert got == [("Equity",)], "a one-member group still drills"
 
     # A leaf has no children; the table row is the way into Single Strategy.
     chart._clicked(by_name["Fixed Income"], SimpleNamespace(point_inds=[0]), None)
@@ -374,7 +383,14 @@ def test_the_icicle_s_points_are_its_leaves_under_the_scope():
     chart.update(_icicle_frame(), **_ICICLE_KW, scope=("Equity", "Growth"))
 
     points = chart.points()
-    assert list(points.columns) == ["path", "label", "name", "value", "count"]
+    assert list(points.columns) == [
+        "path",
+        "label",
+        "name",
+        "value",
+        "count",
+        "leaf",
+    ]
     assert list(points["label"]) == ["AAA Index"]
     assert (points["count"] == 1).all()
     assert points.loc["AAA Index", "path"] == ("Equity", "Growth", "Momentum")
@@ -638,6 +654,7 @@ def _strip_points(counts=(3, 1)) -> tuple[pd.DataFrame, list]:
             "label": labels,
             "name": labels,
             "count": list(counts),
+            "leaf": [False, False],
             dates[0]: [0.01, -0.02],
             dates[1]: [0.02, 0.01],
             dates[2]: [-0.01, 0.03],
@@ -705,7 +722,8 @@ def test_the_strip_s_points_value_is_the_compounded_return_of_its_row():
 def test_clicking_a_strip_group_narrows_and_a_strategy_does_not():
     got: list[tuple[str, ...]] = []
     chart = StripChart(on_drill=got.append)
-    points, dates = _strip_points(counts=(3, 1))
+    points, dates = _strip_points(counts=(1, 1))
+    points["leaf"] = [False, True]  # a one-member GROUP, and a strategy
     chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
 
     by_name = {tr.name: tr for tr in chart.fig.data}
@@ -758,6 +776,7 @@ def _points_frame(counts=(3, 1)) -> pd.DataFrame:
             "label": labels,
             "name": ["Equity basket", "Credit basket"],
             "count": list(counts),
+            "leaf": [False, True],
             "value": [0.5, 1.5],
         },
         index=labels,
@@ -872,6 +891,116 @@ def test_chart_and_table_stand_at_one_height():
     assert chart_box.layout.flex == "1 1 0%"
     assert chart_box.layout.min_width == "0"
     assert points_box.layout.flex == f"0 0 {ANALYTICS_TABLE_WIDTH}"
+
+
+# --- what the code review caught (epic #331) --------------------------------
+
+
+def test_a_one_member_category_row_is_not_opened_as_a_strategy():
+    """The review's first finding, pinned.
+
+    16 of the shipped catalog's 17 root points are one-member categories. A
+    `count == 1` route would clear the user's filters and then hand a category
+    name to the ticker picker, which raises.
+    """
+    opened: list[str] = []
+    pa = _analytics(on_open_strategy=opened.append)
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    lone_group = pd.Series(
+        {
+            "path": ("Equity", "Technology"),
+            "label": "Technology",
+            "name": "Technology",
+            "count": 1,
+            "leaf": False,
+            "value": 1.0,
+        }
+    )
+    pa._pick_point(lone_group)
+    assert opened == [], "a category must never reach Single Strategy"
+    assert pa.drill.scope == ("Equity", "Technology")
+
+
+def test_clicking_an_icicle_ticker_cell_does_not_raise():
+    """A leaf cell's id is one segment deeper than the scope can address."""
+    got: list[tuple[str, ...]] = []
+    chart = IcicleChart(on_drill=got.append)
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+
+    trace = chart.fig.data[0]
+    leaf = next(i for i, node in enumerate(trace.ids) if node.endswith(" Index"))
+    chart._clicked(trace, SimpleNamespace(point_inds=[leaf]), None)
+    assert got == [], "a strategy has no children to narrow into"
+
+
+def test_a_metric_change_stales_the_charts_it_did_not_redraw():
+    """`activate` skips a `fresh` chart, so a stale one would show the old
+    metric under a bar saying something else."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.fresh.update({"icicle", "scatter", "strip"})
+
+    pa.metric_chips.value = "calmar"
+    assert "scatter" not in pa.fresh and "strip" not in pa.fresh
+
+
+def test_a_regime_change_stales_the_scatter_even_while_it_is_hidden():
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.activate(pd.DataFrame(), "icicle")
+    pa.fresh.update({"icicle", "scatter"})
+
+    pa.regime_bucket_chips.value = pa.regime_bucket_chips.options[-1][1]
+    assert "scatter" not in pa.fresh
+    assert "icicle" in pa.fresh, "only the Scatter reads the regime"
+
+
+def test_colour_keys_to_the_points_own_level_below_the_root():
+    """A key that stops varying stops informing (#331 decision 17).
+
+    Reading the parent at every depth collapses a whole scope to one colour
+    and one legend entry — which is what the review found.
+    """
+    from src.layout.platform_charts import _color_values
+
+    inside = pd.DataFrame(
+        {
+            "path": [("Equity", "Momentum"), ("Equity", "Value")],
+            "label": ["Momentum", "Value"],
+        }
+    )
+    assert list(_color_values(inside, "category")) == ["Momentum", "Value"]
+    # At the root the key IS the parent, which is what varies there.
+    assert list(_color_values(inside, "asset_class")) == ["Equity", "Equity"]
+
+
+def test_the_strip_separates_two_nodes_that_share_a_label():
+    """The shipped catalog has "S&P US Sector" under two categories."""
+    dates = list(pd.bdate_range("2026-09-14", periods=2))
+    twins = pd.DataFrame(
+        {
+            "path": [
+                ("Equity", "Technology", "S&P US Sector"),
+                ("Equity", "Energy", "S&P US Sector"),
+            ],
+            "label": ["S&P US Sector", "S&P US Sector"],
+            "name": ["Tech sectors", "Energy sectors"],
+            "count": [1, 1],
+            "leaf": [False, False],
+            dates[0]: [0.01, 0.02],
+            dates[1]: [0.0, 0.01],
+        },
+        index=[0, 1],
+    )
+    chart = StripChart()
+    chart.update(twins, dates, color_key="family", colors={})
+    xs = [x for tr in chart.fig.data for x in tr.x]
+    first_column = sorted(x for x in xs if abs(x) < 0.5)
+    assert first_column[0] != first_column[1], "they must not stack"
 
 
 # --- Platform-analytics orchestration (v0.9.12-review #156) -------------------

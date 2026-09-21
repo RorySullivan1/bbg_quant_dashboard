@@ -603,19 +603,15 @@ def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
 # merged row headers were evaluated for the same job and render incorrectly in
 # 1.4.0 (#255), which is why two table stacks coexist.
 
-#: The class the dark-chrome CSS hangs off. The itables container's own class
-#: is `itables_anywidget` (NOT `itables`), and the stylesheet must outrank
-#: DataTables' bundled one — see the `.bbg-catalog` block in `app_css.html`.
-#: The dark-table chrome both s wear — the catalog's and the chart's
-#: points table. Hoisted out of  in #337, which keeps only what
-#: is catalog-specific: the group bands and the filter row.
-ITABLE_CLASS: str = "bbg-itable"
-
 #: The dark-table chrome both `ITable`s wear — the catalog's and the chart's
 #: points table. Hoisted out of `.bbg-catalog` in #337, which keeps only what
 #: is catalog-specific: the group bands and the filter row.
 ITABLE_CLASS: str = "bbg-itable"
 
+#: What the catalog table adds on top of that chrome. The itables container's
+#: own class is `itables_anywidget` (NOT `itables`), and the stylesheet must
+#: outrank DataTables' bundled one — see the `.bbg-itable` block in
+#: `app_css.html`.
 CATALOG_TABLE_CLASS: str = "bbg-catalog"
 
 # The catalog scrolls rather than pages, but that scrolling is done in CSS
@@ -1171,7 +1167,6 @@ class UniverseGrid:
             pd.DataFrame(), **_catalog_table_options(pd.DataFrame(), [])
         )
         self.widget.add_class(ITABLE_CLASS)
-        self.widget.add_class(ITABLE_CLASS)
         self.widget.add_class(CATALOG_TABLE_CLASS)
         # Full width since #326, where the rail beside it was removed: the
         # table is a child of the Platform column now, not of a row it had to
@@ -1436,8 +1431,11 @@ def _points_table_options(frame: pd.DataFrame, fmt: str) -> dict:
             "bottomEnd": None,
         },
         "select": {"style": "single"},
-        "scrollY": ANALYTICS_HEIGHT,
-        "scrollCollapse": False,
+        # NO `scrollY`, for the reason spelled out above `_catalog_table_options`:
+        # it renders the header in a second table and sizes the two once, at
+        # init, so they drift apart when the container settles. This table
+        # scrolls the same way the catalog does — in CSS, through the
+        # `.bbg-itable` flex chain, which it wears.
         "autoWidth": True,
     }
 
