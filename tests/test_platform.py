@@ -734,6 +734,29 @@ def test_clicking_a_strip_group_narrows_and_a_strategy_does_not():
     assert got == [("Equity",)]
 
 
+def test_the_strip_rules_every_boundary_between_two_days():
+    """The six columns sat in one undivided field of markers, with only the
+    tick labels to say which cloud was which day (v0.9.32).
+
+    The rules land on the half-integers *between* the columns, not on the
+    columns themselves — and the template's own x gridlines, which do land on
+    the centres, are off, so the only vertical lines on the chart mean
+    "this is where one day ends"."""
+    chart = StripChart()
+    points, dates = _strip_points()
+    chart.update(points, dates, color_key="asset_class", colors=ASSET_CLASS_COLORS)
+
+    verticals = [s for s in chart.fig.layout.shapes if s.xref == "x"]
+    assert [s.x0 for s in verticals] == [0.5, 1.5]
+    assert all(s.x0 == s.x1 for s in verticals), "a divider is vertical"
+    assert all(s.line.dash is None for s in verticals), "solid, not the dashed ref"
+    assert all(s.line.width >= 2 for s in verticals), "bold enough to read"
+    # Under the markers: a rule painted over the data is a rule that can hide
+    # it, and the jitter keeps every point clear of the boundary anyway.
+    assert all(s.layer == "below" for s in verticals)
+    assert chart.fig.layout.xaxis.showgrid is False
+
+
 def test_the_strip_draws_what_exists_below_five_days():
     # A fresh mock, or a benchmark added mid-session as a delta.
     chart = StripChart()

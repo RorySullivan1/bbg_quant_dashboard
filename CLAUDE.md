@@ -198,7 +198,11 @@ factor view merged, Y the metric and X / Z the term- and equity-risk-premium
 betas over one sample — the Window's days inside the regime bucket; the
 **Strip** is six weekday columns of 1D returns — **T-1 back to T-6**, never
 today, whose return is against a price still moving — the only view that can
-draw *this week*.
+draw *this week*, **ruled between the days** (v0.9.32): a solid bold line on
+each half-integer boundary of its numeric x-axis, with the template's own
+gridlines off because those land on the column *centres*, so a line ran down
+the middle of each day's cloud while the boundary between two days was
+unmarked.
 
 All three **drill**, down **Solution → Asset Class → Category → Family →
 Strategy** (v0.9.25). `ANALYTICS_LEVELS` leads with `solution` because that is
@@ -346,11 +350,20 @@ means only what it says, and sits on the section's title line rather than among
 the settings.
 
 Two more, on the filters: **structure in the bar, text and numbers in the
-table.** *Filter* names a dimension and a `FilterStrip` beside it shows that
-dimension's values as chips, the two sharing one row at **20:80**
-(`FILTER_CHIPS_SHARE` / `_VALUES_SHARE`, v0.9.31 — shares rather than the
-280px column they started as, because the chip set is always the same seven
-while a dimension can carry forty values). One control per dimension, swapped
+table.** The filter is **its own bar** (v0.9.32), titled *Filter* and headed
+**Dimension · Values**: a `ChipGroup` names a dimension and a `FilterStrip`
+beside it shows that dimension's values, the two sharing the bar at **20:80**
+(`FILTER_CHIPS_SHARE` / `_VALUES_SHARE`, carried on `RailSection.share` — the
+`COMMENTARY_*_SHARE` pattern rather than the 280px column they started as,
+because the chip set is always the same seven while a dimension can carry
+forty values). Unlabelled it was fourteen identical chips on one row, half of
+them choosing *what* was filtered and half choosing *to what*, with nothing
+saying which was which or that either was a filter; the rule between them is
+`.bbg-rail-block`'s, the same line every other bar draws between two controls.
+The headings are **Dimension** and **Values**, not the *group* and *selection*
+the behaviour is described by in conversation — *Group by* one row up is the
+table's row grouping and *Category* is a classification tier, so either word
+would name two things at once. One control per dimension, swapped
 by `display`, so switching dimensions keeps every dimension's ticks; a chip
 badge counts the active ones, because a hidden selection is otherwise
 invisible. And the nine quant
@@ -367,9 +380,21 @@ conversion, and `factor_beta` is the one caller that already held returns. Vol a
 this tab narrows. **Single Strategy keeps `FilterPanel`** and is its only
 caller now.
 
+Every number in a table reads at **two decimals** (v0.9.32) — `0.00%` or
+`0.00`, on both stacks. It is `_STAT_SUFFIXES` that decides, the same tuple the
+uniform width, the comparison filter and the Window chip's hiding key off, so a
+metric added there is rendered without a branch of its own. Two gaps were
+closed to make that true: the itables renderer keyed off `_is_percent_col`, so
+the four quant metrics — the only stat suffixes that are neither a percentage
+nor Sharpe — matched no branch at all and DataTables printed the stored float
+at full precision in an 82px cell; and `_perf_renderers` fell through to its
+formatless text renderer for the same columns. The Leaderboard's value came
+along with them, from `+1.2%` to `+1.23%`, so a row does not show two
+precisions.
+
 ## Current version
 
-`v0.9.31` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.32` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

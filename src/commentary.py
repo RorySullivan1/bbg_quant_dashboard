@@ -310,8 +310,12 @@ def build_leaderboard(
     def name_of(ticker: str) -> str:
         return name_lookup.get(ticker, ticker)
 
+    # Two decimals, like every other number in a table (v0.9.32): the
+    # Leaderboard is a table of four columns, and a `+1.2%` beside a `0.84`
+    # read as two different kinds of precision for no reason anyone could
+    # name.
     def pct(v: float) -> str:
-        return f"{v:+.1%}"
+        return f"{v:+.2%}"
 
     def num2(v: float) -> str:
         return f"{v:.2f}"

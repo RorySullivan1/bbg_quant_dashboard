@@ -281,6 +281,12 @@ def test_leaderboard_rank_agrees_with_the_score_it_leads_with(bdays):
         for r in rows:
             assert r.value == pytest.approx(float(expected.loc[r.ticker]))
             assert r.score_text == f"{r.score:+.2f}"
+            # Two decimals, like every other number in a table (v0.9.32).
+            # The return column read `+1.2%` beside a `0.84` score until
+            # then — two precisions in one row, for no stated reason.
+            assert r.text == (
+                f"{r.value:+.2%}" if col.metric == "return" else f"{r.value:.2f}"
+            )
         assert all(r.name == f"Name {r.ticker.split()[0]}" for r in rows)
 
 

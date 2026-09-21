@@ -839,16 +839,26 @@ div.itables_anywidget.bbg-catalog table.dataTable tr.dtrg-group.dtrg-level-3 td 
   font-size: {{micro_size}};
   font-style: italic;
 }
-/* The filter dimension and its values, on **one row** (v0.9.30). Subordinate
-   to the bar above the way the drill strip is: no box of its own, a rule above
-   instead. The chips hold a fixed column on the left and wrap inside it; the
-   values scroll in the remainder, so a dimension with forty values cannot push
-   the chips off screen or grow the row. */
-.bbg-filter-row-pair {
-  border-top: 1px solid {{border_color}};
-  margin: -6px 0 6px 0;
+/* The filter bar (v0.9.32): the dimension and its values on **one row**
+   (v0.9.30), now in the bar grammar the rest of the app uses — a FILTER title
+   beside two headed sections. It was an unlabelled pair of boxes welded under
+   the Table view bar, which put fourteen identical chips on screen with
+   nothing to say that seven of them chose a dimension and seven chose values
+   inside it.
+
+   The demarcation is one rule between the blocks. `.bbg-rail-block` is what a
+   bar's sections already are, so this is the bar's own line rather than a
+   second idea about how to separate two controls. */
+.bbg-app .bbg-filter-bar .bbg-rail-block + .bbg-rail-block {
+  border-left: 1px solid {{border_color}};
+  padding-left: 18px;
+}
+/* Each half scrolls inside its share instead of growing the bar: the values
+   of one dimension can run to forty chips. Capped at three rows. */
+.bbg-app .bbg-filter-bar .bbg-chip-group,
+.bbg-app .bbg-filter-bar .bbg-filter-strip {
   max-height: 84px;
-  padding: 6px 8px;
+  overflow-y: auto;
 }
 .bbg-filter-strip {
   border: none !important;

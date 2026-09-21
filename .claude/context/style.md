@@ -308,6 +308,16 @@ spread evenly across the column and derived from the point's position, never
 drawn at random — a redraw must not reshuffle the cloud and read as movement
 in the data.
 
+**The days are ruled apart** (`_v_divider`, v0.9.32). Six columns of markers on
+one continuous axis read as one field; the boundaries are the half-integers
+between the columns, drawn solid, in `CHART_ZERO_LINE`, at width 2 — where
+`_v_ref` is a dashed hairline for marking a *value*, this is chrome saying
+where one day ends. It is `layer="below"`, which the jitter makes moot — a
+marker sits within `JITTER` of its centre and so never reaches a boundary —
+but costs nothing. And the x gridlines are **off**: the template draws them on
+the tickvals, which are the column centres, so a line ran down the middle of
+each day's cloud while the boundary between two days carried none.
+
 **`group_colors` and the colour rule.** The drill re-keys the colours at every
 depth, so the palette has to serve families and tickers, not just asset
 classes. `group_colors(keys, curated=…)` takes the curated map first — which
@@ -361,12 +371,22 @@ the screen, so it read as a squeezed strip on anything wide. Both boxes carry
 `min-width: 0` — the #280 pair — so a long strategy name wraps inside its
 column instead of widening it.
 
-**The filter row is 20:80** (v0.9.31): the dimension chips left, that
-dimension's values right, as `flex: 1 1 <share>` with `min-width: 0` — the
-`COMMENTARY_*_SHARE` pattern. The 280px column this replaced gave the chips a
-third of a narrow screen and a tenth of a wide one, and the values are what
-need the room: the chip set is always the same seven, while a dimension can
-carry forty values.
+**The filter is its own bar** (`.bbg-filter-bar`, v0.9.32): a `control_bar`
+titled *Filter*, with **Dimension** over the chips and **Values** over the
+strip, and one `.bbg-rail-block` rule between them — the same line every other
+bar draws between two controls, rather than a second idea about separating
+two things. It was an unlabelled pair of boxes welded under the *Table view*
+bar, which put fourteen chips in identical chrome on one row with nothing to
+say that seven of them chose a dimension and seven chose values inside it, or
+that either row was a filter at all. Each half scrolls inside its share
+(`max-height: 84px`), because a dimension's values can run to forty chips and
+a flex item that cannot shrink grows the bar instead.
+
+The split is **20:80** (v0.9.31), now carried on `RailSection.share` as
+`flex: 1 1 <share>` with `min-width: 0` — the `COMMENTARY_*_SHARE` pattern. The
+280px column it replaced gave the chips a third of a narrow screen and a tenth
+of a wide one, and the values are what need the room: the chip set is always
+the same seven, while a dimension can carry forty values.
 
 **The drill has its own strip** (`.bbg-drill-bar`, v0.9.25), below the *Chart
 view* bar and subordinate to it: no border box of its own, a rule above

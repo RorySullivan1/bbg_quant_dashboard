@@ -14,6 +14,7 @@ from __future__ import annotations
 import pandas as pd
 from src.data import load_metadata
 from src.layout.grids import (
+    _STAT_SUFFIXES,
     CatalogTable,
     UniverseGrid,
     _catalog_table_options,
@@ -131,3 +132,37 @@ def test_universe_grid_still_swallows_its_two_non_events():
 
     grid._on_selected_rows({"new": [0]})
     assert picked == [grid._tickers[0]]
+
+
+# --- every number reads at two decimals ---------------------------------------
+
+
+def test_every_stat_column_gets_a_number_renderer():
+    """The itables half of the 2dp rule (v0.9.32).
+
+    A column with no `render` is printed by DataTables exactly as the frame
+    stores it, so the four quant metrics — the stat suffixes that are neither
+    a percentage nor Sharpe, and therefore matched by no branch of the chain
+    until v0.9.32 — showed a full-precision float in an 82px cell. Checked
+    over `_STAT_SUFFIXES` itself so a metric added there cannot slip through
+    the same gap.
+    """
+    columns = [f"1Y{suffix}" for suffix in _STAT_SUFFIXES] + ["Ticker", "Name"]
+    frame = pd.DataFrame([[1.0] * len(_STAT_SUFFIXES) + ["A", "a"]], columns=columns)
+    options = _catalog_table_options(frame, [], "1Y")
+
+    rendered = {
+        target
+        for spec in options["columnDefs"]
+        if "render" in spec
+        for target in spec["targets"]
+    }
+    missing = [
+        name
+        for position, name in enumerate(columns)
+        if name.endswith(_STAT_SUFFIXES) and position not in rendered
+    ]
+    assert missing == []
+    # The descriptive columns stay unrendered — a renderer there would run
+    # `Number(data).toFixed(2)` over a strategy name.
+    assert columns.index("Name") not in rendered
