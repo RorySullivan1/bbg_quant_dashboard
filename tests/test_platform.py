@@ -642,6 +642,106 @@ def test_a_scaffolded_regime_is_the_unconditioned_view():
     assert mask.all()
 
 
+# --- the regime toggle (v0.9.33) --------------------------------------------
+
+
+def test_the_regime_conditions_nothing_until_the_box_is_ticked():
+    """Every bucket is a *subset* of the Window, so an always-on regime meant
+    the Scatter opened on the first bucket of the first regime — days with
+    VIX < 15 — with nothing on screen saying the sample had been narrowed."""
+    from src.config import VIX_TICKER
+
+    pa = _analytics()
+    _, vix = _regime_universe()
+    pa.state.universe_prices = vix.to_frame()
+
+    assert pa.regime_on_chk.value is False
+    assert pa.regime_indicator() is None
+
+    pa.regime_on_chk.value = True
+    indicator = pa.regime_indicator()
+    assert indicator is not None and indicator.name == VIX_TICKER
+
+
+def test_the_regime_switched_off_is_every_day_in_the_window():
+    """Off has to mean the unconditioned view, never an empty chart — the same
+    fallback a regime with no indicator in the cache takes."""
+    from src.layout.platform import _regime_window_mask
+
+    pa = _analytics()
+    arp, vix = _regime_universe()
+    pa.state.universe_prices = vix.to_frame()
+    index = daily_returns(arp).tail(200).index
+
+    pa.regime_on_chk.value = True
+    # "15 ≤ VIX < 25": a proper subset of the sample, so the two states differ.
+    pa.regime_bucket_chips.value = pa.regime_bucket_chips.options[1][1]
+    low, high = pa.resolve_regime_bucket()
+    conditioned = _regime_window_mask(pa.regime_indicator(), index, low, high)
+    assert conditioned.any() and not conditioned.all()
+
+    pa.regime_on_chk.value = False
+    low, high = pa.resolve_regime_bucket()
+    assert _regime_window_mask(pa.regime_indicator(), index, low, high).all()
+
+
+def test_the_regime_controls_hide_while_it_is_off_and_keep_their_selection():
+    """Hidden, not rebuilt — the bar's own rule (#331 decision 3): which regime
+    and which bucket describe nothing while the toggle is off, but ticking it
+    back on must find the user's last choice still chosen."""
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    for control in (
+        pa.regime_type_chips,
+        pa.regime_selector_dd,
+        pa.regime_bucket_chips,
+    ):
+        assert control.layout.display == "none"
+
+    pa.regime_on_chk.value = True
+    pa.regime_type_chips.value = "Rate-level"  # a regime that offers a source
+    pa.regime_bucket_chips.value = "high"
+    assert pa.regime_type_chips.layout.display == ""
+    assert pa.regime_bucket_chips.layout.display == ""
+    assert pa.regime_selector_dd.layout.display == ""
+
+    pa.regime_on_chk.value = False
+    assert pa.regime_type_chips.layout.display == "none"
+    assert pa.regime_selector_dd.layout.display == "none"
+
+    pa.regime_on_chk.value = True
+    assert pa.regime_type_chips.value == "Rate-level"
+    assert pa.regime_bucket_chips.value == "high"
+
+
+def test_a_regime_with_no_source_keeps_its_dropdown_hidden_when_switched_on():
+    # The source needs both conditions: Volatility has one fixed ticker and so
+    # offers nothing to pick even while the regime is on.
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+
+    pa.regime_on_chk.value = True
+    assert pa.regime_type_chips.value == "Volatility"
+    assert pa.regime_selector_dd.layout.display == "none"
+
+
+def test_toggling_the_regime_stales_the_scatter_even_while_it_is_hidden():
+    # Same rule the bucket chips follow: the toggle changes what the Scatter
+    # would draw, so selecting it later must not show the previous sample.
+    pa = _analytics()
+    pa.state.arp_universe_prices = pd.DataFrame()
+    pa.wire(lambda: pd.DataFrame())
+    pa.activate(pd.DataFrame(), "icicle")
+    pa.fresh.update({"icicle", "scatter"})
+
+    pa.regime_on_chk.value = True
+    assert "scatter" not in pa.fresh
+    assert "icicle" in pa.fresh, "only the Scatter reads the regime"
+
+
 # --- the Strip (#336) -------------------------------------------------------
 
 
@@ -1229,6 +1329,10 @@ def test_platform_regime_controls_resync_on_type_change():
         for w in _walk(panel)
         if isinstance(w, W.Dropdown) and w.description == "Source"
     )
+
+    # Opt-in since v0.9.33; the source is only ever shown for a regime that
+    # is both switched on and has a source to offer.
+    pa.regime_on_chk.value = True
 
     assert pa.regime_type_chips.value == "Volatility"
     assert source_dd.layout.display == "none"  # no source for Volatility

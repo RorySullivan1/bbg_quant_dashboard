@@ -253,6 +253,24 @@ class PlatformAnalytics:
             row=True,
         )
 
+        # **The regime is opt-in** (v0.9.33). Every bucket is a *subset* of the
+        # Window, so an always-on regime meant the Scatter's opening view was
+        # the first bucket of the first regime — days with VIX < 15 — with
+        # nothing on screen saying the sample had been conditioned at all, and
+        # no way to ask for the plain factor view over the whole window. Off,
+        # the sample is the Window; on, the bucket narrows it.
+        #
+        # A `Checkbox` rather than a fourth chip in the type group: an "Off"
+        # chip beside Volatility / Trend / Rate-level would read as a fourth
+        # regime, and the state it carries is a different question from which
+        # regime — which is why unticking it keeps the type and bucket the user
+        # last chose rather than resetting them.
+        self.regime_on_chk = W.Checkbox(
+            value=False,
+            description="Condition on regime",
+            indent=False,
+            layout=W.Layout(width="auto", margin="0 0 2px 0"),
+        )
         self.regime_type_chips = ChipGroup(list(REGIME_SPECS.keys()), row=True)
         # Source stays a dropdown: its options are the live benchmark registry
         # or a region list, and a dropdown is the right control for a long list
@@ -269,9 +287,23 @@ class PlatformAnalytics:
             _init_buckets, value=_init_buckets[0][1], row=True
         )
         regime_controls = W.VBox(
-            [self.regime_type_chips, self.regime_selector_dd, self.regime_bucket_chips],
+            [
+                self.regime_on_chk,
+                self.regime_type_chips,
+                self.regime_selector_dd,
+                self.regime_bucket_chips,
+            ],
             layout=W.Layout(width="auto"),
         )
+        # Start matching the unticked box. `sync_regime_controls` owns this
+        # from `wire` onwards, but it cannot run here: its source options come
+        # from the benchmark registry, which is not populated at construction.
+        for _dependent in (
+            self.regime_type_chips,
+            self.regime_selector_dd,
+            self.regime_bucket_chips,
+        ):
+            _dependent.layout.display = "none"
 
         # The universe filter. The card draws ONE solution at a time (v0.9.27):
         # the root used to be every solution at once, which is a cell per
@@ -745,7 +777,17 @@ class PlatformAnalytics:
 
     def regime_indicator(self) -> pd.Series | None:
         """The regime indicator series from the cache, per the active regime's
-        shape, or None when its ticker(s) are absent (-> unconditioned view)."""
+        shape, or None when the regime is switched off or its ticker(s) are
+        absent (-> unconditioned view).
+
+        **The toggle is gated here, not at the render**, because the absent-
+        indicator path already means "draw every day in the window": one
+        `None` reaches `_regime_window_mask` and `resolve_regime_bucket` alike,
+        so nothing downstream needs a second branch and no future reader of the
+        indicator can miss the switch.
+        """
+        if not self.regime_on_chk.value:
+            return None
         spec = REGIME_SPECS.get(self.regime_type_chips.value)
         if spec is None:
             return None
@@ -807,7 +849,15 @@ class PlatformAnalytics:
         source **selected** whenever it survives into the new option list.
         Switching regime type still falls back to the first option, since the
         old value belongs to a different domain (a benchmark ticker is not a
-        rate region)."""
+        rate region).
+
+        The on/off toggle runs through here too, since which controls apply is
+        exactly what it changes: while it is off, *which* regime and *which*
+        bucket describe nothing that is being drawn. They are hidden rather
+        than rebuilt — the bar's own rule (#331 decision 3) — so switching the
+        regime back on finds the type, source and bucket the user last chose
+        still chosen."""
+        active = bool(self.regime_on_chk.value)
         selector = self.regime_selector_options()
         if selector:
             previous = self.regime_selector_dd.value
@@ -816,9 +866,6 @@ class PlatformAnalytics:
             self.regime_selector_dd.value = (
                 previous if previous in values else selector[0][1]
             )
-            self.regime_selector_dd.layout.display = ""
-        else:
-            self.regime_selector_dd.layout.display = "none"
         options = regime_bucket_options(self.regime_type_chips.value)
         # Preserve the active bucket across a registry change for the same reason.
         prev_bucket = self.regime_bucket_chips.value
@@ -827,6 +874,11 @@ class PlatformAnalytics:
             options,
             value=prev_bucket if prev_bucket in bucket_values else options[0][1],
         )
+        # The source needs both conditions: a fixed-level regime offers no
+        # source to pick even while the regime is on.
+        self.regime_selector_dd.layout.display = "" if active and selector else "none"
+        for control in (self.regime_type_chips, self.regime_bucket_chips):
+            control.layout.display = "" if active else "none"
 
     # --- lazy tab rendering ---------------------------------------------------
 
@@ -897,13 +949,15 @@ class PlatformAnalytics:
             lambda c: self.activate(current_meta(), c["new"]), names="value"
         )
 
-        def _on_regime_type(_change=None):
+        def _on_regime_shape(_change=None):
+            # The on/off toggle and the regime type both change *which*
+            # controls apply, so both sync the section before restaling; the
+            # source and bucket only change what the active one resolves to.
             self.sync_regime_controls()
-            self.fresh.discard("scatter")
-            if self.active_analytics == "scatter":
-                self._render_tab(current_meta(), "scatter")
+            self._restale_scatter()
 
-        self.regime_type_chips.observe(_on_regime_type, names="value")
+        self.regime_on_chk.observe(_on_regime_shape, names="value")
+        self.regime_type_chips.observe(_on_regime_shape, names="value")
         self.regime_selector_dd.observe(
             lambda _c: self._restale_scatter(), names="value"
         )
