@@ -194,7 +194,9 @@ the hierarchy sized by *strategy count* and coloured by mean metric on a ramp
 whose range comes from the data; the **Scatter** is the regime view and the
 factor view merged, Y the metric and X / Z the term- and equity-risk-premium
 betas over one sample — the Window's days inside the regime bucket; the
-**Strip** is five dates of 1D returns, the only view that can draw *this week*.
+**Strip** is six weekday columns of 1D returns — **T-1 back to T-6**, never
+today, whose return is against a price still moving — the only view that can
+draw *this week*.
 
 All three **drill**, down **Solution → Asset Class → Category → Family →
 Strategy** (v0.9.25). `ANALYTICS_LEVELS` leads with `solution` because that is

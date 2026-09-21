@@ -70,20 +70,36 @@ def recent_daily_returns(
     *,
     days: int = STRIP_DAYS,
     returns: pd.DataFrame | None = None,
+    asof: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """The last ``days`` rows of daily returns — dates × tickers.
+    """The last ``days`` **weekday** rows of daily returns up to T-1.
 
-    The Platform Strip's frame: one row per date, one column per ticker, oldest
-    first, so the chart's five categorical columns are the index. Fewer than
-    ``days`` rows in the cache draws what exists (a fresh mock, or a benchmark
-    added as a delta mid-session) rather than raising.
+    The Platform Strip's frame: one row per date, one column per ticker,
+    oldest first, so the chart's date columns are the index in reading order.
 
-    Pass ``returns`` to reuse a shared ``universe_rets`` instead of re-deriving
-    `daily_returns` here.
+    Two rules the desk asked for (v0.9.25):
+
+    - **Weekdays only.** A price feed can carry a weekend or holiday row, and
+      a flat Saturday drawn beside a real trading day is a column of zeros
+      that means nothing.
+    - **It ends at T-1**, never today. Today's return is against a price that
+      is still moving, so the newest column would rebase itself through the
+      session while every other column stood still.
+
+    ``asof`` is today unless given; tests pass it so they do not depend on
+    the day they run. Fewer than ``days`` rows draws what exists — a fresh
+    mock, or a benchmark added mid-session as a delta — rather than raising.
+
+    Pass ``returns`` to reuse a shared ``universe_rets`` instead of
+    re-deriving `daily_returns` here.
     """
     rets = daily_returns(prices) if returns is None else returns
     if rets.empty:
         return pd.DataFrame(index=pd.Index([], name=rets.index.name))
+    index = rets.index
+    if isinstance(index, pd.DatetimeIndex):
+        today = pd.Timestamp(asof) if asof is not None else pd.Timestamp.today()
+        rets = rets[(index.dayofweek < 5) & (index < today.normalize())]
     return rets.tail(days)
 
 

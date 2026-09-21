@@ -369,6 +369,10 @@ class RegimeFactorScatter(Chart):
                 title="",
                 showlegend=True,
                 legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
+                # `align` and `showarrow` are all a 3D scene offers here —
+                # there is no anchor property to put the label on one side of
+                # the marker, so the template above keeps it small instead.
+                hoverlabel=dict(align="left", namelength=-1, showarrow=False),
                 scene=dict(
                     aspectmode="cube",
                     xaxis=_scene_axis("Term-premium β"),
@@ -432,19 +436,22 @@ class RegimeFactorScatter(Chart):
                     customdata=np.column_stack(
                         [
                             group["name"].astype(str).to_numpy(),
-                            counts,
+                            [_members_note(c) for c in counts],
                             [_path_key(p) for p in group["path"]],
                             group["leaf"].to_numpy(),
                         ]
                     ),
+                    # Three short lines, not five. A 3D scene gives no anchor
+                    # for the hover label, so its FOOTPRINT is the only lever
+                    # on how much of the cloud it hides — and the betas read
+                    # perfectly well side by side on one line.
                     hovertemplate=(
-                        "%{customdata[0]}<br>"
-                        + str(key)
+                        "<b>%{customdata[0]}</b>"
                         + f"<br>{metric_label} "
                         + "%{y:"
                         + fmt
-                        + "} %{customdata[1]}"
-                        "<br>Term β %{x:.2f}<br>Equity β %{z:.2f}<extra></extra>"
+                        + "}%{customdata[1]}"
+                        "<br>β term %{x:.2f} · equity %{z:.2f}<extra></extra>"
                     ),
                 )
             )
@@ -624,7 +631,7 @@ class StripChart(Chart):
                     custom.append(
                         [
                             str(row["name"]),
-                            int(row["count"]),
+                            _members_note(row["count"]),
                             _path_key(row["path"]),
                             labels[offset],
                             bool(row["leaf"]),
@@ -643,9 +650,9 @@ class StripChart(Chart):
                     ),
                     customdata=custom,
                     hovertemplate=(
-                        "%{customdata[0]}<br>"
-                        + str(key)
-                        + "<br>%{customdata[3]} %{y:.2%}<extra></extra>"
+                        "<b>%{customdata[0]}</b>"
+                        "<br>%{customdata[3]} %{y:.2%}%{customdata[1]}"
+                        "<extra></extra>"
                     ),
                 )
             )
@@ -709,3 +716,15 @@ def _is_leaf(flag) -> bool:
     marker undrillable.
     """
     return str(flag).lower() in ("true", "1")
+
+
+def _members_note(count) -> str:
+    """ " · mean of N" for a group, and nothing at all for a strategy.
+
+    A group's value is the equal-weight mean of its members, and the hover has
+    to say so or the number reads as the node's own. It was `%{customdata[1]}`
+    against the raw count, which rendered "1Y Sharpe 1.23 3" — a bare integer
+    the reader has to guess at. A leaf gets an empty string rather than "mean
+    of 1", which would be true and useless.
+    """
+    return f" · mean of {int(count)}" if int(count) > 1 else ""
