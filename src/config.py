@@ -161,8 +161,10 @@ LEADERBOARD_WINDOW_OPTIONS: list[tuple[str, int]] = [
 
 #: How many trading days the Platform Strip chart draws, one column per date.
 #: Read by the stats function, the chart and its header rather than typed at
-#: three sites (#331 decision 12).
-STRIP_DAYS: int = 5
+#: three sites (#331 decision 12). Six since v0.9.25, spanning **T-1 back to
+#: T-6** — weekdays only, and never today, whose return is against a price
+#: still moving.
+STRIP_DAYS: int = 6
 
 # Quantitative-filter defaults (Multi-Strategy "Quantitative" filter).
 VAR_CONFIDENCE = 0.95  # historical daily VaR confidence level

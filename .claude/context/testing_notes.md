@@ -284,6 +284,9 @@ catalog is the real test of how the charts read.
 - One marker per **solution** at the root, coloured by solution with a
   legend (v0.9.25 — the drill starts at Solution, not Category). Y is the metric, X the term-premium β, Z the equity-risk-premium β,
   and the axis titles say so.
+- Hover is **three lines** and small enough to see the cloud past it; a group
+  says *mean of N*. There is no way to anchor it beside the marker in a 3D
+  scene, so if it still hides too much the fix is fewer characters.
 - **No translucent planes.** Each axis's zero line and wall edge are visible
   at the default camera, and the box is a cube so a β of 0.2 is the same
   length on all three axes. Orbit the camera and check the zero lines still
@@ -298,11 +301,15 @@ catalog is the real test of how the charts read.
 
 **The Strip**
 
-- Five date columns, oldest left, labelled `DD Mon`, with a dashed zero line.
-  Markers are **spread within** each column rather than stacked on one line.
+- **Six** date columns, oldest left, labelled `DD Mon`, with a dashed zero
+  line. Markers are **spread within** each column rather than stacked on one
+  line.
+- The newest column is **T-1**, not today, and there are **no weekend
+  columns** — check this on a Monday, when T-1 is the previous Friday.
 - Switch away and back: the cloud is in the **same arrangement**. A reshuffle
   would read as movement in the data.
-- Hover reads name, group, date and return.
+- Hover reads name, date and return, and says *mean of N* on a group — never
+  a bare number after the value.
 
 **The drill and the points table**
 

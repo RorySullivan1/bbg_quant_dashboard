@@ -902,12 +902,29 @@ def test_recent_daily_returns_is_dates_by_tickers_oldest_first(multiyear_prices)
     assert len(out) == STRIP_DAYS
     assert list(out.columns) == list(multiyear_prices.columns)
     assert out.index.is_monotonic_increasing
-    pd.testing.assert_frame_equal(
-        out, stats.daily_returns(multiyear_prices).tail(STRIP_DAYS)
-    )
 
 
-def test_recent_daily_returns_draws_what_exists_below_five_days():
+def test_recent_daily_returns_ends_at_t_minus_one_and_skips_weekends():
+    """v0.9.25, both asked for by the desk.
+
+    A weekend row drawn beside a real trading day is a column of zeros that
+    means nothing, and today's return is against a price still moving — the
+    newest column would rebase itself through the session while every other
+    column stood still.
+    """
+    index = pd.date_range("2026-09-07", periods=16, freq="D")  # weekends in it
+    prices = pd.DataFrame({"AAA": np.linspace(100, 116, 16)}, index=index)
+
+    out = stats.recent_daily_returns(prices, asof=pd.Timestamp("2026-09-21"))
+
+    assert len(out) == STRIP_DAYS
+    assert not [d for d in out.index if d.dayofweek >= 5], "weekdays only"
+    # Monday 21st is T; the newest column is Friday the 18th.
+    assert out.index[-1] == pd.Timestamp("2026-09-18")
+    assert out.index.is_monotonic_increasing
+
+
+def test_recent_daily_returns_draws_what_exists_below_its_window():
     # A fresh mock or a benchmark added mid-session as a delta.
     idx = pd.bdate_range("2024-01-01", periods=4)
     prices = pd.DataFrame({"AAA": [100.0, 101.0, 102.0, 103.0]}, index=idx)

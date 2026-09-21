@@ -716,7 +716,7 @@ def test_the_strip_s_points_value_is_the_compounded_return_of_its_row():
     drawn = chart.points()
     expected = compounded_return(points[dates].T)
     assert drawn.loc["Equity", "value"] == pytest.approx(expected["Equity"])
-    assert chart.value_label == "5D Return"
+    assert chart.value_label == "6D Return"  # follows STRIP_DAYS
     assert chart.value_format == ".2%"
 
 
@@ -764,6 +764,42 @@ def test_a_metric_or_window_change_does_not_render_the_strip():
     # reach them — this pins that the wiring agrees with the chrome.
     assert pa.bar.section("Metric").layout.display == "none"
     assert pa.bar.section("Window").layout.display == "none"
+
+
+def test_the_scatter_hover_names_the_members_rather_than_a_bare_count():
+    """It rendered `%{customdata[1]}` against the raw count, so a group read
+    "1Y Sharpe 1.23 3" — an integer the reader has to guess at."""
+    chart = RegimeFactorScatter()
+    points = _scatter_points(counts=(3, 1))
+    chart.update(
+        points,
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    by_name = {tr.name: tr for tr in chart.fig.data}
+    assert by_name["Equity"].customdata[0][1] == " · mean of 3"
+    # A strategy says nothing: "mean of 1" is true and useless.
+    assert by_name["Fixed Income"].customdata[0][1] == ""
+
+
+def test_the_scatter_hover_stays_small_enough_to_see_past():
+    """A 3D scene offers no anchor to put the label beside the marker, so its
+    footprint is the only lever on how much of the cloud it hides."""
+    chart = RegimeFactorScatter()
+    chart.update(
+        _scatter_points(),
+        metric="sharpe",
+        metric_label="1Y Sharpe",
+        color_key="asset_class",
+        colors=ASSET_CLASS_COLORS,
+    )
+    template = chart.fig.data[0].hovertemplate
+    # Three lines: name, the metric, then both betas together.
+    assert template.count("<br>") == 2
+    assert "β term" in template and "equity" in template
+    assert chart.fig.layout.hoverlabel.align == "left"
 
 
 # --- the points table (#337) ------------------------------------------------

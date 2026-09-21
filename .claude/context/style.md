@@ -336,3 +336,18 @@ themselves write back to, and two different kinds of control should not read
 as one row of equals. Its blocks lay the heading *beside* the control rather
 than above it, so the strip is one line of "Scope: … Level: …", and it wraps
 rather than scrolling — a full path is five segments plus the Level chips.
+
+
+## Hover labels on the analytics card (v0.9.25)
+
+**A 3D scene gives no anchor for its hover label.** `layout.hoverlabel` offers
+`align`, `namelength` and `showarrow` and nothing that puts the box on one
+side of the marker, so the label's **footprint** is the only lever on how much
+of the cloud it hides. The Scatter's hover is therefore three short lines —
+name, the metric, then both betas side by side — where it was five.
+
+**A group's hover says "mean of N", never a bare count.** It rendered
+`%{customdata[1]}` against the raw number, so a three-member category read
+`1Y Sharpe 1.23 3`. The value on these charts is an equal-weight mean of the
+node's members and the hover has to say so, or the number reads as the node's
+own. A leaf says nothing at all: "mean of 1" is true and useless.
