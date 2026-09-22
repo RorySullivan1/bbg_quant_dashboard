@@ -343,7 +343,8 @@ board was 16 Market Superlative cards, retired in #291.)*
      declares for both stacks, so a retune reaches the grid renderers too.
   3. **Two analysis panes** — each with its own picker and benchmark dropdown,
      so two views of one strategy sit side by side. Weekly Scatter · Return
-     Distribution · Factor Scatter · Drawdown · **Rolling** (one figure, a
+     Distribution (**outline steps, not filled bars**, with an HTML stats
+     table beneath — #386) · Factor Scatter · Drawdown · **Rolling** (one figure, a
      Correlation / Sharpe / Calmar / Beta chip moving the title, the y-axis
      and the reference line) · **Decile** (weekly returns by benchmark decile,
      regime-conditionable) · **Regime Profile** (return vs vol under all three

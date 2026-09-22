@@ -179,7 +179,18 @@ renders the full dashboard without a Bloomberg session. Verify by:
   DD, Beta and Correlation survive both. Pan, and it follows. Double-click to
   reset, and it reports the whole window again — it is never blank while a
   line is drawn. Toggling the benchmark adds or drops the Beta and Correlation
-  rows. None of this shows the loading overlay: no zoom fetches.
+  rows. None of this shows the loading overlay: no zoom fetches. **Read the
+  header text**: the separators must be middle dots, not the literal
+  `&middot;` — a Plotly annotation renders only four named HTML entities
+  (#386).
+- **Return Distribution** draws **one line per series and no filled bars** —
+  count the lines against the legend, and on Single Strategy with a benchmark
+  on there should be exactly **two**. (Filled overlays used to blend into a
+  third band through the middle, which read as a series the legend never
+  named, #386.) Beneath it the per-ticker stats are an **HTML table**, tickers
+  down and Mean · Std · Min · Max · Skew · Kurtosis across, every number at
+  two decimals with negatives red and nothing green. On Multi-Strategy the
+  table has one row per basket member.
 - **Rolling** is one figure with a Correlation · Sharpe · Calmar · Beta chip.
   Stepping the chip moves the **title, the y-axis label and the reference
   line** together (0, 0, 0, then **1** for Beta), and the benchmark dropdown

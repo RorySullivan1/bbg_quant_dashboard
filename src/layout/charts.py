@@ -20,11 +20,11 @@ import ipywidgets as W
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from ipydatagrid import DataGrid, TextRenderer
 
 from ..config import LOOKBACK_YEARS, TRADING_DAYS_PER_YEAR
 from ..stats import ann_return, ann_sharpe, ann_volatility, poly_fit
 from ..style import READOUT_OPACITY, Color, Font
+from .html import _render_return_stats
 from .theme import (
     SHARPE_WINDOW_LABEL,
     _chart_layout,
@@ -500,73 +500,91 @@ class RollingChart(Chart):
 
 
 class ReturnDistChart(Chart):
-    """Overlaid daily-return histograms plus the per-ticker stats grid beneath.
+    """Overlaid daily-return distributions plus the per-ticker stats table.
 
-    The grid is part of this chart, not a sibling widget: `update` writes both
+    The table is part of this chart, not a sibling widget: `update` writes both
     from the same inputs, and every early-return path has to blank both. Keeping
     them in one object is what makes "figure drawn, stats stale" unrepresentable.
+
+    **Outlines, not filled bars** (#386). Filled histograms at `barmode=
+    "overlay"` blend where they cross, and two return distributions cross over
+    almost their whole body — so a strategy against its benchmark drew a pure
+    colour in each tail and a *third* colour through the middle, which reads as
+    a third series that no legend entry accounts for. A step outline has
+    nothing to blend: N series are N lines, countable, and the tails stay
+    readable where a 55%-opacity fill washed them out. The bins are shared, so
+    the lines are directly comparable height for height.
+
+    The stats table is **HTML** for `strategy_metrics`' reason (#366): it never
+    sorts, scrolls or takes a click, so an `ipydatagrid` canvas bought nothing
+    and cost the v0.6.5 theme-refresh invariant (#223) on every write.
     """
+
+    #: How many bins the shared range is cut into.
+    BINS: int = 80
 
     def __init__(self) -> None:
         super().__init__()
-        self.stats_grid: DataGrid = DataGrid(
-            pd.DataFrame(),
-            base_row_size=28,
-            base_column_size=92,
-            base_row_header_size=180,
-            layout=W.Layout(width="100%", height="180px"),
-        )
+        self.stats_w: W.HTML = W.HTML()
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
             layout=_chart_layout(
                 title=f"Return Distribution — {LOOKBACK_YEARS}Y daily returns",
-                barmode="overlay",
                 xaxis=dict(title="Daily return", tickformat=".1%"),
                 yaxis=dict(title="Frequency"),
+                hovermode="x unified",
             )
         )
+
+    def _blank(self) -> None:
+        with self.fig.batch_update():
+            self.fig.data = ()
+        self.stats_w.value = ""
 
     def update(
         self, rets: pd.DataFrame, stats_df: pd.DataFrame, meta: pd.DataFrame
     ) -> None:
         if rets.empty:
-            with self.fig.batch_update():
-                self.fig.data = ()
-            self.stats_grid.data = pd.DataFrame()
+            self._blank()
             return
         cleaned = rets.dropna(how="all")
         if cleaned.empty:
-            with self.fig.batch_update():
-                self.fig.data = ()
-            self.stats_grid.data = pd.DataFrame()
+            self._blank()
             return
         all_vals = cleaned.values[np.isfinite(cleaned.values)]
         if all_vals.size == 0:
-            with self.fig.batch_update():
-                self.fig.data = ()
-            self.stats_grid.data = pd.DataFrame()
+            self._blank()
             return
         lo, hi = float(np.nanpercentile(all_vals, 0.5)), float(
             np.nanpercentile(all_vals, 99.5)
         )
         if lo == hi:
             lo, hi = lo - 0.01, hi + 0.01
-        bin_size = (hi - lo) / 80.0
-        traces: list[go.Histogram] = []
+        # One shared edge set, so every series is binned identically and the
+        # lines can be read against each other rather than only against zero.
+        edges = np.linspace(lo, hi, self.BINS + 1)
+        centres = (edges[:-1] + edges[1:]) / 2.0
+        bin_size = float(edges[1] - edges[0])
+
+        traces: list[go.Scatter] = []
         for i, col in enumerate(cleaned.columns):
             series = cleaned[col].dropna().values
             if series.size == 0:
                 continue
+            counts, _ = np.histogram(series, bins=edges)
             label = _short_ticker(col)
             traces.append(
-                go.Histogram(
-                    x=series,
-                    xbins=dict(start=lo, end=hi, size=bin_size),
-                    marker=dict(color=_palette_color(i)),
-                    opacity=0.55,
+                go.Scatter(
+                    x=centres,
+                    y=counts,
+                    mode="lines",
+                    # `hvh` steps through each bin at its own height, so the
+                    # line traces the histogram's silhouette rather than
+                    # sloping between bin centres.
+                    line=dict(color=_palette_color(i), width=1.6, shape="hvh"),
                     name=label,
-                    hovertemplate=f"{label}<br>bin %{{x:.2%}}<br>count %{{y}}<extra></extra>",
+                    hovertemplate=f"{label}<br>count %{{y}}<extra></extra>",
                 )
             )
         with self.fig.batch_update():
@@ -575,25 +593,7 @@ class ReturnDistChart(Chart):
                 self.fig.add_traces(traces)
             self.fig.layout.xaxis.range = [lo - bin_size, hi + bin_size]
 
-        if stats_df.empty:
-            self.stats_grid.data = pd.DataFrame()
-            return
-        info = meta.set_index("ticker").reindex(stats_df.index)["name"]
-        display = stats_df.copy()
-        display.insert(0, "Name", info.values)
-        display.index.name = "Ticker"
-        pct = TextRenderer(format=".2%")
-        f2 = TextRenderer(format=".2f")
-        text = TextRenderer()
-        renderers: dict = {"Name": text}
-        for col in ("Mean", "Std", "Min", "Max"):
-            if col in display.columns:
-                renderers[col] = pct
-        for col in ("Skew", "Kurtosis"):
-            if col in display.columns:
-                renderers[col] = f2
-        self.stats_grid.data = display
-        self.stats_grid.renderers = renderers
+        self.stats_w.value = _render_return_stats(stats_df, meta)
 
     def clear(self) -> None:
         self.update(pd.DataFrame(), pd.DataFrame(), pd.DataFrame())

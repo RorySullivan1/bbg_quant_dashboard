@@ -10,7 +10,8 @@ rolling Sharpe-ratio z-score over a 5-year lookback. Metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime. The UI is built with `ipywidgets`, `plotly` (interactive charts
 via `FigureWidget`), `ipydatagrid` (the Multi-Strategy perf grid) and
-`itables` (every catalog table), and is deployable via Voila.
+`itables` (every catalog table), and is deployable via Voila. Since v0.9.38
+`charts.py` imports no grid at all — every table a chart owns is HTML.
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
@@ -448,7 +449,13 @@ top-left, carrying `span_metrics` over exactly the x-range on screen and
 following every zoom, pan and reset; on a reset it reports the whole window,
 so it is never blank while a line is drawn. It is a **Plotly annotation**, not
 a widget, because ipywidgets cannot overlay one on a figure — pre-allocated
-and retexted in place, the `WeeklyScatterChart` rule. Two things make the
+and retexted in place, the `WeeklyScatterChart` rule. That buys the overlay
+and costs the stylesheet: an annotation takes a small HTML subset, and
+**exactly four named entities survive it** — `&amp;`, `&lt;`, `&gt;` and
+`&nbsp;`, the whole list Plotly's bundled parser carries. Anything else is
+printed as typed, which is how the separator written `&middot;` reached the
+screen as the literal text `&middot;` (v0.9.38, #386). Separators are literal
+characters now, and a test holds the readout to those four. Two things make the
 number honest. The span is **clamped to the strategy's own history**, since a
 zoom can run past either end of the data and measuring across the empty part
 would divide a real return by a span covering dates the index did not exist
@@ -459,6 +466,23 @@ the period's cumulative return under its own label, and the panel says which
 of the two regimes it is in so a missing Sharpe reads as a decision rather
 than as a gap. Max DD, Beta and Correlation stay throughout: none of them
 annualizes.
+
+**Return Distribution draws outlines, and its stats are HTML** (v0.9.38,
+#386). Filled histograms at `barmode="overlay"` blend where they cross, and
+two return distributions cross over almost their whole body — so a strategy
+against its benchmark drew a pure colour in each tail and a **third** through
+the middle, which reads as a series no legend entry accounts for. A step
+outline has nothing to blend: N series are N lines, countable, and the tails
+stay readable where a 55%-opacity fill washed them out. One shared bin edge
+set, so the heights are comparable rather than only each line against zero.
+The per-ticker stats beneath it became an HTML table for `strategy_metrics`'
+reason — it never sorts, scrolls sideways or takes a click — which took the
+last `ipydatagrid` import out of `charts.py`. It is **tickers down,
+statistics across**, the transpose of `.bbg-metrics`, because here the row is
+the series and a basket can hold five of them. Both tabs draw it, so it takes
+the frame rather than reading a panel's state, and its numbers go through
+`_metric_cell`: the two-decimal rule, the dash and *red for negative, no
+green* are one implementation across every HTML stats table.
 
 **Every option in the analysis picker draws** (#367). Three of eight were dead
 ends: *PCA Analysis* and *Defensive Scoring* were `_StubChart`s drawing
@@ -543,7 +567,7 @@ precisions.
 
 ## Current version
 
-`v0.9.37` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.38` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

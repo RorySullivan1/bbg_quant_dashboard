@@ -14,7 +14,6 @@ import ipywidgets as W
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
-from ipydatagrid import DataGrid
 from src.layout.charts import Chart
 from src.layout.panes import (
     ANALYSIS_OPTIONS,
@@ -40,7 +39,7 @@ def test_analysis_pane_is_typed_and_fully_populated(side):
         value = getattr(pane, f.name)
         if isinstance(value, Chart):
             assert isinstance(value.fig, go.FigureWidget), f.name
-    assert isinstance(pane.retdist.stats_grid, DataGrid)
+    assert isinstance(pane.retdist.stats_w, W.HTML)
     assert isinstance(pane.root, W.VBox)
     # The views dict covers the tab's whole option list, so every pick mounts.
     assert set(pane.views) == set(ANALYSIS_OPTIONS)
@@ -56,7 +55,7 @@ def test_single_analysis_pane_is_typed_and_fully_populated(side):
         assert value is not None, f.name
         if isinstance(value, Chart):
             assert isinstance(value.fig, go.FigureWidget), f.name
-    assert isinstance(pane.retdist.stats_grid, DataGrid)
+    assert isinstance(pane.retdist.stats_w, W.HTML)
     assert isinstance(pane.root, W.VBox)
     assert set(pane.views) == set(SINGLE_ANALYSIS_OPTIONS)
     assert pane.picker.value in SINGLE_ANALYSIS_OPTIONS

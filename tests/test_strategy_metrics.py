@@ -10,6 +10,8 @@ shows, and what since-inception is measured over.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -282,3 +284,96 @@ def test_the_filtered_out_note_is_the_cards_and_not_a_literal():
     can say a pick is off the table (#363 dec. 2)."""
     assert FILTERED_OUT_NOTE
     assert "filter" in FILTERED_OUT_NOTE.lower()
+
+
+# --- the return-distribution stats table (#386) --------------------------------
+
+
+def _ret_stats() -> tuple[pd.DataFrame, pd.DataFrame]:
+    stats = pd.DataFrame(
+        {
+            "Mean": [0.0004, -0.0002],
+            "Std": [0.0107, 0.0081],
+            "Skew": [-0.35, 0.12],
+            "Kurtosis": [4.10, 3.02],
+            "Min": [-0.0455, -0.0310],
+            "Max": [0.0512, 0.0288],
+        },
+        index=["AAA Index", "SPTR Index"],
+    )
+    meta = pd.DataFrame(
+        {
+            "ticker": ["AAA Index", "SPTR Index"],
+            "name": ["Alpha Strategy", "S&P 500 Total Return"],
+        }
+    )
+    return stats, meta
+
+
+def test_the_return_stats_table_is_tickers_down_statistics_across():
+    """The transpose of `.bbg-metrics`: here the row is the series, because a
+    basket can hold five of them where the metrics table has one strategy."""
+    from src.layout.html import _render_return_stats
+
+    stats, meta = _ret_stats()
+    out = _render_return_stats(stats, meta)
+    assert "bbg-retstats" in out
+    # One body row per ticker, short-form as the chart's legend writes them.
+    assert out.count("<tr><th>") == 2
+    assert "<th>AAA</th>" in out and "<th>SPTR</th>" in out
+    # Every statistic is a column, in the declared order.
+    for name in ("Mean", "Std", "Min", "Max", "Skew", "Kurtosis"):
+        assert f"<th>{name}</th>" in out
+
+
+def test_the_return_stats_table_reads_the_same_units_and_two_decimals():
+    """`_metric_cell`'s rule, reused rather than re-implemented — so the
+    percent/ratio split and the dash and the negative colour are one
+    implementation across every HTML stats table."""
+    from src.layout.html import _render_return_stats
+
+    stats, meta = _ret_stats()
+    out = _render_return_stats(stats, meta)
+    assert "1.07%" in out, "Std reads as a percentage"
+    assert "4.10" in out, "Kurtosis reads as a plain ratio"
+    # Red for negative, and no green — the metrics table's rule.
+    assert "bbg-metrics-neg" in out
+    assert "bbg-metrics-pos" not in out
+
+
+def test_the_return_stats_table_escapes_a_name_and_carries_no_hex():
+    from src.layout.html import _render_return_stats
+
+    stats, meta = _ret_stats()
+    out = _render_return_stats(stats, meta)
+    assert "S&amp;P 500 Total Return" in out
+    assert "S&P 500" not in out, "an unescaped ampersand would break the markup"
+    assert not re.search(r"#[0-9a-fA-F]{3,8}", out), "colours come from the stylesheet"
+
+
+def test_the_return_stats_table_is_empty_for_an_empty_frame():
+    from src.layout.html import _render_return_stats
+
+    assert _render_return_stats(pd.DataFrame(), pd.DataFrame()) == ""
+
+
+def test_a_missing_stat_column_is_simply_absent():
+    """A frame without Skew renders without a Skew column rather than a row of
+    dashes under a heading nothing filled."""
+    from src.layout.html import _render_return_stats
+
+    stats, meta = _ret_stats()
+    out = _render_return_stats(stats.drop(columns=["Skew"]), meta)
+    assert "<th>Skew</th>" not in out
+    assert "<th>Kurtosis</th>" in out
+
+
+def test_a_ticker_the_catalog_does_not_name_still_renders():
+    """A benchmark is not in the catalog, so its name lookup misses — the row
+    is drawn with an empty name rather than the literal `nan`."""
+    from src.layout.html import _render_return_stats
+
+    stats, meta = _ret_stats()
+    out = _render_return_stats(stats, meta[meta["ticker"] == "AAA Index"])
+    assert "<th>SPTR</th>" in out
+    assert "nan" not in out.lower()

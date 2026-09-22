@@ -478,6 +478,74 @@ def _calendar_cell(value: float, band: HeatBand | None, unit: str) -> str:
 _READOUT_LABEL_GAP: int = 2
 
 
+#: The return-distribution stats, and the unit each reads in (#386). The
+#: same two-decimal rule `STRATEGY_METRICS` follows, declared here because
+#: these are *distribution* moments rather than the performance metrics that
+#: tuple names — and the order is the order they are read in, spread before
+#: shape.
+RETURN_STAT_UNITS: tuple[tuple[str, str], ...] = (
+    ("Mean", "percent"),
+    ("Std", "percent"),
+    ("Min", "percent"),
+    ("Max", "percent"),
+    ("Skew", "ratio"),
+    ("Kurtosis", "ratio"),
+)
+
+
+def _render_return_stats(stats: pd.DataFrame, meta: pd.DataFrame) -> str:
+    """The Return Distribution pane's per-ticker stats, as styled HTML (#386).
+
+    `strategy_metrics`' argument, one chart over: this table never sorts,
+    scrolls sideways or takes a click, so the `ipydatagrid` canvas it replaced
+    bought nothing and cost the v0.6.5 theme-refresh invariant (#223) on every
+    write. Both Single Strategy and Multi-Strategy draw it, which is why it
+    takes the frame rather than reading a panel's state.
+
+    **Tickers down, statistics across** — the transpose of `.bbg-metrics`,
+    because here the row is the series and the catalog can put five of them in
+    one basket, where the metrics table has one strategy and many windows.
+
+    Numbers reuse `_metric_cell`, so the two-decimal rule, the dash for a
+    missing value and *red for negative, no green* are one implementation
+    across every HTML stats table rather than a second copy here.
+    """
+    if stats is None or stats.empty:
+        return ""
+    names = (
+        meta.set_index("ticker").reindex(stats.index)["name"]
+        if meta is not None and not meta.empty and "ticker" in meta.columns
+        else pd.Series(index=stats.index, dtype=object)
+    )
+    present = [
+        (name, unit) for name, unit in RETURN_STAT_UNITS if name in stats.columns
+    ]
+
+    headers = "<th class='bbg-retstats-name'>Name</th>" + "".join(
+        f"<th>{html.escape(name)}</th>" for name, _unit in present
+    )
+    rows = []
+    for ticker in stats.index:
+        label = _short_ticker(str(ticker))
+        name = names.get(ticker)
+        name_text = "" if name is None or pd.isna(name) else html.escape(str(name))
+        cells = "".join(
+            f"<td>{_metric_cell(stats.loc[ticker, metric], unit)}</td>"
+            for metric, unit in present
+        )
+        rows.append(
+            f"<tr><th>{html.escape(label)}</th>"
+            f"<td class='bbg-retstats-name'>{name_text}</td>{cells}</tr>"
+        )
+    return render_template(
+        "return_stats",
+        **STYLE_CTX,
+        corner="Ticker",
+        headers=headers,
+        rows="\n    ".join(rows),
+    )
+
+
 def _render_span_readout(frame: pd.DataFrame, *, benchmark: str | None = None) -> str:
     """The zoom readout drawn **inside** the cumulative chart (#380).
 
@@ -489,6 +557,13 @@ def _render_span_readout(frame: pd.DataFrame, *, benchmark: str | None = None) -
     (`<br>`, `<b>`, `<span style>`), which is enough for a headed column of
     numbers. Spaces collapse in that subset, so the metric column is padded
     with `&nbsp;` rather than with spaces.
+
+    **Only four named entities survive that subset** — `&amp;`, `&lt;`,
+    `&gt;` and `&nbsp;`, which is the whole list Plotly's bundled parser
+    carries. Anything else is printed as typed, which is how a separator
+    written `&middot;` reached the screen as the literal text `&middot;`.
+    Separators are literal characters here for that reason; only the four
+    above may be written as entities.
 
     It reads `metric_unit` and `_metric_cell`'s two-decimal rule through the
     same helpers the table below the chart uses, so the panel and the table
@@ -510,7 +585,8 @@ def _render_span_readout(frame: pd.DataFrame, *, benchmark: str | None = None) -
     basis = "annualized" if annualized else "cumulative, &lt; 1Y"
     head = f"<b>{html.escape(span)}</b>" if span else ""
     if head:
-        head += f"&nbsp;&middot;&nbsp;{days}d&nbsp;&middot;&nbsp;{basis}"
+        # A literal middle dot, not `&middot;` — see the entity note above.
+        head += f"&nbsp;\u00b7&nbsp;{days}d&nbsp;\u00b7&nbsp;{basis}"
 
     lines = [head] if head else []
     width = max((len(str(m)) for m in frame.index), default=0) + _READOUT_LABEL_GAP
