@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 
 import ipywidgets as W
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 from ipydatagrid import DataGrid
@@ -74,14 +75,44 @@ def test_panes_do_not_share_charts():
     assert left.fresh is not right.fresh
 
 
-def test_rolling_charts_carry_their_own_title_prefix():
-    # #223: the prefix used to be passed to the factory *and* again to every
-    # update, with nothing checking they matched. It is the chart's now.
+def test_one_rolling_chart_serves_all_four_statistics():
+    """#223's fix, in its stronger #368 form.
+
+    The title prefix used to be passed to the factory *and* again to every
+    update, with nothing checking they matched — a rolling-beta figure could
+    be titled "Rolling Correlation". It became one value on the object, and
+    is now derived from the statistic key, so the title, the y-axis and the
+    reference line cannot disagree with each other or with the data.
+    """
+    from src.layout.charts import ROLLING_STATS
+
     pane = _make_analysis_pane("left")
-    assert pane.rcorr.title_prefix == "Rolling Correlation"
-    assert pane.rbeta.title_prefix == "Rolling Beta"
-    assert "Rolling Correlation" in pane.rcorr.fig.layout.title.text
-    assert "Rolling Beta" in pane.rbeta.fig.layout.title.text
+    assert pane.rolling.stat == "correlation"
+    assert "Rolling Correlation" in pane.rolling.fig.layout.title.text
+    assert [v for _, v in pane.rolling_chips.options] == [
+        key for key, *_ in ROLLING_STATS
+    ]
+
+    for key, label, y_label, ref, _needs in ROLLING_STATS:
+        pane.rolling.update(pd.DataFrame(), stat=key)
+        assert f"Rolling {label}" in pane.rolling.fig.layout.title.text
+        assert pane.rolling.fig.layout.yaxis.title.text == y_label
+        assert pane.rolling.fig.layout.shapes[0]["y0"] == ref
+
+
+def test_the_rolling_benchmark_hides_for_the_statistics_that_ignore_one():
+    """Sharpe and Calmar do not read a benchmark, so naming one would name a
+    series the number does not touch. Hidden, not rebuilt (#331 dec. 3)."""
+    pane = _make_analysis_pane("left")
+    pane.picker.value = "Rolling"
+    pane.rolling_dd.value = "MXWO Index"
+
+    pane.rolling_chips.value = "sharpe"
+    assert pane.rolling_dd.layout.display == "none"
+    pane.rolling_chips.value = "beta"
+    assert pane.rolling_dd.layout.display == ""
+    # And the selection survived being hidden.
+    assert pane.rolling_dd.value == "MXWO Index"
 
 
 def test_fresh_starts_empty_and_is_per_pane():

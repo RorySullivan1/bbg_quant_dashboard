@@ -273,7 +273,7 @@ def test_every_benchmark_selector_is_editable():
     app = build_app(verbose=False)
     selectors = _all_selectors(app)
 
-    assert len(selectors) >= 11
+    assert len(selectors) >= 9
     for sel in selectors:
         assert sel._box.ensure_option is False
         assert sel._box.continuous_update is False

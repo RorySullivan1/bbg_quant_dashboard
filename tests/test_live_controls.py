@@ -106,9 +106,9 @@ def test_benchmark_change_rerenders_live_without_refetch(monkeypatch):
     pickers = [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and "Rolling Correlation" in list(w.options)
+        if isinstance(w, W.Dropdown) and "Rolling" in list(w.options)
     ]
-    pickers[0].value = "Rolling Correlation"
+    pickers[0].value = "Rolling"
     pickers[1].value = "Outperformance"
     assert calls["n"] == after_load
 

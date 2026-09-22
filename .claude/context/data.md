@@ -162,6 +162,37 @@ Project-specific hooks:
   (casting the ID column to `category` first to shrink the pivot).
 
 
+## What rides the single fetch
+
+One BQL request per batch, once, at startup — `_fetch_tickers()` is the whole
+list and everything a chart can need has to be on it. Four sources feed it:
+
+- the **catalog** (`meta_all["ticker"]`);
+- the **benchmarks** — `BENCHMARK_TICKERS` plus whatever the user has added,
+  which is why `_fetch_tickers` is a *function* and not a list captured at
+  build time (#193);
+- **`FACTOR_TICKERS`** — the factor legs the catalog does not already carry:
+  `LUTLTRUU Index` and `LD12TRUU Index` (the long-Treasury and short-rate legs
+  of the term and equity-risk premia), `BSLXAT Index` (trend) and, since
+  v0.9.36 (#371), **`MOVE Index`**. The equity leg `SPXFP Index` and the carry
+  leg `BSLXAC Index` are already benchmarks, so they cost nothing extra;
+- **`REGIME_TICKERS`**, derived from `REGIME_SPECS` so a new regime cannot be
+  added without its indicator joining the request. `VIX Index` comes from here.
+
+**`MOVE Index` is a level, not a price.** So is `VIX Index` and so are the
+rate-level indicators: they are quoted in points and mean-revert rather than
+compounding, which is why `LEVEL_INDICATOR_MOCK` carries a `(mean, vol, lo,
+hi)` shape for each and `MockPriceSource` builds them as clipped
+mean-reverting series. A MOVE mock built as a compounding price would make the
+off-terminal volatility factor meaningless — and it runs an order of magnitude
+above VIX (~105 against ~18), which is the whole reason `volatility_factor`
+z-scores each leg before averaging them.
+
+If BQL cannot serve `MOVE Index` on a terminal, the factor **degrades to VIX
+alone** and says which legs it holds in the series' `name`; the spiderweb that
+reads it draws a missing spoke rather than raising.
+
+
 ## The analytics hierarchy and the drill (v0.9.24, epic #331)
 
 `ANALYTICS_LEVELS` is the one tree the Platform card draws: the Icicle's
@@ -250,4 +281,6 @@ Two deliberate absences. **Vol** is not here and not rankable on the Platform
 tab either: the ramp and the sort both say *higher is better*, which volatility
 is not. And the cross-sectional **Z threshold** is gone outright — a z-score is
 a ranking, and the Platform tab's ranking column is where a ranking belongs.
-`QuantFilter` keeps both for Single Strategy, where nothing claims a direction.
+`QuantFilter` kept both for Single Strategy until #365 retired that tab's
+filter panel too, so neither survives as a threshold anywhere; Vol is a **row**
+of the Single Strategy metrics table, where it is reported rather than ranked.

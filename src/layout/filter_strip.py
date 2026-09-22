@@ -1,6 +1,6 @@
-"""The Multi-Strategy tab's filter values, as a strip under the bar (#345).
+"""A tab's filter values, as a strip beside the Dimension chips (#345, #365).
 
-**Structure in the bar, text and numbers in the table.** The bar's *Filter*
+**Structure in the bar, text and numbers in the table.** The bar's *Dimension*
 chips name a dimension; this strip shows that dimension's values as a wrapping
 row of chips (or, for Launch date, the two date pickers). Everything that is a
 *number* — Sharpe, Sortino, VaR, a return threshold — is a column of the table
@@ -19,6 +19,10 @@ implementation and the wrong behaviour.
 screen still narrows the table, so its bar chip carries a count badge —
 *Family · 2*. Without it the only evidence of an active filter is rows that are
 not there.
+
+**Each tab holds its own.** Two tabs filtering the same catalog independently
+is two selections, and sharing one would make narrowing the Multi tab silently
+narrow Single Strategy's picker.
 """
 
 from __future__ import annotations
@@ -42,9 +46,11 @@ class FilterStrip:
     """The value controls for every filter dimension, one shown at a time.
 
     It owns the values and the reducer; the bar owns which one is *visible*.
-    `apply` runs the same `apply_filters` the Single Strategy panel's
-    `apply_categorical` runs, so the two tabs cannot filter differently — what
-    differs is the chrome the values are picked in (#341 dec. 8, 10).
+    **Both picking tabs build one** since #365 — their own instance each, so
+    the two filter independently while running the identical reducer. It was
+    the Multi tab's alone while Single Strategy still had `FilterPanel`, whose
+    `apply_categorical` called the same `apply_filters`; retiring that panel
+    left one implementation rather than two agreeing ones (#341 dec. 8, 10).
     """
 
     def __init__(self, meta: pd.DataFrame, *, on_change=None) -> None:
@@ -123,8 +129,7 @@ class FilterStrip:
     def apply(self, meta: pd.DataFrame) -> pd.DataFrame:
         """`meta` narrowed by every dimension, in `meta` row order.
 
-        The same `apply_filters` reducer `FilterPanel.apply_categorical` calls
-        — currency is just another key in the mapping, and an empty list means
+        Currency is just another key in the mapping, and an empty list means
         that dimension is unfiltered.
         """
         return apply_filters(

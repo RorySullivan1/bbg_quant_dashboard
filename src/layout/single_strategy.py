@@ -8,12 +8,20 @@ Four parts, top to bottom:
   basket from (#363 dec. 1). It replaced a `W.Dropdown` inside a *Filters*
   accordion beside a 240px checkbox column — the last of the v0.8 idiom, and
   the last caller of `FilterPanel`;
-- **Section 1**, a metadata card beside a cumulative chart and perf table;
-- **Section 2**, a 5-pill monthly-return calendar over one DataGrid;
-- **Section 3**, two analysis panes mirroring the Multi-Strategy tab, each with
-  its own picker and benchmark dropdown. Weekly-returns β scatter, return
-  distribution, factor-correlation scatter, drawdown, and factor scoring are
-  functional; performance-ranking, PCA, and defensive scoring are stubs.
+- **Section 1**, a metadata card beside the cumulative chart;
+- **Section 2**, the numbers: an HTML **metrics table** over the windows plus
+  since-inception, and the monthly-return **calendar** beneath it. Both were
+  `ipydatagrid` canvases until #366 — the theme-refresh invariant (#223) and
+  a Lumino canvas, for tables that never sort, scroll sideways or take a
+  click. The calendar's heatmap survived; only its grid went;
+- **Section 3**, two analysis panes mirroring the Multi-Strategy tab, each
+  with its own picker and benchmark dropdown: a weekly-returns β scatter, the
+  return distribution, a factor-correlation scatter, drawdown, a **Rolling**
+  view whose statistic is a chip (#368), a **Decile** view of returns by
+  benchmark decile (#369), a **Regime Profile** across all three buckets of
+  one regime (#370), and the five-β **Risk Profile** spiderweb (#372).
+  **Every option draws** — the three stubs went to #367, each into an issue
+  of its own.
 
 **The pick is a `Pick`, not the grid's selected row** (#363 dec. 2). Five
 things write it — a row here, a catalog row, a Leaderboard row, a points-table
@@ -22,7 +30,10 @@ filters hide keeps its card, its numbers and its charts; the table simply has
 no row to light, and the profile card says so.
 
 Every control re-renders live off the cached ``state.universe_prices`` — there
-is no Refresh on this tab and nothing here issues BQL.
+is no Refresh on this tab and nothing here issues BQL. The one measurement
+expensive enough to be worth not repeating is the factor cross-section the
+risk profile's percentile axis needs, and that is cached against the price
+frame's identity (`_factor_panel`).
 """
 
 from __future__ import annotations
@@ -43,35 +54,48 @@ from ..config import (
 )
 from ..stats import (
     calendar_return_table,
+    carry_returns,
+    cross_section_percentile,
     cum_perf,
     daily_returns,
+    decile_profile,
     drawdown_series,
     equity_risk_premium,
-    factor_beta,
+    factor_beta_panel,
     monthly_factor_correlations,
     monthly_realized_vol,
     monthly_returns,
-    perf_table,
+    regime_risk_return,
     return_distribution_stats,
-    since_inception_perf,
+    rolling_series,
+    strategy_metrics,
     term_premium,
     trend_returns,
+    volatility_factor,
     weekly_returns,
 )
 from ..style import (
+    CALENDAR_HEIGHT,
     CATALOG_TABLE_HEIGHT,
     FILTER_CHIPS_SHARE,
     FILTER_VALUES_SHARE,
+    STRATEGY_METRICS_HEIGHT,
 )
 from .basket import Pick
 from .benchmarks import BenchmarkRegistry
 from .charts import (
     LineChart,
+    RegimeProfileChart,
 )
-from .chrome import _make_tab_button, _style_tab_button
 from .filter_strip import FilterStrip
-from .grids import CalendarGrid, PerfGrid, StrategyGrid
-from .html import STYLE_CTX, _render_profile_card, render_template
+from .grids import StrategyGrid
+from .html import (
+    STYLE_CTX,
+    _render_calendar,
+    _render_profile_card,
+    _render_strategy_metrics,
+    render_template,
+)
 from .panes import (
     SingleAnalysisPane,
     _make_benchmark_dropdown,
@@ -89,6 +113,8 @@ from .rails import (
     control_bar,
     section_panel,
 )
+from .regime_controls import regime_window_mask
+from .theme import _short_ticker
 
 if TYPE_CHECKING:
     # `state.py` reaches this module through its own imports, so a runtime
@@ -118,8 +144,8 @@ class SingleStrategyPanel:
     `grid` it is picked in and the two bars above it (`table_bar` /
     `filter_bar`, with `filter_strip` holding the values), the shared
     `bench_dd` + `bench_chk` overlay toggle, the `profile_w` card, the `line`
-    cumulative chart, the compact `perf_grid`, the calendar (`cal_grid` +
-    `cal_pills`, with `cal_kind` the active mode), and the two
+    cumulative chart, the `metrics_w` table, the calendar (`cal_w` +
+    `cal_chips`, with `cal_kind` the active mode), and the two
     `SingleAnalysisPane`s — and renders into them.
 
     Like `PlatformAnalytics` (#219), **`state` is held and `meta` stays a
@@ -158,6 +184,11 @@ class SingleStrategyPanel:
         #: drawn is not hiding anything, and a card that said it was would be
         #: claiming a filter nobody set.
         self._shown: frozenset[str] | None = None
+        #: The catalog's factor-β cross-section, and the price frame it was
+        #: measured from. Held rather than recomputed per pick — see
+        #: `_factor_panel`.
+        self._factor_panel_cache: pd.DataFrame = pd.DataFrame()
+        self._factor_panel_source: pd.DataFrame | None = None
         self._build(meta, registry=registry)
 
     def _build(self, meta: pd.DataFrame, *, registry: BenchmarkRegistry | None) -> None:
@@ -245,13 +276,9 @@ class SingleStrategyPanel:
 
         profile_w = W.HTML()
         line = LineChart()
-        perf_grid = PerfGrid()
 
         profile_header = W.HTML(
             render_template("grid_header", **STYLE_CTX, text="Strategy profile")
-        )
-        perf_header = W.HTML(
-            render_template("grid_header", **STYLE_CTX, text="Standard performance")
         )
         left_col = W.VBox(
             [profile_header, profile_w],
@@ -265,44 +292,57 @@ class SingleStrategyPanel:
             [left_col, right_col],
             layout=W.Layout(width="100%", align_items="stretch"),
         )
-        # Standard-performance table spans the full section width, below the
-        # profile-card + cumulative-chart row.
-        perf_block = W.VBox(
-            [perf_header, perf_grid.grid],
-            layout=W.Layout(width="100%", padding="8px 0 0 0"),
-        )
         section1 = W.VBox(
-            [profile_chart_row, perf_block],
+            [profile_chart_row],
             layout=W.Layout(width="100%"),
         )
 
-        # Section 2: a 3-pill monthly-return calendar over one grid.
-        cal_pills = [
-            _make_tab_button(label, active=i == 0)
-            for i, (label, _k) in enumerate(_CALENDAR_TABS)
-        ]
-        cal_pill_bar = W.HBox(
-            cal_pills,
-            layout=W.Layout(width="100%", margin="0 0 4px 0"),
+        # --- the numbers (#366) -----------------------------------------------
+        #
+        # Two `ipydatagrid` canvases stood here: a `PerfGrid` of four metrics
+        # over three windows, and the calendar's grid. Both carry the v0.6.5
+        # theme-refresh invariant (#223) and a Lumino canvas, for tables that
+        # never sort, scroll sideways or take a click. They are HTML now, in
+        # the app's own type and tokens.
+        #
+        # **The calendar heatmap survived; only its grid went** (#363 dec. 4
+        # left that open). It is the one thing on this tab a desk reads at a
+        # glance, and the metrics table does not replace it: that table is
+        # summary statistics, this is the path they came from.
+        metrics_w = W.HTML()
+        self.metrics_section = section_panel(
+            "Performance",
+            W.Box(layout=W.Layout(display="none")),
+            metrics_w,
+            height=STRATEGY_METRICS_HEIGHT,
+            note="vs the Table view benchmark",
         )
-        cal_grid = CalendarGrid()
-        cal_header = W.HTML(
-            render_template("grid_header", **STYLE_CTX, text="Monthly return calendar")
+        cal_w = W.HTML()
+        # Chips, not `_make_tab_button` pills: the last pill-tabs in the app
+        # went with this (#363 dec. 12), and a `ChipGroup` carries the
+        # `.value` / `.observe` surface every other enumerated choice on the
+        # three tabs presents.
+        self.cal_chips = ChipGroup(list(_CALENDAR_TABS), value=_CALENDAR_TABS[0][1])
+        self.cal_chips.layout.width = "auto"
+        self.calendar_section = section_panel(
+            "Monthly returns",
+            control_bar(RailSection("View", self.cal_chips), title=""),
+            cal_w,
+            height=CALENDAR_HEIGHT,
         )
-        section2_slot = W.Box(
-            [
-                W.VBox(
-                    [cal_header, cal_pill_bar, cal_grid.grid],
-                    layout=W.Layout(width="100%"),
-                )
-            ],
+        section2_slot = W.VBox(
+            [self.metrics_section, self.calendar_section],
             layout=W.Layout(width="100%", padding="8px 0 0 0"),
         )
         # Section 3: a two-pane analysis section mirroring the
         # Multi-Strategy tab. The shared `pick` above feeds both panes; each pane
         # picks which analysis + benchmark to draw, for side-by-side comparison.
-        pane_left = _make_single_analysis_pane("left", registry=registry)
-        pane_right = _make_single_analysis_pane("right", registry=registry)
+        pane_left = _make_single_analysis_pane(
+            "left", registry=registry, state=self.state
+        )
+        pane_right = _make_single_analysis_pane(
+            "right", registry=registry, state=self.state
+        )
         s3_header = W.HTML(
             render_template("grid_header", **STYLE_CTX, text="Analytics")
         )
@@ -325,9 +365,8 @@ class SingleStrategyPanel:
         self.bench_chk = bench_chk
         self.profile_w = profile_w
         self.line = line
-        self.perf_grid = perf_grid
-        self.cal_grid = cal_grid
-        self.cal_pills = cal_pills
+        self.metrics_w = metrics_w
+        self.cal_w = cal_w
         #: The active calendar mode; `set_calendar_kind` moves it.
         self.cal_kind = _CALENDAR_TABS[0][1]
         self.pane_left = pane_left
@@ -464,42 +503,42 @@ class SingleStrategyPanel:
             or ticker not in prices.columns
         ):
             self.line.clear()
-            self.perf_grid.clear()
+            self.metrics_w.value = ""
+            self.cal_w.value = ""
             return
 
         cols = [ticker]
-        if self.bench_chk.value:
-            bench = self.bench_dd.value
-            if bench in prices.columns and bench != ticker:
-                cols.append(bench)
+        bench = self.bench_dd.value
+        has_bench = bench in prices.columns and bench != ticker
+        if self.bench_chk.value and has_bench:
+            cols.append(bench)
         window = prices.loc[prices.index >= window_start, cols]
         self.line.update(cum_perf(window))
 
-        # `perf_table` slices per window internally, so it takes the full frame
-        # and its 5Y row benefits from the extra year of history the fetch now
-        # carries. `since_inception_perf` reads whatever it is given end to end
-        # — handed the full frame it would quietly become a six-year figure, so
-        # it gets the analytics window and keeps meaning what it meant (#311).
-        full = prices[[ticker]]
-        pt = pd.concat(
-            [
-                perf_table(full),
-                since_inception_perf(full.loc[full.index >= window_start]),
-            ],
-            axis=1,
+        # The metrics table reads the **analytics window**, not the fetched
+        # frame. The fetch reaches `SCORE_SAMPLE_YEARS` further back for the
+        # scorers (#311, #361), so an unsliced frame would make every window
+        # right and since-inception a fifteen-year figure under a label that
+        # does not say so.
+        win = prices.loc[prices.index >= window_start]
+        self.metrics_w.value = _render_strategy_metrics(
+            strategy_metrics(win, ticker, benchmark=win[bench] if has_bench else None),
+            benchmark=bench if has_bench else None,
         )
-        self.perf_grid.update(pt, meta)
 
         self.render_calendar()
         self.render_section3(meta, window_start)
 
     def set_calendar_kind(self, which: str) -> None:
-        """Activate one calendar pill (`absolute` / `outperformance` /
-        `vol_adjusted`): restyle the pills and record the kind. The caller
-        re-renders via `render_calendar`."""
+        """Record which calendar mode is active. **The caller re-renders.**
+
+        The chips paint themselves — that is what a `ChipGroup` is — so this
+        is now only the record, where with `_make_tab_button` pills it also
+        had to restyle five buttons by hand.
+        """
         self.cal_kind = which
-        for pill, (_label, kind) in zip(self.cal_pills, _CALENDAR_TABS, strict=True):
-            _style_tab_button(pill, active=kind == which)
+        if self.cal_chips.value != which:
+            self.cal_chips.value = which
 
     def render_calendar(self) -> None:
         """Render the monthly calendar for the picked strategy + active kind.
@@ -520,7 +559,7 @@ class SingleStrategyPanel:
             # drawing it unsliced would be a six-year calendar (#311).
             or self._window_start is None
         ):
-            self.cal_grid.clear()
+            self.cal_w.value = ""
             return
         # The fetch reaches a year further back than the app analyses, and
         # `calendar_return_table` pivots every month it is given — unsliced it
@@ -531,13 +570,157 @@ class SingleStrategyPanel:
             bench = self.bench_dd.value
             benchmark = prices[bench] if bench in prices.columns else None
         table = calendar_return_table(prices[ticker], kind=kind, benchmark=benchmark)
-        self.cal_grid.update(table, kind=kind)
+        self.cal_w.value = _render_calendar(table, kind=kind)
 
     def render_section3(self, meta: pd.DataFrame, window_start: pd.Timestamp) -> None:
         """Render both Section 3 analysis panes' currently-mounted views for the
         picked strategy over the 5Y window (no BQL)."""
         self.render_analysis_pane(self.pane_left, meta, window_start)
         self.render_analysis_pane(self.pane_right, meta, window_start)
+
+    def _factor_panel(self) -> pd.DataFrame:
+        """Every catalog strategy's β to all five factors, **measured once**.
+
+        The percentile axis needs the whole cross-section, which is five
+        `factor_beta` passes over the universe. At 18 mock rows that is
+        nothing; at a terminal catalog it is the one expensive thing on this
+        tab, so it is cached against the price frame's **identity** — the
+        `QuantColumns` pattern, and for the same reason (#261: every window
+        is measured once). A Refresh rebinds `arp_universe_prices`, which
+        invalidates it without anything having to remember to.
+
+        `LOOKBACK_YEARS` rather than a control: the spiderweb has no window
+        of its own, and a percentile is only comparable across spokes if
+        every β in it was measured over the same sample.
+        """
+        arp = self.state.arp_universe_prices
+        if arp is None or arp.empty:
+            return pd.DataFrame()
+        if self._factor_panel_source is not arp:
+            rets = self.state.universe_rets
+            if rets is None or rets.empty:
+                rets = daily_returns(arp)
+            self._factor_panel_cache = factor_beta_panel(
+                rets, _risk_factors(self.state.universe_prices), LOOKBACK_YEARS
+            )
+            self._factor_panel_source = arp
+        return self._factor_panel_cache
+
+    def _render_decile(
+        self,
+        pane: SingleAnalysisPane,
+        win: pd.DataFrame,
+        ticker: str,
+        benchmark: str,
+    ) -> None:
+        """The strategy's returns by benchmark decile, optionally conditioned.
+
+        **Weekly**, which is what the chart's axis says (#369): a daily
+        decile's tails are single-session noise.
+
+        The regime restricts the **periods cut**, not a slice of an existing
+        cut — every bucket is a subset of the window, so re-cutting inside it
+        is the only thing that answers "what does this look like when
+        volatility is high". Off by default, and off means no mask at all
+        rather than an all-True one, because `regime_window_mask` already
+        collapses the three ways there can be no conditioning into one.
+        """
+        if not benchmark:
+            pane.decile.clear()
+            return
+        regime = pane.decile_regime
+        weekly = weekly_returns(win[[ticker, benchmark]])
+        mask = None
+        regime_label = ""
+        if regime.on.value:
+            low, high = regime.resolve_bucket()
+            mask = regime_window_mask(regime.indicator(), weekly.index, low, high)
+            regime_label = f"{regime.types.value}: {regime.buckets.label}"
+        pane.decile.update(
+            decile_profile(weekly[ticker], weekly[benchmark], mask=mask),
+            strategy_label=_short_ticker(ticker),
+            benchmark_label=_short_ticker(benchmark),
+            regime_label=regime_label,
+        )
+
+    def _render_regime_profile(
+        self,
+        pane: SingleAnalysisPane,
+        win: pd.DataFrame,
+        ticker: str,
+        benchmark: str,
+    ) -> None:
+        """Return vs vol under every bucket of the selected regime (#370).
+
+        The three buckets plus the **unconditioned anchor**, and the
+        benchmark's three when one is on. Which days each bucket selects is
+        `RegimeControls`' — the same object the Platform card resolves its
+        one bucket through, so the two tabs cannot disagree about where a
+        regime begins.
+
+        The anchor is drawn whatever the checkbox says; the three buckets only
+        while it is on, because with the regime off there is nothing to
+        condition and `bucket_bounds` would answer `(None, None)` — the
+        all-days mask — three times over, which would draw the anchor three
+        more times under three bucket names.
+        """
+        regime = pane.regime
+        columns = [ticker] + ([benchmark] if benchmark else [])
+        rets = daily_returns(win[columns])
+        series_names = {ticker: _short_ticker(ticker)}
+        if benchmark:
+            series_names[benchmark] = _short_ticker(benchmark)
+
+        rows: list[dict] = []
+        whole = regime_risk_return(rets, pd.Series(True, index=rets.index))
+        for column, name in series_names.items():
+            if column in whole.index:
+                rows.append(
+                    {
+                        "bucket": RegimeProfileChart.ANCHOR_LABEL,
+                        "series": f"{name} — whole window",
+                        "anchor": True,
+                        "vol": whole.loc[column, "vol"],
+                        "ret": whole.loc[column, "ret"],
+                    }
+                )
+        if regime.on.value:
+            indicator = regime.indicator()
+            for label, key in regime.bucket_keys():
+                low, high = regime.bucket_bounds(key)
+                mask = regime_window_mask(indicator, rets.index, low, high)
+                bucket = regime_risk_return(rets, mask)
+                for column, name in series_names.items():
+                    if column not in bucket.index:
+                        continue
+                    rows.append(
+                        {
+                            "bucket": label,
+                            "series": name,
+                            "anchor": False,
+                            "vol": bucket.loc[column, "vol"],
+                            "ret": bucket.loc[column, "ret"],
+                        }
+                    )
+        if not rows:
+            pane.regime_profile.clear()
+            return
+        points = pd.DataFrame(rows).set_index("bucket")
+        pane.regime_profile.update(
+            points,
+            regime_label=regime.types.value if regime.on.value else "",
+            benchmark_label=_short_ticker(benchmark) if benchmark else "",
+        )
+
+    def _render_risk_profile(self, pane: SingleAnalysisPane, ticker: str) -> None:
+        """One strategy's five spokes: its percentile per factor, β in hover."""
+        panel = self._factor_panel()
+        if panel.empty or ticker not in panel.index:
+            pane.risk_profile.clear()
+            return
+        pane.risk_profile.update(
+            cross_section_percentile(panel, ticker), panel.loc[ticker]
+        )
 
     def render_analysis_pane(
         self,
@@ -550,22 +733,12 @@ class SingleStrategyPanel:
 
         Benchmark-dependent views (weekly scatter / distribution / drawdown) use
         `pane.bench_dd`; the factor scatter / factor scoring use the cached factor
-        columns; the rest are stubs. A missing ticker / benchmark / factor columns
-        clear the affected figure without raising."""
+        columns. A missing ticker / benchmark / factor columns clear the affected
+        figure without raising — **every option draws** since #367, so there is
+        no branch here that returns before reaching the cache."""
         label = pane.picker.value
         prices = self.state.universe_prices
         ticker = self.pick.value
-
-        # Stubs don't depend on the price cache.
-        if label == "Performance Ranking":
-            pane.ranking.update(None)
-            return
-        if label == "PCA Analysis":
-            pane.pca.update()
-            return
-        if label == "Defensive Scoring":
-            pane.defensive.update()
-            return
 
         valid = not (
             ticker is None
@@ -597,10 +770,27 @@ class SingleStrategyPanel:
         elif label == "Drawdown":
             dd_cols = [ticker, bench] if has_bench else [ticker]
             pane.dd.update(drawdown_series(win[dd_cols]))
+        elif label == "Rolling":
+            # The benchmark is passed whatever the chip holds; `rolling_series`
+            # ignores it for Sharpe and Calmar, which is what lets this stay
+            # one call rather than a branch per statistic (#368).
+            stat = pane.rolling_chips.value
+            bench_rets = daily_returns(win[[bench]])[bench] if has_bench else None
+            pane.rolling.update(
+                rolling_series(
+                    daily_returns(win[[ticker]]), stat, benchmark=bench_rets
+                ),
+                stat=stat,
+                benchmark_label=bench if has_bench else "",
+            )
         elif label == "Factor Scatter":
             _render_factor_scatter(pane, prices, win, ticker)
-        elif label == "Factor Scoring":
-            pane.factor_score.update(_factor_betas(prices, ticker))
+        elif label == "Decile":
+            self._render_decile(pane, win, ticker, bench if has_bench else "")
+        elif label == "Regime Profile":
+            self._render_regime_profile(pane, win, ticker, bench if has_bench else "")
+        elif label == "Risk Profile":
+            self._render_risk_profile(pane, ticker)
 
 
 def _clear_analysis_view(
@@ -613,10 +803,16 @@ def _clear_analysis_view(
         pane.retdist.update(pd.DataFrame(), pd.DataFrame(), meta)
     elif label == "Drawdown":
         pane.dd.clear()
+    elif label == "Rolling":
+        pane.rolling.clear()
     elif label == "Factor Scatter":
         pane.factor.clear()
-    elif label == "Factor Scoring":
-        pane.factor_score.clear()
+    elif label == "Decile":
+        pane.decile.clear()
+    elif label == "Regime Profile":
+        pane.regime_profile.clear()
+    elif label == "Risk Profile":
+        pane.risk_profile.clear()
 
 
 def _render_factor_scatter(
@@ -644,24 +840,24 @@ def _render_factor_scatter(
     )
 
 
-def _factor_betas(prices: pd.DataFrame, ticker: str) -> pd.Series | None:
-    """The strategy's β to each macro-factor proxy (equity risk premium / term
-    premium / trend) over the 5Y window. Returns a label-indexed Series, or None
-    when no factor columns resolve (e.g. a mock cache without the factor legs)."""
-    rets = daily_returns(prices[[ticker]])
-    factors = {
-        "Equity risk premium": equity_risk_premium(prices),
-        "Term premium": term_premium(prices),
+def _risk_factors(prices: pd.DataFrame) -> dict[str, pd.Series]:
+    """The five factor-return series the risk profile takes a β to (#372).
+
+    Built from the one fetched cache, in spoke order. Three shapes, and the
+    difference is deliberate — see `stats.factors`: the two premia are
+    short-rate spreads, Trend and Carry are the indices' own returns, and
+    Volatility is two level series standardized and averaged.
+
+    A leg the feed did not serve comes back empty, which `factor_beta_panel`
+    turns into an all-NaN column and the chart into a missing spoke.
+    """
+    return {
+        "ERP": equity_risk_premium(prices),
+        "Term": term_premium(prices),
+        "Volatility": volatility_factor(prices),
         "Trend": trend_returns(prices),
+        "Carry": carry_returns(prices),
     }
-    out: dict[str, float] = {}
-    for name, fr in factors.items():
-        if fr is None or fr.empty:
-            continue
-        val = factor_beta(rets, fr, LOOKBACK_YEARS).get(ticker)
-        if val is not None and pd.notna(val):
-            out[name] = float(val)
-    return pd.Series(out, dtype=float) if out else None
 
 
 def make_single_strategy_panel(

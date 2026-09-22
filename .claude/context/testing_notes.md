@@ -87,54 +87,29 @@ build_app()
 ```
 
 renders the full dashboard without a Bloomberg session. Verify by:
-- Clicking a filter-type pill (Solution / Category / Family / Asset
-  Class / Return Type / Characteristics / Quantitative — the first five
-  are derived from `CATALOG_SCHEMA`, so this list follows the schema)
-  in the right panel swaps the
-  value list shown below; the active pill gets the `.is-active` style
-  (accent-bordered raised surface). Ticking a value
-  checkbox narrows the ticker dropdown to the intersection.
-  Characteristics shows the Launch-date range (two date boxes separated
-  by a hyphen) and a **Currency** dropdown; setting either narrows the
-  dropdown.
+- **There is no filter accordion left in the app** (#345, #365). Both picking
+  tabs filter from a *Filter* bar — a **Dimension** chip row beside that
+  dimension's **Values** — and every number that used to be a `≥ / ≤`
+  threshold is a **column** of the table with a comparison filter under its
+  header. Nothing on any tab should show a pill-tab bar, a 240px checkbox
+  list, an operator dropdown or a "Clear section" button.
+- Picking a Dimension chip swaps which values are shown; ticking values
+  narrows the table live, with no BQL. **Switching dimensions keeps every
+  dimension's ticks**, and a dimension with active values carries a count
+  badge (*Family · 2*) — which is the only place an off-screen filter is
+  visible from.
 - **The three classification tiers are visible everywhere (v0.9.15).** The
-  filter accordion carries a **Solution**, **Category** and **Family** pill in
-  that order (both tabs); the all-catalog grid shows Solution / Category /
-  Family after Asset Class, and the selected-strategy grid shows them plus
-  Return Type and **Launch Date** (relabelled from "Live Date" — the label now
-  comes from the schema); the Single Strategy **profile card** lists Asset
-  Class · Currency · Return Type · Solution · Category · Family · Launch Date,
-  rendering `—` for any the record lacks; the **New Launch** cards' meta line
-  reads `asset class · category · currency`. Ticking a value in any of the
-  three tier pills narrows the picker.
-- The **Quantitative** pill shows a global Period (1Y/3Y/5Y) dropdown and
-  one row per metric (Sharpe / Sortino / Calmar / Beta / Treynor /
-  Jensen α / VaR % / RSI / Z-Score), each a `[≥/≤ dropdown] [value box]`;
-  Beta, Treynor, and Jensen each carry their own benchmark dropdown, and
-  Z-Score carries its base-metric selector **plus a 1W/1M/3M/6M window
-  dropdown** (v0.8.11). Setting e.g. Sharpe
-  `≥ 0.5` (or Sharpe `≤ 0.5`) narrows the dropdown to indices whose metric
-  (computed from the already-fetched prices) clears the threshold; a blank
-  box is ignored. Changing any operator/period/benchmark/z-metric/z-window
-  re-narrows live, no BQL.
-- Clicking **Clear section** unticks the active pill's checkboxes (or
-  clears the launch-date range + currency on Characteristics, or the
-  ratio thresholds on Quantitative); **Clear all** clears every filter
-  group, the date range, the currency, the quant thresholds, and the
-  search box. Both re-widen the ticker dropdown but keep the user's
-  selected tickers. They do not recompute or hit BQL.
-- The strategies dropdown (left panel) is the same height as the filter
-  box (right panel) — it grows via `flex` while the parent HBox stretches
-  both panels to equal height.
-- Typing in the strategies search box (left panel, above the dropdown)
-  — the dropdown narrows to substring matches on ticker or name;
-  already-selected tickers stay visible.
-- The **selection cap** (v0.9.13 #181): a `Selected Strategies: n/25` count
-  sits above the picker and updates live as boxes are ticked (turning red at
-  25/25). Ticking a 26th strategy is **rejected** — the checkbox snaps back,
-  the count stays 25/25, and a red auto-fading "Maximum 25 strategies" popup
-  appears at the top of the viewport. (The bundled mock catalog has only ~4
-  indices, so exercising the cap needs a larger catalog / a live terminal.)
+  Filter bar's dimension chips carry **Solution**, **Category** and **Family**
+  in that order (both tabs); the catalog table draws them as nested group
+  headers; the Single Strategy **profile card** lists Asset Class · Currency ·
+  Return Type · Solution · Category · Family · Launch Date, rendering `—` for
+  any the record lacks; the **New Launch** cards' meta line reads
+  `asset class · category · currency`.
+- The **selection cap** (v0.9.13 #181): the Multi tab's `n / 25 selected`
+  count updates live as rows are ticked. Ticking past the cap is **rejected
+  whole** — the ticks snap back to what the basket holds and a red auto-fading
+  "Maximum 25 strategies" popup appears. (The bundled mock catalog is 18 rows,
+  so exercising the cap needs a larger catalog / a live terminal.)
 - **No analysis date range and no Refresh prices.** The window is the
   selection's overlap (v0.9.29) and nothing refetches (v0.9.30); the Selected
   Strategies strip's readout says the window and names the member that binds
@@ -153,22 +128,66 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Clicking the top-level **Platform** / **Multi-Strategy** / **Single
   Strategy** pill buttons toggles the active button (`.bbg-pill.is-active`)
   and swaps the content area; commentary stays visible across all three.
-- The **Single Strategy** tab (v0.9.0): picking a strategy from the
-  single-select dropdown populates the profile card + cumulative chart +
-  standard-perf table (Section 1); the 3-pill monthly-return calendar
-  (Absolute / Outperformance / Vol-adjusted) tab-switches over one DataGrid
-  (Section 2); and the two side-by-side analysis panes each swap analyses on
-  their own picker + per-pane benchmark dropdown (Section 3) — all computed
-  from the cached prices, no BQL.
-- The Single Strategy **"Filters" accordion** (v0.9.12): a two-column panel —
-  the strategy picker + benchmark selector + "Show benchmark" toggle on the
-  **left**, the filter criteria (the schema-derived pills, then
-  Characteristics / Quantitative) on the **right**, stretched to equal height.
-  Toggling any criteria box narrows the strategy picker **live** — no
-  Refresh-prices button. When the currently-picked strategy is filtered out, the
-  first still-matching strategy is auto-selected and the whole tab re-renders;
-  when nothing matches, the picker empties and the sections clear without a
-  traceback. **Clear all** restores the full catalog.
+- The **Single Strategy** tab (v0.9.36, epic #363) — the picker is the
+  catalog table again, in single-select, under a *Table view* bar
+  (**Group by · Window · Benchmark**) and a *Filter* bar (**Dimension ·
+  Values**), at the same height as the other two tabs' tables. There is **no
+  accordion, no pill-tabs, no threshold rows and no strategy dropdown**
+  anywhere on the tab.
+- **Clicking a row** picks that strategy: the profile card, the cumulative
+  chart, the metrics table, the calendar and both panes all redraw, live, off
+  the cache. Changing Group by, Window, a Dimension chip or a value chip
+  rebuilds the table and **the picked row stays lit** if it is still shown.
+- **A pick the filters hide stays picked.** Narrow the filters until the
+  picked strategy has no row: nothing clears, every section keeps drawing it,
+  no row is lit, and the profile card reads `… · not shown by the current
+  filters` beside the ticker. This is the behaviour that replaced clearing the
+  user's filters, so also check the other direction — clicking a **catalog**
+  row on the Platform tab, a **Leaderboard** row, a **points-table** row or a
+  **basket card** opens this tab on that strategy and **leaves the filters
+  alone**, with no status message about clearing anything.
+- **The metrics table** is HTML in the app's type: eight rows (Return · Vol ·
+  Sharpe · Sortino · Calmar · Max DD · Beta · Correlation) across every window
+  the fetch serves plus **SI**, which is set off by a left rule. Every number
+  is at **two decimals**; an unserved window is an em dash, not a blank and not
+  `NaN`. Negatives are red and **nothing is green**. Changing the bar's
+  Benchmark moves the Beta and Correlation rows and nothing else.
+- **The calendar** is HTML too, and still a heatmap: years down, Jan…Dec
+  across, the annual summary set off at the right, cells shaded red→green on
+  the same bands the Platform grid uses. Its five modes are **chips**
+  (Absolute / Outperformance / Vol-adjusted / Beta / Correlation), not pills;
+  switching one repaints the cells and the summary columns change with the
+  mode. Vol, where it appears, carries **no shading**.
+- **Every analysis option draws.** Step the pane picker through all eight —
+  Weekly Scatter · Return Distribution · Factor Scatter · Drawdown · Rolling ·
+  Decile · Regime Profile · Risk Profile — and none of them shows a *coming
+  soon* placeholder.
+- **Rolling** is one figure with a Correlation · Sharpe · Calmar · Beta chip.
+  Stepping the chip moves the **title, the y-axis label and the reference
+  line** together (0, 0, 0, then **1** for Beta), and the benchmark dropdown
+  **disappears** for Sharpe and Calmar and comes back with the same benchmark
+  still selected. The Multi-Strategy tab now has **one** *Rolling* entry where
+  it had two.
+- **Decile** draws ten column pairs, strategy beside benchmark, rising left to
+  right on the benchmark's own bars. Tick *Condition on regime*: the bucket
+  chips appear, the columns **change** (they are re-cut inside the bucket, not
+  re-sliced), and the regime and bucket are named **in the title**. Untick it
+  and the title loses the suffix. Switching the regime **type** repopulates
+  the buckets before the redraw, so the title never names a bucket from the
+  regime you just left.
+- **Regime Profile** draws, per series, a muted open-diamond anchor labelled
+  *Whole window* plus one labelled marker per bucket — three for Volatility
+  and Rate-level. With a benchmark on there are two anchors and two sets of
+  three. There is **no bucket control** on this view. Unticking *Condition on
+  regime* leaves only the anchors.
+- **Risk Profile** is a five-spoke polygon — ERP · Term · Volatility · Trend ·
+  Carry — on a radial axis in **percent**, and every hover reads
+  `<factor> · N% of the catalog · β = x.xx`. On the mock cache Volatility
+  resolves (VIX and MOVE are both fetched); drop `MOVE Index` from the request
+  and it should still draw with the VIX leg alone rather than vanishing.
+- The two panes are independent: set them to different analyses, or to the
+  same analysis with different benchmarks or different regime buckets, and
+  neither disturbs the other.
 - Selecting 2+ strategies — every figure in BOTH
   analysis panes refreshes (the pane's currently mounted view shows
   the new data; the other 8 pre-built views are also populated so
@@ -195,9 +214,9 @@ renders the full dashboard without a Bloomberg session. Verify by:
   same date in one tooltip.
 - Hovering a point on the risk/return scatter shows ticker name,
   annualized vol (%), annualized return (%), and annualized Sharpe (2dp).
-- Each pane has its OWN Rolling Correlation / Rolling Beta benchmark
-  dropdown — setting the left pane's benchmark to SPTR and the right
-  pane's to MXWO produces two independently-titled charts.
+- Each pane has its OWN Rolling benchmark dropdown — setting the left pane's
+  to SPTR and the right pane's to MXWO produces two independently-titled
+  charts.
 - On the Correlation Heatmap view, ticking **Benchmark** reveals a
   benchmark dropdown and a nested **Regime** checkbox; ticking **Regime**
   reveals a **`>` / `<`** dropdown and a 0–100% tail dropdown and
@@ -408,7 +427,8 @@ real test of it.
 - The **tick is its own column**, narrow, at the left edge, and **never
   overlaps the ticker text at any window width**. Resize the browser and check
   again — sharing a cell is exactly what broke before.
-- Change **Benchmark**: Beta, Treynor and Jensen move; nothing else does.
+- Change **Benchmark**: Beta and Treynor move; nothing else does. (Jensen α
+  is still computed but is not a column — v0.9.30 dropped it with VaR and RSI.)
 
 **The filters**
 
@@ -428,7 +448,8 @@ real test of it.
   **The × renders on every card** — it was the name spilling that pushed it off
   the end before v0.9.30.
 - **×** removes the card and unticks the row if it is shown. Clicking the
-  **ticker** opens that strategy in Single Strategy, with the filters cleared —
+  **ticker** opens that strategy in Single Strategy — the filters are left
+  alone since #363, a hidden pick simply staying picked —
   the same as clicking a catalog row.
 - *Clear all* empties it; the note reads `n / 25 selected` and tracks every
   change. An empty basket shows a placeholder line and the strip **does not
@@ -446,7 +467,8 @@ real test of it.
 - *Select all shown* is **one** recompute, not one per row.
 - There is **nothing to press**. Prices are the startup fetch's for the life of
   the session (v0.9.30) — to get fresh ones, reload the app.
-- Single Strategy is unchanged: its accordion, its pickers, its live narrowing.
+- Single Strategy has its own table, bars and filters (#363) — narrowing one
+  tab's filters must not move the other's.
 
 ### Manual checklist — the commentary block (v0.9.22, epic #303)
 
@@ -490,8 +512,9 @@ but not that the two sections *look* like one pair at a terminal's fonts.
   cell, which is correct.
 - **Clicking any leaderboard row opens that strategy in the Single Strategy
   tab**, exactly as a catalog-grid row does — including clicking the rank, the
-  score or the value, not just the ticker. If the Single Strategy filters had
-  excluded it, they clear and the status toast says so.
+  score or the value, not just the ticker. A strategy the Single Strategy
+  filters exclude opens all the same — since #363 the pick does not depend on
+  a row being shown, so nothing clears and there is no status toast.
 - Changing the **Window** chips (1W / 1M / 3M / 6M / **1Y**) genuinely
   **reorders** the rows — with no fetch and no visible pause. Returning to a
   window already seen is instant. Nothing on screen still says "Past Week": the

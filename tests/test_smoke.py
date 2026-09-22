@@ -173,15 +173,15 @@ def test_regime_analysis_section_conditions_live():
     # plain factor view over the whole Window and the controls that describe a
     # bucket are hidden. Everything below is about the conditioned view, so
     # tick it on first.
-    assert pa.regime_on_chk.value is False
-    assert pa.regime_type_chips.layout.display == "none"
-    pa.regime_on_chk.value = True
+    assert pa.regime.on.value is False
+    assert pa.regime.types.layout.display == "none"
+    pa.regime.on.value = True
 
     chart_box, _points_box = body.children
     # Type and Bucket are chips since #333; Source stays a dropdown because its
     # options are a long live list (#331 decision 13).
-    regime_type, bucket_dd = pa.regime_type_chips, pa.regime_bucket_chips
-    selector_dd = pa.regime_selector_dd
+    regime_type, bucket_dd = pa.regime.types, pa.regime.buckets
+    selector_dd = pa.regime.source
     assert [label for label, _ in regime_type.options] == [
         "Volatility",
         "Trend",
@@ -593,14 +593,32 @@ def test_dark_grid_style():
 def test_grids_are_dark_themed():
     # The ipydatagrid grids theme their canvas through the `grid_style` API.
     # The all-catalog grid is an `itables` table and is themed by page CSS
-    # instead — see `test_catalog_grid_carries_the_chrome_hook`.
-    from src.layout.grids import CalendarGrid, PerfGrid
+    # instead — see `test_catalog_grid_carries_the_chrome_hook`, which is also
+    # how the Single Strategy metrics table and calendar are themed since
+    # #366 replaced their two canvases with HTML.
+    from src.layout.grids import PerfGrid
 
-    for owner in (PerfGrid(), CalendarGrid()):
-        grid = owner.grid
-        assert grid.grid_style["background_color"] == Color.CHROME_BG.value
-        assert grid.header_renderer.text_color == Color.TEXT.value
-        assert "bbg-grid" in grid._dom_classes
+    grid = PerfGrid().grid
+    assert grid.grid_style["background_color"] == Color.CHROME_BG.value
+    assert grid.header_renderer.text_color == Color.TEXT.value
+    assert "bbg-grid" in grid._dom_classes
+
+
+def test_the_html_tables_carry_their_chrome_hooks():
+    """The metrics table and the calendar are themed by page CSS (#366).
+
+    Same contract as the catalog table's: the class is what the stylesheet
+    hangs off, so it is part of the contract rather than decoration — and the
+    stylesheet has to actually define it.
+    """
+    from src.config import TEMPLATES_DIR
+
+    css = (TEMPLATES_DIR / "app_css.html").read_text(encoding="utf-8")
+    for name in ("strategy_metrics", "calendar"):
+        markup = (TEMPLATES_DIR / f"{name}.html").read_text(encoding="utf-8")
+        hook = "bbg-metrics" if name == "strategy_metrics" else "bbg-calendar"
+        assert f"class='{hook}'" in markup
+        assert f".{hook}" in css
 
 
 def test_catalog_grid_carries_the_chrome_hook():

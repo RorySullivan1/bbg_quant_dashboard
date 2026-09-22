@@ -206,6 +206,52 @@ COMMENTARY_BOX_HEIGHT: str = "300px"
 #: strip scrolls rather than growing the page.
 BASKET_STRIP_HEIGHT: str = "104px"
 
+#: The diverging heat bands: the four thresholds a value is placed in to pick
+#: one of `Color.HEAT_*`. `(t0, t1, t2, t3)` reads as strong-negative below
+#: `t0`, soft-negative to `t1`, **neutral** to `t2`, soft-positive to `t3`,
+#: strong-positive above.
+#:
+#: Here rather than in `grids.py` because two stacks read them now (v0.9.36,
+#: #366): the ipydatagrid renderers, and the HTML calendar that replaced the
+#: `CalendarGrid`. A band is a visual decision keyed to the colour tokens it
+#: sits beside, so this is where it belongs either way — and it is the one
+#: place a band can be retuned without one table disagreeing with another.
+#:
+#: The bands themselves: Sharpe's neutral straddles 0–0.5; a Z-Score is
+#: already centred at 0 so its bands are symmetric; a **return** cell is
+#: neutral within ±1% and strong beyond ±5%; a vol-adjusted cell is a
+#: unitless ratio on a wider band; correlation diverges around 0 and **beta
+#: around 1.0**, the market-beta neutral point, since what the ramp encodes
+#: there is distance from the market rather than good or bad.
+HeatBand = tuple[float, float, float, float]
+SHARPE_HEAT_BAND: HeatBand = (-0.5, 0.0, 0.5, 1.0)
+ZSCORE_HEAT_BAND: HeatBand = (-1.5, -0.5, 0.5, 1.5)
+RETURN_HEAT_BAND: HeatBand = (-0.05, -0.01, 0.01, 0.05)
+VOLADJ_HEAT_BAND: HeatBand = (-1.0, -0.25, 0.25, 1.0)
+CORR_HEAT_BAND: HeatBand = (-0.5, -0.1, 0.1, 0.5)
+BETA_HEAT_BAND: HeatBand = (0.0, 0.7, 1.3, 2.0)
+
+#: Empty (NaN) numeric cells render as this rather than "NaN" / "NaN%", in
+#: every table on both stacks.
+MISSING_DASH: str = "-"
+
+#: How tall the Single Strategy monthly-return calendar's box stands (#366).
+#:
+#: Sized for the ten years `LOOKBACK_YEARS` offers plus the header; a longer
+#: history scrolls inside the box rather than growing the page, which is the
+#: same trade `CATALOG_TABLE_HEIGHT` makes and for the same reason — what is
+#: below it should not move when a strategy with more history is picked.
+CALENDAR_HEIGHT: str = "336px"
+
+#: How tall the Single Strategy metrics table's box stands (#366).
+#:
+#: Fixed for `CATALOG_TABLE_HEIGHT`'s reason: the number of rows is constant
+#: (`STRATEGY_METRICS`) but the number of *columns* is not — `stat_windows()`
+#: grows with `LOOKBACK_YEARS` — and a box that sized itself would move
+#: everything below it when the fetch widens. Tall enough for the eight rows
+#: plus the header; beyond that it scrolls.
+STRATEGY_METRICS_HEIGHT: str = "292px"
+
 #: How wide the asset-class colour block on a selected-strategy card is.
 #:
 #: 3px when the cards shipped, which read as trim rather than as the card's

@@ -21,6 +21,7 @@ given fails at construction instead of at render time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import ipywidgets as W
 
@@ -29,22 +30,37 @@ from ..config import (
 )
 from .benchmarks import BenchmarkRegistry, BenchmarkSelect
 from .charts import (
+    ROLLING_BENCHMARK_STATS,
     CorrHeatmap,
-    DefensiveChart,
+    DecileChart,
     DrawdownChart,
     FactorCorrChart,
-    FactorScoringChart,
     LineChart,
     OutperformanceChart,
-    PcaChart,
-    PerfRankingChart,
+    RegimeProfileChart,
     ReturnDistChart,
-    RollingRefChart,
+    RiskProfileChart,
+    RollingChart,
     ScatterChart,
     SharpeZChart,
     WeeklyScatterChart,
+    rolling_stat_chips,
 )
+from .rails import ChipGroup
+from .regime_controls import RegimeControls
 
+if TYPE_CHECKING:
+    # `state.py` imports this module, so the annotation cannot be a runtime
+    # import — the same guard `platform` and `single_strategy` carry.
+    from .state import DashboardState
+
+#: The Multi-Strategy analysis-pane options.
+#:
+#: **One *Rolling* where there were two** (#368). *Rolling Correlation* and
+#: *Rolling Beta* were two `RollingRefChart`s and two picker entries, while
+#: rolling Sharpe and Calmar had their stats functions and no chart anywhere.
+#: The statistic is a chip inside the view now, so both tabs draw all four
+#: through one component.
 ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Cumulative Performance",
     "Outperformance",
@@ -52,9 +68,8 @@ ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Correlation Heatmap",
     "Risk / Return",
     "Drawdown",
-    "Rolling Correlation",
+    "Rolling",
     "Return Distribution",
-    "Rolling Beta",
 )
 
 
@@ -65,9 +80,9 @@ def _make_benchmark_dropdown(
     width: str = "320px",
     registry: BenchmarkRegistry | None = None,
 ) -> W.Dropdown:
-    """A benchmark selector. Every analysis-pane benchmark dropdown (Rolling
-    Correlation / Rolling Beta / Outperformance / Correlation-Heatmap regime)
-    and the Quantitative-filter benchmark rows use this one factory. A blank
+    """A benchmark selector. Every analysis-pane benchmark dropdown (Rolling /
+    Outperformance / Correlation-Heatmap regime) and both picking tabs'
+    *Table view* bars use this one factory. A blank
     `description` leaves no label gap.
 
     With a `registry` the options track the live benchmark set, so a
@@ -89,22 +104,42 @@ def _make_benchmark_dropdown(
     return dd
 
 
-# Single Strategy analysis-pane options. Drawdown and Factor scoring are
-# functional; the trailing four are stubs.
+#: Single Strategy analysis-pane options. **Every one of these draws.**
+#:
+#: It was eight, three of which were dead ends: *PCA Analysis* and *Defensive
+#: Scoring* were `_StubChart`s drawing *coming soon*, and *Performance
+#: Ranking* drew the same placeholder because nothing ever passed it scores.
+#: #367 retired all three — each into an issue of its own (#374, #375, #376),
+#: so the intent outlives the placeholder — on the rule that a picker offering
+#: a view the app cannot draw is a promise it does not keep.
 SINGLE_ANALYSIS_OPTIONS: tuple[str, ...] = (
     "Weekly Scatter",
     "Return Distribution",
     "Factor Scatter",
     "Drawdown",
-    "Performance Ranking",
-    "Factor Scoring",
-    "PCA Analysis",
-    "Defensive Scoring",
+    "Rolling",
+    "Decile",
+    "Regime Profile",
+    "Risk Profile",
 )
 
-# Single-strategy analyses whose figure depends on the per-pane benchmark.
+#: Single-strategy analyses whose figure depends on the per-pane benchmark.
+#:
+#: *Rolling* is here **conditionally** — Correlation and Beta read a
+#: benchmark, Sharpe and Calmar do not — so the visibility sync asks the
+#: chip as well as the picker (#368).
 _SINGLE_BENCHMARK_VIEWS: frozenset[str] = frozenset(
-    {"Weekly Scatter", "Return Distribution", "Drawdown"}
+    {
+        "Weekly Scatter",
+        "Return Distribution",
+        "Drawdown",
+        # The decile view **cannot draw without one** — the benchmark is what
+        # decides the buckets — and the regime profile draws the benchmark's
+        # own three points beside the strategy's, so its regime sensitivity
+        # reads against something.
+        "Decile",
+        "Regime Profile",
+    }
 )
 
 
@@ -127,10 +162,13 @@ class SingleAnalysisPane:
     retdist: ReturnDistChart
     factor: FactorCorrChart
     dd: DrawdownChart
-    ranking: PerfRankingChart
-    factor_score: FactorScoringChart
-    pca: PcaChart
-    defensive: DefensiveChart
+    rolling: RollingChart
+    rolling_chips: ChipGroup
+    decile: DecileChart
+    decile_regime: RegimeControls
+    regime_profile: RegimeProfileChart
+    regime: RegimeControls
+    risk_profile: RiskProfileChart
 
 
 @dataclass
@@ -163,16 +201,18 @@ class AnalysisPane:
     heat_pct: W.Dropdown
     scatter: ScatterChart
     dd: DrawdownChart
-    rcorr: RollingRefChart
-    rcorr_dd: BenchmarkSelect
-    rbeta: RollingRefChart
-    rbeta_dd: BenchmarkSelect
+    rolling: RollingChart
+    rolling_chips: ChipGroup
+    rolling_dd: BenchmarkSelect
     retdist: ReturnDistChart
     fresh: set[str] = field(default_factory=set)
 
 
 def _make_single_analysis_pane(
-    side_label: str, *, registry: BenchmarkRegistry | None = None
+    side_label: str,
+    *,
+    registry: BenchmarkRegistry | None = None,
+    state: DashboardState | None = None,
 ) -> SingleAnalysisPane:
     """Build one Single-Strategy analysis pane — a self-contained 50%-width
     column with an analysis picker, a per-pane benchmark dropdown (shown only for
@@ -188,10 +228,20 @@ def _make_single_analysis_pane(
     retdist = ReturnDistChart()
     factor = FactorCorrChart()
     dd = DrawdownChart()
-    ranking = PerfRankingChart()
-    factor_score = FactorScoringChart()
-    pca = PcaChart()
-    defensive = DefensiveChart()
+    rolling = RollingChart()
+    rolling_chips = ChipGroup(rolling_stat_chips(), value=rolling.stat, row=True)
+    decile = DecileChart()
+    # The decile view conditions on **one** bucket, so it keeps the bucket
+    # chips the regime-profile view has no use for. Its own instance, because
+    # two charts in one pane conditioning on one shared selection would make
+    # a chip on a hidden view move a visible one.
+    decile_regime = RegimeControls(state)
+    regime_profile = RegimeProfileChart()
+    # **No bucket control** (#363 dec. 8): all three buckets are the chart, so
+    # there is nothing for a bucket chip to select. The *type* and *source*
+    # are the Platform card's own controls, from the module both tabs import.
+    regime = RegimeControls(state, buckets=False)
+    risk_profile = RiskProfileChart()
 
     bench_dd = _make_benchmark_dropdown(registry=registry)
 
@@ -203,10 +253,30 @@ def _make_single_analysis_pane(
         ),
         "Factor Scatter": W.VBox([factor.fig], layout=view_layout),
         "Drawdown": W.VBox([dd.fig], layout=view_layout),
-        "Performance Ranking": W.VBox([ranking.fig], layout=view_layout),
-        "Factor Scoring": W.VBox([factor_score.fig], layout=view_layout),
-        "PCA Analysis": W.VBox([pca.fig], layout=view_layout),
-        "Defensive Scoring": W.VBox([defensive.fig], layout=view_layout),
+        "Rolling": W.VBox([rolling_chips, rolling.fig], layout=view_layout),
+        "Decile": W.VBox(
+            (
+                [
+                    decile_regime.on,
+                    decile_regime.types,
+                    decile_regime.source,
+                    decile_regime.buckets,
+                    decile.fig,
+                ]
+                if decile_regime is not None
+                else [decile.fig]
+            ),
+            layout=view_layout,
+        ),
+        "Regime Profile": W.VBox(
+            (
+                [regime.on, regime.types, regime.source, regime_profile.fig]
+                if regime is not None
+                else [regime_profile.fig]
+            ),
+            layout=view_layout,
+        ),
+        "Risk Profile": W.VBox([risk_profile.fig], layout=view_layout),
     }
 
     default_label = "Weekly Scatter" if side_label == "left" else "Factor Scatter"
@@ -219,9 +289,19 @@ def _make_single_analysis_pane(
     )
 
     def _sync_benchmark_visibility(label: str) -> None:
-        bench_dd.layout.display = "" if label in _SINGLE_BENCHMARK_VIEWS else "none"
+        # *Rolling* reads a benchmark for two of its four statistics, so the
+        # selector follows the chip as well as the picker. Hidden rather than
+        # rebuilt, so switching Sharpe → Correlation finds the last benchmark
+        # still chosen (#331 dec. 3, #368).
+        shown = label in _SINGLE_BENCHMARK_VIEWS or (
+            label == "Rolling" and rolling_chips.value in ROLLING_BENCHMARK_STATS
+        )
+        bench_dd.layout.display = "" if shown else "none"
 
     _sync_benchmark_visibility(default_label)
+    rolling_chips.observe(
+        lambda _c: _sync_benchmark_visibility(picker.value), names="value"
+    )
 
     header_row = W.HBox(
         [picker, bench_dd],
@@ -249,10 +329,13 @@ def _make_single_analysis_pane(
         retdist=retdist,
         factor=factor,
         dd=dd,
-        ranking=ranking,
-        factor_score=factor_score,
-        pca=pca,
-        defensive=defensive,
+        rolling=rolling,
+        rolling_chips=rolling_chips,
+        decile=decile,
+        decile_regime=decile_regime,
+        regime_profile=regime_profile,
+        regime=regime,
+        risk_profile=risk_profile,
     )
 
 
@@ -267,9 +350,10 @@ def _make_analysis_pane(
 
     Plotly figures are independent widget instances; each pane owns its
     own set so the two panes can render the same analysis side-by-side
-    without conflict. The Rolling-Correlation / Rolling-Beta benchmark
-    dropdowns live on the same row as the analysis picker and toggle
-    visibility based on the active analysis.
+    without conflict. The Rolling and Outperformance benchmark dropdowns live
+    on the same row as the analysis picker and toggle visibility based on the
+    active analysis — and, for Rolling, on which statistic its chip has
+    selected (#368: Sharpe and Calmar do not read a benchmark).
     """
     line = LineChart()
     outperf = OutperformanceChart()
@@ -277,20 +361,15 @@ def _make_analysis_pane(
     heat = CorrHeatmap()
     scatter = ScatterChart()
     dd = DrawdownChart()
-    rcorr = RollingRefChart(
-        title_prefix="Rolling Correlation",
-        y_label="Correlation",
-        ref_y=0.0,
-    )
-    rbeta = RollingRefChart(
-        title_prefix="Rolling Beta",
-        y_label="Beta",
-        ref_y=1.0,
-    )
+    rolling = RollingChart()
     retdist = ReturnDistChart()
 
-    rcorr_benchmark_dd = _make_benchmark_dropdown(registry=registry)
-    rbeta_benchmark_dd = _make_benchmark_dropdown(registry=registry)
+    # The statistic, as a chip group in the view itself rather than a fourth
+    # entry in the analysis picker: *which rolling statistic* is a different
+    # question from *which analysis*, and folding it into the picker is what
+    # gave the tab two rolling entries and no home for the other two.
+    rolling_chips = ChipGroup(rolling_stat_chips(), value=rolling.stat, row=True)
+    rolling_benchmark_dd = _make_benchmark_dropdown(registry=registry)
     outperf_benchmark_dd = _make_benchmark_dropdown(registry=registry)
 
     # Correlation-Heatmap controls, revealed progressively: "Benchmark" exposes
@@ -332,11 +411,10 @@ def _make_analysis_pane(
         "Correlation Heatmap": W.VBox([heat.fig], layout=view_layout),
         "Risk / Return": W.VBox([scatter.fig], layout=view_layout),
         "Drawdown": W.VBox([dd.fig], layout=view_layout),
-        "Rolling Correlation": W.VBox([rcorr.fig], layout=view_layout),
+        "Rolling": W.VBox([rolling_chips, rolling.fig], layout=view_layout),
         "Return Distribution": W.VBox(
             [retdist.fig, retdist.stats_grid], layout=view_layout
         ),
-        "Rolling Beta": W.VBox([rbeta.fig], layout=view_layout),
     }
 
     default_label = (
@@ -363,10 +441,15 @@ def _make_analysis_pane(
             w.layout.display = "" if regime_on else "none"
 
     def _sync_benchmark_visibility(label: str) -> None:
-        rcorr_benchmark_dd.layout.display = (
-            "" if label == "Rolling Correlation" else "none"
+        # Rolling shows its benchmark only for the statistics that read one —
+        # a *Rolling Sharpe vs SPTR* control would name a series the number
+        # does not touch. Hidden, not rebuilt, so switching back to
+        # Correlation finds the last benchmark still chosen (#331 dec. 3).
+        rolling_benchmark_dd.layout.display = (
+            ""
+            if label == "Rolling" and rolling_chips.value in ROLLING_BENCHMARK_STATS
+            else "none"
         )
-        rbeta_benchmark_dd.layout.display = "" if label == "Rolling Beta" else "none"
         outperf_benchmark_dd.layout.display = (
             "" if label == "Outperformance" else "none"
         )
@@ -383,14 +466,16 @@ def _make_analysis_pane(
         _sync_regime_controls()
 
     _sync_benchmark_visibility(default_label)
+    rolling_chips.observe(
+        lambda _c: _sync_benchmark_visibility(picker.value), names="value"
+    )
     heat_benchmark_chk.observe(_on_benchmark_chk, names="value")
     heat_regime_chk.observe(lambda _c: _sync_regime_controls(), names="value")
 
     header_row = W.HBox(
         [
             picker,
-            rcorr_benchmark_dd,
-            rbeta_benchmark_dd,
+            rolling_benchmark_dd,
             outperf_benchmark_dd,
             heat_benchmark_chk,
             heat_benchmark_dd,
@@ -439,9 +524,8 @@ def _make_analysis_pane(
         heat_pct=heat_pct,
         scatter=scatter,
         dd=dd,
-        rcorr=rcorr,
-        rcorr_dd=rcorr_benchmark_dd,
-        rbeta=rbeta,
-        rbeta_dd=rbeta_benchmark_dd,
+        rolling=rolling,
+        rolling_chips=rolling_chips,
+        rolling_dd=rolling_benchmark_dd,
         retdist=retdist,
     )

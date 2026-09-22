@@ -195,16 +195,17 @@ def test_added_benchmark_reaches_every_selector(captured_registry):
     (registry,) = captured_registry
 
     selectors = _all_benchmark_selectors(app)
-    # 4 per Multi-Strategy pane (x2), 1 per Single-Strategy pane (x2), and one
+    # 3 per Multi-Strategy pane (x2), 1 per Single-Strategy pane (x2), and one
     # in each tab's *Table view* bar. Pinned as a floor so silent
     # de-registration is caught without the test going stale when a pane is
     # added.
     #
-    # It was 17 until #345 and 15 until #365. Each drop is the same trade: a
-    # filter panel's three benchmark rows plus its Z-score's became **one**
-    # dropdown in the bar, feeding Beta and Treynor as table columns — the
-    # Multi tab's in #345, Single Strategy's in #365.
-    assert len(selectors) >= 11
+    # It was 17 until #345, 15 until #365 and 12 until #368, and every drop
+    # is the same trade: several selectors that each served one reading
+    # became **one** serving the reading that is on screen. #345 and #365
+    # folded a filter panel's four benchmark rows into a *Table view* bar;
+    # #368 folded two rolling figures into one whose statistic is a chip.
+    assert len(selectors) >= 9
 
     registry.add(NEW)
 
@@ -243,7 +244,7 @@ def _regime_dropdowns(app):
     source_dd = next(
         w for w in _walk(app) if isinstance(w, W.Dropdown) and w.description == "Source"
     )
-    return analytics.regime_type_chips, source_dd
+    return analytics.regime.types, source_dd
 
 
 def test_trend_regime_source_tracks_the_registry(captured_registry):

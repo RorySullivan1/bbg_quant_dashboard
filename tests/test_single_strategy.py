@@ -8,13 +8,14 @@ benchmark overlay, the perf table, calendar shape/kind switching, and guards.
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pandas as pd
 from src.layout.html import _fmt_date, _na, _render_profile_card
 from src.layout.panes import _SINGLE_BENCHMARK_VIEWS, SINGLE_ANALYSIS_OPTIONS
 from src.layout.single_strategy import _CALENDAR_TABS, SingleStrategyPanel
-from src.stats import calendar_summary_columns
+from src.stats import calendar_summary_columns, strategy_metrics
 
 
 def _meta() -> pd.DataFrame:
@@ -79,7 +80,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     ss.state = state
     ss.render(meta, window_start)
     assert len(ss.line.fig.data) == 1  # strategy only, no overlay
-    assert not ss.perf_grid.grid.data.empty
+    assert "<table class='bbg-metrics'>" in ss.metrics_w.value
     assert "Alpha" in ss.profile_w.value
 
     # Toggling the overlay adds the benchmark trace.
@@ -115,9 +116,9 @@ def test_render_single_strategy_empty_cache_no_raise():
     ss.state = state
     ss.render(meta, pd.Timestamp("2020-01-01"))
     assert len(ss.line.fig.data) == 0
-    assert ss.perf_grid.grid.data.empty
+    assert ss.metrics_w.value == ""
     # Section 1 recompute also drives the calendar — it should clear too.
-    assert ss.cal_grid.grid.data.empty
+    assert ss.cal_w.value == ""
 
 
 _CAL_MONTHS = [
@@ -155,12 +156,14 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
     # here the whole fixture is the window.
     ss._window_start = universe.index.min()
     ss.render_calendar()
-    data = ss.cal_grid.grid.data
-    # Default kind is absolute → Return / Vol / Sharpe summary columns.
-    assert list(data.columns) == _cal_cols("absolute")
-    # Oldest year on top (ascending), years rendered as string labels.
-    years = [int(y) for y in data.index]
-    assert years == sorted(years)
+    html = ss.cal_w.value
+    # Default kind is absolute → Return / Vol / Sharpe summary columns, each
+    # a header in the rendered table beside the twelve months.
+    for column in _cal_cols("absolute"):
+        assert f">{column}<" in html
+    # Oldest year on top (ascending).
+    years = [int(y) for y in re.findall(r"<tr><th>(\d{4})</th>", html)]
+    assert years and years == sorted(years)
 
 
 def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
@@ -179,12 +182,14 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
         ss.state = state
         ss.render_calendar()
         # Each kind drives its own summary columns.
-        assert list(ss.cal_grid.grid.data.columns) == _cal_cols(kind)
-        assert not ss.cal_grid.grid.data.empty
+        html = ss.cal_w.value
+        for column in _cal_cols(kind):
+            assert f">{column}<" in html
+        assert "<tbody>" in html and re.search(r"<tr><th>\d{4}</th>", html)
 
 
 def test_calendar_tabs_cover_every_kind():
-    # The pill set and the calendar_return_table kinds stay in lockstep.
+    # The chip set and the calendar_return_table kinds stay in lockstep.
     kinds = {kind for _label, kind in _CALENDAR_TABS}
     assert kinds == {
         "absolute",
@@ -207,6 +212,22 @@ def _universe_with_factors(multiyear_prices, benchmark):
         rets = rng.normal(drift, 0.003, len(universe))
         universe[col] = 100.0 * np.cumprod(1.0 + rets)
     return universe
+
+
+def _state(universe, *, catalog=("AAA Index", "BBB Index", "CCC Index")):
+    """A `DashboardState` stub carrying the fields the panel actually reads.
+
+    A bare `SimpleNamespace(universe_prices=...)` covered every renderer until
+    the risk profile, which needs the **catalog** — the percentile axis is a
+    cross-section, so the panel reads `arp_universe_prices` too. Building the
+    stub in one place keeps a new reader from being a per-test surprise.
+    """
+    held = [t for t in catalog if t in universe.columns]
+    return SimpleNamespace(
+        universe_prices=universe,
+        arp_universe_prices=universe[held],
+        universe_rets=None,
+    )
 
 
 def _set_pane(pane, label, bench="SPXFP Index"):
@@ -263,40 +284,99 @@ def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):
     assert len(pane.dd.fig.data) == 2
 
 
-def test_render_analysis_pane_factor_scoring(multiyear_prices, benchmark):
+def test_render_analysis_pane_risk_profile(multiyear_prices, benchmark):
+    """The five-β spiderweb on a percentile axis (#372).
+
+    It replaced `FactorScoringChart`, three bars of ERP / Term / Trend — no
+    Carry, no Volatility, and no way to tell a large β from a small one, the
+    betas being on wildly different scales.
+    """
+    from src.layout.charts import RISK_PROFILE_FACTORS
+
     meta = _meta()
     ss = SingleStrategyPanel(meta, None)
     universe = _universe_with_factors(multiyear_prices, benchmark)
-    universe["BSLXAT Index"] = benchmark  # trend factor leg
-    state = SimpleNamespace(universe_prices=universe)
+    universe["BSLXAT Index"] = benchmark  # trend leg
+    universe["BSLXAC Index"] = benchmark * 1.01  # carry leg
+    ss.state = _state(universe)
     ss.pick.value = "AAA Index"
     pane = ss.pane_left
-    _set_pane(pane, "Factor Scoring")
+    _set_pane(pane, "Risk Profile")
 
-    ss.state = state
     ss.render_analysis_pane(pane, meta, universe.index.min())
-    bar = pane.factor_score.fig.data[0]
-    # All three macro-factor betas resolve from the mock cache.
-    assert list(bar.x) == ["Equity risk premium", "Term premium", "Trend"]
-    assert len(bar.y) == 3
+    trace = pane.risk_profile.fig.data[0]
+    # Volatility has no VIX/MOVE legs in this cache, so it is a **missing
+    # spoke** rather than an exception — four points plus the closing one.
+    drawn = list(trace.theta)[:-1]
+    assert set(drawn) <= set(RISK_PROFILE_FACTORS)
+    assert "Volatility" not in drawn
+    assert drawn, "the factors that do resolve still draw"
+    # Every radius is a percentile, so every one is in [0, 1] — which is the
+    # point of the axis, the raw betas being incomparable across spokes.
+    assert all(0.0 <= float(r) <= 1.0 for r in trace.r)
+    # And the raw β rides in the hover.
+    assert len(trace.customdata) == len(trace.r)
 
 
-def test_render_analysis_pane_stubs_show_placeholder():
+def test_the_factor_cross_section_is_measured_once_per_price_frame():
+    """Five `factor_beta` passes over the universe on every pick would be the
+    one expensive thing on this tab (#363's risk note).
+
+    Cached against the frame's **identity**, the `QuantColumns` pattern: a
+    Refresh rebinds `arp_universe_prices` and invalidates it without anything
+    having to remember to.
+    """
+    import numpy as np
+
+    index = pd.bdate_range("2021-01-01", "2026-01-01")
+    rng = np.random.default_rng(4)
+    frame = pd.DataFrame(
+        {
+            t: 100 * np.cumprod(1 + rng.normal(0.0003, 0.008, len(index)))
+            for t in ("AAA Index", "BBB Index", "CCC Index")
+        },
+        index=index,
+    )
+    ss = SingleStrategyPanel(_meta(), None)
+    ss.state = _state(frame)
+
+    first = ss._factor_panel()
+    assert first is ss._factor_panel(), "a second pick is a lookup"
+
+    # A Refresh rebinds the frame, which is what invalidates it.
+    ss.state.arp_universe_prices = frame.copy()
+    assert ss._factor_panel() is not first
+
+
+def test_every_analysis_option_draws(multiyear_prices, benchmark):
+    """No option is a dead end (#367).
+
+    Three of eight were: *PCA Analysis* and *Defensive Scoring* drew *coming
+    soon*, and *Performance Ranking* drew the same placeholder because
+    nothing ever passed it scores. Each is retired into an issue (#374, #375,
+    #376) rather than left in a picker.
+    """
     meta = _meta()
     ss = SingleStrategyPanel(meta, None)
-    state = SimpleNamespace(universe_prices=pd.DataFrame())
-    for label, chart_attr in (
-        ("Performance Ranking", "ranking"),
-        ("PCA Analysis", "pca"),
-        ("Defensive Scoring", "defensive"),
-    ):
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    universe["BSLXAT Index"] = benchmark
+    universe["BSLXAC Index"] = benchmark * 1.01
+    ss.state = _state(universe)
+    ss.pick.value = "AAA Index"
+
+    for label in SINGLE_ANALYSIS_OPTIONS:
         pane = ss.pane_left
         _set_pane(pane, label)
-        ss.state = state
-        ss.render_analysis_pane(pane, meta, pd.Timestamp("2020-01-01"))
-        fig = getattr(pane, chart_attr).fig
-        assert len(fig.data) == 0
-        assert len(fig.layout.annotations) == 1
+        ss.render_analysis_pane(pane, meta, universe.index.min())
+        figures = [w for w in pane.views[label].children if hasattr(w, "layout")]
+        annotations = [
+            a
+            for fig in figures
+            for a in getattr(getattr(fig, "layout", None), "annotations", ()) or ()
+        ]
+        assert all(
+            not (a.text or "").lower().endswith("coming soon") for a in annotations
+        ), f"{label} draws a placeholder"
 
 
 def test_analysis_options_match_pane_views():
@@ -350,7 +430,7 @@ def test_panel_owns_its_widgets_and_opens_on_the_first_calendar_kind():
     ss = SingleStrategyPanel(_meta(), None)
     assert isinstance(ss.root, W.VBox)
     assert ss.cal_kind == _CALENDAR_TABS[0][1]
-    assert len(ss.cal_pills) == len(_CALENDAR_TABS)
+    assert [v for _, v in ss.cal_chips.options] == [k for _, k in _CALENDAR_TABS]
     for pane in (ss.pane_left, ss.pane_right):
         assert isinstance(pane, SingleAnalysisPane)
     assert ss.pane_left is not ss.pane_right
@@ -367,17 +447,18 @@ def test_two_panels_share_no_widgets():
     assert b.cal_kind == _CALENDAR_TABS[0][1]
 
 
-def test_set_calendar_kind_restyles_only_the_active_pill():
+def test_set_calendar_kind_moves_the_chip_group():
+    """The chips paint themselves, so the panel only records the kind (#366).
+
+    With `_make_tab_button` pills it had to restyle five buttons by hand and
+    a missed one left two looking active; a `ChipGroup`'s selection is a
+    trait, so there is one place for it to be wrong.
+    """
     ss = SingleStrategyPanel(_meta(), None)
     for _label, kind in _CALENDAR_TABS:
         ss.set_calendar_kind(kind)
         assert ss.cal_kind == kind
-        active = [
-            k
-            for pill, (_l, k) in zip(ss.cal_pills, _CALENDAR_TABS, strict=True)
-            if "is-active" in pill._dom_classes
-        ]
-        assert active == [kind]
+        assert ss.cal_chips.value == kind
 
 
 # --- the fetched frame is longer than the analysis window (#311) -----------
@@ -397,49 +478,39 @@ def _panel_with(prices: pd.DataFrame) -> SingleStrategyPanel:
 
 
 def test_a_longer_fetch_does_not_move_the_since_inception_row(multiyear_prices):
-    """SI is whole-frame, so an extra year of history would silently deepen it.
+    """Since-inception is whole-frame, so an extra year would deepen it.
 
-    It means "since the fetch start" already, for any index older than the
-    window; what must not happen is that meaning changing under the reader
-    because the fetch grew for the leaderboard's benefit.
+    It means "since the fetch start" for any index older than the window;
+    what must not happen is that meaning changing under the reader because
+    the fetch grew for the leaderboard's benefit. `render` slices to the
+    analytics window before measuring, which is what pins it.
     """
     window_start = multiyear_prices.index.min()
-    older = pd.DataFrame(
-        50.0,
-        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
-        columns=multiyear_prices.columns,
-    )
-    longer = pd.concat([older, multiyear_prices])
+    longer = _with_a_year_more(multiyear_prices, window_start)
 
     short_row = _panel_with(multiyear_prices)
     short_row.render(_meta(), window_start)
     long_row = _panel_with(longer)
     long_row.render(_meta(), window_start)
 
-    si = [c for c in short_row.perf_grid.grid.data.columns if str(c).startswith("SI")]
-    assert si, "no since-inception columns on the perf grid"
-    pd.testing.assert_frame_equal(
-        short_row.perf_grid.grid.data[si], long_row.perf_grid.grid.data[si]
-    )
+    assert short_row.metrics_w.value == long_row.metrics_w.value
 
 
-def test_a_longer_fetch_fills_a_window_the_shorter_one_left_blank(multiyear_prices):
-    """The other half of the same decision, and a pre-existing bug it fixes.
+def test_a_longer_fetch_does_not_fill_a_window_the_window_cannot_serve(
+    multiyear_prices,
+):
+    """The other half of that decision, and the one thing #366 changed.
 
-    `perf_table` keeps the **full** frame on purpose: it slices per window
-    internally, and it blanks a window whose first valid row is even a day
-    short of `years * 365.25`. The fetch start is a `DateOffset` and the first
-    trading row snaps forward off a weekend, so the two disagree — measured on
-    2026-09-18 the catalog's whole `5Y` column is blank, and it blanks on ~20%
-    of business days. The extra year the fetch now carries settles it.
+    `perf_table` kept the **full** frame on purpose, so the extra year the
+    fetch carries settled a `3Y` column that blanked on ~20% of business days
+    (#311). The metrics table does not: it measures the analytics window, and
+    a window the *window* cannot serve stays a dash whatever the fetch holds.
+    That is the honest reading — a 3Y number the ten-year window has the data
+    for is a 3Y number; one assembled from history the window excludes is a
+    number under a label that does not describe it.
     """
     window_start = multiyear_prices.index.min()
-    older = pd.DataFrame(
-        50.0,
-        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
-        columns=multiyear_prices.columns,
-    )
-    longer = pd.concat([older, multiyear_prices])
+    longer = _with_a_year_more(multiyear_prices, window_start)
 
     short_row = _panel_with(multiyear_prices)
     short_row.render(_meta(), window_start)
@@ -447,27 +518,34 @@ def test_a_longer_fetch_fills_a_window_the_shorter_one_left_blank(multiyear_pric
     long_row.render(_meta(), window_start)
 
     # The fixture spans just under three years, so `3Y` is the window on the
-    # boundary: blank on the short frame, populated once the history reaches.
-    assert short_row.perf_grid.grid.data["3Y Return"].isna().all()
-    assert long_row.perf_grid.grid.data["3Y Return"].notna().all()
+    # boundary — and it is unserved on both, because both are sliced to it.
+    assert short_row.metrics_w.value == long_row.metrics_w.value
+    frame = strategy_metrics(
+        multiyear_prices.loc[multiyear_prices.index >= window_start], "AAA Index"
+    )
+    assert frame.loc["Return", "3Y"] != frame.loc["Return", "3Y"]  # NaN
+    assert frame.loc["Return", "1Y"] == frame.loc["Return", "1Y"]  # served
 
 
 def test_a_longer_fetch_does_not_grow_the_calendar(multiyear_prices):
     # `calendar_return_table` pivots every month it is handed, so an unsliced
     # frame would add a whole year row and restate the oldest year's summary.
     window_start = multiyear_prices.index.min()
-    older = pd.DataFrame(
-        50.0,
-        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
-        columns=multiyear_prices.columns,
-    )
-    longer = pd.concat([older, multiyear_prices])
+    longer = _with_a_year_more(multiyear_prices, window_start)
 
     short_cal = _panel_with(multiyear_prices)
     short_cal.render(_meta(), window_start)
     long_cal = _panel_with(longer)
     long_cal.render(_meta(), window_start)
 
-    pd.testing.assert_frame_equal(
-        short_cal.cal_grid.grid.data, long_cal.cal_grid.grid.data
+    assert short_cal.cal_w.value == long_cal.cal_w.value
+
+
+def _with_a_year_more(prices: pd.DataFrame, window_start) -> pd.DataFrame:
+    """`prices` with a flat year of history bolted on in front of it."""
+    older = pd.DataFrame(
+        50.0,
+        index=pd.bdate_range(window_start - pd.Timedelta(days=365), window_start)[:-1],
+        columns=prices.columns,
     )
+    return pd.concat([older, prices])

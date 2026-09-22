@@ -338,6 +338,126 @@
   margin: 10px 0 4px 0;
 }
 .bbg-app .bbg-chip-group { width: 100%; }
+
+/* ---- The strategy metrics table (v0.9.36, #366) -----------------------
+   Eight metrics down, one column per window. **HTML, not a grid.** The two
+   `ipydatagrid` canvases this replaced — a `PerfGrid` and the monthly
+   calendar's summary columns — carry the v0.6.5 theme-refresh invariant
+   (#223) and a Lumino canvas, for what is a dozen static numbers that never
+   sort, scroll or take a click.
+
+   Every value here is a token: the type is the app's, the rules are the
+   catalog table's `border_color`, and the numbers are `mono` so a column of
+   them aligns on the decimal the way the grid's did. Nothing inline, which
+   is the whole reason it is a template. */
+.bbg-app .bbg-metrics {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: {{sans}};
+  font-size: {{caption_size}};
+  color: {{text_color}};
+}
+.bbg-app .bbg-metrics th,
+.bbg-app .bbg-metrics td {
+  padding: 5px 10px;
+  border-bottom: 1px solid {{border_color}};
+  white-space: nowrap;
+}
+.bbg-app .bbg-metrics thead th {
+  color: {{text_muted}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: right;
+  border-bottom: 1px solid {{accent}};
+}
+/* The metric names: a row header, so left-aligned and in the body type
+   rather than the uppercase heading treatment the windows wear. */
+.bbg-app .bbg-metrics thead th.bbg-metrics-corner,
+.bbg-app .bbg-metrics tbody th {
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: {{text_color}};
+}
+.bbg-app .bbg-metrics tbody th {
+  font-size: {{caption_size}};
+}
+.bbg-app .bbg-metrics td {
+  font-family: {{mono}};
+  text-align: right;
+}
+/* The since-inception column is a different kind of number from the trailing
+   windows beside it — every strategy's is measured over a different span —
+   so it is set off by a rule rather than left to read as a fourth window. */
+.bbg-app .bbg-metrics th.bbg-metrics-si,
+.bbg-app .bbg-metrics td.bbg-metrics-si {
+  border-left: 1px solid {{border_color}};
+}
+.bbg-app .bbg-metrics tbody tr:last-child th,
+.bbg-app .bbg-metrics tbody tr:last-child td {
+  border-bottom: none;
+}
+/* A dash for an unserved window, red for a negative number — and no green.
+   Half these rows have no direction (a high Vol is not good, a negative Beta
+   is not bad), so the colour says only what a terminal's would: below zero. */
+.bbg-app .bbg-metrics .bbg-metrics-na { color: {{text_muted}}; }
+.bbg-app .bbg-metrics .bbg-metrics-neg { color: {{red}}; }
+/* ---- The monthly-return calendar (v0.9.36, #366) ----------------------
+   Years down, Jan…Dec across, the kind's annual summary set off at the
+   right. The `ipydatagrid` canvas under it went with `CalendarGrid`; the
+   heatmap did not (#363 dec. 4) — it is the one thing on this tab a desk
+   reads at a glance, and the metrics table beside it is summary statistics
+   rather than the path they came from.
+
+   The five heat steps are classes, not inline backgrounds, so the colours
+   stay here with every other token and a cell carries only *which step*. The
+   fills are the same `HEAT_*` tokens the grid's diverging renderer uses, on
+   the same bands (`style.py`), so the two stacks cannot drift. */
+.bbg-app .bbg-calendar {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: {{sans}};
+  font-size: {{caption_size}};
+  color: {{text_color}};
+  table-layout: fixed;
+}
+.bbg-app .bbg-calendar th,
+.bbg-app .bbg-calendar td {
+  padding: 4px 6px;
+  border: 1px solid {{border_color}};
+  text-align: center;
+  white-space: nowrap;
+}
+.bbg-app .bbg-calendar thead th {
+  color: {{text_muted}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid {{accent}};
+}
+/* The year label is a row header: left-aligned, mono so the column of years
+   sits under itself, and not shaded — a year is not a measurement. */
+.bbg-app .bbg-calendar tbody th {
+  font-family: {{mono}};
+  font-weight: 600;
+  text-align: left;
+  color: {{text_color}};
+  background: {{surface}};
+}
+.bbg-app .bbg-calendar td { font-family: {{mono}}; }
+/* The annual aggregates, set off from the twelve monthly cells beside them
+   the way the metrics table sets off since-inception. */
+.bbg-app .bbg-calendar .bbg-cal-edge { border-left: 2px solid {{accent}}; }
+.bbg-app .bbg-calendar .bbg-cal-na { color: {{text_muted}}; }
+.bbg-app .bbg-calendar .bbg-heat-neg2 { background: {{heat_neg_strong}}; }
+.bbg-app .bbg-calendar .bbg-heat-neg1 { background: {{heat_neg_soft}}; }
+.bbg-app .bbg-calendar .bbg-heat-pos1 { background: {{heat_pos_soft}}; }
+.bbg-app .bbg-calendar .bbg-heat-pos2 { background: {{heat_pos_strong}}; }
+
 /* `text-align` alone does not left-align a Jupyter button: the widget renders
    a flex container, so the text is centred by `justify-content` regardless.
    Both are set. */

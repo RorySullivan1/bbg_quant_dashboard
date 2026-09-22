@@ -14,7 +14,7 @@ structural, and the same code still serves both the full recompute
 (``render_pane``) and the live per-pane benchmark/regime observers
 (``bind_live_controls``).
 
-Each pane swaps among nine analysis views. Every benchmark series is sliced from
+Each pane swaps among eight analysis views. Every benchmark series is sliced from
 the already-fetched ``state.universe_prices`` and memoized on ``state.memo`` —
 no BQL fetch.
 """
@@ -33,8 +33,7 @@ from ..stats import (
     daily_returns,
     excess_cum_return,
     heatmap_corr_matrix,
-    rolling_beta,
-    rolling_correlation,
+    rolling_series,
 )
 from .panes import AnalysisPane
 from .selection import SelectionSlice
@@ -42,7 +41,7 @@ from .selection import SelectionSlice
 if TYPE_CHECKING:
     # No cycle today, but `state.py` is one import away from reaching this
     # module, and the annotation never needs the symbol at runtime. Guarded
-    # like `filter_panel` / `single_strategy`, where the cycle is real.
+    # like `single_strategy`, where the cycle is real.
     from .state import DashboardState
 
 
@@ -82,8 +81,7 @@ def clear_pane(pane: AnalysisPane, meta: pd.DataFrame) -> None:
         pane.heat,
         pane.scatter,
         pane.dd,
-        pane.rcorr,
-        pane.rbeta,
+        pane.rolling,
         pane.retdist,
     ):
         chart.clear()
@@ -179,23 +177,24 @@ def _render_heatmap(ctx: RenderContext, pane: AnalysisPane) -> None:
         pane.heat.clear()
 
 
-def _render_rolling_corr(ctx: RenderContext, pane: AnalysisPane) -> None:
-    ticker = pane.rcorr_dd.value
+def _render_rolling(ctx: RenderContext, pane: AnalysisPane) -> None:
+    """The one rolling view, at whatever statistic its chip has selected.
+
+    Two near-identical renderers stood here until #368, one per figure. The
+    benchmark is read for every statistic and ignored by the two that do not
+    take one — `rolling_series` decides that, and it is also what keys the
+    memo, so switching Sharpe → Calmar → Sharpe is a cache hit rather than a
+    recompute.
+    """
+    stat = pane.rolling_chips.value
+    ticker = pane.rolling_dd.value
     _render_bench_chart(
         ctx,
-        ("rcorr", ticker),
-        lambda: rolling_correlation(ctx.sel.rets, _bench_returns(ctx, ticker)),
-        lambda rc: pane.rcorr.update(rc, benchmark_label=ticker),
-    )
-
-
-def _render_rolling_beta(ctx: RenderContext, pane: AnalysisPane) -> None:
-    ticker = pane.rbeta_dd.value
-    _render_bench_chart(
-        ctx,
-        ("rbeta", ticker),
-        lambda: rolling_beta(ctx.sel.rets, _bench_returns(ctx, ticker)),
-        lambda rb: pane.rbeta.update(rb, benchmark_label=ticker),
+        ("rolling", stat, ticker),
+        lambda: rolling_series(
+            ctx.sel.rets, stat, benchmark=_bench_returns(ctx, ticker)
+        ),
+        lambda df: pane.rolling.update(df, stat=stat, benchmark_label=ticker),
     )
 
 
@@ -228,10 +227,8 @@ def render_one(ctx: RenderContext, pane: AnalysisPane, label: str) -> None:
         pane.retdist.update(sel.rets, sel.rd_stats, ctx.meta)
     elif label == "Correlation Heatmap":
         _render_heatmap(ctx, pane)
-    elif label == "Rolling Correlation":
-        _render_rolling_corr(ctx, pane)
-    elif label == "Rolling Beta":
-        _render_rolling_beta(ctx, pane)
+    elif label == "Rolling":
+        _render_rolling(ctx, pane)
     elif label == "Outperformance":
         _render_outperf(ctx, pane)
 
@@ -285,8 +282,10 @@ def bind_live_controls(
 
         return _handler
 
-    pane.rcorr_dd.observe(_make(_render_rolling_corr), names="value")
-    pane.rbeta_dd.observe(_make(_render_rolling_beta), names="value")
+    # The statistic chip is a live control like the benchmark beside it: it
+    # re-slices the cache, it never fetches.
+    pane.rolling_chips.observe(_make(_render_rolling), names="value")
+    pane.rolling_dd.observe(_make(_render_rolling), names="value")
     pane.outperf_dd.observe(_make(_render_outperf), names="value")
     # The Benchmark/Regime checkboxes keep their visibility-sync observers
     # (in panes.py); this adds the data re-render on top. Toggling Benchmark

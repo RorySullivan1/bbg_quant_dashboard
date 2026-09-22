@@ -138,6 +138,53 @@ _ROLLING_METRICS = {
 }
 
 
+#: The four statistics the Single Strategy and Multi-Strategy *Rolling* view
+#: offers, and whether each reads a benchmark. One dispatch so the chart, the
+#: renderer and the memo key all name the same set (#368).
+#:
+#: It is deliberately **not** `_ROLLING_METRICS`: that dispatch serves
+#: `rolling_metric_zscore`, whose members are the ones a z-score is taken of,
+#: and it carries `vol` and `sortino` while carrying neither benchmark
+#: statistic. Merging the two would make one list answer two questions.
+_ROLLING_VIEW_METRICS: dict[str, tuple] = {
+    "correlation": (rolling_correlation, True),
+    "sharpe": (rolling_sharpe, False),
+    "calmar": (rolling_calmar, False),
+    "beta": (rolling_beta, True),
+}
+
+
+def rolling_series(
+    returns: pd.DataFrame,
+    metric: str,
+    *,
+    benchmark: pd.Series | None = None,
+    window: int = SHARPE_WINDOW,
+) -> pd.DataFrame:
+    """One rolling frame, chosen by name — the *Rolling* view's whole compute.
+
+    Correlation and Beta are measured against ``benchmark``; Sharpe and Calmar
+    ignore it, so a caller may pass one unconditionally rather than branching
+    on which statistic is selected. That is the point: the chart's chip picks
+    a key, and nothing above this has to know which keys take a second series.
+
+    Raises `ValueError` on an unknown metric, like `latest_rolling_metric`, so
+    the rolling functions share one vocabulary. An absent benchmark for a
+    statistic that needs one gives the all-NaN frame the underlying functions
+    already return for an empty one — a cleared chart, not an exception.
+    """
+    try:
+        metric_fn, needs_benchmark = _ROLLING_VIEW_METRICS[metric]
+    except KeyError:
+        raise ValueError(
+            f"unknown metric {metric!r}; choose from {sorted(_ROLLING_VIEW_METRICS)}"
+        ) from None
+    if not needs_benchmark:
+        return metric_fn(returns, window)
+    leg = benchmark if benchmark is not None else pd.Series(dtype=float)
+    return metric_fn(returns, leg, window)
+
+
 def latest_rolling_metric(
     prices: pd.DataFrame,
     *,

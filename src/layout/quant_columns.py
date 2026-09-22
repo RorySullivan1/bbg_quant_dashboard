@@ -6,10 +6,13 @@ saw. Epic #341 makes them **columns** of the basket table, filtered by the
 comparison row the catalog already carries (#297) — the same operator, on a
 number that is on screen.
 
-The memo moved here out of `QuantFilter` so the two consumers cannot disagree.
-Single Strategy still filters by threshold and the basket table renders the
-values; both now ask this object, so *the number the user sees is the number
-the threshold compares*. It is keyed on `(years, benchmark)` and on the
+The memo moved here out of `QuantFilter` so the two consumers could not
+disagree — Single Strategy still filtered by threshold then, and the basket
+table rendered the values. #365 retired that panel too, so **both** tabs draw
+these as columns now and there is no threshold left to disagree with; what
+the one object still buys is a single measurement for two tables, and
+`frame` is the per-window block both of them ask for. It is keyed on
+`(years, benchmark)` and on the
 **identity** of the price frame, which is what a Refresh invalidates — a new
 fetch rebinds `arp_universe_prices`, so the old entries can never be served
 against new prices. The frame is held by reference rather than by `id()`:

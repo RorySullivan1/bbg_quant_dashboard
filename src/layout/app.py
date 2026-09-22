@@ -133,7 +133,7 @@ from .rails import (
     section_panel,
 )
 from .selection import SelectionSlice
-from .single_strategy import _CALENDAR_TABS, SingleStrategyPanel
+from .single_strategy import SingleStrategyPanel
 from .state import DashboardState
 
 # The overlay's paint rule, which three sites below depend on: the frontend
@@ -954,10 +954,10 @@ class DashboardApp:
         # the sections below on its way out.
         self.single_strategy.bench_dd.observe(self._render_single_grid, names="value")
 
-        for pill, (_label, kind) in zip(
-            self.single_strategy.cal_pills, _CALENDAR_TABS, strict=True
-        ):
-            pill.on_click(self._make_cal_kind_handler(kind))
+        # One observer where there were five `on_click`s (#366): the calendar's
+        # mode is a `ChipGroup` now, so the chips paint themselves and the
+        # handler only has to record the kind and redraw.
+        self.single_strategy.cal_chips.observe(self._on_calendar_kind, names="value")
 
         # Section 3 two-pane analysis: each pane re-renders its mounted view when its
         # analysis picker or benchmark dropdown changes (panes.py already swapped the
@@ -969,6 +969,20 @@ class DashboardApp:
             handler = self._make_pane_render_handler(pane)
             pane.picker.observe(handler, names="value")
             pane.bench_dd.observe(handler, names="value")
+            # The Rolling view's statistic is a live control like the benchmark
+            # beside it: it re-slices the cache and never fetches (#368).
+            pane.rolling_chips.observe(handler, names="value")
+            # The two regime views' controls likewise (#369, #370). `sync`
+            # runs before the redraw because the type change is what
+            # repopulates the buckets — redrawing first would condition on
+            # the *previous* regime's bucket.
+            for controls in (pane.decile_regime, pane.regime):
+                if controls is None:
+                    continue
+                for control in (controls.on, controls.types, controls.source):
+                    control.observe(self._regime_handler(controls, handler), "value")
+                if controls.buckets is not None:
+                    controls.buckets.observe(handler, names="value")
 
     def _assemble_app(self) -> None:
         """Assemble the app container and run the initial load."""
@@ -1436,10 +1450,24 @@ class DashboardApp:
         self.single_strategy.render_grid(self.meta)
         self._render_single()
 
-    def _make_cal_kind_handler(self, which: str):
-        def _handler(_b=None) -> None:
-            self.single_strategy.set_calendar_kind(which)
-            self.single_strategy.render_calendar()
+    def _on_calendar_kind(self, change) -> None:
+        """Switch the calendar's mode and redraw it. **No BQL** — every kind
+        is a different transform of the same cached prices."""
+        self.single_strategy.set_calendar_kind(change["new"])
+        self.single_strategy.render_calendar()
+
+    @staticmethod
+    def _regime_handler(controls, render):
+        """Re-sync the regime controls, then redraw. **No BQL.**
+
+        The order matters: a type change repopulates the bucket chips, and a
+        redraw before that would condition on a bucket belonging to the
+        regime the user just left.
+        """
+
+        def _handler(_change=None) -> None:
+            controls.sync()
+            render()
 
         return _handler
 

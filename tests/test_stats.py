@@ -595,6 +595,117 @@ def test_factor_builders_missing_columns_return_empty():
     assert stats.equity_risk_premium(prices).empty
     assert stats.term_premium(prices).empty
     assert stats.trend_returns(prices).empty
+    assert stats.carry_returns(prices).empty
+    assert stats.volatility_factor(prices).empty
+
+
+# --- the cross-asset volatility factor (#371) ---------------------------------
+
+
+def _vol_frame(index) -> pd.DataFrame:
+    """VIX- and MOVE-shaped level series on their real, very different scales.
+
+    The scales are the point: VIX trades around 15–30 and MOVE around 80–130,
+    which is what makes a raw average of their changes a MOVE series wearing
+    a cross-asset name.
+    """
+    rng = np.random.default_rng(11)
+    n = len(index)
+    return pd.DataFrame(
+        {
+            "VIX Index": 18.0 + np.cumsum(rng.normal(0, 0.4, n)).clip(-8, 30),
+            "MOVE Index": 105.0 + np.cumsum(rng.normal(0, 2.4, n)).clip(-50, 110),
+        },
+        index=index,
+    )
+
+
+def test_the_volatility_factor_weights_its_two_legs_equally(bdays):
+    """The z-then-average order, which is the whole decision (#363 dec. 9).
+
+    Averaged raw, the blend is ~99% MOVE and barely correlated with VIX —
+    an equal-weight factor in name and a single-leg one in fact. Standardized
+    first, the two legs contribute alike.
+    """
+    prices = _vol_frame(bdays(500))
+    blend = stats.volatility_factor(prices)
+    vix_changes = prices["VIX Index"].diff()
+    move_changes = prices["MOVE Index"].diff()
+
+    to_vix = abs(blend.corr(vix_changes))
+    to_move = abs(blend.corr(move_changes))
+    assert to_vix == pytest.approx(to_move, abs=0.1), "the legs are balanced"
+
+    raw = prices.diff().mean(axis=1)
+    assert abs(raw.corr(move_changes)) > 0.9, "the raw average is the MOVE leg"
+    assert abs(raw.corr(vix_changes)) < 0.5
+
+
+def test_the_volatility_factor_degrades_to_one_leg_and_says_so(bdays):
+    """If BQL cannot serve MOVE, the factor is VIX alone — a NaN spoke is not
+    what a missing leg should produce when the other one is there."""
+    prices = _vol_frame(bdays(300))
+    only_vix = stats.volatility_factor(prices[["VIX Index"]])
+    assert not only_vix.empty
+    assert "VIX Index" in only_vix.name
+    assert "MOVE Index" not in only_vix.name
+    # And the full blend names both, so a chart can tell the reader which.
+    both = stats.volatility_factor(prices)
+    assert "VIX Index" in both.name and "MOVE Index" in both.name
+
+
+def test_the_volatility_factor_uses_changes_not_returns(bdays):
+    """Level changes, not percentage returns.
+
+    A move from 12 to 15 and one from 40 to 50 are the same 25% and nothing
+    like the same event, so a percentage change of a series that trades
+    between 9 and 60 is violently skewed.
+    """
+    prices = _vol_frame(bdays(400))
+    one_leg = stats.volatility_factor(prices[["VIX Index"]])
+    changes = prices["VIX Index"].diff()
+    assert one_leg.corr(changes) == pytest.approx(1.0)
+    # Standardized: unit scale, whatever the leg's own volatility.
+    assert float(one_leg.std()) == pytest.approx(1.0)
+
+
+def test_a_flat_leg_is_dropped_rather_than_dividing_by_zero(bdays):
+    index = bdays(200)
+    prices = _vol_frame(index)
+    prices["MOVE Index"] = 105.0  # never moves
+    blend = stats.volatility_factor(prices)
+    assert "MOVE Index" not in blend.name
+    assert blend.notna().any()
+
+
+def test_move_rides_the_single_startup_fetch():
+    """#9's rule: no second BQL call. The one new ticker the factor costs
+    joins the request every other factor leg rides."""
+    from src.config import FACTOR_TICKERS, LEVEL_INDICATOR_MOCK, MOVE_TICKER, VIX_TICKER
+
+    assert MOVE_TICKER in FACTOR_TICKERS
+    # And it is a *level*, so the off-terminal series has to be built like
+    # VIX's rather than as a compounding price.
+    assert MOVE_TICKER in LEVEL_INDICATOR_MOCK
+    assert VIX_TICKER in LEVEL_INDICATOR_MOCK
+
+
+def test_carry_returns_is_the_carry_columns_own_returns(bdays):
+    """Trend's sibling: an index in its own right, so the β is against its
+    returns — not a short-rate spread like the two premia."""
+    from src.config import CARRY_TICKER
+
+    index = bdays(300)
+    rng = np.random.default_rng(5)
+    prices = pd.DataFrame(
+        {CARRY_TICKER: 100 * np.cumprod(1 + rng.normal(0.0002, 0.006, len(index)))},
+        index=index,
+    )
+    expected = stats.daily_returns(prices[[CARRY_TICKER]])[CARRY_TICKER]
+    pd.testing.assert_series_equal(
+        stats.carry_returns(prices), expected, check_names=False
+    )
+    assert stats.carry_returns(prices).name == "carry"
 
 
 def test_trend_returns_is_trend_column_pct_change(bdays):

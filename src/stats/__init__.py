@@ -1,7 +1,8 @@
 """Statistics package — performance, risk, and rolling metrics.
 
 Organized as ``_common`` (price/return primitives) plus ``performance`` /
-``risk`` / ``rolling`` / ``calendar`` / ``factors`` / ``regime``. The public
+``risk`` / ``rolling`` / ``calendar`` / ``factors`` / ``regime`` /
+``strategy``. The public
 surface is deliberately flat: every name is re-exported here, so callers import
 from ``src.stats`` and never from a submodule.
 """
@@ -44,11 +45,15 @@ from .drill import (
     node_paths,
 )
 from .factors import (
+    carry_returns,
+    cross_section_percentile,
     equity_risk_premium,
     factor_beta,
+    factor_beta_panel,
     icicle_frame,
     term_premium,
     trend_returns,
+    volatility_factor,
 )
 from .performance import (
     ann_return,
@@ -106,14 +111,31 @@ from .rolling import (
     rolling_correlation,
     rolling_metric_zscore,
     rolling_return,
+    rolling_series,
     rolling_sharpe,
     rolling_sharpe_zscore,
     rolling_sortino,
     rolling_volatility,
     sharpe_zscore,
 )
+from .strategy import (
+    BENCHMARK_METRICS,
+    DECILE_COUNT,
+    SINCE_INCEPTION,
+    STRATEGY_METRICS,
+    decile_profile,
+    metric_unit,
+    strategy_metrics,
+)
 
 __all__ = [
+    "BENCHMARK_METRICS",
+    "DECILE_COUNT",
+    "decile_profile",
+    "SINCE_INCEPTION",
+    "STRATEGY_METRICS",
+    "metric_unit",
+    "strategy_metrics",
     "OLSFit",
     "PolyFit",
     "_benchmark_series",
@@ -129,6 +151,9 @@ __all__ = [
     "calendar_return_table",
     "calendar_summary_columns",
     "calmar_ratio",
+    "carry_returns",
+    "cross_section_percentile",
+    "factor_beta_panel",
     "color_key",
     "BasketWindow",
     "basket_window",
@@ -184,6 +209,7 @@ __all__ = [
     "rolling_metric_zscore",
     "rolling_return",
     "rolling_sharpe",
+    "rolling_series",
     "rolling_sharpe_zscore",
     "rolling_sortino",
     "rolling_volatility",
@@ -195,6 +221,7 @@ __all__ = [
     "term_premium",
     "total_return",
     "trend_returns",
+    "volatility_factor",
     "trend_strength",
     "treynor_ratio",
     "universe_perf",
