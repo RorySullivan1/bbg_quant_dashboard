@@ -262,10 +262,8 @@ def _all_selectors(app) -> list[BenchmarkSelect]:
     found: dict[int, BenchmarkSelect] = {}
     for tab in ("Platform", "Multi-Strategy", "Single Strategy"):
         _click(app, tab)
-        if tab == "Single Strategy":
-            # Its threshold rows sit behind the Quantitative pill; the Multi
-            # tab's one selector is in the bar, visible on mount (#345).
-            _click(app, "Quantitative")
+        # No pill to open on any tab: since #345 and #365 both picking tabs
+        # put their one selector in a *Table view* bar, visible on mount.
         for sel in _selectors(app):
             found[id(sel)] = sel
     return list(found.values())
@@ -275,7 +273,7 @@ def test_every_benchmark_selector_is_editable():
     app = build_app(verbose=False)
     selectors = _all_selectors(app)
 
-    assert len(selectors) >= 11
+    assert len(selectors) >= 9
     for sel in selectors:
         assert sel._box.ensure_option is False
         assert sel._box.continuous_update is False
@@ -283,13 +281,15 @@ def test_every_benchmark_selector_is_editable():
 
 
 def test_the_width_variants_survive_the_swap():
-    # The panes use 320px, the quant filter rows 200px, and the Single-Strategy
-    # shared selector 100%. A composite that lost those would wreck the layout.
+    # A composite that lost the per-call width would wreck the layout.
     app = build_app(verbose=False)
     widths = {sel.layout.width for sel in _all_selectors(app)}
-    # 320px the panes, 200px the basket bar and the quant rows, 100% the
-    # Single-Strategy shared selector.
-    assert {"320px", "200px", "100%"} <= widths
+    # 320px the analysis panes, 200px both picking tabs' *Table view* bars.
+    # The 100% variant went with the accordion: Single Strategy's shared
+    # selector filled a 38% bordered column until #365 put it in a bar, where
+    # it is sized like the Multi tab's for the reason they are now the same
+    # control in the same place.
+    assert {"320px", "200px"} <= widths
 
 
 def test_picking_a_curated_benchmark_still_works_end_to_end():

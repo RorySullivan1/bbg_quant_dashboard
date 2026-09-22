@@ -87,23 +87,6 @@ def _update_line_series(
             fig.layout.title.text = title
 
 
-def _stub_placeholder(fig: go.FigureWidget, text: str) -> None:
-    """Clear a figure and show one centered muted placeholder annotation — the
-    shared body of the not-yet-implemented analysis stubs."""
-    with fig.batch_update():
-        fig.data = ()
-        fig.layout.annotations = ()
-        fig.add_annotation(
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            text=text,
-            font=dict(color=Color.TEXT_MUTED.value, size=13),
-        )
-
-
 # --- the base ------------------------------------------------------------------
 
 
@@ -127,18 +110,6 @@ class Chart:
 
     def clear(self) -> None:  # pragma: no cover - abstract
         raise NotImplementedError
-
-
-class _StubChart(Chart):
-    """A chart whose analysis is not wired yet: it draws one centered
-    placeholder whatever it is handed. `PLACEHOLDER` is the text."""
-
-    PLACEHOLDER: str = ""
-
-    def update(self, *_args, **_kwargs) -> None:
-        _stub_placeholder(self.fig, self.PLACEHOLDER)
-
-    clear = update
 
 
 # --- the charts ----------------------------------------------------------------
@@ -367,44 +338,107 @@ class DrawdownChart(Chart):
         self.update(pd.DataFrame())
 
 
-class RollingRefChart(Chart):
-    """A rolling statistic against a benchmark — correlation or beta.
+#: The rolling statistics one chart offers, in chip order: the key, its
+#: display label, its y-axis label, the reference line it is read against, and
+#: whether it needs a benchmark.
+#:
+#: **Sharpe and Calmar had the stats functions and no chart anywhere** — the
+#: Multi tab drew Correlation and Beta as two near-identical `RollingRefChart`s
+#: and nothing drew the other two. One chart with a chip is what #368 replaced
+#: that with: adding a fifth rolling statistic is a row here, not a figure, a
+#: view entry, a picker label and an observer.
+ROLLING_STATS: tuple[tuple[str, str, str, float, bool], ...] = (
+    ("correlation", "Correlation", "Correlation", 0.0, True),
+    ("sharpe", "Sharpe", "Sharpe", 0.0, False),
+    ("calmar", "Calmar", "Calmar", 0.0, False),
+    ("beta", "Beta", "Beta", 1.0, True),
+)
 
-    `title_prefix` is fixed at construction. Before #223 it had to be passed
-    *twice*, once to `_rolling_ref_chart` and again to every
-    `_update_rolling_ref` call, with nothing checking the two agreed: a rolling
-    beta figure could be titled "Rolling Correlation" on update. Holding it on
-    the object removes that whole class of mismatch.
+#: Which rolling statistics are measured **against a benchmark**. The pane
+#: hides its benchmark control for the rest, the way the Platform bar hides a
+#: section its chart does not read (#331 dec. 3) — so switching away and back
+#: finds the last benchmark still chosen.
+ROLLING_BENCHMARK_STATS: frozenset[str] = frozenset(
+    key for key, _l, _y, _r, needs in ROLLING_STATS if needs
+)
+
+_ROLLING_SPECS: dict[str, tuple[str, str, float]] = {
+    key: (label, y_label, ref) for key, label, y_label, ref, _n in ROLLING_STATS
+}
+
+
+def rolling_stat_chips() -> list[tuple[str, str]]:
+    """`(label, key)` pairs for the pane's statistic `ChipGroup`."""
+    return [(label, key) for key, label, _y, _r, _n in ROLLING_STATS]
+
+
+class RollingChart(Chart):
+    """One rolling figure whose statistic is a chip.
+
+    Correlation · Sharpe · Calmar · Beta over `SHARPE_WINDOW`, and the title,
+    the y-axis label and the **reference line** all follow the chip — 0 for
+    correlation, Sharpe and Calmar, **1** for beta, which is where a beta
+    stops being interesting rather than where it changes sign.
+
+    It replaced `RollingRefChart`, whose `title_prefix` was fixed at
+    construction to close a real bug (#223: the prefix used to be passed to
+    the factory *and* to every update, with nothing checking the two agreed).
+    That fix survives in a stronger form here: the statistic is one key, and
+    the title, axis and reference line are all derived from it, so there is
+    nothing left for a caller to get out of step.
+
+    The moving reference line is why this is a restyle rather than a second
+    figure: a shape is layout, and a layout change is a `batch_update`, so
+    the chip switches the view without rebuilding the widget.
     """
 
-    def __init__(self, *, title_prefix: str, y_label: str, ref_y: float) -> None:
-        self.title_prefix = title_prefix
-        self._y_label = y_label
-        self._ref_y = ref_y
+    def __init__(self, *, stat: str = "correlation") -> None:
+        self.stat = stat
         super().__init__()
 
     def _build(self) -> go.FigureWidget:
+        label, y_label, ref = _ROLLING_SPECS[self.stat]
         return go.FigureWidget(
             layout=_chart_layout(
-                title=f"{self.title_prefix} — {SHARPE_WINDOW_LABEL} rolling",
+                title=self._title(label, ""),
                 hovermode="x unified",
                 xaxis=dict(title="Date"),
-                yaxis=dict(title=self._y_label),
-                shapes=[_h_ref(self._ref_y)],
+                yaxis=dict(title=y_label),
+                shapes=[_h_ref(ref)],
             )
         )
 
-    def update(self, df: pd.DataFrame, *, benchmark_label: str) -> None:
-        title_suffix = f" — {SHARPE_WINDOW_LABEL} rolling"
-        new_title = (
-            f"{self.title_prefix} vs {benchmark_label}{title_suffix}"
+    @staticmethod
+    def _title(label: str, benchmark_label: str) -> str:
+        suffix = f" — {SHARPE_WINDOW_LABEL} rolling"
+        stem = f"Rolling {label}"
+        return (
+            f"{stem} vs {benchmark_label}{suffix}"
             if benchmark_label
-            else f"{self.title_prefix}{title_suffix}"
+            else (f"{stem}{suffix}")
         )
-        _update_line_series(self.fig, df, title=new_title)
+
+    def update(
+        self, df: pd.DataFrame, *, stat: str | None = None, benchmark_label: str = ""
+    ) -> None:
+        """Draw `df` as the named statistic, moving the chrome with it.
+
+        `stat` defaults to the one already shown, so a plain redraw of the
+        current view needs no argument. A benchmark label is only shown for
+        the statistics that read one — a *Rolling Sharpe vs SPTR* title would
+        name a series the number does not touch.
+        """
+        if stat is not None:
+            self.stat = stat
+        label, y_label, ref = _ROLLING_SPECS[self.stat]
+        shown = benchmark_label if self.stat in ROLLING_BENCHMARK_STATS else ""
+        with self.fig.batch_update():
+            self.fig.layout.yaxis.title.text = y_label
+            self.fig.layout.shapes = [_h_ref(ref)]
+        _update_line_series(self.fig, df, title=self._title(label, shown))
 
     def clear(self) -> None:
-        self.update(pd.DataFrame(), benchmark_label="")
+        self.update(pd.DataFrame())
 
 
 class ReturnDistChart(Chart):
@@ -680,79 +714,46 @@ class FactorCorrChart(Chart):
         self.update(None, None, None)
 
 
-class FactorScoringChart(Chart):
-    """Bar chart of a strategy's beta to each macro-factor proxy."""
+class RadarChart(Chart):
+    """A closed-loop radar over a labelled Series — the body a spiderweb needs.
 
-    def _build(self) -> go.FigureWidget:
-        """Single Strategy analysis: a bar chart of the strategy's β to the
-        macro-factor proxies (equity risk premium / term premium / trend), filled by
-        `update`."""
-        return go.FigureWidget(
-            data=[
-                go.Bar(
-                    x=[],
-                    y=[],
-                    marker=dict(color=[]),
-                    hovertemplate="%{x}<br>β %{y:.2f}<extra></extra>",
-                )
-            ],
-            layout=_chart_layout(
-                title=f"Factor scoring — β to macro factors ({LOOKBACK_YEARS}Y)",
-                xaxis=dict(title="Factor"),
-                yaxis=dict(title="Beta", zeroline=True),
-                shapes=[_h_ref(0.0)],
-            ),
-        )
+    What this was is `PerfRankingChart`, whose `update` drew exactly this
+    whenever it was handed scores and a *coming soon* placeholder otherwise.
+    Nothing ever passed it scores, so the placeholder was the only branch
+    anyone saw, and a picker offering a view that cannot be drawn is a promise
+    the app does not keep (#367). The intent is recorded on #376; the body
+    stays, because a polar plot over standardized values is what #372's
+    five-β risk profile is.
 
-    def update(self, betas: pd.Series | None) -> None:
-        """Bar chart of a strategy's β to each macro-factor proxy (equity risk
-        premium / term premium / trend). `betas` is a Series indexed by factor label;
-        bars are green when positive, red when negative. None / all-NaN clears."""
-        if betas is None or betas.dropna().empty:
-            with self.fig.batch_update():
-                self.fig.data[0].x = []
-                self.fig.data[0].y = []
-                self.fig.data[0].marker.color = []
-            return
-        s = betas.dropna()
-        colors = [
-            Color.GREEN_600.value if v >= 0 else Color.RED_600.value for v in s.values
-        ]
-        with self.fig.batch_update():
-            self.fig.data[0].x = list(s.index)
-            self.fig.data[0].y = s.values
-            self.fig.data[0].marker.color = colors
-
-    def clear(self) -> None:
-        self.update(None)
-
-
-class PerfRankingChart(Chart):
-    """Radar ranking of a strategy across performance metrics. Metrics are wired
-    in a later pass; with no scores it shows a placeholder."""
+    With nothing to draw it **clears**, like every other chart here. That is
+    the substantive change: an empty figure says "no data for this
+    selection", where the placeholder said "not built yet" about a view that
+    was.
+    """
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
             data=[go.Scatterpolar(r=[], theta=[], fill="toself")],
             layout=_chart_layout(
-                title="Performance ranking",
+                title="Risk profile",
                 polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
             ),
         )
 
     def update(self, scores: pd.Series | None = None) -> None:
-        """Radar/spider ranking of the strategy across performance metrics. Metrics
-        are wired in a later pass; with no scores the figure shows a placeholder.
-        When given, `scores` is a Series of metric→value plotted as a closed loop."""
+        """Draw `scores` — a Series of axis label → value — as a closed loop.
+
+        The loop is closed by repeating the first point, which is what makes
+        a polygon rather than an open path. None / all-NaN clears.
+        """
         if scores is None or scores.dropna().empty:
-            _stub_placeholder(self.fig, "Performance metrics coming soon")
+            self.clear()
             return
         s = scores.dropna()
         theta = [*s.index, s.index[0]]  # close the loop back to the first axis
         r = [*s.values, s.values[0]]
         with self.fig.batch_update():
             self.fig.data = ()
-            self.fig.layout.annotations = ()
             self.fig.add_traces(
                 [
                     go.Scatterpolar(
@@ -765,48 +766,276 @@ class PerfRankingChart(Chart):
             )
 
     def clear(self) -> None:
-        self.update(None)
+        with self.fig.batch_update():
+            self.fig.data = ()
 
 
-class PcaChart(_StubChart):
-    """PCA scree (stub): explained-variance bars plus a cumulative line."""
+#: The five factors the risk profile draws, in spoke order. Two premia, two
+#: index factors and the volatility blend — see `stats.factors` for why the
+#: three kinds are built differently.
+RISK_PROFILE_FACTORS: tuple[str, ...] = (
+    "ERP",
+    "Term",
+    "Volatility",
+    "Trend",
+    "Carry",
+)
 
-    PLACEHOLDER = "PCA analysis — coming soon"
+
+class RiskProfileChart(RadarChart):
+    """The five-β spiderweb, on a cross-sectional percentile radial axis.
+
+    **The axis is a percentile, and that is the whole design.** Betas to
+    these five are on wildly different scales — a Carry β of 0.3 is large
+    where an ERP β of 0.3 is small — so a polygon drawn on the raw numbers
+    says only which factors happen to be quoted in bigger units. Each spoke
+    is where the strategy sits among the catalog's own betas to that factor;
+    the **raw β rides in the hover**, because the percentile is what the
+    shape means and the β is what a reader will want to check it against.
+
+    A factor the feed could not serve is a **missing spoke**, not an
+    exception: `stats.factor_beta_panel` returns an all-NaN column for it and
+    `dropna` takes it out of the loop, so the web draws with four points
+    rather than failing.
+
+    It replaced `FactorScoringChart`, three bars of ERP / Term / Trend — no
+    Carry, no Volatility, and no way to tell a large β from a small one.
+    """
+
+    def _build(self) -> go.FigureWidget:
+        fig = super()._build()
+        fig.layout.title.text = f"Risk profile — {LOOKBACK_YEARS}Y factor betas"
+        fig.layout.polar.radialaxis.tickformat = ".0%"
+        return fig
+
+    def update(
+        self,
+        percentiles: pd.Series | None = None,
+        betas: pd.Series | None = None,
+    ) -> None:
+        """Draw the percentiles, with the raw betas in the hover.
+
+        Both are Series indexed by factor label. `betas` is optional so the
+        chart still draws from a percentile alone; where it is given, the
+        two are aligned by label rather than by position, so a missing spoke
+        cannot shift the hover onto the wrong factor.
+        """
+        if percentiles is None or percentiles.dropna().empty:
+            self.clear()
+            return
+        shown = percentiles.dropna()
+        raw = (
+            betas.reindex(shown.index)
+            if betas is not None
+            else pd.Series(float("nan"), index=shown.index)
+        )
+        theta = [*shown.index, shown.index[0]]  # close the loop
+        r = [*shown.values, shown.values[0]]
+        hover = [*raw.values, raw.values[0]]
+        with self.fig.batch_update():
+            self.fig.data = ()
+            self.fig.add_traces(
+                [
+                    go.Scatterpolar(
+                        r=r,
+                        theta=theta,
+                        fill="toself",
+                        line=dict(color=_palette_color(0)),
+                        customdata=hover,
+                        hovertemplate=(
+                            "%{theta}<br>%{r:.0%} of the catalog"
+                            "<br>β = %{customdata:.2f}<extra></extra>"
+                        ),
+                    )
+                ]
+            )
+
+
+class RegimeProfileChart(Chart):
+    """One strategy's return/vol under **all three** buckets of one regime.
+
+    The Platform Scatter conditions a whole catalog on one bucket at a time.
+    Nothing showed how *one* strategy moves **across** a regime's buckets —
+    which is the question a desk asks of a single strategy, and the reason
+    this chart has no bucket control: all three buckets are the chart.
+
+    The **unconditioned point is drawn muted, as the anchor**, so the three
+    read as deviations from the strategy's own whole-window profile rather
+    than as three unrelated dots. Without it a reader has no scale for "the
+    high-vol bucket is over there".
+
+    The benchmark's three are drawn too when it is given, so the strategy's
+    regime sensitivity reads against something. A bucket with too few days to
+    measure is simply absent — `regime_risk_return` returns an empty frame
+    below two, and a point invented from one day would be the worst kind of
+    wrong here.
+    """
+
+    #: The muted anchor and the three buckets, in bucket order. The buckets
+    #: take the shared positional palette so a bucket's colour matches the
+    #: legend entry beside it and nothing else on the tab.
+    ANCHOR_LABEL: str = "Whole window"
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
-            data=[
-                go.Bar(x=[], y=[], name="Explained"),
-                go.Scatter(
-                    x=[], y=[], mode="lines+markers", name="Cumulative", yaxis="y2"
-                ),
-            ],
             layout=_chart_layout(
-                title="PCA analysis",
-                xaxis=dict(title="Principal component"),
-                yaxis=dict(title="Explained variance", tickformat=".0%"),
-                yaxis2=dict(
-                    title="Cumulative",
-                    overlaying="y",
-                    side="right",
+                title="Regime profile",
+                hovermode="closest",
+                xaxis=dict(
+                    title="Annualized Volatility",
                     tickformat=".0%",
-                    range=[0, 1],
+                    rangemode="tozero",
                 ),
-            ),
+                yaxis=dict(title="Annualized Return", tickformat=".0%"),
+                showlegend=True,
+            )
         )
 
+    def update(
+        self,
+        points: pd.DataFrame,
+        *,
+        regime_label: str = "",
+        benchmark_label: str = "",
+    ) -> None:
+        """Draw the points.
 
-class DefensiveChart(_StubChart):
-    """Defensive scoring (stub)."""
+        `points` is indexed by bucket label with `vol` / `ret` columns and a
+        `series` column naming which line each belongs to — the strategy, the
+        benchmark, or `ANCHOR_LABEL`. One frame rather than three arguments
+        because every point is drawn the same way and only its grouping
+        differs; building it is `single_strategy`'s, which is where the masks
+        and the cache live.
+        """
+        if points is None or points.empty:
+            self.clear()
+            return
+        frame = points.dropna(subset=["vol", "ret"])
+        if frame.empty:
+            self.clear()
+            return
+        traces: list[go.Scatter] = []
+        for position, (name, block) in enumerate(frame.groupby("series", sort=False)):
+            anchor = bool(block["anchor"].iloc[0]) if "anchor" in block else False
+            traces.append(
+                go.Scatter(
+                    x=block["vol"].to_numpy(),
+                    y=block["ret"].to_numpy(),
+                    mode="markers+text",
+                    name=str(name),
+                    text=[str(i) for i in block.index],
+                    textposition="top center",
+                    textfont=dict(
+                        color=(
+                            Color.TEXT_MUTED.value if anchor else Color.CHART_TEXT.value
+                        ),
+                        size=10,
+                    ),
+                    marker=dict(
+                        size=18 if anchor else 13,
+                        color=(
+                            Color.TEXT_MUTED.value
+                            if anchor
+                            else _palette_color(position)
+                        ),
+                        symbol="diamond-open" if anchor else "circle",
+                        line=dict(width=2 if anchor else 0),
+                    ),
+                    hovertemplate=(
+                        f"{name} — %{{text}}"
+                        "<br>Vol %{x:.2%}<br>Return %{y:.2%}<extra></extra>"
+                    ),
+                )
+            )
+        stem = f"Regime profile — {regime_label}" if regime_label else "Regime profile"
+        title = f"{stem} vs {benchmark_label}" if benchmark_label else stem
+        with self.fig.batch_update():
+            self.fig.data = ()
+            self.fig.add_traces(traces)
+            self.fig.layout.title.text = title
 
-    PLACEHOLDER = "Defensive scoring — coming soon"
+    def clear(self) -> None:
+        with self.fig.batch_update():
+            self.fig.data = ()
+
+
+class DecileChart(Chart):
+    """The strategy's mean return per benchmark-return decile, beside the
+    benchmark's own — ten column pairs, worst decile on the left.
+
+    **Convexity, read left to right.** A strategy that keeps its upside and
+    cushions its downside draws a smile against the benchmark's straight
+    line; one that is short volatility draws a frown. No summary statistic on
+    this tab shows that: a β is the average slope and says nothing about
+    whether the slope is the same at both ends.
+
+    **Weekly, not daily** (#363 dec. 7 left the call to the terminal). A
+    daily decile's tails are dominated by single-session noise and by when a
+    series marks, which is a question about plumbing rather than about the
+    strategy; a week is the shortest horizon at which "how does this behave
+    when the market falls" is a real reading. The axis title says so, because
+    the same chart at a different horizon is a different chart.
+
+    The **benchmark decides the buckets** and the strategy is measured inside
+    them — cutting on the strategy's own returns would draw a monotone
+    staircase for any series at all.
+    """
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
-            data=[go.Bar(x=[], y=[])],
             layout=_chart_layout(
-                title="Defensive scoring",
-                xaxis=dict(title="Metric"),
-                yaxis=dict(title="Score"),
-            ),
+                title="Return by benchmark decile",
+                barmode="group",
+                hovermode="x unified",
+                xaxis=dict(
+                    title="Benchmark weekly-return decile (worst → best)",
+                    dtick=1,
+                ),
+                yaxis=dict(title="Mean weekly return", tickformat=".1%"),
+                shapes=[_h_ref(0.0)],
+                showlegend=True,
+            )
         )
+
+    def update(
+        self,
+        profile: pd.DataFrame,
+        *,
+        strategy_label: str = "Strategy",
+        benchmark_label: str = "Benchmark",
+        regime_label: str = "",
+    ) -> None:
+        """Draw a `stats.decile_profile` frame as paired columns.
+
+        `regime_label` names the bucket the periods were restricted to, and
+        goes in the **title** rather than a caption: every bucket is a subset
+        of the window, so a conditioned chart that does not say so is a
+        narrowed sample the reader cannot see (v0.9.33's reason).
+        """
+        if profile is None or profile.empty:
+            self.clear()
+            return
+        deciles = list(profile.index)
+        traces = [
+            go.Bar(
+                x=deciles,
+                y=profile[column].to_numpy(),
+                name=name,
+                marker=dict(color=_palette_color(position)),
+                hovertemplate=f"{name} %{{y:.2%}}<extra></extra>",
+            )
+            for position, (column, name) in enumerate(
+                (("strategy", strategy_label), ("benchmark", benchmark_label))
+            )
+        ]
+        title = "Return by benchmark decile"
+        if regime_label:
+            title = f"{title} — {regime_label}"
+        with self.fig.batch_update():
+            self.fig.data = ()
+            self.fig.add_traces(traces)
+            self.fig.layout.title.text = title
+
+    def clear(self) -> None:
+        with self.fig.batch_update():
+            self.fig.data = ()

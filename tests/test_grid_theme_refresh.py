@@ -24,7 +24,6 @@ import pandas as pd
 import pytest
 from src.layout import grids
 from src.layout.grids import (
-    CalendarGrid,
     PerfGrid,
     _Grid,
     _reassert_dark_theme,
@@ -71,15 +70,16 @@ def _perf_frame():
     return pt, _meta()
 
 
-def _calendar_table():
-    return pd.DataFrame([[0.01, 0.02]], index=pd.Index([2024]), columns=["Jan", "Feb"])
-
-
 #: (label, class, populated-update thunk) per concrete grid. The thunk takes the
 #: grid object so each case drives that grid's real `update` signature.
+#:
+#: One case since #366, where the calendar's grid was replaced by an HTML
+#: table: `_Grid` exists to make the theme-refresh invariant structural, and
+#: a table that is ordinary page CSS has no such invariant to hold. The
+#: parametrisation stays — `PerfGrid` still serves the Multi tab, and a second
+#: `_Grid` subclass must arrive with a case here.
 GRID_CASES: list[tuple[str, type, object]] = [
     ("perf", PerfGrid, lambda g: g.update(*_perf_frame())),
-    ("calendar", CalendarGrid, lambda g: g.update(_calendar_table(), kind="absolute")),
 ]
 
 

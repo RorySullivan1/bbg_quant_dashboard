@@ -45,8 +45,15 @@ from ..config import (
     universe_grid_default_window,
     universe_grid_group_fields,
 )
-from ..style import ANALYTICS_HEIGHT, CATALOG_TABLE_HEIGHT, Color
-from .basket import Basket
+from ..style import (
+    ANALYTICS_HEIGHT,
+    CATALOG_TABLE_HEIGHT,
+    MISSING_DASH,
+    SHARPE_HEAT_BAND,
+    ZSCORE_HEAT_BAND,
+    Color,
+)
+from .basket import Basket, Pick
 from .theme import _palette_color
 
 
@@ -296,10 +303,12 @@ def _perf_column_widths(
 # the filter kinds and the column defs are handed the key the builder returned.
 ZSCORE_SUPERCOL: str = "Z-Score"
 ZSCORE_COLUMN_PREFIX: str = "Normalized"
-# Sharpe leaves: neutral band straddles ~0–0.5, red below, green above.
-_SHARPE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-0.5, 0.0, 0.5, 1.0)
-# Z-Score column: already centered at 0, so the bands are symmetric.
-_ZSCORE_HEAT_THRESHOLDS: tuple[float, float, float, float] = (-1.5, -0.5, 0.5, 1.5)
+# The diverging bands moved to `style.py` with #366, where the HTML calendar
+# that replaced `CalendarGrid` also reads them: a band is a visual decision
+# keyed to the `HEAT_*` colours, and two stacks disagreeing about where
+# "neutral" ends is exactly the drift one declaration prevents.
+_SHARPE_HEAT_THRESHOLDS = SHARPE_HEAT_BAND
+_ZSCORE_HEAT_THRESHOLDS = ZSCORE_HEAT_BAND
 
 
 def zscore_column_name(metric_label: str, window_label: str) -> str:
@@ -336,8 +345,9 @@ def _zebra_expr() -> str:
     return f"(cell.row % 2 === 0 ? '{Color.CHROME_BG}' : '{Color.SURFACE}')"
 
 
-# Empty (NaN) numeric cells render as this dash rather than "NaN" / "NaN%".
-_MISSING_DASH: str = "-"
+# Empty (NaN) numeric cells render as this dash rather than "NaN" / "NaN%" —
+# `style.MISSING_DASH` since #366, so both table stacks show the same mark.
+_MISSING_DASH: str = MISSING_DASH
 
 
 def _dash_text_value(missing: str) -> VegaExpr:
@@ -519,108 +529,6 @@ def _apply_grid_styling(
     grid.base_row_header_size = _content_px(
         frame.index.name or "", frame.index.tolist()
     )
-
-
-# The Single Strategy monthly-return calendar.
-# Month / annual cells are returns: red below -5%, soft red to -1%, neutral
-# ±1%, soft green to +5%, strong green above. Vol-adjusted cells are
-# return/vol ratios on a wider unitless band. The Sharpe summary column reuses
-# the perf-grid Sharpe band.
-_CALENDAR_RETURN_THRESHOLDS: tuple[float, float, float, float] = (
-    -0.05,
-    -0.01,
-    0.01,
-    0.05,
-)
-_CALENDAR_VOLADJ_THRESHOLDS: tuple[float, float, float, float] = (
-    -1.0,
-    -0.25,
-    0.25,
-    1.0,
-)
-# Correlation cells diverge around 0; beta cells around the 1.0 market-beta
-# neutral band. The ramp encodes magnitude/sign, not good/bad.
-_CALENDAR_CORR_THRESHOLDS: tuple[float, float, float, float] = (-0.5, -0.1, 0.1, 0.5)
-_CALENDAR_BETA_THRESHOLDS: tuple[float, float, float, float] = (0.0, 0.7, 1.3, 2.0)
-# Renderer spec per calendar summary column: (thresholds | None, fmt). A
-# `None` threshold → a plain (non-diverging) renderer, used for Vol where a
-# good/bad color ramp would mislead. Return-like columns use the return ramp
-# (".2%"); Sharpe / Beta / Correlation use their own bands (".2f").
-_CALENDAR_SUMMARY_SPECS: dict[str, tuple[tuple[float, float, float, float] | None, str]]
-_CALENDAR_SUMMARY_SPECS = {
-    "Return": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
-    "Bench": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
-    "Excess": (_CALENDAR_RETURN_THRESHOLDS, ".2%"),
-    "Vol": (None, ".2%"),
-    "Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
-    "Bench Sharpe": (_SHARPE_HEAT_THRESHOLDS, ".2f"),
-    "Beta": (_CALENDAR_BETA_THRESHOLDS, ".2f"),
-    "Correlation": (_CALENDAR_CORR_THRESHOLDS, ".2f"),
-}
-# Empty (NaN) calendar cells render as the shared dash rather than "NaN".
-_CALENDAR_MISSING: str = _MISSING_DASH
-
-
-class CalendarGrid(_Grid):
-    """The Single Strategy monthly-return calendar — years x Jan…Dec plus the
-    summary columns for the active `kind`."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            base_row_size=26,
-            base_column_size=62,
-            base_row_header_size=54,
-            layout=W.Layout(width="100%", height="260px"),
-        )
-
-    def update(self, table: pd.DataFrame, *, kind: str) -> None:
-        """Render a `calendar_return_table` frame (years x Jan…Dec + the kind's
-        summary columns), oldest year on top, with diverging conditional
-        formatting keyed to `kind`."""
-        if table is None or table.empty:
-            self.clear()
-            return
-        display = table.sort_index(ascending=True)
-        display.index = display.index.astype(int).astype(str)
-        display.index.name = ""
-        self._set_data(display, _calendar_renderers(display.columns, kind=kind))
-
-    def clear(self) -> None:
-        self._set_data(pd.DataFrame())
-
-
-def _calendar_renderers(columns: pd.Index, *, kind: str) -> dict:
-    """Renderers for the calendar grid, keyed by `kind`. Month cells use a
-    diverging ramp whose band/format match the kind (returns ".2%" for absolute /
-    outperformance, ratios ".2f" for vol-adjusted, beta / correlation ".2f"). The
-    trailing summary columns each take their own renderer from
-    `_CALENDAR_SUMMARY_SPECS` (e.g. Return as a ".2%" ramp, Sharpe on the Sharpe
-    band, Vol plain). Empty cells display ``-`` (`_CALENDAR_MISSING`) via the
-    renderers' numeric-preserving `text_value`."""
-    if kind == "vol_adjusted":
-        month_thr, month_fmt = _CALENDAR_VOLADJ_THRESHOLDS, ".2f"
-    elif kind == "beta":
-        month_thr, month_fmt = _CALENDAR_BETA_THRESHOLDS, ".2f"
-    elif kind == "correlation":
-        month_thr, month_fmt = _CALENDAR_CORR_THRESHOLDS, ".2f"
-    else:  # absolute / outperformance
-        month_thr, month_fmt = _CALENDAR_RETURN_THRESHOLDS, ".2%"
-    month_r = _diverging_bg_renderer(
-        month_thr, fmt=month_fmt, missing=_CALENDAR_MISSING
-    )
-    renderers: dict = {}
-    for col in columns:
-        spec = _CALENDAR_SUMMARY_SPECS.get(col)
-        if spec is None:  # a month cell (Jan…Dec)
-            renderers[col] = month_r
-            continue
-        thresholds, fmt = spec
-        renderers[col] = (
-            _plain_num_renderer(fmt, missing=_CALENDAR_MISSING)
-            if thresholds is None
-            else _diverging_bg_renderer(thresholds, fmt=fmt, missing=_CALENDAR_MISSING)
-        )
-    return renderers
 
 
 # --- the all-catalog grid (itables / DataTables) -----------------------------
@@ -1570,6 +1478,80 @@ class UniverseGrid(CatalogTable):
         if picked is None or self._on_pick is None:
             return
         self._on_pick(self._tickers[picked])
+
+
+class StrategyGrid(CatalogTable):
+    """The catalog table as the Single Strategy picker (#363 dec. 1-2).
+
+    The same rows, grouping, search and per-column filter row as the other
+    two, in the base's own single-select style: a click **sets the pick**,
+    where the Platform's click *opens* a strategy in this tab and the basket's
+    *ticks* a row.
+
+    What it adds over `UniverseGrid` — which is otherwise the same single-
+    select table — is the other direction. The Platform's grid only ever
+    reports a click; this one is also a *view* of a selection that five other
+    things can write, so it has `BasketGrid`'s reconciliation problem with one
+    row instead of a set, and the same answer: **by ticker, never by
+    position**, re-derived after every rebuild, behind a `_pushing` guard so
+    the write is not read back as a user edit.
+
+    A pick the filters hide is simply not in the frame. `positions_of` skips
+    it, the table shows nothing selected, and the pick is untouched — the tab
+    keeps drawing it, and the profile card says why no row is lit.
+    """
+
+    def __init__(self, pick: Pick) -> None:
+        super().__init__()
+        self.pick = pick
+        self._pushing = False
+        self.pick.observe(self._on_pick_change, names="value")
+
+    def _on_selected_rows(self, change: dict) -> None:
+        """A clicked row is a new pick.
+
+        `picked_row` swallows the deselection and the out-of-frame position
+        for `UniverseGrid`'s reasons; unlike the basket, an empty list here is
+        never "nothing is picked" — clicking the lit row again would otherwise
+        blank the whole tab.
+        """
+        if self._pushing:
+            return
+        picked = picked_row(change, len(self._tickers))
+        if picked is None:
+            return
+        self.pick.value = self._tickers[picked]
+
+    def _on_pick_change(self, _change=None) -> None:
+        """Another entry point set the pick — light its row if we have one."""
+        if self._pushing:
+            return
+        self.push_selection()
+
+    def push_selection(self) -> None:
+        """Make the lit row say what the pick holds, for this frame."""
+        self._pushing = True
+        try:
+            held = [self.pick.value] if self.pick.value is not None else []
+            self.widget.selected_rows = self.positions_of(held)
+        finally:
+            self._pushing = False
+
+    def _set_data(self, frame: pd.DataFrame, *, zscore_col: str | None = None) -> None:
+        """Write the frame, then re-derive the lit row for it.
+
+        Cleared before the write for `BasketGrid`'s reason: itables validates
+        `selected_rows` against the incoming data and raises *Selected rows out
+        of range* whenever the new frame is shorter, which is every narrowing
+        filter.
+        """
+        self._pushing = True
+        try:
+            self.widget.selected_rows = []
+            super()._set_data(frame, zscore_col=zscore_col)
+        finally:
+            self._pushing = False
+        self.push_selection()
 
 
 class BasketGrid(CatalogTable):

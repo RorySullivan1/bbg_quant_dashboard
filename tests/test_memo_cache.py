@@ -3,7 +3,7 @@
 Flipping a per-pane benchmark and flipping back must hit the memo instead of
 recomputing, and the memo must be invalidated when Refresh prices rebuilds the
 selection slice. We assert this by spying on
-`multi_strategy.rolling_correlation` and counting how often it actually runs as
+`multi_strategy.rolling_series` and counting how often it actually runs as
 we drive the rendered widget tree.
 """
 
@@ -57,17 +57,17 @@ def _benchmark_dropdowns(app) -> list[W.Dropdown]:
     ]
 
 
-def _spy_rolling_correlation(monkeypatch) -> dict:
-    # The Rolling Correlation compute lives in the multi_strategy pane engine
+def _spy_rolling_series(monkeypatch) -> dict:
+    # The Rolling compute lives in the multi_strategy pane engine
     # (extracted from builder in v0.9.12-review #156), so spy there.
-    real = ms_mod.rolling_correlation
+    real = ms_mod.rolling_series
     calls = {"n": 0}
 
     def counting(*args, **kwargs):
         calls["n"] += 1
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(ms_mod, "rolling_correlation", counting)
+    monkeypatch.setattr(ms_mod, "rolling_series", counting)
     return calls
 
 
@@ -80,23 +80,23 @@ def _pickers(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and "Rolling Correlation" in list(w.options)
+        if isinstance(w, W.Dropdown) and "Rolling" in list(w.options)
     ]
 
 
 def test_flip_back_hits_memo_and_shares_across_panes(monkeypatch):
-    calls = _spy_rolling_correlation(monkeypatch)
+    calls = _spy_rolling_series(monkeypatch)
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
 
-    # Lazy rendering: neither pane's default view is Rolling Correlation, so
+    # Lazy rendering: neither pane's default view is Rolling, so
     # nothing is computed at load.
     assert calls["n"] == 0
 
-    # Mount Rolling Correlation on BOTH panes. The first pane computes it
+    # Mount Rolling on BOTH panes. The first pane computes it
     # (memo miss); the second is a hit — the result is pane-independent.
     for picker in _pickers(app):
-        picker.value = "Rolling Correlation"
+        picker.value = "Rolling"
     assert calls["n"] == 1  # cross-pane share
 
     other = next(b for b in BENCHMARK_TICKERS if b != DEFAULT_BENCHMARK)
@@ -114,12 +114,12 @@ def test_flip_back_hits_memo_and_shares_across_panes(monkeypatch):
 
 
 def test_refresh_invalidates_memo(monkeypatch):
-    calls = _spy_rolling_correlation(monkeypatch)
+    calls = _spy_rolling_series(monkeypatch)
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
 
-    # Mount Rolling Correlation on the left pane -> computed on demand once.
-    _pickers(app)[0].value = "Rolling Correlation"
+    # Mount Rolling on the left pane -> computed on demand once.
+    _pickers(app)[0].value = "Rolling"
     assert calls["n"] == 1
 
     # A basket change rebuilds the slice and must clear the memo, so the same

@@ -4,6 +4,11 @@
 it builds the flat single-index frame, inserts the dynamic z-score column, and
 sorts by it — so it's testable without constructing an `ipydatagrid.DataGrid`.
 The conditional-format renderer scoping is checked against `_perf_renderers`.
+
+The calendar's renderers were pinned here until #366 replaced its grid with an
+HTML table; the same three rules — a dash for an empty month, the format per
+kind, and **no ramp on Vol** — are pinned against the rendered markup in
+`test_strategy_metrics.py`.
 """
 
 from __future__ import annotations
@@ -14,72 +19,9 @@ from src.layout.grids import (
     PERF_COLOR_COLUMN_NAME,
     ZSCORE_SUPERCOL,
     _build_universe_frame,
-    _calendar_renderers,
     _perf_renderers,
     zscore_column_name,
 )
-
-_CAL_MONTHS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-]
-# Absolute kind's grid columns: months + Return / Vol / Sharpe.
-_CAL_COLS = [*_CAL_MONTHS, "Return", "Vol", "Sharpe"]
-
-
-def test_calendar_renderers_show_dash_for_missing():
-    # Every calendar cell renders empty (NaN) months as "-" while keeping the
-    # value numeric for the diverging background. The dash is driven by a
-    # `text_value` VegaExpr (ipydatagrid's `missing` trait only fires on a strict
-    # JSON null, which pandas NaN never serializes to), so assert the expr is
-    # wired up and substitutes the dash only for NaN cells.
-    renderers = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
-    assert set(renderers) == set(_CAL_COLS)
-    assert all(r.missing == "-" for r in renderers.values())
-    for r in renderers.values():
-        assert r.text_value is not None
-        assert r.text_value.value == "isNaN(cell.value) ? '-' : ''"
-
-
-def test_calendar_renderers_format_by_kind():
-    # Return kinds format months as %, beta/correlation as plain 2dp.
-    pct = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")["Jan"]
-    beta = _calendar_renderers(pd.Index(_CAL_COLS), kind="beta")["Jan"]
-    assert pct.format == ".2%"
-    assert beta.format == ".2f"
-
-
-def test_calendar_summary_column_renderers():
-    # Each summary column takes its own renderer: Return as a % diverging ramp,
-    # Sharpe on the Sharpe band (2dp), and Vol plain (no diverging background) so
-    # its higher-is-not-better axis isn't color-coded good/bad.
-    r = _calendar_renderers(pd.Index(_CAL_COLS), kind="absolute")
-    assert r["Return"].format == ".2%"
-    assert "cell.value <" in _bg_expr(r["Return"])
-    assert r["Sharpe"].format == ".2f"
-    assert "cell.value <" in _bg_expr(r["Sharpe"])
-    # Vol: plain numeric, default (empty) background, but still 2%-formatted + dash.
-    assert r["Vol"].format == ".2%"
-    assert _bg_expr(r["Vol"]) == ""
-    assert r["Vol"].missing == "-"
-
-    # Beta / Correlation single summary columns format as 2dp diverging ramps.
-    beta = _calendar_renderers(pd.Index([*_CAL_MONTHS, "Beta"]), kind="beta")["Beta"]
-    corr = _calendar_renderers(
-        pd.Index([*_CAL_MONTHS, "Correlation"]), kind="correlation"
-    )["Correlation"]
-    assert beta.format == ".2f" and "cell.value <" in _bg_expr(beta)
-    assert corr.format == ".2f" and "cell.value <" in _bg_expr(corr)
 
 
 def _meta() -> pd.DataFrame:

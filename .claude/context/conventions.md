@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.35`.
+- **Current version**: `v0.9.36`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -635,9 +635,8 @@ CSS, style tokens — live in `style.md`.)
   never rebinds a name — so there is **no `nonlocal`** and no list-as-mutable-cell
   hack.
 - **Annotate `state` as `DashboardState`, never `object`.** `state.py` imports
-  `panes` / `selection` / `single_strategy` (and through the last of those,
-  `filter_panel`), so those modules cannot import `DashboardState` back at
-  module level — a runtime `from .state import DashboardState` there raises
+  `panes` / `selection` / `single_strategy`, so those modules cannot import
+  `DashboardState` back at module level — a runtime `from .state import DashboardState` there raises
   ImportError on a partially initialized module. Use a `TYPE_CHECKING` guard
   instead; every layout module has `from __future__ import annotations`, so the
   annotation is a string and the symbol is never needed at runtime. `platform`
@@ -738,3 +737,45 @@ stale, and serving one would mean the right benchmark over the wrong
 strategies with nothing on screen to say so. With no frontend it runs
 synchronously, so a test observes the render immediately after the write with
 no thread to join.
+
+
+## The Single Strategy tab's four rules (v0.9.36, epic #363)
+
+**One pick, written in one place.** `Pick` (`src/layout/basket.py`) is
+`Basket`'s single-ticker sibling, and five things write it — a row in the
+tab's own grid, a catalog row, a Leaderboard row, a points-table row and a
+basket card — while the grid, the profile card, the metrics table and both
+panes are *views* of it. It replaced a `W.Dropdown` whose options list
+doubled as the store, which is why opening a strategy from another tab used
+to have to **clear the user's filters** to reach it: a ticker the options
+list had dropped could not be selected. It cannot happen to a `Pick`. Two
+consequences are load-bearing — `StrategyGrid` re-derives its lit row **by
+ticker** after every rebuild (itables destroys and re-news the table on every
+options change, so a position is worthless across one), and a pick the
+filters hide **stays picked**, with the profile card saying why no row is lit
+rather than the app silently choosing a different strategy.
+
+**A table that is HTML is not a `_Grid`.** `_Grid` exists to make the v0.6.5
+theme-refresh invariant structural (#223); a table whose chrome is page CSS
+has no such invariant, because a data swap cannot reset a stylesheet. So the
+metrics table and the calendar are `render_template` blocks, the way
+`CatalogTable` is deliberately not a `_Grid` either. The rule to carry: reach
+for `_Grid` when the widget is a **canvas**, not because the thing is a table.
+
+**Regime resolution has one implementation.** `RegimeControls`
+(`src/layout/regime_controls.py`) owns the four widgets and the lookups; the
+Platform card delegates to it and each regime-conditioned chart on this tab
+constructs its own. Two distinctions that are easy to get backwards: the
+**rule** is shared (which days a bucket selects) and the **widgets** are not
+(two tabs conditioning their own charts is two selections, and two charts in
+one pane sharing one selection would let a chip on a hidden view move a
+visible one). `sample_days` is set **at the call**, not captured, because a
+tercile's quantiles are taken over a window a chip can move.
+
+**Measure the cross-section once.** The risk profile's percentile axis needs
+every catalog strategy's β to five factors — five passes over the universe,
+identical whichever strategy is being read. It is cached against the price
+frame's **identity**, the `QuantColumns` pattern, so a Refresh invalidates it
+by rebinding `arp_universe_prices` and nothing has to remember to. The same
+argument as #261's "every window is measured once", applied to a different
+axis.

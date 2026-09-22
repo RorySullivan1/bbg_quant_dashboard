@@ -31,12 +31,9 @@ from ..config import (
     DEFAULT_RANKING_METRIC,
     DRILL_LEAF_LEVEL,
     DRILL_ROOT_LABEL,
-    REGIME_SPECS,
     SCORE_SAMPLE_DAYS,
     STRIP_DAYS,
     TRADING_DAYS_PER_YEAR,
-    LevelRegime,
-    TercileRegime,
     analytics_levels,
     drill_level_label,
     drill_levels,
@@ -54,10 +51,7 @@ from ..stats import (
     node_paths,
     recent_daily_returns,
     regime_factor_frame,
-    regime_mask,
-    rolling_autocorr,
     rolling_metric_zscore,
-    tercile_bounds,
     term_premium,
 )
 from ..style import ANALYTICS_CHART_SHARE, ANALYTICS_HEIGHT, ANALYTICS_TABLE_SHARE
@@ -73,27 +67,14 @@ from .platform_charts import (
     group_colors,
 )
 from .rails import Breadcrumb, ChipGroup, RailSection, control_bar, drill_bar
+from .regime_controls import RegimeControls, regime_window_mask
 from .theme import _short_ticker
 
 if TYPE_CHECKING:
     # No cycle today, but `state.py` is one import away from reaching this
     # module, and the annotation never needs the symbol at runtime. Guarded
-    # like `filter_panel` / `single_strategy`, where the cycle is real.
+    # like `single_strategy`, where the cycle is real.
     from .state import DashboardState
-
-
-def _regime_window_mask(
-    indicator: pd.Series | None,
-    index: pd.Index,
-    low: float | None,
-    high: float | None,
-) -> pd.Series:
-    """Boolean mask over ``index``: the regime bucket, or all-True when there's
-    no indicator / no bucket (a scaffolded regime → unconditioned all-days view).
-    """
-    if indicator is None or indicator.empty or low is None or high is None:
-        return pd.Series(True, index=index)
-    return regime_mask(indicator.reindex(index), low, high)
 
 
 @contextmanager
@@ -155,15 +136,6 @@ def _colors_for(points: pd.DataFrame, key: str) -> dict[str, str]:
     if key == CURATED_COLOR_LEVEL:
         return asset_class_colors(values)
     return group_colors(values)
-
-
-def regime_bucket_options(regime_type: str) -> list[tuple[str, object]]:
-    """Bucket-dropdown options for a regime: ``(label, (low, high))`` for the
-    fixed-level mode, ``(label, tercile_key)`` for the tercile modes."""
-    spec = REGIME_SPECS[regime_type]
-    if isinstance(spec, LevelRegime):
-        return [(label, (low, high)) for label, low, high in spec.buckets]
-    return [(label, key) for label, key in spec.bucket_labels]
 
 
 def _window_days(label: str) -> int:
@@ -253,57 +225,25 @@ class PlatformAnalytics:
             row=True,
         )
 
-        # **The regime is opt-in** (v0.9.33). Every bucket is a *subset* of the
-        # Window, so an always-on regime meant the Scatter's opening view was
-        # the first bucket of the first regime — days with VIX < 15 — with
-        # nothing on screen saying the sample had been conditioned at all, and
-        # no way to ask for the plain factor view over the whole window. Off,
-        # the sample is the Window; on, the bucket narrows it.
+        # **The regime is opt-in** (v0.9.33), and the controls are their own
+        # object since #370 — Single Strategy's two regime charts ask exactly
+        # the same question, and four methods copied into a second class is
+        # how two answers drift apart. The card keeps the widgets it draws
+        # and delegates the rules.
         #
-        # A `Checkbox` rather than a fourth chip in the type group: an "Off"
-        # chip beside Volatility / Trend / Rate-level would read as a fourth
-        # regime, and the state it carries is a different question from which
-        # regime — which is why unticking it keeps the type and bucket the user
-        # last chose rather than resetting them.
-        self.regime_on_chk = W.Checkbox(
-            value=False,
-            description="Condition on regime",
-            indent=False,
-            layout=W.Layout(width="auto", margin="0 0 2px 0"),
-        )
-        self.regime_type_chips = ChipGroup(list(REGIME_SPECS.keys()), row=True)
-        # Source stays a dropdown: its options are the live benchmark registry
-        # or a region list, and a dropdown is the right control for a long list
-        # (#331 decision 13, #302's reasoning).
-        self.regime_selector_dd = W.Dropdown(
-            options=[("\u2014", "")],
-            value="",
-            description="Source",
-            style={"description_width": "60px"},
-            layout=W.Layout(width="240px"),
-        )
-        _init_buckets = regime_bucket_options(self.regime_type_chips.value)
-        self.regime_bucket_chips = ChipGroup(
-            _init_buckets, value=_init_buckets[0][1], row=True
-        )
+        # `sample_days` is a callable rather than a number: a tercile's
+        # quantiles are taken over the card's **own** Window, which a chip can
+        # move, so a value captured here would be the window at construction.
+        self.regime = RegimeControls(state)
         regime_controls = W.VBox(
             [
-                self.regime_on_chk,
-                self.regime_type_chips,
-                self.regime_selector_dd,
-                self.regime_bucket_chips,
+                self.regime.on,
+                self.regime.types,
+                self.regime.source,
+                self.regime.buckets,
             ],
             layout=W.Layout(width="auto"),
         )
-        # Start matching the unticked box. `sync_regime_controls` owns this
-        # from `wire` onwards, but it cannot run here: its source options come
-        # from the benchmark registry, which is not populated at construction.
-        for _dependent in (
-            self.regime_type_chips,
-            self.regime_selector_dd,
-            self.regime_bucket_chips,
-        ):
-            _dependent.layout.display = "none"
 
         # The universe filter. The card draws ONE solution at a time (v0.9.27):
         # the root used to be every solution at once, which is a cell per
@@ -712,7 +652,7 @@ class PlatformAnalytics:
             rets = rets.tail(_window_days(self.card_window_chips.value))
 
             low, high = self.resolve_regime_bucket()
-            mask = _regime_window_mask(self.regime_indicator(), rets.index, low, high)
+            mask = regime_window_mask(self.regime_indicator(), rets.index, low, high)
             erp = equity_risk_premium(state.universe_prices).reindex(rets.index)
             tp = term_premium(state.universe_prices).reindex(rets.index)
 
@@ -774,111 +714,30 @@ class PlatformAnalytics:
             )
 
     # --- regime resolution ----------------------------------------------------
+    #
+    # Thin, because the rules moved to `RegimeControls` with #370. They stay
+    # as named methods rather than becoming `self.regime.…` at every call
+    # site: the render path reads them, the tests pin them, and a rename
+    # would be churn in two files to save one attribute hop.
 
     def regime_indicator(self) -> pd.Series | None:
-        """The regime indicator series from the cache, per the active regime's
-        shape, or None when the regime is switched off or its ticker(s) are
-        absent (-> unconditioned view).
-
-        **The toggle is gated here, not at the render**, because the absent-
-        indicator path already means "draw every day in the window": one
-        `None` reaches `_regime_window_mask` and `resolve_regime_bucket` alike,
-        so nothing downstream needs a second branch and no future reader of the
-        indicator can miss the switch.
-        """
-        if not self.regime_on_chk.value:
-            return None
-        spec = REGIME_SPECS.get(self.regime_type_chips.value)
-        if spec is None:
-            return None
-        prices = self.state.universe_prices
-        if isinstance(spec, TercileRegime) and spec.kind == "autocorr":
-            ticker = self.regime_selector_dd.value
-            if not ticker or ticker not in prices.columns:
-                return None
-            rets = daily_returns(prices[[ticker]])[ticker]
-            return rolling_autocorr(rets, window=spec.autocorr_window)
-        # Both remaining shapes read a raw level; only the ticker's source
-        # differs — a tercile regime's comes from its dropdown, a level
-        # regime's is fixed.
-        ticker = (
-            spec.ticker
-            if isinstance(spec, LevelRegime)
-            else self.regime_selector_dd.value
-        )
-        if not ticker or ticker not in prices.columns:
-            return None
-        return prices[ticker]
+        """The active regime's indicator series, or None for the
+        unconditioned view — which is also what a cleared checkbox gives."""
+        self.regime.sample_days = _window_days(self.card_window_chips.value)
+        return self.regime.indicator()
 
     def resolve_regime_bucket(self) -> tuple[float | None, float | None]:
-        """The ``(low, high)`` bounds for the active bucket. Fixed-level regimes
-        read the tuple off the bucket dropdown; tercile regimes derive it from
-        the live indicator's 1/3 & 2/3 quantiles over the lookback.
-        ``(None, None)`` when no indicator is available."""
-        spec = REGIME_SPECS.get(self.regime_type_chips.value)
-        if isinstance(spec, LevelRegime):
-            low, high = self.regime_bucket_chips.value
-            return (low, high)
-        indicator = self.regime_indicator()
-        if indicator is None:
-            return (None, None)
-        return tercile_bounds(
-            indicator.tail(_window_days(self.card_window_chips.value)),
-            self.regime_bucket_chips.value,
-        )
+        """The ``(low, high)`` bounds of the bucket the chips have selected."""
+        self.regime.sample_days = _window_days(self.card_window_chips.value)
+        return self.regime.resolve_bucket()
 
     def regime_selector_options(self) -> list[tuple[str, object]]:
-        """The indicator-source options for the active regime, ``(label, ticker)``.
-
-        Trend sources its list from the **live** benchmark registry rather than
-        one frozen into `REGIME_SPECS` at import, so a benchmark added at
-        runtime is offered here too. Rate-level carries a literal `selector`;
-        a fixed-level regime has one ticker and so offers no source at all."""
-        spec = REGIME_SPECS.get(self.regime_type_chips.value)
-        if not isinstance(spec, TercileRegime):
-            return []
-        if spec.selector_source == "benchmarks":
-            return self.state.benchmarks.options(labeled=True)
-        return list(spec.selector)
+        """The indicator-source options for the active regime."""
+        return self.regime.selector_options()
 
     def sync_regime_controls(self) -> None:
-        """Repopulate the bucket dropdown for the active regime and show / hide
-        the indicator-source dropdown.
-
-        Also re-run on a benchmark-registry change, so this keeps the current
-        source **selected** whenever it survives into the new option list.
-        Switching regime type still falls back to the first option, since the
-        old value belongs to a different domain (a benchmark ticker is not a
-        rate region).
-
-        The on/off toggle runs through here too, since which controls apply is
-        exactly what it changes: while it is off, *which* regime and *which*
-        bucket describe nothing that is being drawn. They are hidden rather
-        than rebuilt — the bar's own rule (#331 decision 3) — so switching the
-        regime back on finds the type, source and bucket the user last chose
-        still chosen."""
-        active = bool(self.regime_on_chk.value)
-        selector = self.regime_selector_options()
-        if selector:
-            previous = self.regime_selector_dd.value
-            values = [value for _, value in selector]
-            self.regime_selector_dd.options = selector
-            self.regime_selector_dd.value = (
-                previous if previous in values else selector[0][1]
-            )
-        options = regime_bucket_options(self.regime_type_chips.value)
-        # Preserve the active bucket across a registry change for the same reason.
-        prev_bucket = self.regime_bucket_chips.value
-        bucket_values = [value for _, value in options]
-        self.regime_bucket_chips.set_options(
-            options,
-            value=prev_bucket if prev_bucket in bucket_values else options[0][1],
-        )
-        # The source needs both conditions: a fixed-level regime offers no
-        # source to pick even while the regime is on.
-        self.regime_selector_dd.layout.display = "" if active and selector else "none"
-        for control in (self.regime_type_chips, self.regime_bucket_chips):
-            control.layout.display = "" if active else "none"
+        """Repopulate the source and bucket controls and show / hide them."""
+        self.regime.sync()
 
     # --- lazy tab rendering ---------------------------------------------------
 
@@ -956,14 +815,10 @@ class PlatformAnalytics:
             self.sync_regime_controls()
             self._restale_scatter()
 
-        self.regime_on_chk.observe(_on_regime_shape, names="value")
-        self.regime_type_chips.observe(_on_regime_shape, names="value")
-        self.regime_selector_dd.observe(
-            lambda _c: self._restale_scatter(), names="value"
-        )
-        self.regime_bucket_chips.observe(
-            lambda _c: self._restale_scatter(), names="value"
-        )
+        self.regime.on.observe(_on_regime_shape, names="value")
+        self.regime.types.observe(_on_regime_shape, names="value")
+        self.regime.source.observe(lambda _c: self._restale_scatter(), names="value")
+        self.regime.buckets.observe(lambda _c: self._restale_scatter(), names="value")
 
         # Metric and Window re-render the visible chart and **stale the other
         # two**. `activate` skips a chart that is still `fresh`, so without

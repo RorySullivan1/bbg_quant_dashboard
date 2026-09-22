@@ -219,6 +219,29 @@ class MultiChipGroup(_ChipStack):
         self.value = tuple(picked)
 
 
+#: What a bar of table-shaping controls is called, wherever one stands: above
+#: the Platform catalog, the Multi-Strategy basket and the Single Strategy
+#: picker. Spelled once, here with the component that draws it, so the three
+#: tabs, the docs and the tests cannot drift — which is the whole argument
+#: `control_bar` itself is built on.
+TABLE_BAR_TITLE: str = "Table view"
+
+#: The filter bar's own title and its two headings (v0.9.32). The row used to
+#: carry no words at all: two rows of chips in identical chrome, one of which
+#: chose *what* was being filtered and the other *to what* — and nothing on
+#: screen said which was which, or that either of them was a filter. So the row
+#: is a bar like the one above it, titled, with each half headed.
+#:
+#: **Not "Group" and "Selection"**, which is how the behaviour reads in
+#: conversation. *Group by* is the heading one row up, where it means the
+#: table's row grouping, and *Category* is a classification tier — both words
+#: are already spoken for, and re-using either here would name two different
+#: things the same thing on one screen.
+FILTER_BAR_TITLE: str = "Filter"
+FILTER_DIMENSION_HEADING: str = "Dimension"
+FILTER_VALUES_HEADING: str = "Values"
+
+
 class RailSection(NamedTuple):
     """One headed block of a bar: what it is called, and the control itself.
 

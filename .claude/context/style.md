@@ -492,3 +492,51 @@ Select's `6px` centres the glyph on its line box rather than in the box, which
 left a ticked row sitting higher than an empty one. Both are scoped to
 `.bbg-basket-table`, and both are pinned by tests that also assert the
 `compact` class is still there to override (#343).
+
+## The two HTML tables (v0.9.36, #366)
+
+Single Strategy's numbers are **HTML tables styled by page CSS**, where they
+were two `ipydatagrid` canvases. That is a deliberate split from the rest of
+the app rather than an inconsistency: `_Grid` exists to make the v0.6.5
+theme-refresh invariant structural for the canvas stack (#223), and a table
+that is ordinary markup has no such invariant — its chrome is CSS, which a
+data swap cannot reset. Neither of these sorts, scrolls sideways or takes a
+click, so the canvas bought nothing and cost the invariant.
+
+**`.bbg-metrics`** is the metrics table: eight metric rows down, one column per
+window with **since-inception set off by a left rule**, because every
+strategy's since-inception is measured over a different span and it should not
+read as a fourth window. Metric names are row headers — left-aligned, body
+type — while the window headers wear the uppercase letterspaced treatment
+every other heading in the app does. Numbers are `mono`, so a column of them
+aligns on the decimal the way the grid's did.
+
+**Red for negative, and no green.** The Leaderboard puts sentiment on its
+score because that board *ranks*, and a ranking has a direction. Half these
+rows do not: a high Vol is not good and a negative Beta is not bad. Colouring
+by sign alone says what a terminal says — this number is below zero — and
+claims nothing else. The box stands at a fixed `STRATEGY_METRICS_HEIGHT` for
+`CATALOG_TABLE_HEIGHT`'s reason: the row count is fixed but the *column* count
+grows with `LOOKBACK_YEARS`, and a box sized to its content would move
+everything below it when the fetch widens.
+
+**`.bbg-calendar`** is the year × month heatmap. The grid under it went; the
+heatmap did not, because it is the one thing on the tab a desk reads at a
+glance and the metrics table beside it is summary statistics rather than the
+path they came from. Years are mono row headers on `surface` and are not
+shaded — a year is not a measurement. The annual summary columns are set off
+by a rule, as the metrics table sets off since-inception.
+
+**The heat is five CSS classes, not an inline background.** A cell carries
+*which step* it falls in and the stylesheet carries the hex, so the palette
+stays here with every other token and a retune reaches both stacks at once.
+The steps are the same `Color.HEAT_*` fills the ipydatagrid diverging renderer
+passes to VegaExpr, on the same bands — which is why those bands moved to
+`style.py` (`RETURN_HEAT_BAND`, `SHARPE_HEAT_BAND`, `VOLADJ_HEAT_BAND`,
+`BETA_HEAT_BAND`, `CORR_HEAT_BAND`, and `MISSING_DASH` with them). Two tables
+disagreeing about where "neutral" ends is exactly the drift one declaration
+prevents. **Vol carries no band** in either stack: a red→green ramp there would
+claim a good/bad axis volatility does not have, which is the same call the
+metrics table makes by using no green at all.
+
+A test pins that neither rendered block contains a hex literal.

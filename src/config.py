@@ -612,7 +612,20 @@ SHORT_RATE_TICKER = "LD12TRUU Index"  # Bloomberg US Treasury 1–3M Bills TR
 #: The scatter's 3D z-axis is each strategy's β to this index's returns
 #: directly, not to a short-rate spread like the two premia above.
 TREND_TICKER = "BSLXAT Index"  # Bloomberg cross-asset trend
-FACTOR_TICKERS: list[str] = [LONG_TREASURY_TICKER, SHORT_RATE_TICKER, TREND_TICKER]
+#: The cross-asset **carry** factor. Already a curated benchmark, so it costs
+#: no extra ticker — the β is taken against its own returns, like Trend's.
+CARRY_TICKER = "BSLXAC Index"  # Bloomberg cross-asset carry
+#: The bond-volatility leg of the cross-asset **Volatility** factor (#371).
+#: `VIX_TICKER` is the equity leg and is already a `REGIME_TICKER`, so this is
+#: the one new name the factor costs — and it joins `FACTOR_TICKERS` so it
+#: rides the single startup fetch rather than a second call (#9's rule).
+MOVE_TICKER = "MOVE Index"  # ICE BofA MOVE — implied Treasury volatility
+FACTOR_TICKERS: list[str] = [
+    LONG_TREASURY_TICKER,
+    SHORT_RATE_TICKER,
+    TREND_TICKER,
+    MOVE_TICKER,
+]
 
 # Indicator tickers for the Platform "Regime Analysis" section.
 VIX_TICKER = "VIX Index"
@@ -628,6 +641,10 @@ RATE_LEVEL_TICKERS: list[tuple[str, str]] = [
 #: mean-reverting level; see `MockPriceSource` in `src/price_source.py`.
 LEVEL_INDICATOR_MOCK: dict[str, tuple[float, float, float, float]] = {
     VIX_TICKER: (18.0, 1.5, 9.0, 60.0),  # VIX-like, hovers ~18
+    # MOVE runs an order of magnitude above VIX, which is the whole reason the
+    # Volatility factor z-scores each leg before averaging them (#371): a raw
+    # average of the two would be mostly this one.
+    MOVE_TICKER: (105.0, 6.0, 50.0, 220.0),  # MOVE-like, hovers ~105
     **{t: (2.0, 0.10, 0.0, 8.0) for _, t in RATE_LEVEL_TICKERS},  # short rates
 }
 

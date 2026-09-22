@@ -9,8 +9,8 @@ metadata, look up tickers, and view performance, correlation, and a 1-year
 rolling Sharpe-ratio z-score over a 5-year lookback. Metadata is stored
 locally in `data/indexdb.json`; time-series prices are pulled from BQL at
 runtime. The UI is built with `ipywidgets`, `plotly` (interactive charts
-via `FigureWidget`), `ipydatagrid` (the per-strategy tables) and `itables`
-(the grouped all-catalog table), and is deployable via Voila.
+via `FigureWidget`), `ipydatagrid` (the Multi-Strategy perf grid) and
+`itables` (every catalog table), and is deployable via Voila.
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
@@ -22,11 +22,10 @@ tabs — **Platform** (one control bar over a full-width all-catalog performance
 grid + a Platform-analytics card: a chart — Icicle / Scatter / Strip — beside
 a table of its own points), **Multi-Strategy**
 (the same catalog table in multi-select over a **Basket**, a strip of basket
-cards, a selected-strategy perf grid, and two side-by-side
-analysis panes), and **Single Strategy** (a per-strategy deep-dive: a
-live-narrowing filter accordion, a profile card + cumulative chart, a
-monthly-return calendar, and two analysis panes) → disclaimers. All compute
-lives in `src/`; the notebook is a one-liner that calls `build_app()`.
+cards, and two side-by-side analysis panes), and **Single Strategy** (the same
+table again in single-select, over a profile card + cumulative chart, an HTML
+metrics table and monthly calendar, and two analysis panes) → disclaimers. All
+compute lives in `src/`; the notebook is a one-liner that calls `build_app()`.
 
 The catalog is described by a **declarative schema** (v0.9.15,
 `CATALOG_SCHEMA` in `src/config.py`): every metadata column is declared once —
@@ -50,10 +49,9 @@ The code is organized **around objects, not bags** (epic #215, v0.9.16–v0.9.17
 What used to be `SimpleNamespace` bundles, module globals and closures over
 `build_app`'s locals are now typed classes, each owning its own widgets and
 state: `DashboardApp` (`src/layout/app.py`) is the controller the notebook's
-`build_app()` one-liner constructs, and `PlatformAnalytics`, `FilterPanel` /
-`CategoricalFilter` / `QuantFilter`, `SingleStrategyPanel`, `PriceCache` and
-the `PriceSource` protocol (`BqlPriceSource` / `MockPriceSource`) each own one
-area. **A figure or a table is an object too (v0.9.17 #223):** each `Chart`
+`build_app()` one-liner constructs, and `PlatformAnalytics`,
+`SingleStrategyPanel`, `RegimeControls`, `PriceCache` and the `PriceSource`
+protocol (`BqlPriceSource` / `MockPriceSource`) each own one area. **A figure or a table is an object too (v0.9.17 #223):** each `Chart`
 subclass in `charts.py` builds its own `FigureWidget` and updates it
 (`pane.heat.update(cm, …)`), and `PerfGrid` / `UniverseGrid` / `CalendarGrid`
 each own a `DataGrid` whose single write path re-asserts the dark theme — so
@@ -397,8 +395,99 @@ every caller of `ann_beta` handed it a benchmark **price** series where it
 covaries against returns, so every Beta had been collapsing toward zero and
 taking Treynor and Jensen with it. `stats.risk.benchmark_returns` is the
 conversion, and `factor_beta` is the one caller that already held returns. Vol and the cross-sectional Z stayed behind: the Platform tab ranks,
-this tab narrows. **Single Strategy keeps `FilterPanel`** and is its only
-caller now.
+this tab narrows.
+
+The Single Strategy tab is **the same table again, in single-select** (epic
+#363, v0.9.36). It was the last of the v0.8 idiom, and the last thing the
+other two tabs had already left behind: a `W.Dropdown` of ticker strings
+inside a *Filters* accordion, beside a 240px checkbox column and nine
+`≥ / ≤` threshold rows typed against numbers that appeared nowhere on screen —
+while the catalog those rows were narrowing sat one tab away, grouped, with
+every one of those numbers in a column. It is now a `section_panel` over the
+same two bars the Multi tab picks its basket from, and `filter_panel.py` —
+`FilterPanel`, `CategoricalFilter`, `QuantFilter` — is gone entirely.
+
+**The pick is a `Pick`, not a row and not a widget's value.** `Basket`'s
+single-ticker sibling: five things write it — a row here, a catalog row, a
+Leaderboard row, a points-table row and a basket card — and the grid, the
+profile card, the metrics table and both panes are views of it. Two
+behaviours fall out and both were bugs before. `StrategyGrid` re-derives its
+lit row **by ticker** after every rebuild, because itables destroys and re-news
+the table on every options change. And a pick the filters hide **stays
+picked**, with the profile card saying why no row is lit — so
+`_show_in_single_strategy` no longer clears anyone's filters, a workaround
+that existed only because a dropdown could not offer a ticker its options
+list had dropped.
+
+**Its numbers are HTML now** (#366). Two `ipydatagrid` canvases stood there —
+a `PerfGrid` and the calendar's — each carrying the v0.6.5 theme-refresh
+invariant (#223) and a Lumino canvas, for tables that never sort, scroll
+sideways or take a click. `strategy_metrics` gives eight metrics over every
+`stat_windows()` window plus since-inception, at two decimals, `—` where a
+window is not served. **The calendar's heatmap survived; only its grid went** —
+it is the one thing on the tab a desk reads at a glance, and the metrics table
+is summary statistics rather than the path they came from. Its five steps are
+CSS classes on the bands `style.py` now declares for **both** stacks, and its
+five pills became a `ChipGroup`, which was the last `_make_tab_button` set in
+the app. One departure from the grid it replaced: the metrics table measures
+the **analytics window**, where `perf_table` was deliberately handed the full
+fetched frame (#311) — a `3Y` figure assembled from history the window
+excludes is a number under a label that does not describe it, so an unserved
+window is a dash whatever the fetch holds.
+
+**Every option in the analysis picker draws** (#367). Three of eight were dead
+ends: *PCA Analysis* and *Defensive Scoring* were `_StubChart`s drawing
+*coming soon*, and *Performance Ranking* drew the same placeholder because
+nothing ever passed it scores. Each was retired **into an issue of its own**
+(#374, #375, #376) before being deleted, so the intent outlives the
+placeholder; `PerfRankingChart`'s radar body survived as `RadarChart`, which
+is what the spiderweb is built on. What the picker offers now is Weekly
+Scatter · Return Distribution · Factor Scatter · Drawdown · Rolling · Decile ·
+Regime Profile · Risk Profile.
+
+Four of those are new or rebuilt, and each replaced something that was either
+duplicated or not drawable:
+
+- **Rolling** is one figure whose statistic is a chip — Correlation · Sharpe ·
+  Calmar · Beta — and the title, the y-axis and the **reference line** all
+  follow it (0, 0, 0, **1**). It replaced two near-identical `RollingRefChart`s
+  on the Multi tab while rolling Sharpe and Calmar had their stats functions
+  and no chart anywhere; one component serves both tabs now, and the benchmark
+  control hides for the two statistics that do not read one.
+- **Decile** cuts the **benchmark's weekly** returns into ten buckets and
+  draws the strategy's mean return in each beside the benchmark's own, so
+  convexity reads left to right — which no summary statistic on the tab shows,
+  a β being the average slope and silent about whether the slope is the same
+  at both ends. Weekly because a daily decile's tails are single-session noise
+  and marking conventions. The benchmark decides the buckets; cutting on the
+  strategy's own returns would draw a monotone staircase for any series at all.
+- **Regime Profile** draws all three buckets of one regime at once — return vs
+  vol per bucket, plus the **unconditioned point muted as the anchor** so the
+  three read as deviations rather than as three unrelated dots, plus the
+  benchmark's three. It has **no bucket control**, because all three buckets
+  are the chart.
+- **Risk Profile** is five βs on one polar axis — ERP · Term · Volatility ·
+  Trend · Carry — and **the axis is a percentile**, which is the whole design:
+  a Carry β of 0.3 is large where an ERP β of 0.3 is small, so a polygon on the
+  raw numbers says only which factors are quoted in bigger units. The raw β
+  rides in the hover. A factor the feed cannot serve is a **missing spoke**,
+  not an exception. It retired `FactorScoringChart`, three bars of ERP, Term
+  and Trend; *Factor Scatter* stayed, because it is a **history** — one marker
+  per month — where the spiderweb is one shape over the whole window.
+
+Three rules hold underneath. **Regime resolution has one implementation**:
+`RegimeControls` (`src/layout/regime_controls.py`), which the Platform card
+delegates to and both new charts construct their own instance of — the epic
+named copying those four methods as the risk, and two tabs each conditioning
+their own chart is two selections, not one. **The cross-section is measured
+once**: the percentile axis needs every catalog strategy's β to five factors,
+so it is cached against the price frame's identity, the `QuantColumns` pattern,
+and a Refresh invalidates it by rebinding. And **one new ticker**, `MOVE
+Index`, which joins `FACTOR_TICKERS` and rides the single startup fetch — the
+Volatility factor is VIX and MOVE **z-scored and then averaged**, because VIX
+runs 15–30 and MOVE 80–130 and a raw average is an equal-weight factor in name
+and a MOVE series in fact. A missing leg degrades to the other and says so in
+the series' name.
 
 Every number in a table reads at **two decimals** (v0.9.32) — `0.00%` or
 `0.00`, on both stacks. It is `_STAT_SUFFIXES` that decides, the same tuple the
@@ -414,7 +503,7 @@ precisions.
 
 ## Current version
 
-`v0.9.35` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.36` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

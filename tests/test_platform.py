@@ -22,10 +22,7 @@ from src.config import (
 )
 from src.data import load_metadata
 from src.layout.grids import ChartPointsGrid
-from src.layout.platform import (
-    PlatformAnalytics,
-    regime_bucket_options,
-)
+from src.layout.platform import PlatformAnalytics
 from src.layout.platform_charts import (
     IcicleChart,
     RegimeFactorScatter,
@@ -34,6 +31,7 @@ from src.layout.platform_charts import (
     group_colors,
 )
 from src.layout.rails import ChipGroup
+from src.layout.regime_controls import regime_bucket_options, regime_window_mask
 from src.layout.theme import _v_ref
 from src.stats import daily_returns, tercile_bounds
 from src.style import ASSET_CLASS_COLORS, ASSET_CLASS_FALLBACK_COLOR
@@ -550,23 +548,23 @@ def test_regime_selector_options_by_spec_type():
     # benchmark registry (#190) so a runtime addition shows up in its picker;
     # a fixed-level regime has one ticker and so offers no source at all.
     pa = _analytics()
-    pa.regime_type_chips.value = "Volatility"
+    pa.regime.types.value = "Volatility"
     assert pa.regime_selector_options() == []
-    pa.regime_type_chips.value = "Rate-level"
+    pa.regime.types.value = "Rate-level"
     assert pa.regime_selector_options() == [
         ("US (FEDL01)", "FEDL01 Index"),
         ("EU (EONIA)", "EONIA Index"),
         ("JP (MUTKCALM)", "MUTKCALM Index"),
     ]
-    pa.regime_type_chips.value = "Trend"
+    pa.regime.types.value = "Trend"
     assert pa.regime_selector_options() == [("SPX", "SPX Index")]
 
 
 def test_regime_selector_options_tolerates_an_unknown_regime():
     # An unknown regime type resolves to None upstream; it must not raise.
     pa = _analytics()
-    pa.regime_type_chips.set_options(
-        [*pa.regime_type_chips.options, ("Nope", "Nope")], value="Nope"
+    pa.regime.types.set_options(
+        [*pa.regime.types.options, ("Nope", "Nope")], value="Nope"
     )
     assert pa.regime_selector_options() == []
     assert pa.regime_indicator() is None
@@ -606,11 +604,10 @@ def _regime_meta() -> pd.DataFrame:
 def test_the_regime_mask_conditions_the_scatter_s_sample():
     """What the old regime scatter tested, at the level it now lives.
 
-    The chart no longer owns the conditioning: `_regime_window_mask` picks the
+    The chart no longer owns the conditioning: `regime_window_mask` picks the
     days and `regime_factor_frame` measures all three axes over them, so the
     behaviour is pinned on the pair rather than on a figure's coordinates.
     """
-    from src.layout.platform import _regime_window_mask
     from src.stats import daily_returns, regime_factor_frame
 
     arp, vix = _regime_universe()
@@ -620,8 +617,8 @@ def test_the_regime_mask_conditions_the_scatter_s_sample():
 
     lo_low, lo_high = tercile_bounds(vix.tail(200), "low")
     hi_low, hi_high = tercile_bounds(vix.tail(200), "high")
-    low_mask = _regime_window_mask(vix, rets.index, lo_low, lo_high)
-    high_mask = _regime_window_mask(vix, rets.index, hi_low, hi_high)
+    low_mask = regime_window_mask(vix, rets.index, lo_low, lo_high)
+    high_mask = regime_window_mask(vix, rets.index, hi_low, hi_high)
 
     # Disjoint day sets, so the two buckets describe the catalog differently.
     assert not (low_mask & high_mask).any()
@@ -634,11 +631,9 @@ def test_the_regime_mask_conditions_the_scatter_s_sample():
 def test_a_scaffolded_regime_is_the_unconditioned_view():
     # A regime with no indicator in the cache must not blank the chart; it
     # falls back to every day in the window, as it did before the merge.
-    from src.layout.platform import _regime_window_mask
-
     arp, _ = _regime_universe()
     index = daily_returns(arp).tail(200).index
-    mask = _regime_window_mask(None, index, None, None)
+    mask = regime_window_mask(None, index, None, None)
     assert mask.all()
 
 
@@ -655,10 +650,10 @@ def test_the_regime_conditions_nothing_until_the_box_is_ticked():
     _, vix = _regime_universe()
     pa.state.universe_prices = vix.to_frame()
 
-    assert pa.regime_on_chk.value is False
+    assert pa.regime.on.value is False
     assert pa.regime_indicator() is None
 
-    pa.regime_on_chk.value = True
+    pa.regime.on.value = True
     indicator = pa.regime_indicator()
     assert indicator is not None and indicator.name == VIX_TICKER
 
@@ -666,23 +661,22 @@ def test_the_regime_conditions_nothing_until_the_box_is_ticked():
 def test_the_regime_switched_off_is_every_day_in_the_window():
     """Off has to mean the unconditioned view, never an empty chart — the same
     fallback a regime with no indicator in the cache takes."""
-    from src.layout.platform import _regime_window_mask
 
     pa = _analytics()
     arp, vix = _regime_universe()
     pa.state.universe_prices = vix.to_frame()
     index = daily_returns(arp).tail(200).index
 
-    pa.regime_on_chk.value = True
+    pa.regime.on.value = True
     # "15 ≤ VIX < 25": a proper subset of the sample, so the two states differ.
-    pa.regime_bucket_chips.value = pa.regime_bucket_chips.options[1][1]
+    pa.regime.buckets.value = pa.regime.buckets.options[1][1]
     low, high = pa.resolve_regime_bucket()
-    conditioned = _regime_window_mask(pa.regime_indicator(), index, low, high)
+    conditioned = regime_window_mask(pa.regime_indicator(), index, low, high)
     assert conditioned.any() and not conditioned.all()
 
-    pa.regime_on_chk.value = False
+    pa.regime.on.value = False
     low, high = pa.resolve_regime_bucket()
-    assert _regime_window_mask(pa.regime_indicator(), index, low, high).all()
+    assert regime_window_mask(pa.regime_indicator(), index, low, high).all()
 
 
 def test_the_regime_controls_hide_while_it_is_off_and_keep_their_selection():
@@ -694,26 +688,26 @@ def test_the_regime_controls_hide_while_it_is_off_and_keep_their_selection():
     pa.wire(lambda: pd.DataFrame())
 
     for control in (
-        pa.regime_type_chips,
-        pa.regime_selector_dd,
-        pa.regime_bucket_chips,
+        pa.regime.types,
+        pa.regime.source,
+        pa.regime.buckets,
     ):
         assert control.layout.display == "none"
 
-    pa.regime_on_chk.value = True
-    pa.regime_type_chips.value = "Rate-level"  # a regime that offers a source
-    pa.regime_bucket_chips.value = "high"
-    assert pa.regime_type_chips.layout.display == ""
-    assert pa.regime_bucket_chips.layout.display == ""
-    assert pa.regime_selector_dd.layout.display == ""
+    pa.regime.on.value = True
+    pa.regime.types.value = "Rate-level"  # a regime that offers a source
+    pa.regime.buckets.value = "high"
+    assert pa.regime.types.layout.display == ""
+    assert pa.regime.buckets.layout.display == ""
+    assert pa.regime.source.layout.display == ""
 
-    pa.regime_on_chk.value = False
-    assert pa.regime_type_chips.layout.display == "none"
-    assert pa.regime_selector_dd.layout.display == "none"
+    pa.regime.on.value = False
+    assert pa.regime.types.layout.display == "none"
+    assert pa.regime.source.layout.display == "none"
 
-    pa.regime_on_chk.value = True
-    assert pa.regime_type_chips.value == "Rate-level"
-    assert pa.regime_bucket_chips.value == "high"
+    pa.regime.on.value = True
+    assert pa.regime.types.value == "Rate-level"
+    assert pa.regime.buckets.value == "high"
 
 
 def test_a_regime_with_no_source_keeps_its_dropdown_hidden_when_switched_on():
@@ -723,9 +717,9 @@ def test_a_regime_with_no_source_keeps_its_dropdown_hidden_when_switched_on():
     pa.state.arp_universe_prices = pd.DataFrame()
     pa.wire(lambda: pd.DataFrame())
 
-    pa.regime_on_chk.value = True
-    assert pa.regime_type_chips.value == "Volatility"
-    assert pa.regime_selector_dd.layout.display == "none"
+    pa.regime.on.value = True
+    assert pa.regime.types.value == "Volatility"
+    assert pa.regime.source.layout.display == "none"
 
 
 def test_toggling_the_regime_stales_the_scatter_even_while_it_is_hidden():
@@ -737,7 +731,7 @@ def test_toggling_the_regime_stales_the_scatter_even_while_it_is_hidden():
     pa.activate(pd.DataFrame(), "icicle")
     pa.fresh.update({"icicle", "scatter"})
 
-    pa.regime_on_chk.value = True
+    pa.regime.on.value = True
     assert "scatter" not in pa.fresh
     assert "icicle" in pa.fresh, "only the Scatter reads the regime"
 
@@ -1183,7 +1177,7 @@ def test_a_regime_change_stales_the_scatter_even_while_it_is_hidden():
     pa.activate(pd.DataFrame(), "icicle")
     pa.fresh.update({"icicle", "scatter"})
 
-    pa.regime_bucket_chips.value = pa.regime_bucket_chips.options[-1][1]
+    pa.regime.buckets.value = pa.regime.buckets.options[-1][1]
     assert "scatter" not in pa.fresh
     assert "icicle" in pa.fresh, "only the Scatter reads the regime"
 
@@ -1332,20 +1326,20 @@ def test_platform_regime_controls_resync_on_type_change():
 
     # Opt-in since v0.9.33; the source is only ever shown for a regime that
     # is both switched on and has a source to offer.
-    pa.regime_on_chk.value = True
+    pa.regime.on.value = True
 
-    assert pa.regime_type_chips.value == "Volatility"
+    assert pa.regime.types.value == "Volatility"
     assert source_dd.layout.display == "none"  # no source for Volatility
-    vix_buckets = [label for label, _ in pa.regime_bucket_chips.options]
+    vix_buckets = [label for label, _ in pa.regime.buckets.options]
 
-    pa.regime_type_chips.value = "Trend"  # tercile regime — observer re-syncs
+    pa.regime.types.value = "Trend"  # tercile regime — observer re-syncs
     assert source_dd.layout.display != "none"
     assert len(source_dd.options) > 0
-    assert [label for label, _ in pa.regime_bucket_chips.options] != vix_buckets
+    assert [label for label, _ in pa.regime.buckets.options] != vix_buckets
 
-    pa.regime_type_chips.value = "Volatility"  # back to fixed buckets
+    pa.regime.types.value = "Volatility"  # back to fixed buckets
     assert source_dd.layout.display == "none"
-    assert [label for label, _ in pa.regime_bucket_chips.options] == vix_buckets
+    assert [label for label, _ in pa.regime.buckets.options] == vix_buckets
 
 
 def test_platform_chart_chips_swap_the_chart():

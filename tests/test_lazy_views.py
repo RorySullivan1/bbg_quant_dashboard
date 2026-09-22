@@ -2,8 +2,8 @@
 
 Each pane renders only its currently-mounted view per recompute; the other
 eight are built on first pick and stay fresh until the next recompute. We prove
-this by spying on `multi_strategy.rolling_correlation` (the compute behind the
-Rolling Correlation view, which is NOT a default-mounted view) and counting how
+this by spying on `multi_strategy.rolling_series` (the compute behind the
+Rolling view, which is NOT a default-mounted view) and counting how
 often it actually runs as we drive the picker.
 """
 
@@ -41,12 +41,12 @@ def _pickers(app) -> list[W.Dropdown]:
     return [
         w
         for w in _walk(app)
-        if isinstance(w, W.Dropdown) and "Rolling Correlation" in list(w.options)
+        if isinstance(w, W.Dropdown) and "Rolling" in list(w.options)
     ]
 
 
 def _spy(monkeypatch, name: str) -> dict:
-    # The Rolling Correlation compute lives in the multi_strategy pane engine
+    # The Rolling compute lives in the multi_strategy pane engine
     # (extracted from builder in v0.9.12-review #156), so spy there.
     real = getattr(ms_mod, name)
     calls = {"n": 0}
@@ -72,58 +72,58 @@ def _fetch_counter(monkeypatch) -> dict:
 
 
 def test_offscreen_view_not_rendered_at_load(monkeypatch):
-    rc = _spy(monkeypatch, "rolling_correlation")
+    rc = _spy(monkeypatch, "rolling_series")
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
     # Default mounted views are Cumulative Performance (left) / Correlation
-    # Heatmap (right) — Rolling Correlation is off-screen, so it isn't computed.
+    # Heatmap (right) — Rolling is off-screen, so it isn't computed.
     assert rc["n"] == 0
 
 
 def test_first_pick_renders_on_demand_without_fetch(monkeypatch):
     fetches = _fetch_counter(monkeypatch)
-    rc = _spy(monkeypatch, "rolling_correlation")
+    rc = _spy(monkeypatch, "rolling_series")
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
     assert fetches["n"] == 1  # the single load fetch
 
-    _pickers(app)[0].value = "Rolling Correlation"
+    _pickers(app)[0].value = "Rolling"
     assert rc["n"] == 1  # built on demand
     assert fetches["n"] == 1  # no refetch on a pick
 
 
 def test_revisit_is_free(monkeypatch):
-    rc = _spy(monkeypatch, "rolling_correlation")
+    rc = _spy(monkeypatch, "rolling_series")
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
     picker = _pickers(app)[0]
 
-    picker.value = "Rolling Correlation"
+    picker.value = "Rolling"
     assert rc["n"] == 1
     picker.value = "Drawdown"  # navigate away
-    picker.value = "Rolling Correlation"  # ...and back: already fresh
+    picker.value = "Rolling"  # ...and back: already fresh
     assert rc["n"] == 1  # no recompute on revisit
 
 
 def test_refresh_restales_offscreen_views(monkeypatch):
-    rc = _spy(monkeypatch, "rolling_correlation")
+    rc = _spy(monkeypatch, "rolling_series")
     app = build_app(verbose=False)
     _mount_multi_strategy(app)
     picker = _pickers(app)[0]
 
-    picker.value = "Rolling Correlation"
+    picker.value = "Rolling"
     assert rc["n"] == 1
-    picker.value = "Drawdown"  # leave Rolling Correlation mounted elsewhere
+    picker.value = "Drawdown"  # leave Rolling mounted elsewhere
 
     # A basket change rebuilds the slice (v0.9.30 — Refresh prices is gone and
     # this is what re-slices now); only the now-mounted Drawdown view renders,
-    # so Rolling Correlation is not recomputed here...
+    # so Rolling is not recomputed here...
     # Two, not one: a correlation needs a pair, so dropping to a
-    # single strategy would leave `rolling_correlation` uncalled and
+    # single strategy would leave `rolling_series` uncalled and
     # the counter unmoved for the wrong reason.
     _basket(app).replace(list(_basket(app).value)[:2])
     assert rc["n"] == 1
 
     # ...but it's now stale, so re-picking it rebuilds on demand.
-    picker.value = "Rolling Correlation"
+    picker.value = "Rolling"
     assert rc["n"] == 2
