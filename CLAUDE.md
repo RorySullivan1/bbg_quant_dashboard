@@ -271,6 +271,18 @@ the bar (`.bbg-drill-bar`), breadcrumb first — "where am I" reads before "how
 deep". Scope shows on every chart, the Icicle included; Level hides there,
 because a chart drawing every level at once has no single depth to select.
 
+**A group's hover says what it averaged** (v0.9.39, #388). All three charts
+route it through one `_members_note`, which reads
+`(Average over N strategies)` and is **empty for a leaf**. It said
+`· mean of 3`, which names the wrong noun — beside a number, "mean of 3"
+parses first as *the mean is 3* rather than as the mean of three things — and
+before that it was the bare integer, which rendered `1Y Sharpe 1.23 3`. The
+Icicle was worse and separately wrong: a `hovertemplate` is one string for the
+whole trace, so its `%{customdata[0]:.0f} strategies` rendered on **every**
+node and read **"1 strategies"** on each leaf — the common case here, where 16
+of the shipped catalog's 17 root points are one-member. It carries the note in
+`customdata` now, like the other two.
+
 The points table reads `points()` and never a figure's traces, and a row click
 routes on the **`leaf` flag**: a group narrows the drill, a strategy opens in
 Single Strategy through the same `_show_in_single_strategy` the catalog grid
@@ -482,7 +494,14 @@ statistics across**, the transpose of `.bbg-metrics`, because here the row is
 the series and a basket can hold five of them. Both tabs draw it, so it takes
 the frame rather than reading a panel's state, and its numbers go through
 `_metric_cell`: the two-decimal rule, the dash and *red for negative, no
-green* are one implementation across every HTML stats table.
+green* are one implementation across every HTML stats table. **Mean reads in
+basis points** (v0.9.39, #388), which is that rule's answer to a statistic
+three orders below its neighbours rather than an exception to it: a daily
+mean lives around 0.0001–0.0006, so two decimals of a percentage gave it one
+significant figure and printed `0.06%` for two strategies a fifth apart.
+Basis points move the decimal and keep the decimals; the heading carries the
+unit, which is why `RETURN_STAT_UNITS` declares a heading apart from the
+column name.
 
 **Every option in the analysis picker draws** (#367). Three of eight were dead
 ends: *PCA Analysis* and *Defensive Scoring* were `_StubChart`s drawing
@@ -567,7 +586,7 @@ precisions.
 
 ## Current version
 
-`v0.9.38` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.39` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

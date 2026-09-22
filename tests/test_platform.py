@@ -423,6 +423,32 @@ def test_the_icicle_buckets_a_missing_level_as_other(monkeypatch):
     assert nodes["Equity / Other"] == "Equity"
 
 
+def test_the_icicle_hover_never_says_one_strategies():
+    """#388. A `hovertemplate` is one string for the whole trace, so the
+    icicle's `%{customdata[0]:.0f} strategies` rendered for **every** node —
+    including each leaf, where it read "1 strategies". That is the common case
+    on the shipped catalog, where 16 of 17 root points are one-member.
+
+    Routing it through `_members_note` fixes the grammar and makes all three
+    Platform charts say the same thing the same way.
+    """
+    from src.layout.platform_charts import _members_note
+
+    assert _members_note(1) == "", "a leaf says nothing"
+    assert _members_note(2) == " (Average over 2 strategies)"
+
+    chart = IcicleChart()
+    chart.update(_icicle_frame(), **_ICICLE_KW)
+    (trace,) = chart.fig.data
+    # The template carries the note verbatim rather than formatting a count.
+    assert "%{customdata[0]}" in trace.hovertemplate
+    assert "strategies" not in trace.hovertemplate, "the noun is in the note"
+    notes = {cd[0] for cd in trace.customdata}
+    assert not any("1 strategies" in n for n in notes)
+    assert any("Average over" in n for n in notes), "some node is a group"
+    assert "" in notes, "and every leaf is silent"
+
+
 def test_the_icicle_label_drives_the_colorbar_and_the_value_label():
     chart = IcicleChart()
     chart.update(_icicle_frame(), metric="sortino", metric_label="3M Sortino")
@@ -885,7 +911,12 @@ def test_a_metric_or_window_change_does_not_render_the_strip():
 
 def test_the_scatter_hover_names_the_members_rather_than_a_bare_count():
     """It rendered `%{customdata[1]}` against the raw count, so a group read
-    "1Y Sharpe 1.23 3" — an integer the reader has to guess at."""
+    "1Y Sharpe 1.23 3" — an integer the reader has to guess at.
+
+    It then read `· mean of 3`, which names the wrong noun (#388): beside a
+    number, "mean of 3" parses first as *the mean is 3*. The count belongs on
+    the thing being counted.
+    """
     chart = RegimeFactorScatter()
     points = _scatter_points(counts=(3, 1))
     chart.update(
@@ -896,8 +927,8 @@ def test_the_scatter_hover_names_the_members_rather_than_a_bare_count():
         colors=ASSET_CLASS_COLORS,
     )
     by_name = {tr.name: tr for tr in chart.fig.data}
-    assert by_name["Equity"].customdata[0][1] == " · mean of 3"
-    # A strategy says nothing: "mean of 1" is true and useless.
+    assert by_name["Equity"].customdata[0][1] == " (Average over 3 strategies)"
+    # A strategy says nothing: "average over 1 strategy" is true and useless.
     assert by_name["Fixed Income"].customdata[0][1] == ""
 
 
