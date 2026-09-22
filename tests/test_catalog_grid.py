@@ -539,8 +539,10 @@ def test_only_windows_the_price_history_supports_are_offered():
     # and the column renders as a full column of dashes, which reads as a
     # broken dashboard rather than a pending feature.
     offered = [label for label, _ in config.stat_windows()]
-    assert offered == ["6M", "1Y", "3Y", "5Y"]
-    assert "10Y" not in offered and "15Y" not in offered
+    assert offered == ["6M", "1Y", "3Y", "5Y", "10Y"]
+    # 15Y is the one the ten-year lookback cannot serve (#361) — and the one
+    # the catalog's own strategies, launched mid-2016, could not fill anyway.
+    assert "15Y" not in offered
     # They are declared, though — widening the fetch is meant to reveal them
     # with no UI change.
     assert "15Y" in [label for label, _ in config.STAT_WINDOWS]
@@ -698,20 +700,35 @@ def test_the_header_names_the_sample_it_claims():
 
     The header is a promise about what was standardized, so the number in it
     and the sample behind it have to come from the same place. Both are read
-    off `LOOKBACK_YEARS`: the label here, and `SCORE_SAMPLE_DAYS` — which
+    off `SCORE_SAMPLE_YEARS`: the label here, and `SCORE_SAMPLE_DAYS` — which
     `render_universe_grid` passes as the z-window — there. A literal `5Y` typed
     into the header would be free to outlive a config change.
+
+    **And not off `LOOKBACK_YEARS`.** The two were one number until v0.9.34
+    (#361) widened the analysis to ten years and kept the sample at five; a
+    header that kept reading the lookback would say `10Y Z-Score` over a
+    five-year sample, which is exactly the drift this test is for.
     """
-    from src.config import LOOKBACK_YEARS, SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
+    from src.config import (
+        LOOKBACK_YEARS,
+        SCORE_SAMPLE_DAYS,
+        SCORE_SAMPLE_YEARS,
+        TRADING_DAYS_PER_YEAR,
+    )
     from src.layout.grids import zscore_column_name
 
     assert zscore_column_name("Sharpe", "1Y") == "Normalized 1Y Sharpe (5Y Z-Score)"
     assert zscore_column_name("Calmar", "6M") == "Normalized 6M Calmar (5Y Z-Score)"
 
     # The `5Y` is that constant, not a coincidence...
-    assert zscore_column_name("Sharpe", "1Y").endswith(f"({LOOKBACK_YEARS}Y Z-Score)")
+    assert zscore_column_name("Sharpe", "1Y").endswith(
+        f"({SCORE_SAMPLE_YEARS}Y Z-Score)"
+    )
     # ...and it is the same constant the sample itself is sized from.
-    assert SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+    assert SCORE_SAMPLE_DAYS == SCORE_SAMPLE_YEARS * TRADING_DAYS_PER_YEAR
+    # ...and it is not the lookback, which is a different number now.
+    assert LOOKBACK_YEARS != SCORE_SAMPLE_YEARS
+    assert f"({LOOKBACK_YEARS}Y" not in zscore_column_name("Sharpe", "1Y")
 
 
 def test_a_window_or_metric_change_keeps_every_group_contiguous():

@@ -134,9 +134,10 @@ Project-specific hooks:
   and `bql_client.fetch_prices` only orchestrates between one of them and a
   `PriceCache`.
 
-- **The request spans `score_history_years()`** — ten years today, derived as
-  `LOOKBACK_YEARS + the longest window stat_windows() offers` (v0.9.23 #322,
-  widening #311's six). It is longer than the app **analyses** on purpose: both
+- **The request spans `score_history_years()`** — fifteen years today, derived
+  as `the longest window stat_windows() offers + SCORE_SAMPLE_YEARS` (v0.9.23
+  #322, widening #311's six; v0.9.34 #361 moved the lookback to ten and split
+  the sample off it). It is longer than the app **analyses** on purpose: both
   boards score a metric against `SCORE_SAMPLE_DAYS` of its own rolling history,
   so the deepest case needs the longest window plus that sample.
   `DashboardApp._analytics_window_start()` is the single boundary, and every

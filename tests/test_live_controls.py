@@ -156,7 +156,7 @@ def test_a_ranking_change_rerenders_the_column_without_refetching(monkeypatch):
     window is the sharper case now: it re-scores the whole catalog on a click,
     and a recompute is exactly what could tempt a refetch.
     """
-    from src.config import LOOKBACK_YEARS
+    from src.config import SCORE_SAMPLE_YEARS
     from src.layout.app import DashboardApp
     from src.layout.grids import ZSCORE_SUPERCOL
 
@@ -170,7 +170,7 @@ def test_a_ranking_change_rerenders_the_column_without_refetching(monkeypatch):
             c for c in app.universe_grid._display.columns if ZSCORE_SUPERCOL in str(c)
         ]
 
-    assert _z_columns() == [f"Normalized 1Y Sharpe ({LOOKBACK_YEARS}Y Z-Score)"]
+    assert _z_columns() == [f"Normalized 1Y Sharpe ({SCORE_SAMPLE_YEARS}Y Z-Score)"]
 
     # Click, rather than set the trait: the handler wiring is half of what is
     # being asserted.
@@ -178,9 +178,9 @@ def test_a_ranking_change_rerenders_the_column_without_refetching(monkeypatch):
         dict(zip(chips.labels, chips.children, strict=True))[label].click()
 
     _click(app.z_metric_chips, "Sortino")
-    assert _z_columns() == [f"Normalized 1Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"]
+    assert _z_columns() == [f"Normalized 1Y Sortino ({SCORE_SAMPLE_YEARS}Y Z-Score)"]
     assert calls["n"] == after_load
 
     _click(app.window_chips, "3Y")
-    assert _z_columns() == [f"Normalized 3Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"]
+    assert _z_columns() == [f"Normalized 3Y Sortino ({SCORE_SAMPLE_YEARS}Y Z-Score)"]
     assert calls["n"] == after_load

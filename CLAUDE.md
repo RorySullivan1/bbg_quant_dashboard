@@ -105,12 +105,17 @@ listing the catalog's top three and bottom three as
 (1W–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year does not
 reach the two controls built from `SHORT_WINDOW_OPTIONS`). **Ranking is by the
 score** (#310), which the section title says out loud
-(`(Ranked By Normalized 5Y Z-Score)`, built from `LOOKBACK_YEARS` rather than
-spelled) — each metric standardized against its *own* trailing history,
+(`(Ranked By Normalized 5Y Z-Score)`, built from `SCORE_SAMPLE_YEARS` rather
+than spelled) — each metric standardized against its *own* trailing history,
 which is why the app **fetches** `score_history_years()` — the longest window
-the catalog offers plus the sample standardized behind it, ten years today —
-while analytics stay at `LOOKBACK_YEARS = 5`; the raw value rides behind it in
-parentheses so a reader
+the catalog offers plus the sample standardized behind it, **fifteen years**
+since v0.9.34 (#361) — while analytics stay at `LOOKBACK_YEARS = 10`. The
+sample and the lookback were one constant while both were 5; #361 widened
+the analysis to ten years and *kept the sample at five*, because a ten-year
+sample is a different statistic and its half-sample floor would have needed
+~22 years of history to rank at all. `SCORE_SAMPLE_YEARS` is what both boards
+share now, and every `(nY Z-Score)` label reads it, never the lookback. The raw
+value rides behind the score in parentheses so a reader
 can see what was standardized, and the sentiment colour sits on the score, which
 is what the row is read by. The asset-class-demeaned z-score is a different
 figure and stays where it belongs, on the catalog's Z-Score column. **Clicking any row opens that strategy in Single Strategy**, through the
@@ -169,13 +174,13 @@ own set from `RANKABLE_METRICS`, so a reading carries between the two boards —
 over the selected **Window**, standardized against a fixed `SCORE_SAMPLE_DAYS`
 of that metric's own rolling history. The header says all four facts:
 **`Normalized 1Y Sharpe (5Y Z-Score)`**, with the `5Y` built from
-`LOOKBACK_YEARS` rather than typed. Three rules hold underneath. The column is
+`SCORE_SAMPLE_YEARS` rather than typed. Three rules hold underneath. The column is
 **found by the key its builder returned**, never by parsing its header — five
 behaviours hang off knowing which column it is (width, ramp, DataTables kind,
 number renderer, filter units) and all five failed silently on a relabel (#323).
 A sample too short to be a five-year sample **renders a dash** rather than
 standardizing against the little it has (`CATALOG_SCORE_MIN_SAMPLE_DAYS`), so
-at the `5Y` window an index needs roughly 7.5 years of history to be ranked.
+at the `10Y` window an index needs roughly 12.5 years of history to be ranked.
 And **Vol is not rankable here**: the ramp and the sort both say *higher is
 better*, which volatility is not — it stays on the Quantitative filter, where
 nothing claims a direction for it. The analytics card offered it too until
@@ -404,7 +409,7 @@ precisions.
 
 ## Current version
 
-`v0.9.33` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.34` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
