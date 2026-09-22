@@ -24,12 +24,13 @@ from ipydatagrid import DataGrid, TextRenderer
 
 from ..config import LOOKBACK_YEARS, TRADING_DAYS_PER_YEAR
 from ..stats import ann_return, ann_sharpe, ann_volatility, poly_fit
-from ..style import Color
+from ..style import READOUT_OPACITY, Color, Font
 from .theme import (
     SHARPE_WINDOW_LABEL,
     _chart_layout,
     _h_ref,
     _palette_color,
+    _rgba,
     _short_ticker,
 )
 
@@ -116,11 +117,18 @@ class Chart:
 
 
 class LineChart(Chart):
-    """Cumulative rebased performance, one line per strategy."""
+    """Cumulative rebased performance, one line per strategy.
+
+    Since #380 it also carries a **readout of the period on screen**: a
+    pre-allocated annotation the Single Strategy tab fills with the metrics
+    measured over whatever x-range the figure is zoomed to. Zooming was
+    cosmetic before — the line rescaled and nothing else knew the reader had
+    narrowed to a period.
+    """
 
     def _build(self) -> go.FigureWidget:
         """The cumulative-performance figure."""
-        return go.FigureWidget(
+        fig = go.FigureWidget(
             layout=_chart_layout(
                 title=f"Cumulative Performance ({LOOKBACK_YEARS}Y)",
                 hovermode="x unified",
@@ -128,13 +136,63 @@ class LineChart(Chart):
                 yaxis=dict(title="Rebased = 100"),
             )
         )
+        # The zoom readout (#380). Pre-allocated and retexted in place, the
+        # `WeeklyScatterChart` rule — and top-**left** at paper coordinates so
+        # it sits over the start of the series, where a rebased line is at 100
+        # and least likely to be covered.
+        fig.add_annotation(
+            x=0.01,
+            y=0.99,
+            xref="paper",
+            yref="paper",
+            xanchor="left",
+            yanchor="top",
+            showarrow=False,
+            align="left",
+            text="",
+            font=dict(color=Color.CHART_TEXT.value, size=10, family=Font.MONO.value),
+            bgcolor=_rgba(Color.SURFACE.value, READOUT_OPACITY),
+            bordercolor=Color.BORDER.value,
+            borderwidth=1,
+            borderpad=6,
+            visible=False,
+        )
+        return fig
 
     def update(self, perf: pd.DataFrame) -> None:
-        """Draw one rebased line per column."""
+        """Draw one rebased line per column. **Leaves the readout alone** —
+        it is the caller's, and recomputing it here would need the span."""
         _update_line_series(self.fig, perf)
+
+    def set_readout(self, text: str) -> None:
+        """Fill the in-figure readout, or hide it when handed nothing."""
+        annotation = self.fig.layout.annotations[0]
+        with self.fig.batch_update():
+            annotation.text = text or ""
+            annotation.visible = bool(text)
+
+    def on_range(self, callback) -> None:
+        """Call `callback(lo, hi)` whenever the drawn x-range changes.
+
+        `lo` / `hi` are the range Plotly reports, or **`None` on an
+        autorange** — a double-click, or the reset a fresh `update` performs.
+        A caller treats that as "the whole window", which is the state the
+        chart opens in; the readout is never blank while a line is drawn.
+
+        Wrapping `fig.layout.on_change` rather than exposing it: the figure is
+        the chart's, and a caller reaching into `.layout` to subscribe is the
+        loose figure-and-updater pairing #223 removed.
+        """
+
+        def _forward(_layout, value) -> None:
+            lo, hi = (value or (None, None)) if value is not None else (None, None)
+            callback(lo, hi)
+
+        self.fig.layout.on_change(_forward, "xaxis.range")
 
     def clear(self) -> None:
         self.update(pd.DataFrame())
+        self.set_readout("")
 
 
 class OutperformanceChart(Chart):
@@ -568,8 +626,12 @@ class WeeklyScatterChart(Chart):
                 ),
             )
         )
-        # Trace 0 = weekly-return markers; trace 1 = the quadratic fit line. Both
-        # start empty and are filled in place on update.
+        # Trace 0 = weekly-return markers; trace 1 = its quadratic fit;
+        # trace 2 / 3 = the regime-conditioned pair (#382). All four start
+        # empty and are filled in place on update — a *same-count* trace
+        # replacement can be dropped by older widget-manager frontends, which
+        # is the repaint bug this chart hit on BQuant, so the conditioned pair
+        # is pre-allocated here rather than added when a regime is switched on.
         fig.add_trace(
             go.Scatter(
                 x=[],
@@ -590,6 +652,28 @@ class WeeklyScatterChart(Chart):
                 hoverinfo="skip",
             )
         )
+        fig.add_trace(
+            go.Scatter(
+                x=[],
+                y=[],
+                mode="markers",
+                marker=dict(size=7, color=_palette_color(1), line=dict(width=0)),
+                name="in regime",
+                hovertemplate="bench %{x:.2%}<br>strat %{y:.2%}<extra></extra>",
+                visible=False,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[],
+                y=[],
+                mode="lines",
+                line=dict(color=_palette_color(1), width=2),
+                name="in-regime fit",
+                hoverinfo="skip",
+                visible=False,
+            )
+        )
         # Pre-allocated β/convexity/R² annotation, toggled + retexted in place.
         fig.add_annotation(
             x=0.02,
@@ -604,48 +688,110 @@ class WeeklyScatterChart(Chart):
         )
         return fig
 
-    def update(self, x: pd.Series, y: pd.Series) -> None:
+    @staticmethod
+    def _fit_line(frame: pd.DataFrame) -> tuple[object, str] | tuple[None, str]:
+        """The quadratic through `frame`, as (xy pair, caption).
+
+        Returns `(None, "")` when the fit is undefined — fewer than three
+        points, or three collinear ones — which is the caller's signal to
+        empty its line while keeping its markers.
+        """
+        fit = poly_fit(frame["x"], frame["y"], degree=2)
+        if np.isnan(fit.convexity):
+            return None, ""
+        # Dense x grid so the quadratic renders as a smooth curve, sorted so
+        # the connected line never doubles back on itself.
+        xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
+        caption = (
+            f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
+            f"  R²={fit.r_squared:.2f}"
+        )
+        return (xs, np.polyval(fit.coeffs, xs)), caption
+
+    def update(
+        self,
+        x: pd.Series,
+        y: pd.Series,
+        *,
+        mask: pd.Series | None = None,
+        regime_label: str = "",
+    ) -> None:
         """Scatter of paired weekly returns (x = benchmark, y = strategy) with a
         quadratic least-squares fit, so a curved line reveals convexity (a smile =
         the strategy outperforms in big up *and* down weeks) rather than a single
         straight β. The annotation reports the central β (linear term), the convexity
         (x² term, signed) and R². Fewer than three aligned points clears the fit
-        line (markers still draw); fewer than two clears the figure."""
+        line (markers still draw); fewer than two clears the figure.
+
+        `mask` conditions on a regime (#382). **Both clouds stay on screen**:
+        the full-window pair drops to a muted treatment and the weeks inside
+        the regime are drawn over it in colour with their own fit, so what the
+        reader sees is the relationship *moving* rather than a cloud that
+        quietly lost most of its points. With no mask the conditioned pair is
+        emptied and hidden and the chart is what it was before — the
+        unconditioned view is a path both states share, not a second branch
+        (v0.9.33's rule).
+        """
         frame = (
             pd.DataFrame({"x": x, "y": y}).dropna()
             if x is not None and y is not None
             else pd.DataFrame(columns=["x", "y"])
         )
-        # Mutate the pre-allocated traces + annotation in place (see
-        # `_weekly_scatter_chart`): a same-count trace *replacement* can fail to
-        # repaint on older widget-manager frontends, an in-place restyle does not.
+        # Mutate the pre-allocated traces + annotation in place (see `_build`):
+        # a same-count trace *replacement* can fail to repaint on older
+        # widget-manager frontends, an in-place restyle does not.
         marker, fit_line = self.fig.data[0], self.fig.data[1]
+        in_marker, in_fit = self.fig.data[2], self.fig.data[3]
         annotation = self.fig.layout.annotations[0]
         if len(frame) < 2:
             with self.fig.batch_update():
-                marker.x, marker.y = (), ()
-                fit_line.x, fit_line.y = (), ()
+                for trace in (marker, fit_line, in_marker, in_fit):
+                    trace.x, trace.y = (), ()
+                in_marker.visible = False
+                in_fit.visible = False
                 annotation.visible = False
             return
-        fit = poly_fit(frame["x"], frame["y"], degree=2)
-        has_fit = not np.isnan(fit.convexity)
+
+        conditioned = (
+            frame.loc[mask.reindex(frame.index).fillna(False).to_numpy()]
+            if mask is not None
+            else None
+        )
+        on = conditioned is not None
+
+        xy, caption = self._fit_line(frame)
+        lines = [f"all: {caption}"] if (on and caption) else [caption]
         with self.fig.batch_update():
             marker.x = frame["x"].to_numpy()
             marker.y = frame["y"].to_numpy()
-            if has_fit:
-                # Dense x grid so the quadratic renders as a smooth curve, sorted so
-                # the connected line never doubles back on itself.
-                xs = np.linspace(frame["x"].min(), frame["x"].max(), 100)
-                fit_line.x = xs
-                fit_line.y = np.polyval(fit.coeffs, xs)
-                annotation.text = (
-                    f"β={fit.slope:.2f}  convexity={fit.convexity:+.1f}"
-                    f"  R²={fit.r_squared:.2f}"
+            # Muted only while there is a conditioned cloud to be the subject;
+            # on its own the full window *is* the subject and keeps its colour.
+            marker.marker.color = Color.TEXT_MUTED.value if on else _palette_color(0)
+            marker.marker.size = 5 if on else 6
+            fit_line.x, fit_line.y = xy if xy is not None else ((), ())
+
+            in_marker.visible = on
+            in_fit.visible = on
+            if on and len(conditioned) >= 2:
+                in_marker.x = conditioned["x"].to_numpy()
+                in_marker.y = conditioned["y"].to_numpy()
+                in_xy, in_caption = self._fit_line(conditioned)
+                in_fit.x, in_fit.y = in_xy if in_xy is not None else ((), ())
+                lines.append(f"{regime_label or 'in regime'}: {in_caption or '—'}")
+            elif on:
+                # Too few weeks to fit, but the ones there are still drawn:
+                # an empty panel would read as "the regime never happened".
+                in_marker.x = conditioned["x"].to_numpy() if len(conditioned) else ()
+                in_marker.y = conditioned["y"].to_numpy() if len(conditioned) else ()
+                in_fit.x, in_fit.y = (), ()
+                lines.append(
+                    f"{regime_label or 'in regime'}: "
+                    f"{len(conditioned)} week(s) — too few to fit"
                 )
-                annotation.visible = True
-            else:
-                fit_line.x, fit_line.y = (), ()
-                annotation.visible = False
+
+            text = "<br>".join(line for line in lines if line)
+            annotation.text = text
+            annotation.visible = bool(text)
 
     def clear(self) -> None:
         self.update(None, None)
@@ -871,10 +1017,11 @@ class RegimeProfileChart(Chart):
     wrong here.
     """
 
-    #: The muted anchor and the three buckets, in bucket order. The buckets
-    #: take the shared positional palette so a bucket's colour matches the
-    #: legend entry beside it and nothing else on the tab.
-    ANCHOR_LABEL: str = "Whole window"
+    #: What the unconditioned point is called, wherever it is named — the
+    #: bucket index, the legend entry and the hover all read this rather than
+    #: re-spelling it (#381; it was "Whole window" in two files that had to
+    #: agree by hand).
+    ANCHOR_LABEL: str = "Full period"
 
     def _build(self) -> go.FigureWidget:
         return go.FigureWidget(
@@ -900,12 +1047,12 @@ class RegimeProfileChart(Chart):
     ) -> None:
         """Draw the points.
 
-        `points` is indexed by bucket label with `vol` / `ret` columns and a
-        `series` column naming which line each belongs to — the strategy, the
-        benchmark, or `ANCHOR_LABEL`. One frame rather than three arguments
-        because every point is drawn the same way and only its grouping
-        differs; building it is `single_strategy`'s, which is where the masks
-        and the cache live.
+        `points` is indexed by bucket label with `vol` / `ret` columns, a
+        `series` column naming which line each belongs to, an `anchor` flag,
+        and a `series_index` giving that series' palette slot. One frame
+        rather than four arguments because every point is drawn the same way
+        and only its grouping differs; building it is `single_strategy`'s,
+        which is where the masks and the cache live.
         """
         if points is None or points.empty:
             self.clear()
@@ -917,6 +1064,17 @@ class RegimeProfileChart(Chart):
         traces: list[go.Scatter] = []
         for position, (name, block) in enumerate(frame.groupby("series", sort=False)):
             anchor = bool(block["anchor"].iloc[0]) if "anchor" in block else False
+            # **Colour keys to the series, not to the group** (#381). The
+            # enumeration counts *groups*, and with a benchmark on there are
+            # four of them — each series' anchor and its buckets — so a
+            # positional colour gave one series two colours and told the
+            # reader nothing about which anchor belonged to which cloud.
+            # `series_index` is the series' own slot, carried by the caller.
+            colour = _palette_color(
+                int(block["series_index"].iloc[0])
+                if "series_index" in block
+                else position
+            )
             traces.append(
                 go.Scatter(
                     x=block["vol"].to_numpy(),
@@ -925,19 +1083,15 @@ class RegimeProfileChart(Chart):
                     name=str(name),
                     text=[str(i) for i in block.index],
                     textposition="top center",
-                    textfont=dict(
-                        color=(
-                            Color.TEXT_MUTED.value if anchor else Color.CHART_TEXT.value
-                        ),
-                        size=10,
-                    ),
+                    textfont=dict(color=colour, size=10),
                     marker=dict(
+                        # The anchor is told apart by its **shape**, not by
+                        # being grey: a large open diamond among filled
+                        # circles still reads as the reference the three
+                        # buckets are deviations from, and it keeps the
+                        # colour that says whose reference it is.
                         size=18 if anchor else 13,
-                        color=(
-                            Color.TEXT_MUTED.value
-                            if anchor
-                            else _palette_color(position)
-                        ),
+                        color=colour,
                         symbol="diamond-open" if anchor else "circle",
                         line=dict(width=2 if anchor else 0),
                     ),

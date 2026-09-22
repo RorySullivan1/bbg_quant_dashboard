@@ -38,7 +38,6 @@ from ..config import (
     BENCHMARK_SHORT_HISTORY_DAYS,
     DEFAULT_RANKING_METRIC,
     FACTOR_TICKERS,
-    LEADERBOARD_WINDOW_DAYS,
     LEADERBOARD_WINDOW_OPTIONS,
     LEGAL_DISCLOSURE_PATH,
     LOOKBACK_YEARS,
@@ -51,6 +50,7 @@ from ..config import (
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     field_label,
+    leaderboard_window_days,
     rankable_metric_chips,
     score_history_years,
     stat_windows,
@@ -573,7 +573,7 @@ class DashboardApp:
         # `_build_window_chips` made for the catalog's window.
         self.ranking_window = ChipGroup(
             LEADERBOARD_WINDOW_OPTIONS,
-            value=LEADERBOARD_WINDOW_DAYS,
+            value=leaderboard_window_days(),
             row=True,
         )
         self.ranking_window_bar = control_bar(
@@ -976,7 +976,7 @@ class DashboardApp:
             # runs before the redraw because the type change is what
             # repopulates the buckets — redrawing first would condition on
             # the *previous* regime's bucket.
-            for controls in (pane.decile_regime, pane.regime):
+            for controls in (pane.weekly_regime, pane.decile_regime, pane.regime):
                 if controls is None:
                     continue
                 for control in (controls.on, controls.types, controls.source):

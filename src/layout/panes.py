@@ -159,6 +159,7 @@ class SingleAnalysisPane:
     stack: W.Box
     views: dict[str, W.Widget]
     weekly: WeeklyScatterChart
+    weekly_regime: RegimeControls
     retdist: ReturnDistChart
     factor: FactorCorrChart
     dd: DrawdownChart
@@ -237,6 +238,13 @@ def _make_single_analysis_pane(
     # a chip on a hidden view move a visible one.
     decile_regime = RegimeControls(state)
     regime_profile = RegimeProfileChart()
+    # The Weekly Scatter's own regime (#382), with buckets: unlike the profile
+    # below, it conditions on **one** bucket at a time, and it draws the
+    # unconditioned cloud underneath rather than replacing it. Its own
+    # instance for the same reason `decile_regime` is — two views each
+    # conditioning their own chart is two selections, not one.
+    weekly_regime = RegimeControls(state)
+
     # **No bucket control** (#363 dec. 8): all three buckets are the chart, so
     # there is nothing for a bucket chip to select. The *type* and *source*
     # are the Platform card's own controls, from the module both tabs import.
@@ -247,7 +255,16 @@ def _make_single_analysis_pane(
 
     view_layout = W.Layout(width="100%", padding="4px")
     views: dict[str, W.Widget] = {
-        "Weekly Scatter": W.VBox([weekly.fig], layout=view_layout),
+        "Weekly Scatter": W.VBox(
+            [
+                weekly_regime.on,
+                weekly_regime.types,
+                weekly_regime.source,
+                weekly_regime.buckets,
+                weekly.fig,
+            ],
+            layout=view_layout,
+        ),
         "Return Distribution": W.VBox(
             [retdist.fig, retdist.stats_grid], layout=view_layout
         ),
@@ -326,6 +343,7 @@ def _make_single_analysis_pane(
         stack=stack,
         views=views,
         weekly=weekly,
+        weekly_regime=weekly_regime,
         retdist=retdist,
         factor=factor,
         dd=dd,

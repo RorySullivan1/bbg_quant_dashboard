@@ -252,6 +252,16 @@ CALENDAR_HEIGHT: str = "336px"
 #: plus the header; beyond that it scrolls.
 STRATEGY_METRICS_HEIGHT: str = "292px"
 
+#: How opaque the cumulative chart's in-figure zoom readout sits over the
+#: plot (#380).
+#:
+#: **Semi-transparent on purpose**: the panel is drawn over the chart's own
+#: top-left corner, and a solid box there would hide the start of a rebased
+#: line — which is the one place every series is at 100 and the eye uses to
+#: judge the rest. High enough that the numbers stay legible against a
+#: gridline, low enough that the line reads through it.
+READOUT_OPACITY: float = 0.82
+
 #: How wide the asset-class colour block on a selected-strategy card is.
 #:
 #: 3px when the cards shipped, which read as trim rather than as the card's

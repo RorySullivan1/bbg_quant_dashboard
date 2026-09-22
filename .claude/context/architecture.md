@@ -323,6 +323,14 @@ board was 16 Market Superlative cards, retired in #291.)*
 
   1. **Profile + cumulative chart** — the metadata card (`_render_profile_card`)
      beside a cumulative performance chart with the optional benchmark overlay.
+     The chart carries a **zoom readout** (#380): `LineChart.on_range` forwards
+     the figure's `xaxis.range` changes to `SingleStrategyPanel.render_readout`,
+     which measures `stats.span_metrics` over the visible span and writes it
+     into a pre-allocated, semi-transparent annotation via `set_readout`. A
+     `None` range (a reset, or the autorange a fresh `update` performs) means
+     the whole window, so the panel is never blank while a line is drawn.
+     Under a year `ANNUALIZED_METRICS` are dropped and Return becomes
+     `CUMULATIVE_RETURN`; the span is clamped to the strategy's valid history.
   2. **The numbers, as HTML** (#366). `_render_strategy_metrics` draws
      `stats.strategy_metrics` — Return · Vol · Sharpe · Sortino · Calmar ·
      Max DD · Beta · Correlation over every `stat_windows()` window plus
@@ -339,8 +347,13 @@ board was 16 Market Superlative cards, retired in #291.)*
      Correlation / Sharpe / Calmar / Beta chip moving the title, the y-axis
      and the reference line) · **Decile** (weekly returns by benchmark decile,
      regime-conditionable) · **Regime Profile** (return vs vol under all three
-     buckets plus the muted unconditioned anchor) · **Risk Profile** (five βs
-     on a cross-sectional percentile polar axis, raw β in the hover).
+     buckets plus the unconditioned *Full period* anchor, which wears its own
+     series' colour and is set apart by its open-diamond shape, #381) ·
+     **Risk Profile** (five βs on a cross-sectional percentile polar axis, raw
+     β in the hover). **Weekly Scatter is regime-conditionable too** (#382),
+     through its own `weekly_regime` `RegimeControls`: it keeps four
+     pre-allocated traces and draws the conditioned cloud and fit over the
+     muted full-window pair, reporting both fits in the annotation.
      **Every option draws** — the three stubs went to #367, each into an issue
      of its own (#374 / #375 / #376).
 

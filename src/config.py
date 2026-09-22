@@ -43,11 +43,6 @@ SHARPE_ZSCORE_WINDOW = 252
 TRADING_DAYS_PER_YEAR = 252
 PERF_TABLE_YEARS = (1, 3, 5)
 
-#: Trailing window (trading days, ~1 month) the leaderboard ranks over on load,
-#: computed whole-catalog from the already-fetched prices. The Ranking window
-#: toggle moves it live; this is only the default.
-LEADERBOARD_WINDOW_DAYS = 21
-
 #: How long a sample **every** score is standardized against, in years of the
 #: metric's own rolling history. `score_history_years()` sizes the fetch so
 #: this is available at the deepest window either board offers (#310, #311).
@@ -180,6 +175,16 @@ LEADERBOARD_WINDOW_OPTIONS: list[tuple[str, int]] = [
     *SHORT_WINDOW_OPTIONS,
     ("1Y", TRADING_DAYS_PER_YEAR),
 ]
+
+#: Trailing window (trading days) the leaderboard ranks over on load, computed
+#: whole-catalog from the already-fetched prices. The Window chips move it
+#: live; this is only what the board opens on.
+#:
+#: It sits **below the options it has to be one of** so it can be spelled as
+#: one of their constants rather than as a bare number — it was `21` while the
+#: options were a list of names two hundred lines away, which is how a default
+#: and the chips that offer it drift apart.
+LEADERBOARD_WINDOW_DAYS = WEEK_WINDOW
 
 #: How many trading days the Platform Strip chart draws, one column per date.
 #: Read by the stats function, the chart and its header rather than typed at
@@ -514,6 +519,22 @@ def universe_grid_default_window() -> str:
             f"({offered})"
         )
     return UNIVERSE_GRID_DEFAULT_WINDOW
+
+
+def leaderboard_window_days() -> int:
+    """`LEADERBOARD_WINDOW_DAYS`, validated against the chips that offer it.
+
+    `universe_grid_default_window`'s argument, one board over: a default the
+    Window chips do not offer would open the board on a window no chip is lit
+    for, so the first click on any chip would look like it had done nothing.
+    """
+    offered = [days for _label, days in LEADERBOARD_WINDOW_OPTIONS]
+    if LEADERBOARD_WINDOW_DAYS not in offered:
+        raise ValueError(
+            f"LEADERBOARD_WINDOW_DAYS={LEADERBOARD_WINDOW_DAYS!r} is not one of "
+            f"LEADERBOARD_WINDOW_OPTIONS ({offered})"
+        )
+    return LEADERBOARD_WINDOW_DAYS
 
 
 #: Every catalog field the all-catalog grid can group by, **in nesting order**:

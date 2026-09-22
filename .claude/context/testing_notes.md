@@ -162,6 +162,24 @@ renders the full dashboard without a Bloomberg session. Verify by:
   Weekly Scatter · Return Distribution · Factor Scatter · Drawdown · Rolling ·
   Decile · Regime Profile · Risk Profile — and none of them shows a *coming
   soon* placeholder.
+- **Weekly Scatter** opens unconditioned and looks exactly as it did: one
+  cloud in colour, one dashed quadratic, a one-line β / convexity / R² panel.
+  Tick *Condition on regime* and a **second** cloud draws over it in colour
+  with its own solid fit while the full window steps back to grey; the panel
+  grows to two lines, `all:` over the bucket's own, and the two β figures
+  should differ. Untick it and the chart returns to exactly its opening state.
+  Pick a bucket almost nothing falls in: the few points still draw and the
+  panel says *too few to fit* rather than going blank.
+- **The cumulative chart's zoom readout** (#380). On load, a semi-transparent
+  panel sits at the chart's top-left naming the window, its length in days,
+  *annualized*, and eight metrics. Drag a zoom over **more** than a year: the
+  dates and every number change, and it still says *annualized*. Zoom to
+  **less** than a year: Vol, Sharpe, Sortino and Calmar **disappear**, Return
+  becomes *Return (cumulative)*, and the header says *cumulative, < 1Y*. Max
+  DD, Beta and Correlation survive both. Pan, and it follows. Double-click to
+  reset, and it reports the whole window again — it is never blank while a
+  line is drawn. Toggling the benchmark adds or drops the Beta and Correlation
+  rows. None of this shows the loading overlay: no zoom fetches.
 - **Rolling** is one figure with a Correlation · Sharpe · Calmar · Beta chip.
   Stepping the chip moves the **title, the y-axis label and the reference
   line** together (0, 0, 0, then **1** for Beta), and the benchmark dropdown
@@ -175,10 +193,12 @@ renders the full dashboard without a Bloomberg session. Verify by:
   and the title loses the suffix. Switching the regime **type** repopulates
   the buckets before the redraw, so the title never names a bucket from the
   regime you just left.
-- **Regime Profile** draws, per series, a muted open-diamond anchor labelled
-  *Whole window* plus one labelled marker per bucket — three for Volatility
-  and Rate-level. With a benchmark on there are two anchors and two sets of
-  three. There is **no bucket control** on this view. Unticking *Condition on
+- **Regime Profile** draws, per series, an open-diamond anchor labelled *Full
+  period* plus one labelled marker per bucket — three for Volatility and
+  Rate-level. With a benchmark on there are two anchors and two sets of three,
+  and **each anchor is the colour of its own cloud** (#381), so the pairing
+  reads without consulting the legend — two colours on screen, not three or
+  four. There is **no bucket control** on this view. Unticking *Condition on
   regime* leaves only the anchors.
 - **Risk Profile** is a five-spoke polygon — ERP · Term · Volatility · Trend ·
   Carry — on a radial axis in **percent**, and every hover reads
@@ -497,6 +517,8 @@ but not that the two sections *look* like one pair at a terminal's fonts.
   caption muted and smaller so it reads as a qualifier rather than a second
   heading, and on the same baseline as the title rather than wrapping under it
   at a narrow width.
+- The board **opens on `1W`** (#384), with that chip lit — not `1M`. Clicking
+  any other Window chip re-ranks it from the cache with no loading overlay.
 - Four columns — **Return / Sharpe / Calmar / Sortino** — each with a top block
   and a bottom block separated by a divider, and **centred** column titles.
 - Every row reads `rank · ticker · score (value)`: the score carries the

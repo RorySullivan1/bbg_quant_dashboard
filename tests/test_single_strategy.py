@@ -250,7 +250,9 @@ def test_render_section3_renders_both_panes(multiyear_prices, benchmark):
 
     ss.state = state
     ss.render_section3(meta, universe.index.min())
-    assert len(ss.pane_left.weekly.fig.data) == 2  # markers + quadratic fit
+    # Markers + quadratic fit, twice: the unconditioned pair and the
+    # regime-conditioned pair, both pre-allocated (#382).
+    assert len(ss.pane_left.weekly.fig.data) == 4
     assert len(ss.pane_right.factor.fig.data) == 1  # one monthly point cloud
 
 
@@ -400,7 +402,7 @@ def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
     ss.render_section3(meta, multiyear_prices.index.min())
     # Weekly scatter traces are pre-allocated (in-place update), so "cleared"
     # means the marker trace has no points, not zero traces.
-    assert len(ss.pane_left.weekly.fig.data) == 2
+    assert len(ss.pane_left.weekly.fig.data) == 4
     assert not ss.pane_left.weekly.fig.data[0].x  # no benchmark → cleared
     # Strategy-only histogram still renders.
     assert len(ss.pane_right.retdist.fig.data) >= 1
@@ -414,9 +416,9 @@ def test_render_section3_empty_cache_no_raise():
     _set_pane(ss.pane_right, "Factor Scatter")
     ss.state = state
     ss.render_section3(meta, pd.Timestamp("2020-01-01"))
-    # Weekly scatter keeps its 2 pre-allocated traces but with no data points.
-    assert len(ss.pane_left.weekly.fig.data) == 2
-    assert not ss.pane_left.weekly.fig.data[0].x
+    # Weekly scatter keeps its 4 pre-allocated traces but with no data points.
+    assert len(ss.pane_left.weekly.fig.data) == 4
+    assert all(not trace.x for trace in ss.pane_left.weekly.fig.data)
     assert len(ss.pane_right.factor.fig.data) == 0
 
 
@@ -434,6 +436,23 @@ def test_panel_owns_its_widgets_and_opens_on_the_first_calendar_kind():
     for pane in (ss.pane_left, ss.pane_right):
         assert isinstance(pane, SingleAnalysisPane)
     assert ss.pane_left is not ss.pane_right
+
+
+def test_every_bar_chip_group_on_the_tab_lays_out_as_a_row():
+    """#383. A `_ChipStack` is a `VBox` that runs horizontally only when built
+    with `row=True`. The calendar's *View* chips were the one group in a
+    `control_bar` that was not, so five chips stacked five high inside a
+    section whose height is fixed at `CALENDAR_HEIGHT`.
+
+    Asserted for every chip group the tab puts in a bar rather than for the
+    calendar's alone, so the next one added has to make the same choice
+    deliberately.
+    """
+    ss = SingleStrategyPanel(_meta(), None)
+    for name in ("cal_chips", "window_chips", "group_chips", "filter_dim_chips"):
+        chips = getattr(ss, name)
+        assert "bbg-chip-row" in chips._dom_classes, name
+        assert chips.layout.flex_flow == "row wrap", name
 
 
 def test_two_panels_share_no_widgets():
