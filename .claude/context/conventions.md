@@ -51,6 +51,23 @@ Every roadmap item ships through the same loop. The `/workstream` skill
    actually fires on the merge into `main`. Defer `.meta/VERSION` +
    release-note edits to end-of-cycle.
 
+   **Name every issue the PR closes, not just the first.** GitHub fires a
+   keyword only for the issues actually written, and `Closes #342` does not
+   close #343 because they share a parent, sit in the same PR, or are listed
+   in its body as prose. A PR that ships a whole epic needs
+   `Closes #341 #342 #343 …` — one keyword per number. #357 shipped all seven
+   sub-issues of epic #341 and carried one keyword, so six sub-issues and the
+   epic sat open for three versions while the code they describe was being
+   refined twice over. **Nothing catches this**: the merge succeeds, the code
+   is in `main`, and the only symptom is a backlog that disagrees with the
+   repo. Compare #350, which listed all nine of epic #331's and closed them
+   on merge.
+
+   The exception is an issue the PR does **not** finish. #343's acceptance
+   included a browser gate that no unit test can run, so it stays open while
+   its code ships — closing it with the rest would retire the check silently.
+   Say so in the PR body rather than leaving the omission to be inferred.
+
 ## Conventions
 
 (Visual/styling conventions — color identity, dark chart theme, dark chrome
