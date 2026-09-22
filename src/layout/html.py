@@ -43,6 +43,7 @@ from ..style import (
     HeatBand,
     StatusTone,
 )
+from .theme import _short_ticker
 
 # Shared style-token vocabulary spread into every template's context, so the
 # `data/templates/*.html` files carry placeholders ({{navy}}, {{label_size}},
@@ -467,6 +468,75 @@ def _calendar_cell(value: float, band: HeatBand | None, unit: str) -> str:
     text = html.escape(f"{value:.2%}" if unit == "percent" else f"{value:.2f}")
     css = _heat_class(value, band)
     return f"<td class='{css}'>{text}</td>" if css else f"<td>{text}</td>"
+
+
+#: The gap between the readout's metric column and its values, in characters.
+#: The annotation is drawn in the chart's mono font, so padding aligns the
+#: values into a column the way the HTML table's `text-align: right` does —
+#: added to the **longest label present** rather than to a fixed width, which
+#: `Return (cumulative)` (19 characters against a 12-wide column) overflowed.
+_READOUT_LABEL_GAP: int = 2
+
+
+def _render_span_readout(frame: pd.DataFrame, *, benchmark: str | None = None) -> str:
+    """The zoom readout drawn **inside** the cumulative chart (#380).
+
+    `frame` is `stats.span_metrics`' output — one `value` column indexed by
+    metric, with `start` / `end` / `days` / `annualized` on `.attrs`.
+
+    This returns **annotation text, not a widget**: ipywidgets cannot overlay
+    HTML on a figure, and Plotly annotations accept a small HTML subset
+    (`<br>`, `<b>`, `<span style>`), which is enough for a headed column of
+    numbers. Spaces collapse in that subset, so the metric column is padded
+    with `&nbsp;` rather than with spaces.
+
+    It reads `metric_unit` and `_metric_cell`'s two-decimal rule through the
+    same helpers the table below the chart uses, so the panel and the table
+    cannot disagree about how a number is written.
+    """
+    if frame is None or frame.empty:
+        return ""
+    start, end = frame.attrs.get("start"), frame.attrs.get("end")
+    days = int(frame.attrs.get("days") or 0)
+    annualized = bool(frame.attrs.get("annualized"))
+
+    span = (
+        f"{start:%Y-%m-%d} \u2192 {end:%Y-%m-%d}"
+        if start is not None and end is not None
+        else ""
+    )
+    # Say which regime the numbers are in, so a missing Sharpe reads as a
+    # decision rather than as a gap (#380).
+    basis = "annualized" if annualized else "cumulative, &lt; 1Y"
+    head = f"<b>{html.escape(span)}</b>" if span else ""
+    if head:
+        head += f"&nbsp;&middot;&nbsp;{days}d&nbsp;&middot;&nbsp;{basis}"
+
+    lines = [head] if head else []
+    width = max((len(str(m)) for m in frame.index), default=0) + _READOUT_LABEL_GAP
+    for metric, value in frame["value"].items():
+        unit = metric_unit(str(metric))
+        if value is None or pd.isna(value):
+            text = METRICS_NA
+        else:
+            text = f"{value:.2%}" if unit == "percent" else f"{value:.2f}"
+            if value < 0:
+                # The table's rule: red for negative, and no green (#366) —
+                # and the table's own `{{red}}`, which is solid. The `HEAT_*`
+                # reds carry an alpha suffix, and an 8-digit hex inside an
+                # annotation's inline style is at the mercy of the SVG text
+                # renderer where the CSS class below the chart is not.
+                text = f"<span style='color:{Color.RED_600.value}'>{text}</span>"
+        label = html.escape(str(metric))
+        pad = "&nbsp;" * max(width - len(str(metric)), 1)
+        lines.append(f"{label}{pad}{text}")
+
+    if benchmark:
+        lines.append(
+            f"<span style='color:{Color.TEXT_MUTED.value}'>"
+            f"vs {html.escape(_short_ticker(benchmark))}</span>"
+        )
+    return "<br>".join(lines)
 
 
 def _render_calendar(table: pd.DataFrame, *, kind: str) -> str:

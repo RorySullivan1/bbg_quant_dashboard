@@ -540,3 +540,26 @@ claim a good/bad axis volatility does not have, which is the same call the
 metrics table makes by using no green at all.
 
 A test pins that neither rendered block contains a hex literal.
+
+## The in-chart zoom readout (v0.9.37, #380)
+
+The cumulative chart's span readout is drawn **inside the figure**, as a
+Plotly annotation, because ipywidgets cannot overlay a `W.HTML` on a
+`FigureWidget` — there is no z-order between a widget and a figure's canvas,
+only boxes beside each other. An annotation is the only thing that sits *over*
+the plot.
+
+That trades the stylesheet for Plotly's small HTML subset: `<br>`, `<b>` and
+`<span style>`, and **spaces collapse**, so the metric column is padded with
+`&nbsp;` to the longest label present rather than aligned by CSS. Two
+consequences worth knowing before editing it. The negative colour is
+`Color.RED_600`, the table's own `{{red}}` — not one of the `HEAT_*` reds,
+which carry an alpha suffix, and an 8-digit hex inside an inline style is at
+the mercy of the SVG text renderer where a CSS class is not. And the font is
+`Font.MONO` set on the annotation, since there is no class to inherit it from.
+
+`READOUT_OPACITY` (0.82) is the box's alpha, combined with `Color.SURFACE` by
+`theme._rgba`. **Semi-transparent on purpose**: the panel sits over the
+chart's top-left corner, which is where a rebased line starts at 100 — the one
+point every series shares and the eye uses to judge the rest. A solid box
+there would hide it.

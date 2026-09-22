@@ -57,9 +57,32 @@ BENCHMARK_METRICS: frozenset[str] = frozenset({"Beta", "Correlation"})
 
 _METRIC_NAMES: tuple[str, ...] = tuple(name for name, _ in STRATEGY_METRICS)
 
+#: The metrics that are **annualized**, and so mean nothing over a sample
+#: shorter than a year (#380).
+#:
+#: Return is not among them because it *changes* rather than disappears —
+#: `span_metrics` reports the period's cumulative return in its place and the
+#: renderer relabels the row. These four have no such fallback: an annualized
+#: volatility from four months of data is a number under a label that does not
+#: describe it, the same objection #366 made to a partially-served window.
+#:
+#: Calmar is here for the reason it is a *ratio of* an annualized return, so
+#: it inherits the objection whole rather than being a separate judgement.
+ANNUALIZED_METRICS: frozenset[str] = frozenset({"Vol", "Sharpe", "Sortino", "Calmar"})
+
+#: The label the Return row takes when the span is under a year, so the number
+#: is never read as an annual rate.
+CUMULATIVE_RETURN: str = "Return (cumulative)"
+
 
 def metric_unit(metric: str) -> str:
-    """``"percent"`` or ``"ratio"`` for one metric name."""
+    """``"percent"`` or ``"ratio"`` for one metric name.
+
+    `CUMULATIVE_RETURN` is Return under another label (#380) and reads the
+    same way, so it resolves here rather than at the two renderers.
+    """
+    if metric == CUMULATIVE_RETURN:
+        return "percent"
     return dict(STRATEGY_METRICS)[metric]
 
 
@@ -161,6 +184,90 @@ def strategy_metrics(
         )
         for name, value in si.items():
             out.loc[name, SINCE_INCEPTION] = value
+    return out
+
+
+def span_metrics(
+    prices: pd.DataFrame,
+    ticker: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    *,
+    benchmark: pd.Series | None = None,
+) -> pd.DataFrame:
+    """One strategy's metrics over an **arbitrary** `[start, end]` span.
+
+    `strategy_metrics`' sibling for a period the user chose rather than one
+    `stat_windows()` offers — the span the cumulative chart is zoomed to
+    (#380). Returns a one-column frame (`"value"`) indexed by metric name,
+    carrying only the metrics that are defined over the span, plus two
+    attributes on `frame.attrs`: `days` (the span actually measured) and
+    `annualized` (whether it reached a year).
+
+    **Under a year the annualized metrics are dropped, not scaled.**
+    `ANNUALIZED_METRICS` leave the frame entirely and Return becomes the
+    period's cumulative return under `CUMULATIVE_RETURN`. Max DD, Beta and
+    Correlation stay: none of them annualizes, so a four-month reading of
+    each is the same kind of number as a four-year one.
+
+    The span is **clamped to the strategy's own valid history** — a zoom can
+    run past either end of the data, and measuring across the empty part
+    would divide a real return by a span that includes dates the index did
+    not exist for, which is `_valid_span`'s argument one level up.
+    """
+    empty = pd.DataFrame({"value": []}, dtype=float)
+    empty.attrs["days"] = 0
+    empty.attrs["annualized"] = False
+    empty.attrs["start"] = None
+    empty.attrs["end"] = None
+    if prices.empty or ticker not in prices.columns:
+        return empty
+
+    span = _valid_span(prices[ticker])
+    if span.empty:
+        return empty
+    lo = max(pd.Timestamp(start), span.index.min())
+    hi = min(pd.Timestamp(end), span.index.max())
+    if lo >= hi:
+        return empty
+
+    window = prices.loc[lo:hi]
+    one = window[[ticker]].dropna()
+    if len(one) < 2:
+        return empty
+
+    days = (one.index.max() - one.index.min()).days
+    years = max(days / 365.25, 1.0 / 365.25)
+    annualized = days >= 365
+
+    returns = daily_returns(one)
+    bench_returns = benchmark_returns(
+        benchmark.loc[lo:hi] if benchmark is not None else None
+    )
+    values = _window_metrics(one, returns, years, bench_returns)
+
+    if not annualized:
+        for name in ANNUALIZED_METRICS:
+            values.pop(name, None)
+        series = one[ticker].dropna()
+        cumulative = (
+            float(series.iloc[-1] / series.iloc[0] - 1.0) if series.iloc[0] else np.nan
+        )
+        values.pop("Return", None)
+        values = {CUMULATIVE_RETURN: cumulative, **values}
+
+    # `STRATEGY_METRICS`' order, so the panel reads down in the same sequence
+    # as the table below it; the cumulative Return takes Return's slot.
+    order = [
+        CUMULATIVE_RETURN if (name == "Return" and not annualized) else name
+        for name, _unit in STRATEGY_METRICS
+    ]
+    rows = [name for name in order if name in values]
+    out = pd.DataFrame({"value": [values[name] for name in rows]}, index=rows)
+    out.attrs["days"] = days
+    out.attrs["annualized"] = annualized
+    out.attrs["start"] = one.index.min()
+    out.attrs["end"] = one.index.max()
     return out
 
 

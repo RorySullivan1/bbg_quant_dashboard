@@ -717,6 +717,7 @@ def test_a_leaderboard_click_opens_that_strategy_in_single_strategy(app):
 
 
 def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch):
+    from src.config import LEADERBOARD_WINDOW_OPTIONS, leaderboard_window_days
     from src.layout import app as app_mod
 
     before_rows = _board_tickers(app)
@@ -729,18 +730,61 @@ def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch)
         return real(*a, **kw)
 
     monkeypatch.setattr(app_mod, "fetch_prices", counting)
+    # A window the board is **not** already on, read from the options rather
+    # than typed: the default moved from a month to a week in #384, and a
+    # hard-coded 5 stopped firing the observer the moment it became the
+    # default. `next` over the options is the shape that cannot rot again.
+    other = next(
+        days
+        for _label, days in LEADERBOARD_WINDOW_OPTIONS
+        if days != leaderboard_window_days()
+    )
     try:
-        app.ranking_window.value = 5  # WEEK_WINDOW → fires the observer
+        app.ranking_window.value = other  # fires the observer
         assert calls["n"] == 0  # re-ranked from the cache, no BQL
-        # The board is genuinely re-ranked: a week's ordering differs from a
-        # month's on this catalog. (The board no longer titles itself — the
+        # The board is genuinely re-ranked: one window's ordering differs from
+        # another's on this catalog. (The board no longer titles itself — the
         # section heading and the chips say the window since #306 — so the
         # rows are the only evidence that anything happened.)
         after_rows = _board_tickers(app)
         assert after_rows
         assert after_rows != before_rows
     finally:
-        app.ranking_window.value = 21  # restore the module-scoped fixture
+        # Back to the default, which is the module-scoped fixture's state.
+        app.ranking_window.value = leaderboard_window_days()
+
+
+def test_the_board_opens_on_a_week(app):
+    """#384. The default is `WEEK_WINDOW`, and the chips open lit on it.
+
+    Asserted against the constant rather than against `5` — what matters is
+    that the board's opening window is one its own chips offer, which is what
+    `leaderboard_window_days` validates and what a bare number cannot.
+    """
+    from src.config import WEEK_WINDOW, leaderboard_window_days
+
+    assert leaderboard_window_days() == WEEK_WINDOW
+    assert app.ranking_window.value == leaderboard_window_days()
+    assert app.ranking_window.label == "1W"
+
+
+def test_the_boards_default_window_is_one_its_chips_offer():
+    """The validator, not the value: a default outside the options would open
+    the board on a window no chip is lit for, so the first click on any chip
+    would look like it had done nothing."""
+    import src.config as cfg
+
+    assert cfg.leaderboard_window_days() in [
+        days for _label, days in cfg.LEADERBOARD_WINDOW_OPTIONS
+    ]
+
+    original = cfg.LEADERBOARD_WINDOW_DAYS
+    cfg.LEADERBOARD_WINDOW_DAYS = 7  # not a window any chip carries
+    try:
+        with pytest.raises(ValueError, match="LEADERBOARD_WINDOW_DAYS"):
+            cfg.leaderboard_window_days()
+    finally:
+        cfg.LEADERBOARD_WINDOW_DAYS = original
 
 
 def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app):
@@ -780,7 +824,7 @@ def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app
 def test_selecting_the_year_window_re_ranks_from_cache_without_fetching(
     app, monkeypatch
 ):
-    from src.config import TRADING_DAYS_PER_YEAR
+    from src.config import TRADING_DAYS_PER_YEAR, leaderboard_window_days
     from src.layout import app as app_mod
 
     before_rows = _board_tickers(app)
@@ -796,28 +840,40 @@ def test_selecting_the_year_window_re_ranks_from_cache_without_fetching(
         assert after_rows
         assert after_rows != before_rows
     finally:
-        app.ranking_window.value = 21
+        app.ranking_window.value = leaderboard_window_days()
 
 
 def test_re_toggling_a_window_is_a_cache_hit(app):
     # The cache is keyed by window, so returning to one already computed must
     # not rebuild it — this is what makes the toggle feel live.
+    from src.config import leaderboard_window_days
+
+    default = leaderboard_window_days()
     app.ranking_window.value = 63
     first = app.highlights_cache[63]
-    app.ranking_window.value = 21
+    app.ranking_window.value = default
     app.ranking_window.value = 63
     assert app.highlights_cache[63] is first
-    app.ranking_window.value = 21
+    app.ranking_window.value = default
 
 
 def test_an_init_error_survives_a_window_change_and_a_pane_switch(app):
     # `errors_w` is a sibling of both panes precisely so neither live control
     # can wipe it. It was split out of the old highlights widget for this.
+    from src.config import LEADERBOARD_WINDOW_OPTIONS, leaderboard_window_days
+
+    # A window the board is not already on — otherwise the assignment is a
+    # no-op and this stops testing that an error survives a *change* (#384).
+    other = next(
+        days
+        for _label, days in LEADERBOARD_WINDOW_OPTIONS
+        if days != leaderboard_window_days()
+    )
     marker = "INIT-ERROR-MARKER"
     before = app.state.errors_w.value
     app.state.errors_w.value = before + marker
     try:
-        app.ranking_window.value = 5
+        app.ranking_window.value = other
         assert marker in app.state.errors_w.value
         app.commentary_pane.show("launches")
         assert marker in app.state.errors_w.value
@@ -825,7 +881,7 @@ def test_an_init_error_survives_a_window_change_and_a_pane_switch(app):
         assert marker in app.state.errors_w.value
     finally:
         app.state.errors_w.value = before
-        app.ranking_window.value = 21
+        app.ranking_window.value = leaderboard_window_days()
 
 
 def test_the_pane_carries_the_launch_cards_built_from_the_catalog(app):

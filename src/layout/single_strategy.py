@@ -68,6 +68,7 @@ from ..stats import (
     regime_risk_return,
     return_distribution_stats,
     rolling_series,
+    span_metrics,
     strategy_metrics,
     term_premium,
     trend_returns,
@@ -93,6 +94,7 @@ from .html import (
     STYLE_CTX,
     _render_calendar,
     _render_profile_card,
+    _render_span_readout,
     _render_strategy_metrics,
     render_template,
 )
@@ -322,8 +324,15 @@ class SingleStrategyPanel:
         # went with this (#363 dec. 12), and a `ChipGroup` carries the
         # `.value` / `.observe` surface every other enumerated choice on the
         # three tabs presents.
-        self.cal_chips = ChipGroup(list(_CALENDAR_TABS), value=_CALENDAR_TABS[0][1])
-        self.cal_chips.layout.width = "auto"
+        # `row=True`, as every other chip group in a bar is built (#383). A
+        # `_ChipStack` is a `VBox`; it lays out horizontally only when told to,
+        # and this one — converted from `_make_tab_button` pills — was not, so
+        # five chips stacked five high and took a third of the section's fixed
+        # `CALENDAR_HEIGHT` from the calendar they head. `row` also sets the
+        # `width` this used to assign by hand.
+        self.cal_chips = ChipGroup(
+            list(_CALENDAR_TABS), value=_CALENDAR_TABS[0][1], row=True
+        )
         self.calendar_section = section_panel(
             "Monthly returns",
             control_bar(RailSection("View", self.cal_chips), title=""),
@@ -365,6 +374,10 @@ class SingleStrategyPanel:
         self.bench_chk = bench_chk
         self.profile_w = profile_w
         self.line = line
+        # The zoom drives the in-figure readout (#380). Subscribed once, here,
+        # rather than re-subscribed per render — `on_range` wraps the figure's
+        # own `on_change`, and a second subscription would double every event.
+        self.line.on_range(self._on_chart_range)
         self.metrics_w = metrics_w
         self.cal_w = cal_w
         #: The active calendar mode; `set_calendar_kind` moves it.
@@ -514,6 +527,10 @@ class SingleStrategyPanel:
             cols.append(bench)
         window = prices.loc[prices.index >= window_start, cols]
         self.line.update(cum_perf(window))
+        # A fresh draw autoranges, so the readout goes back to the whole
+        # window — the state the chart opens in. It is never blank while a
+        # line is drawn.
+        self.render_readout()
 
         # The metrics table reads the **analytics window**, not the fetched
         # frame. The fetch reaches `SCORE_SAMPLE_YEARS` further back for the
@@ -528,6 +545,61 @@ class SingleStrategyPanel:
 
         self.render_calendar()
         self.render_section3(meta, window_start)
+
+    def _on_chart_range(self, lo, hi) -> None:
+        """The cumulative chart was zoomed, panned or reset (#380).
+
+        `lo` / `hi` are `None` on an autorange, which `render_readout` reads
+        as "the whole window". Nothing here fetches: it re-slices the same
+        cached frame `render` sliced.
+        """
+        self.render_readout(lo, hi)
+
+    def render_readout(self, lo=None, hi=None) -> None:
+        """Measure the picked strategy over the period the chart is showing.
+
+        The readout answers for **the span on screen**, which is the whole
+        point of #380 — a zoom used to be cosmetic. `lo` / `hi` default to the
+        analytics window, so a fresh render and a double-click land in the
+        same place.
+
+        Under a year `span_metrics` drops the annualized rows and reports a
+        cumulative return; the panel says which regime it is in, so a missing
+        Sharpe reads as a decision rather than as a gap.
+        """
+        ticker = self.pick.value
+        prices = self.state.universe_prices if self.state is not None else None
+        if (
+            ticker is None
+            or prices is None
+            or prices.empty
+            or ticker not in prices.columns
+            or self._window_start is None
+        ):
+            self.line.set_readout("")
+            return
+
+        win = prices.loc[prices.index >= self._window_start]
+        if win.empty:
+            self.line.set_readout("")
+            return
+        start = pd.Timestamp(lo) if lo is not None else win.index.min()
+        end = pd.Timestamp(hi) if hi is not None else win.index.max()
+
+        bench = self.bench_dd.value
+        has_bench = bench in win.columns and bench != ticker
+        self.line.set_readout(
+            _render_span_readout(
+                span_metrics(
+                    win,
+                    ticker,
+                    start,
+                    end,
+                    benchmark=win[bench] if has_bench else None,
+                ),
+                benchmark=bench if has_bench else None,
+            )
+        )
 
     def set_calendar_kind(self, which: str) -> None:
         """Record which calendar mode is active. **The caller re-renders.**
@@ -671,6 +743,11 @@ class SingleStrategyPanel:
         if benchmark:
             series_names[benchmark] = _short_ticker(benchmark)
 
+        # The series' own slot in the palette, so its anchor and its buckets
+        # are drawn the same colour (#381). The chart cannot derive it — it
+        # sees groups, and each series contributes two.
+        series_index = {column: i for i, column in enumerate(series_names)}
+
         rows: list[dict] = []
         whole = regime_risk_return(rets, pd.Series(True, index=rets.index))
         for column, name in series_names.items():
@@ -678,8 +755,10 @@ class SingleStrategyPanel:
                 rows.append(
                     {
                         "bucket": RegimeProfileChart.ANCHOR_LABEL,
-                        "series": f"{name} — whole window",
+                        # The label is the chart's, never re-spelled here.
+                        "series": f"{name} — {RegimeProfileChart.ANCHOR_LABEL}",
                         "anchor": True,
+                        "series_index": series_index[column],
                         "vol": whole.loc[column, "vol"],
                         "ret": whole.loc[column, "ret"],
                     }
@@ -698,6 +777,7 @@ class SingleStrategyPanel:
                             "bucket": label,
                             "series": name,
                             "anchor": False,
+                            "series_index": series_index[column],
                             "vol": bucket.loc[column, "vol"],
                             "ret": bucket.loc[column, "ret"],
                         }
@@ -760,7 +840,22 @@ class SingleStrategyPanel:
             if has_bench:
                 bench_w = weekly_returns(win[[bench]])[bench]
                 strat_w = weekly_returns(win[[ticker]])[ticker]
-                pane.weekly.update(bench_w, strat_w)
+                # The regime picks **which weeks** are drawn on top, over the
+                # whole cloud (#382). The mask is built the way the Decile
+                # chart builds its own, off the same `RegimeControls`, so the
+                # two views cannot disagree about where a bucket begins.
+                regime = pane.weekly_regime
+                mask = None
+                regime_label = ""
+                if regime.on.value:
+                    low, high = regime.resolve_bucket()
+                    mask = regime_window_mask(
+                        regime.indicator(), bench_w.index, low, high
+                    )
+                    regime_label = f"{regime.types.value}: {regime.buckets.label}"
+                pane.weekly.update(
+                    bench_w, strat_w, mask=mask, regime_label=regime_label
+                )
             else:
                 pane.weekly.clear()
         elif label == "Return Distribution":

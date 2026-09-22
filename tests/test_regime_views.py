@@ -20,13 +20,14 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-from src.layout.charts import DecileChart, RegimeProfileChart
+from src.layout.charts import DecileChart, RegimeProfileChart, WeeklyScatterChart
 from src.layout.regime_controls import (
     RegimeControls,
     regime_bucket_options,
     regime_window_mask,
 )
 from src.stats import decile_profile, regime_risk_return
+from src.style import Color
 
 
 @pytest.fixture
@@ -196,27 +197,72 @@ def test_the_regime_profile_points_match_regime_risk_return(two_regimes):
     assert calm_point.loc["AAA Index", "vol"] < storm_point.loc["AAA Index", "vol"]
 
 
-def test_the_regime_profile_draws_the_anchor_muted(two_regimes):
-    points = pd.DataFrame(
+def _profile_points(series: str = "AAA", series_index: int = 0) -> pd.DataFrame:
+    """One series' anchor plus its three buckets, as the renderer builds them."""
+    label = RegimeProfileChart.ANCHOR_LABEL
+    return pd.DataFrame(
         {
-            "series": ["AAA — whole window", "AAA", "AAA", "AAA"],
+            "series": [f"{series} — {label}", series, series, series],
             "anchor": [True, False, False, False],
+            "series_index": [series_index] * 4,
             "vol": [0.10, 0.05, 0.10, 0.25],
             "ret": [0.04, 0.09, 0.03, -0.12],
         },
-        index=pd.Index(
-            ["Whole window", "VIX < 15", "15 ≤ VIX < 25", "VIX ≥ 25"], name="bucket"
-        ),
+        index=pd.Index([label, "VIX < 15", "15 ≤ VIX < 25", "VIX ≥ 25"], name="bucket"),
     )
-    chart = RegimeProfileChart()
-    chart.update(points, regime_label="Volatility")
 
-    anchor = next(t for t in chart.fig.data if "whole window" in t.name)
+
+def test_the_regime_profile_sets_the_anchor_apart_by_shape(two_regimes):
+    chart = RegimeProfileChart()
+    chart.update(_profile_points(), regime_label="Volatility")
+
+    label = RegimeProfileChart.ANCHOR_LABEL
+    anchor = next(t for t in chart.fig.data if label in t.name)
     buckets = next(t for t in chart.fig.data if t.name == "AAA")
     assert len(buckets.x) == 3, "one marker per bucket"
     assert anchor.marker.symbol == "diamond-open", "the anchor is set apart"
     assert anchor.marker.size > buckets.marker.size
     assert "Volatility" in chart.fig.layout.title.text
+
+
+def test_the_anchor_is_called_full_period_everywhere(two_regimes):
+    """#381. One spelling, read from the chart rather than typed at the
+    renderer — it was "Whole window" in `charts.py` and "whole window" in
+    `single_strategy.py`, two strings that had to agree by hand."""
+    assert RegimeProfileChart.ANCHOR_LABEL == "Full period"
+
+    chart = RegimeProfileChart()
+    chart.update(_profile_points())
+    names = [t.name for t in chart.fig.data]
+    assert any("Full period" in n for n in names)
+    assert not any("whole window" in n.lower() for n in names)
+
+
+def test_the_anchor_wears_its_own_series_colour(two_regimes):
+    """#381. The anchor and its buckets are one series and read as one, so
+    they share a colour; the two *series* differ.
+
+    The bug this pins: `groupby` enumeration coloured by **group**, and with
+    a benchmark on there are four groups for two series — so a series' anchor
+    and its cloud came out in different colours and the pairing was legend
+    work rather than something the eye did.
+    """
+    points = pd.concat([_profile_points("AAA", 0), _profile_points("BBB", 1)])
+    chart = RegimeProfileChart()
+    chart.update(points, benchmark_label="BBB")
+
+    label = RegimeProfileChart.ANCHOR_LABEL
+    by_name = {t.name: t for t in chart.fig.data}
+    assert len(by_name) == 4, "an anchor and a cloud for each of two series"
+    for series in ("AAA", "BBB"):
+        assert (
+            by_name[f"{series} — {label}"].marker.color == by_name[series].marker.color
+        ), f"{series}'s anchor and buckets must share a colour"
+    assert by_name["AAA"].marker.color != by_name["BBB"].marker.color
+
+    # The text under each marker follows the marker, not a muted grey.
+    for trace in chart.fig.data:
+        assert trace.textfont.color == trace.marker.color
 
 
 def test_a_bucket_with_too_few_days_is_absent_not_invented(two_regimes):
@@ -234,3 +280,100 @@ def test_an_empty_frame_clears_rather_than_drawing_axes(two_regimes):
     chart = RegimeProfileChart()
     chart.update(pd.DataFrame())
     assert len(chart.fig.data) == 0
+
+
+# --- the Weekly Scatter's regime (#382) ---------------------------------------
+
+
+def _weekly_pair(prices: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    from src.stats import weekly_returns
+
+    weekly = weekly_returns(prices[["SPTR Index", "AAA Index"]])
+    return weekly["SPTR Index"], weekly["AAA Index"]
+
+
+def test_the_weekly_scatter_is_unchanged_with_no_regime(two_regimes):
+    """Off is the path both states share, not a second branch (v0.9.33). With
+    no mask the conditioned pair is empty and hidden, and the full cloud keeps
+    its own colour rather than being muted for a subject that is not there."""
+    x, y = _weekly_pair(two_regimes)
+    chart = WeeklyScatterChart()
+    chart.update(x, y)
+
+    marker, fit, in_marker, in_fit = chart.fig.data
+    assert len(marker.x) == len(x.dropna())
+    assert len(fit.x) > 0
+    assert not in_marker.x and not in_fit.x
+    assert in_marker.visible is False and in_fit.visible is False
+    assert marker.marker.color != Color.TEXT_MUTED.value
+
+
+def test_a_regime_draws_both_clouds_and_moves_the_fit(two_regimes):
+    """The ask: the conditioned series **and** the unconditioned one, so the
+    reader sees the relationship move rather than a cloud that shrank.
+
+    On this fixture the calm half and the stormy half are genuinely different
+    regressions, so a chart that merely re-sliced the same answer would give
+    the two fits the same coefficients.
+    """
+    x, y = _weekly_pair(two_regimes)
+    controls = _controls(two_regimes)
+    controls.on.value = True
+    controls.types.value = "Volatility"
+    controls.sync()
+    low, high = controls.resolve_bucket()
+    mask = regime_window_mask(controls.indicator(), x.index, low, high)
+
+    chart = WeeklyScatterChart()
+    chart.update(x, y, mask=mask, regime_label="Volatility: VIX < 15")
+
+    marker, fit, in_marker, in_fit = chart.fig.data
+    # Both clouds are on screen, and the conditioned one is the subset.
+    assert len(marker.x) == len(x.dropna())
+    assert 0 < len(in_marker.x) < len(marker.x)
+    assert in_marker.visible and in_fit.visible
+    # The full cloud steps back so the conditioned one reads as the subject.
+    assert marker.marker.color == Color.TEXT_MUTED.value
+    # Two genuinely different fits, not one answer drawn twice.
+    assert list(fit.y) != list(in_fit.y)
+    # And the panel reports both, labelled.
+    text = chart.fig.layout.annotations[0].text
+    assert "all:" in text and "Volatility: VIX < 15" in text
+    assert "<br>" in text, "one line per fit"
+
+
+def test_too_few_conditioned_weeks_still_draw_their_markers(two_regimes):
+    """A bucket with almost no weeks keeps its points and says why there is no
+    fit — an empty panel would read as "the regime never happened"."""
+    x, y = _weekly_pair(two_regimes)
+    mask = pd.Series(False, index=x.index)
+    mask.iloc[0] = True
+
+    chart = WeeklyScatterChart()
+    chart.update(x, y, mask=mask, regime_label="Volatility: VIX ≥ 25")
+
+    _marker, _fit, in_marker, in_fit = chart.fig.data
+    assert len(in_marker.x) == 1
+    assert not in_fit.x, "one week cannot be fitted"
+    assert "too few to fit" in chart.fig.layout.annotations[0].text
+
+
+def test_the_weekly_scatter_has_its_own_regime_controls():
+    """Its own instance, like the Decile chart's: two views each conditioning
+    their own chart is two selections, not one shared one."""
+    from src.layout.panes import _make_single_analysis_pane
+
+    pane = _make_single_analysis_pane("left")
+    assert pane.weekly_regime is not None
+    assert pane.weekly_regime is not pane.decile_regime
+    assert pane.weekly_regime is not pane.regime
+    # Off by default, and its dependents are mounted in the view.
+    assert pane.weekly_regime.on.value is False
+    mounted = pane.views["Weekly Scatter"].children
+    for control in (
+        pane.weekly_regime.on,
+        pane.weekly_regime.types,
+        pane.weekly_regime.source,
+        pane.weekly_regime.buckets,
+    ):
+        assert control in mounted

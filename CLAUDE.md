@@ -101,7 +101,10 @@ The **Leaderboard** is four columns — Return, Sharpe, Calmar, Sortino — each
 listing the catalog's top three and bottom three as
 **`rank · ticker · score (value)`** over the window its Window chips select
 (1W–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year does not
-reach the two controls built from `SHORT_WINDOW_OPTIONS`). **Ranking is by the
+reach the two controls built from `SHORT_WINDOW_OPTIONS`). The board **opens on 1W** (v0.9.37, #384), and the
+default is validated against the chips that offer it — a default outside the
+options would light no chip, so the first click on any of them would look like
+it had done nothing. **Ranking is by the
 score** (#310), which the section title says out loud
 (`(Ranked By Normalized 5Y Z-Score)`, built from `SCORE_SAMPLE_YEARS` rather
 than spelled) — each metric standardized against its *own* trailing history,
@@ -429,11 +432,33 @@ it is the one thing on the tab a desk reads at a glance, and the metrics table
 is summary statistics rather than the path they came from. Its five steps are
 CSS classes on the bands `style.py` now declares for **both** stacks, and its
 five pills became a `ChipGroup`, which was the last `_make_tab_button` set in
-the app. One departure from the grid it replaced: the metrics table measures
+the app — laid out as a **row** since v0.9.37 (#383), which is what every
+other chip group in a bar has always been: a `_ChipStack` is a `VBox` and runs
+horizontally only when told to, so these five stacked five high and took a
+third of the section's fixed height from the calendar they head. One departure from the grid it replaced: the metrics table measures
 the **analytics window**, where `perf_table` was deliberately handed the full
 fetched frame (#311) — a `3Y` figure assembled from history the window
 excludes is a number under a label that does not describe it, so an unserved
 window is a dash whatever the fetch holds.
+
+**And the zoom is a measurement** (v0.9.37, #380). Zooming the cumulative
+chart was cosmetic — the line rescaled and nothing else knew the reader had
+narrowed to a period. A semi-transparent readout now sits inside the figure,
+top-left, carrying `span_metrics` over exactly the x-range on screen and
+following every zoom, pan and reset; on a reset it reports the whole window,
+so it is never blank while a line is drawn. It is a **Plotly annotation**, not
+a widget, because ipywidgets cannot overlay one on a figure — pre-allocated
+and retexted in place, the `WeeklyScatterChart` rule. Two things make the
+number honest. The span is **clamped to the strategy's own history**, since a
+zoom can run past either end of the data and measuring across the empty part
+would divide a real return by a span covering dates the index did not exist
+for. And **under a year the annualized metrics are dropped, not scaled**:
+`ANNUALIZED_METRICS` — Vol, Sharpe, Sortino and Calmar, the last because it is
+a ratio *of* an annualized return — leave the panel entirely, Return becomes
+the period's cumulative return under its own label, and the panel says which
+of the two regimes it is in so a missing Sharpe reads as a decision rather
+than as a gap. Max DD, Beta and Correlation stay throughout: none of them
+annualizes.
 
 **Every option in the analysis picker draws** (#367). Three of eight were dead
 ends: *PCA Analysis* and *Defensive Scoring* were `_StubChart`s drawing
@@ -462,10 +487,16 @@ duplicated or not drawable:
   and marking conventions. The benchmark decides the buckets; cutting on the
   strategy's own returns would draw a monotone staircase for any series at all.
 - **Regime Profile** draws all three buckets of one regime at once — return vs
-  vol per bucket, plus the **unconditioned point muted as the anchor** so the
-  three read as deviations rather than as three unrelated dots, plus the
+  vol per bucket, plus the unconditioned **Full period** point as the anchor so
+  the three read as deviations rather than as three unrelated dots, plus the
   benchmark's three. It has **no bucket control**, because all three buckets
-  are the chart.
+  are the chart. The anchor is told apart by its **shape** and not by being
+  grey (v0.9.37, #381): colour keys to the *series*, so a strategy's anchor and
+  its three buckets are one colour and the benchmark's are another. It keyed
+  off the `groupby` position until then, which counts **groups** — four of them
+  once a benchmark is on — so a series' anchor and its own cloud came out in
+  different colours and pairing them was legend work rather than something the
+  eye did.
 - **Risk Profile** is five βs on one polar axis — ERP · Term · Volatility ·
   Trend · Carry — and **the axis is a percentile**, which is the whole design:
   a Carry β of 0.3 is large where an ERP β of 0.3 is small, so a polygon on the
@@ -474,6 +505,15 @@ duplicated or not drawable:
   not an exception. It retired `FactorScoringChart`, three bars of ERP, Term
   and Trend; *Factor Scatter* stayed, because it is a **history** — one marker
   per month — where the spiderweb is one shape over the whole window.
+
+**Weekly Scatter conditions too** (v0.9.37, #382), and draws **both** clouds:
+the full window muted underneath, the weeks inside the bucket over it in
+colour with their own quadratic, and the β / convexity / R² panel reporting
+the two fits on two lines. A conditioned view that simply replaced the cloud
+would show a sample that had quietly shrunk; what a reader wants to see is the
+relationship *move*. Its conditioned pair of traces is **pre-allocated** like
+the unconditioned one, because a same-count trace replacement can be dropped
+by older widget-manager frontends — the repaint bug this chart hit on BQuant.
 
 Three rules hold underneath. **Regime resolution has one implementation**:
 `RegimeControls` (`src/layout/regime_controls.py`), which the Platform card
@@ -503,7 +543,7 @@ precisions.
 
 ## Current version
 
-`v0.9.36` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.37` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

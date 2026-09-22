@@ -119,12 +119,15 @@ from .rolling import (
     sharpe_zscore,
 )
 from .strategy import (
+    ANNUALIZED_METRICS,
     BENCHMARK_METRICS,
+    CUMULATIVE_RETURN,
     DECILE_COUNT,
     SINCE_INCEPTION,
     STRATEGY_METRICS,
     decile_profile,
     metric_unit,
+    span_metrics,
     strategy_metrics,
 )
 
@@ -132,9 +135,12 @@ __all__ = [
     "BENCHMARK_METRICS",
     "DECILE_COUNT",
     "decile_profile",
+    "ANNUALIZED_METRICS",
+    "CUMULATIVE_RETURN",
     "SINCE_INCEPTION",
     "STRATEGY_METRICS",
     "metric_unit",
+    "span_metrics",
     "strategy_metrics",
     "OLSFit",
     "PolyFit",

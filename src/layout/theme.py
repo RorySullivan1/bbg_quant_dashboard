@@ -141,6 +141,19 @@ def _palette_color(i: int) -> str:
     return LINE_PALETTE[i % len(LINE_PALETTE)]
 
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    """`#RRGGBB` plus an alpha, as the `rgba()` Plotly wants.
+
+    Plotly's `bgcolor` takes a CSS colour, and the style tokens are hex — so
+    an overlay that has to let the chart through needs the two combined
+    somewhere. Here rather than at the call site, because a second caller
+    would otherwise re-derive the same three `int(..., 16)` slices.
+    """
+    value = hex_color.lstrip("#")
+    r, g, b = (int(value[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def _short_ticker(ticker: str) -> str:
     """Drop the BBG ' Index' suffix, leaving the core ticker (e.g. 'SPX')."""
     return ticker.removesuffix(" Index")

@@ -10,6 +10,7 @@ the layout, this fails loudly instead of leaving the UI silently empty.
 from __future__ import annotations
 
 import ipywidgets as W
+from src.config import leaderboard_window_days
 from src.layout import build_app
 from src.layout.chrome import _render_overlay
 from src.layout.html import STYLE_CTX, render_template
@@ -459,7 +460,10 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     labels = [w.value for w in widgets if isinstance(w, W.HTML)]
     assert any("Leaderboard" in (v or "") for v in labels)
     assert any("Window" in (v or "") for v in labels)
-    assert chips.value == 21  # MONTH_WINDOW, the default
+    # The default, read from config rather than typed — it moved from a
+    # month to a week in #384, and a literal here is what made that a
+    # two-file change instead of one.
+    assert chips.value == leaderboard_window_days()
 
     # No trace of the retired board survives anywhere in the app — #291 took
     # the cards, the two templates and the stylesheet rule with it.
