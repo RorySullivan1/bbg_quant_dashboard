@@ -250,3 +250,28 @@ def test_the_readout_clears_when_there_is_no_pick():
     panel.state = SimpleNamespace(universe_prices=pd.DataFrame())
     panel.render_readout()
     assert panel.line.fig.layout.annotations[0].visible is False
+
+
+def test_the_readout_uses_only_entities_plotly_can_render(prices):
+    """#386. Plotly's bundled parser knows exactly four named entities —
+    `&amp;`, `&lt;`, `&gt;` and `&nbsp;`. Anything else is printed as typed,
+    which is how a separator written `&middot;` reached the screen as the
+    literal text `&middot;`."""
+    out = span_metrics(
+        prices, "AAA Index", pd.Timestamp("2020-01-01"), pd.Timestamp("2023-01-01")
+    )
+    for text in (
+        _render_span_readout(out, benchmark="SPTR Index"),
+        _render_span_readout(
+            span_metrics(
+                prices,
+                "AAA Index",
+                pd.Timestamp("2022-01-01"),
+                pd.Timestamp("2022-05-01"),
+            )
+        ),
+    ):
+        named = set(re.findall(r"&([a-zA-Z][a-zA-Z0-9]*);", text))
+        assert named <= {"amp", "lt", "gt", "nbsp"}, named
+        # The separator is the character itself, not an entity for it.
+        assert "·" in text

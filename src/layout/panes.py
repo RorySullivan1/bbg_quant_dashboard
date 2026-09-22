@@ -266,7 +266,7 @@ def _make_single_analysis_pane(
             layout=view_layout,
         ),
         "Return Distribution": W.VBox(
-            [retdist.fig, retdist.stats_grid], layout=view_layout
+            [retdist.fig, retdist.stats_w], layout=view_layout
         ),
         "Factor Scatter": W.VBox([factor.fig], layout=view_layout),
         "Drawdown": W.VBox([dd.fig], layout=view_layout),
@@ -431,7 +431,7 @@ def _make_analysis_pane(
         "Drawdown": W.VBox([dd.fig], layout=view_layout),
         "Rolling": W.VBox([rolling_chips, rolling.fig], layout=view_layout),
         "Return Distribution": W.VBox(
-            [retdist.fig, retdist.stats_grid], layout=view_layout
+            [retdist.fig, retdist.stats_w], layout=view_layout
         ),
     }
 

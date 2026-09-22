@@ -268,7 +268,7 @@ def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
     ss.state = state
     ss.render_analysis_pane(pane, meta, universe.index.min())
     assert len(pane.retdist.fig.data) >= 1
-    assert not pane.retdist.stats_grid.data.empty
+    assert pane.retdist.stats_w.value, "the stats table is drawn too"
 
 
 def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):

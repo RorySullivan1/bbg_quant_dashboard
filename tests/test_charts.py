@@ -155,9 +155,42 @@ def test_the_radar_clears_rather_than_promising():
     assert len(chart.fig.layout.annotations) == 0
 
 
-def test_return_dist_chart_owns_its_stats_grid():
-    # The grid is part of the chart, so an update that blanks the figure blanks
-    # the grid too — they cannot drift apart.
+def test_return_dist_chart_owns_its_stats_table():
+    # The table is part of the chart, so an update that blanks the figure
+    # blanks the table too — they cannot drift apart.
     chart = ch.ReturnDistChart()
     chart.clear()
-    assert chart.stats_grid.data.empty
+    assert chart.stats_w.value == ""
+
+
+def test_return_dist_draws_one_line_per_series_and_nothing_to_blend():
+    """#386. Filled histograms at `barmode="overlay"` blend where they cross,
+    and two return distributions cross over almost their whole body — so a
+    strategy against its benchmark drew a pure colour in each tail and a
+    *third* through the middle, which reads as a series no legend entry
+    accounts for. Outlines have nothing to blend."""
+    import numpy as np
+    import pandas as pd
+
+    index = pd.bdate_range("2020-01-01", periods=600)
+    rng = np.random.default_rng(386)
+    rets = pd.DataFrame(
+        {
+            "AAA Index": rng.normal(0.0004, 0.010, len(index)),
+            "SPTR Index": rng.normal(0.0003, 0.008, len(index)),
+        },
+        index=index,
+    )
+    chart = ch.ReturnDistChart()
+    chart.update(rets, pd.DataFrame(), pd.DataFrame())
+
+    assert len(chart.fig.data) == 2, "one trace per column, and no more"
+    assert {t.mode for t in chart.fig.data} == {"lines"}
+    # Nothing filled, so no region of the plot is a colour neither series is.
+    assert all(getattr(t, "fill", None) in (None, "none") for t in chart.fig.data)
+    # Both binned on the same edges, so the heights are comparable.
+    assert list(chart.fig.data[0].x) == list(chart.fig.data[1].x)
+    assert {t.line.color for t in chart.fig.data} == {
+        ch._palette_color(0),
+        ch._palette_color(1),
+    }

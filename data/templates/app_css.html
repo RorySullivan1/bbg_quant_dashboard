@@ -403,8 +403,74 @@
 /* A dash for an unserved window, red for a negative number — and no green.
    Half these rows have no direction (a high Vol is not good, a negative Beta
    is not bad), so the colour says only what a terminal's would: below zero. */
-.bbg-app .bbg-metrics .bbg-metrics-na { color: {{text_muted}}; }
-.bbg-app .bbg-metrics .bbg-metrics-neg { color: {{red}}; }
+.bbg-app .bbg-metrics .bbg-metrics-na,
+.bbg-app .bbg-retstats .bbg-metrics-na { color: {{text_muted}}; }
+.bbg-app .bbg-metrics .bbg-metrics-neg,
+.bbg-app .bbg-retstats .bbg-metrics-neg { color: {{red}}; }
+/* ---- The return-distribution stats table (v0.9.38, #386) --------------
+   Tickers down, statistics across — the transpose of `.bbg-metrics`, because
+   here the row is the series and a basket can hold five of them, where the
+   metrics table has one strategy and many windows.
+
+   HTML for the same reason that one is: it never sorts, scrolls sideways or
+   takes a click, so the `ipydatagrid` canvas it replaced bought nothing and
+   cost the theme-refresh invariant on every write. With it went the last
+   `ipydatagrid` import in `charts.py`. */
+.bbg-app .bbg-retstats {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: {{sans}};
+  font-size: {{caption_size}};
+  color: {{text_color}};
+}
+.bbg-app .bbg-retstats th,
+.bbg-app .bbg-retstats td {
+  padding: 5px 10px;
+  border-bottom: 1px solid {{border_color}};
+  white-space: nowrap;
+}
+.bbg-app .bbg-retstats thead th {
+  color: {{text_muted}};
+  font-size: {{label_size}};
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: right;
+  border-bottom: 1px solid {{accent}};
+}
+/* The ticker is a row header, so it wears the body type left-aligned rather
+   than the uppercase heading treatment the statistics wear. */
+.bbg-app .bbg-retstats thead th.bbg-retstats-corner,
+.bbg-app .bbg-retstats tbody th {
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: {{text_color}};
+}
+.bbg-app .bbg-retstats tbody th {
+  font-family: {{mono}};
+  font-size: {{caption_size}};
+}
+.bbg-app .bbg-retstats td {
+  font-family: {{mono}};
+  text-align: right;
+}
+/* The name is prose, not a measurement: body type, left-aligned, and allowed
+   to be the column that gives way — it is the only one here whose width is
+   not known in advance. */
+.bbg-app .bbg-retstats th.bbg-retstats-name,
+.bbg-app .bbg-retstats td.bbg-retstats-name {
+  text-align: left;
+  font-family: {{sans}};
+  color: {{text_muted}};
+  white-space: normal;
+  width: 40%;
+}
+.bbg-app .bbg-retstats tbody tr:last-child th,
+.bbg-app .bbg-retstats tbody tr:last-child td {
+  border-bottom: none;
+}
 /* ---- The monthly-return calendar (v0.9.36, #366) ----------------------
    Years down, Jan…Dec across, the kind's annual summary set off at the
    right. The `ipydatagrid` canvas under it went with `CalendarGrid`; the

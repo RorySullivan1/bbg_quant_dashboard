@@ -551,7 +551,15 @@ the plot.
 
 That trades the stylesheet for Plotly's small HTML subset: `<br>`, `<b>` and
 `<span style>`, and **spaces collapse**, so the metric column is padded with
-`&nbsp;` to the longest label present rather than aligned by CSS. Two
+`&nbsp;` to the longest label present rather than aligned by CSS.
+
+**Only four named entities survive that subset** — `&amp;`, `&lt;`, `&gt;`
+and `&nbsp;`, which is the whole list Plotly's bundled parser carries.
+Anything else is printed as typed: the separator written `&middot;` reached
+the screen as the literal text `&middot;` (#386). Separators are literal
+characters now, and a test holds the readout to those four. This is the
+sharpest edge of drawing text into a figure rather than into the page, and it
+applies to every annotation in `charts.py`, not only this one. Two
 consequences worth knowing before editing it. The negative colour is
 `Color.RED_600`, the table's own `{{red}}` — not one of the `HEAT_*` reds,
 which carry an alpha suffix, and an 8-digit hex inside an inline style is at
@@ -563,3 +571,27 @@ the mercy of the SVG text renderer where a CSS class is not. And the font is
 chart's top-left corner, which is where a rebased line starts at 100 — the one
 point every series shares and the eye uses to judge the rest. A solid box
 there would hide it.
+
+## The return-distribution stats table (v0.9.38, #386)
+
+`.bbg-retstats` is the **transpose** of `.bbg-metrics`: tickers down,
+statistics across. The metrics table has one strategy and many windows; this
+one has many series and a fixed six moments, and a basket can put five rows in
+it. Same type, same rules, same `mono` numerals — only the axis differs.
+
+It shares `_metric_cell` with the metrics table, so `.bbg-metrics-na` and
+`.bbg-metrics-neg` are styled for **both** tables from one declaration. That
+is deliberate: the two-decimal rule, the dash for a missing value and *red for
+negative, no green* are properties of an HTML stats cell, not of one table, and
+a second copy is a second thing to keep in step.
+
+The **Name** column is the only one whose width is not known in advance, so it
+is the one that gives way — body type, left-aligned, muted, `white-space:
+normal` at 40%. Everything else is `nowrap`, because a wrapped number reads as
+two numbers.
+
+The chart above it draws **outline steps rather than filled bars**, which is a
+readability decision as much as a correctness one: filled histograms at
+`barmode="overlay"` blend where they cross, and a strategy against its
+benchmark crosses over almost its whole body — a pure colour in each tail and
+a third through the middle, reading as a series no legend entry accounts for.
