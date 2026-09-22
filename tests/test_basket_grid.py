@@ -215,3 +215,48 @@ def test_a_deeper_header_does_not_stop_an_outer_walk():
     """Three tiers: the Solution header must reach the Family rows."""
     levels = [0, 1, 2, None, 2, None, 1, 2, None]
     assert group_member_rows(levels, 0) == [3, 5, 8]
+
+
+# --- the tick's vertical alignment (#343) -----------------------------------
+#
+# Browser-side geometry, so what is pinned here is the two facts the override
+# depends on: that the table really does take DataTables' `compact` class, and
+# that the stylesheet re-centres the box against the rule `compact` brings.
+
+
+def _tick_rule(selector: str) -> str:
+    """The body of the `.bbg-basket-table` rule ending in `selector`.
+
+    Whitespace-normalised: the selectors are line-wrapped in the template, so
+    matching them verbatim would pin the test to the wrapping rather than to
+    the declaration it is about.
+    """
+    from src.layout.html import STYLE_CTX, render_template
+
+    css = " ".join(render_template("app_css", **STYLE_CTX).split())
+    return css.split(f".bbg-basket-table table.dataTable tbody {selector} {{")[1].split(
+        "}"
+    )[0]
+
+
+def test_the_basket_table_takes_the_compact_class():
+    """The premise of the override below. If itables ever drops `compact` from
+    its default `classes`, Select centres the box on its own and the rule in
+    `app_css.html` becomes a no-op worth deleting rather than a silent one."""
+    grid, _, _ = _grid()
+    assert "compact" in grid.widget.classes
+
+
+def test_the_tick_box_is_re_centred_against_the_compact_rule():
+    """`table.dataTable.compact` re-declares Select's centring `margin-top` as
+    `-12px` — half a box too high — which drew the tick pinned to the top of
+    the row. The stylesheet puts the bundle's own `-6px` back."""
+    rule = _tick_rule("tr > td.bbg-tick-cell:before")
+    assert "margin-top: -6px !important;" in rule
+
+
+def test_the_tick_glyph_is_centred_in_its_box():
+    """Select draws the check with `line-height: 6px` in a 10px content box, so
+    a ticked row sat higher than an empty one even once the box was centred."""
+    rule = _tick_rule("tr.selected > td.bbg-tick-cell:before")
+    assert "line-height: 10px !important;" in rule

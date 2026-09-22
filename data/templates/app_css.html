@@ -884,10 +884,38 @@ div.itables_anywidget.bbg-basket-table table.dataTable tr.dtrg-group:hover td {
   color: {{accent}} !important;
   box-shadow: inset 2px 0 0 {{accent}} !important;
 }
-/* The tick, drawn by the Select extension into the first visible column (see
-   `_catalog_table_options` for why it is not a column of its own). */
+/* The tick, drawn by the Select extension as a `:before` on the cell of its
+   own column (`TICK_COLUMN`, v0.9.30 — see `_catalog_table_options`). */
 div.itables_anywidget.bbg-basket-table table.dataTable td.bbg-tick-cell {
   cursor: pointer !important;
+}
+/* Centre the box in its row (#343). Select positions it `top: 50%` with
+   `margin-top: -6px` — half the 12px box — which centres it; then a
+   `table.dataTable.compact` rule in the same bundle re-declares that margin
+   as `-12px`, and itables' default `classes` is `"display nowrap compact"`,
+   so every table here takes it. The box therefore drew 6px above centre,
+   reading as pinned to the top of the row. Restoring the bundle's own
+   un-compacted value is the whole fix, and it sits symmetrically beside the
+   `margin-left: -6px` still doing the horizontal half.
+
+   The tick glyph is that same `:before` once the row is selected
+   (`content: "\2713"`), and Select gives it `line-height: 6px` inside a 10px
+   content box — so the glyph centres on its line box, 2px above the box's own
+   centre. A line-height matching the content box puts it back, which is what
+   keeps a ticked row from sitting higher than an empty one. */
+div.itables_anywidget.bbg-basket-table
+  table.dataTable
+  tbody
+  tr
+  > td.bbg-tick-cell:before {
+  margin-top: -6px !important;
+}
+div.itables_anywidget.bbg-basket-table
+  table.dataTable
+  tbody
+  tr.selected
+  > td.bbg-tick-cell:before {
+  line-height: 10px !important;
 }
 /* Selected row (the Select extension) — the hook #265 builds on. */
 div.itables_anywidget table.dataTable tbody tr.selected td {

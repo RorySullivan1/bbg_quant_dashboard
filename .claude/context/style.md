@@ -480,3 +480,15 @@ column after the group columns in `_catalog_display_frame` is the whole change.
 Sharing a cell was the real cost — Select draws its checkbox as a
 pseudo-element, so it sat on top of the ticker text at some widths and beside
 it at others, and which one you got moved with the window.
+
+**That pseudo-element is centred here, not by the bundle.** Select positions it
+`top: 50%` with a `margin-top` of half its 12px height, which centres it — and
+then `table.dataTable.compact` re-declares that margin as `-12px`. itables'
+default `classes` is `"display nowrap compact"`, so every table in the app
+takes the override and the box drew 6px above centre, reading as pinned to the
+top of the row. `app_css.html` puts the bundle's own `-6px` back, and gives the
+selected state's check glyph a `line-height` matching its 10px content box —
+Select's `6px` centres the glyph on its line box rather than in the box, which
+left a ticked row sitting higher than an empty one. Both are scoped to
+`.bbg-basket-table`, and both are pinned by tests that also assert the
+`compact` class is still there to override (#343).

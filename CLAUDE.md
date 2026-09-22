@@ -316,7 +316,12 @@ to four** (Sortino · Calmar · Beta · Treynor): seven across four windows is 2
 columns, and VaR, RSI and Jensen α are the ones a reader narrows by least. The
 tick became **its own column** rather than a class on the Ticker cell, because
 Select draws its checkbox as a pseudo-element and sharing a cell put the two
-on top of each other at some widths and beside each other at others. The cards
+on top of each other at some widths and beside each other at others. That
+pseudo-element is **centred by us, not by the bundle** (v0.9.35, #343): Select
+centres it, then its own `table.dataTable.compact` rule re-declares the
+centring margin at twice the value, and itables' default `classes` carries
+`compact` — so the box drew half a box above centre on every table in the app,
+reading as pinned to the top of the row. The cards
 lost their names, which were long enough to push the **×** off the end of the
 card so it stopped rendering at all; what identifies a card now is its
 asset-class colour, a `BASKET_TAG_WIDTH` block down its leading edge (10px
@@ -409,7 +414,7 @@ precisions.
 
 ## Current version
 
-`v0.9.34` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.35` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
