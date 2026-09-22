@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.33`.
+- **Current version**: `v0.9.34`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -518,22 +518,39 @@ CSS, style tokens — live in `style.md`.)
   `"<level0>,<level1>"` width keys and a two-row header — flattened in
   v0.9.11.)
 - **Fetching and analysing are two horizons (v0.9.22 #311, widened v0.9.23
-  #322).** The app **analyses** `LOOKBACK_YEARS = 5` back — every chart window,
-  every `5Y` label — but **fetches** `score_history_years()`, which is
-  **derived**, not typed: `LOOKBACK_YEARS + the longest window stat_windows()
-  offers`, ten years today. Both boards score a metric against
-  `SCORE_SAMPLE_DAYS` of its own rolling history, so the deepest case needs the
-  longest window *plus* that sample — `5Y + 5Y` for the catalog table, `1Y + 5Y`
-  for the leaderboard. #311 wrote the leaderboard's case as the literal `6`,
-  which nothing checked against the windows on offer; deriving it means widening
-  `LOOKBACK_YEARS`, or adding a window within it, carries the fetch along
-  instead of leaving a quietly truncated sample behind. The boundary is
+  #322, widened again v0.9.34 #361).** The app **analyses** `LOOKBACK_YEARS =
+  10` back — every chart window, every `10Y` label — but **fetches**
+  `score_history_years()`, which is **derived**, not typed: `the longest window
+  stat_windows() offers + SCORE_SAMPLE_YEARS`, fifteen years today. Both boards
+  score a metric against `SCORE_SAMPLE_DAYS` of its own rolling history, so the
+  deepest case needs the longest window *plus* that sample — `10Y + 5Y` for the
+  catalog table, `1Y + 5Y` for the leaderboard. #311 wrote the leaderboard's
+  case as the literal `6`, which nothing checked against the windows on offer;
+  deriving it means widening `LOOKBACK_YEARS`, lengthening the sample, or
+  adding a window within the lookback, carries the fetch along instead of
+  leaving a quietly truncated sample behind. The boundary is
   `DashboardApp._analytics_window_start()`, and **every consumer goes through
   it**: with the two numbers equal a missed slice was harmless, and now it is a
-  ten-year figure under a `5Y` label. The two scorers are the documented
+  fifteen-year figure under a `10Y` label. The two scorers are the documented
   exceptions that read the unsliced frame. Three consumers had never sliced at
   all — `since_inception_perf`, `calendar_return_table` and the benchmark
   short-history caveat — because until #311 they never had to.
+
+  **The sample is not the lookback (v0.9.34 #361).** They were one constant
+  while both were 5. #361 asked for fifteen years pulled from Bloomberg; under
+  the old derivation (`LOOKBACK_YEARS + longest window`) that meant either a
+  `LOOKBACK_YEARS` of 15 — a thirty-year pull, a fifteen-year sample behind
+  every score, and a half-sample floor demanding ~22 years of history to rank
+  at the deepest window, which no strategy in the catalog has — or leaving the
+  analysis at 5 and pulling ten years nothing would read. So `SCORE_SAMPLE_YEARS
+  = 5` became its own constant, `LOOKBACK_YEARS` moved to 10 on its own, and the
+  fetch lands on exactly 15. Ten is also the deepest window the catalog's own
+  strategies can fill: the BSLX indices launched mid-2016, so a `15Y` column
+  would be dashes for every QIS strategy and populated only by the beta
+  benchmarks. **Every `(nY Z-Score)` label reads `SCORE_SAMPLE_YEARS`**, on the
+  Leaderboard's note and on the catalog header — a label reading the lookback
+  would say `10Y` over a five-year sample, which is the drift the derived label
+  exists to prevent.
   The rolling-Sharpe window is `SHARPE_WINDOW = 252` (1Y); the perf grid uses
   `PERF_TABLE_YEARS = (1, 3, 5)`. No UI date picker for the chart range.
 - **Plotly auto-fits y-axis** on data replacement, so the bqplot-era

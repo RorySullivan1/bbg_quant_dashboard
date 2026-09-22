@@ -21,9 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-#: How far back the app **analyses**: every chart window, every `5Y` label, and
-#: the slice `DashboardApp._analytics_window_start` hands each consumer.
-LOOKBACK_YEARS = 5
+#: How far back the app **analyses**: every chart window, every `10Y` label,
+#: the deepest window `stat_windows()` offers, and the slice
+#: `DashboardApp._analytics_window_start` hands each consumer.
+#:
+#: 10 since v0.9.34 (#361), up from 5. It is the deepest window the catalog's
+#: own strategies can fill: the three BSLX indices launched in mid-2016, so a
+#: `15Y` window would be a column of dashes for every QIS strategy and
+#: populated only by the beta benchmarks beside them.
+LOOKBACK_YEARS = 10
 
 #: (How far back the app **fetches** is `score_history_years()`, further down
 #: beside `stat_windows()` — the window set it is derived from. The pair only
@@ -42,17 +48,24 @@ PERF_TABLE_YEARS = (1, 3, 5)
 #: toggle moves it live; this is only the default.
 LEADERBOARD_WINDOW_DAYS = 21
 
-#: How long a sample **every** score is standardized against: `LOOKBACK_YEARS`
-#: of the metric's own rolling history. `score_history_years()` sizes the fetch
-#: so this is available at the deepest window either board offers (#310, #311).
+#: How long a sample **every** score is standardized against, in years of the
+#: metric's own rolling history. `score_history_years()` sizes the fetch so
+#: this is available at the deepest window either board offers (#310, #311).
 #:
-#: One quantity, not two that agree: the leaderboard's columns and the catalog
-#: table's ranking column are the same kind of number, and #324 made the
-#: catalog's sample fixed precisely so a reader can compare them. Two constants
-#: would have been free to drift apart with nothing to catch it.
+#: **Its own number since v0.9.34 (#361), not `LOOKBACK_YEARS`.** The two were
+#: one constant while both were 5, and #361 widened the analysis to 10 years
+#: without wanting a 10-year sample: a score standardized against ten years is
+#: a different statistic, and the half-sample floor below would then have
+#: demanded ~22 years of history to rank at the deepest window — more than any
+#: strategy in the catalog has. So the sample stays five years and the
+#: lookback moves on its own. What the two boards share is *this* constant,
+#: which is what keeps a reading comparable between them (#324).
+SCORE_SAMPLE_YEARS = 5
+
+#: The same sample in trading days — what the scorers are actually handed.
 #: (Named `LEADERBOARD_SCORE_SAMPLE_DAYS` until #324, when it stopped being
 #: only the leaderboard's.)
-SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+SCORE_SAMPLE_DAYS = SCORE_SAMPLE_YEARS * TRADING_DAYS_PER_YEAR
 
 #: Below this many rolling observations the catalog's ranking column renders a
 #: dash instead of a score, and sorts to the bottom with the other blanks.
@@ -64,8 +77,8 @@ SCORE_SAMPLE_DAYS = LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
 #: where a sample stops being a short five years and starts being a different
 #: statistic; it is a judgement, and it is one number to move.
 #:
-#: Expected effect, not a regression: at the `5Y` window an index needs about
-#: 7.5 years of history to score at all.
+#: Expected effect, not a regression: at the `10Y` window an index needs about
+#: 12.5 years of history to score at all — the window plus half the sample.
 #:
 #: The leaderboard deliberately does not take this floor — it already drops
 #: NaN and infinite readings before ranking, and changing what its board shows
@@ -435,27 +448,34 @@ def score_history_years() -> int:
     analyses.
 
     Sized for the deepest score the app will ask for. The catalog's ranking
-    column is about to standardize a metric against `LOOKBACK_YEARS` of that
-    metric's *own rolling history*, at whichever window the table is showing
-    (#324), so the deepest case needs the longest offered window **plus** the
-    sample behind it: at `5Y` that is 5 + 5 = 10 calendar years. Fetch only
-    `LOOKBACK_YEARS` and the `5Y` window's sample is a single observation long,
-    which `rolling_metric_zscore` standardizes against without saying so.
+    column standardizes a metric against `SCORE_SAMPLE_YEARS` of that metric's
+    *own rolling history*, at whichever window the table is showing (#324), so
+    the deepest case needs the longest offered window **plus** the sample
+    behind it: at `10Y` that is 10 + 5 = 15 calendar years. Fetch only the
+    window and its sample is a single observation long, which
+    `rolling_metric_zscore` standardizes against without saying so.
 
     Derived rather than typed, and for the reason the accessors above are:
     #311 wrote `6` — `1Y window + 5Y sample`, the leaderboard's deepest case —
     as a literal that nothing checked against the windows on offer. A second
     consumer with a deeper window would have been a second literal. The
-    relationship is the fact worth storing, so widening `LOOKBACK_YEARS` or
-    adding a window to `STAT_WINDOWS` carries the fetch with it instead of
-    leaving a quietly truncated sample behind.
+    relationship is the fact worth storing, so widening `LOOKBACK_YEARS`,
+    lengthening `SCORE_SAMPLE_YEARS` or adding a window to `STAT_WINDOWS`
+    carries the fetch with it instead of leaving a quietly truncated sample
+    behind.
 
     `stat_windows()` is itself capped by `LOOKBACK_YEARS`, so the two can never
     disagree: the offered set never outruns the lookback, and the fetch never
     outruns what the offered set needs. Rounded up because a window may be a
     fraction of a year (`6M`) while `pd.DateOffset(years=...)` takes an int.
+
+    Until v0.9.34 the sample *was* the lookback, so this read
+    `LOOKBACK_YEARS + longest window` and widening the analysis to 10 years
+    would have meant a 20-year pull with a 10-year sample behind every score.
+    #361 wanted 15 years pulled and the scores left comparable, which is the
+    reading that made the sample its own constant.
     """
-    return math.ceil(LOOKBACK_YEARS + max(years for _, years in stat_windows()))
+    return math.ceil(max(years for _, years in stat_windows()) + SCORE_SAMPLE_YEARS)
 
 
 def stat_window_years(label: str) -> float:

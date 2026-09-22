@@ -46,6 +46,7 @@ from ..config import (
     PERFORMANCE_DISCLAIMER_PATH,
     REGIME_TICKERS,
     RESLICE_DEBOUNCE_S,
+    SCORE_SAMPLE_YEARS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
@@ -790,11 +791,13 @@ class DashboardApp:
                     # The ranking basis, which the board cannot show: the rows
                     # carry a score and a raw value, and nothing on screen
                     # otherwise says the order comes from the former. Reads
-                    # `LOOKBACK_YEARS` because that is what
-                    # `SCORE_SAMPLE_DAYS` is derived from — a
-                    # literal "5Y" here would be free to drift from the sample
-                    # the scorer actually standardizes over.
-                    note=f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)",
+                    # `SCORE_SAMPLE_YEARS` because that is what
+                    # `SCORE_SAMPLE_DAYS` is derived from — a literal "5Y"
+                    # here would be free to drift from the sample the scorer
+                    # actually standardizes over, and so would
+                    # `LOOKBACK_YEARS`, which stopped being that sample in
+                    # v0.9.34 (#361).
+                    note=f"(Ranked By Normalized {SCORE_SAMPLE_YEARS}Y Z-Score)",
                 )
             ],
             layout=W.Layout(flex=f"1 1 {COMMENTARY_LEADERBOARD_SHARE}", min_width="0"),
@@ -916,10 +919,10 @@ class DashboardApp:
         """The start of the window every analytic is computed over.
 
         `LOOKBACK_YEARS` back from today — *not* the fetch start, which reaches
-        a year further for the leaderboard's score (#311). One helper rather
-        than the four inline copies this replaced: with the two horizons equal,
-        a missed slice was harmless; now it is a six-year figure under a `5Y`
-        label, and a fifth call site would opt out by omission.
+        `SCORE_SAMPLE_YEARS` further for the scorers (#311, #361). One helper
+        rather than the four inline copies this replaced: with the two horizons
+        equal, a missed slice was harmless; now it is a fifteen-year figure
+        under a `10Y` label, and a fifth call site would opt out by omission.
 
         The scorer in `_render_leaderboard` is the one deliberate exception and
         says so where it reads the unsliced frame.
@@ -936,7 +939,7 @@ class DashboardApp:
         #
         # Everything except the scorers reads `_analytics_window_start()`
         # instead. The two are years apart, so a consumer that skips the slice
-        # is a ten-year statistic under a `5Y` label.
+        # is a fifteen-year statistic under a `10Y` label.
         self.universe_start = (
             pd.Timestamp(self.today) - pd.DateOffset(years=score_history_years())
         ).date()
@@ -1162,8 +1165,9 @@ class DashboardApp:
         if first is None:
             return ""
         # Measured against the analytics window, not the fetch: the fetch
-        # reaches a year further for the leaderboard's score (#311), and a
-        # benchmark with a full five years of history covers everything shown.
+        # reaches `SCORE_SAMPLE_YEARS` further for the scorers (#311, #361),
+        # and a benchmark with a full `LOOKBACK_YEARS` of history covers
+        # everything shown.
         start = self._analytics_window_start()
         if first <= start + pd.Timedelta(days=BENCHMARK_SHORT_HISTORY_DAYS):
             return ""

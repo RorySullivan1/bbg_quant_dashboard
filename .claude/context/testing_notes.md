@@ -554,10 +554,12 @@ Run alongside the mock-price checklist above:
   hierarchy order, whatever order the chips were ticked in.
 - Unticking every chip leaves a **flat table with no group headers at all** —
   not one header per row.
-- The **Window** chips swap all four stat columns; the grouping, the row order
+- The **Window** chips swap the window's stat columns; the grouping, the row order
   and any selected row are undisturbed.
-- Only windows the price history supports are offered (6M/1Y/3Y/5Y at
-  `LOOKBACK_YEARS = 5`); no column of dashes.
+- Only windows the price history supports are offered (6M/1Y/3Y/5Y/10Y at
+  `LOOKBACK_YEARS = 10`, v0.9.34); no column of dashes. At **10Y** the three
+  BSLX strategies (launched 2016-06-30) carry values and BCLEAN / BAITHM show
+  the dash; the ranking column still reads `(5Y Z-Score)`, not `10Y`.
 - Column headers sit **on** their columns at first paint, with no click needed.
 - Scrolling the grid keeps the header row pinned.
 - Clicking a row opens that strategy in the **Single Strategy** tab (the same

@@ -455,21 +455,21 @@ def test_the_ranking_header_says_all_four_facts(app):
     """`Normalized 1Y Sharpe (5Y Z-Score)` — standardized, over what window,
     which metric, against what (#324). It replaced `Z-Score Sharpe 1M/1Y`,
     which compressed a window over a *movable* lookback into six characters."""
-    from src.config import LOOKBACK_YEARS
+    from src.config import SCORE_SAMPLE_YEARS
 
     app.window_chips.value = "1Y"
     assert _ranking_columns(app) == [
-        f"Normalized 1Y Sharpe ({LOOKBACK_YEARS}Y Z-Score)"
+        f"Normalized 1Y Sharpe ({SCORE_SAMPLE_YEARS}Y Z-Score)"
     ]
 
     app.z_metric_chips.value = "sortino"
     assert _ranking_columns(app) == [
-        f"Normalized 1Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"
+        f"Normalized 1Y Sortino ({SCORE_SAMPLE_YEARS}Y Z-Score)"
     ]
 
     app.window_chips.value = "3Y"
     assert _ranking_columns(app) == [
-        f"Normalized 3Y Sortino ({LOOKBACK_YEARS}Y Z-Score)"
+        f"Normalized 3Y Sortino ({SCORE_SAMPLE_YEARS}Y Z-Score)"
     ]
 
     app.z_metric_chips.value = "sharpe"
@@ -515,11 +515,11 @@ def test_the_catalog_cannot_rank_by_volatility(app):
 
 
 def test_ranking_by_calmar_rescores_the_table(app):
-    from src.config import LOOKBACK_YEARS
+    from src.config import SCORE_SAMPLE_YEARS
 
     app.z_metric_chips.value = "calmar"
     assert _ranking_columns(app) == [
-        f"Normalized 1Y Calmar ({LOOKBACK_YEARS}Y Z-Score)"
+        f"Normalized 1Y Calmar ({SCORE_SAMPLE_YEARS}Y Z-Score)"
     ]
     app.z_metric_chips.value = "sharpe"
 
@@ -809,19 +809,22 @@ def test_the_leaderboard_title_says_what_the_board_is_ranked_by(app):
     """The rows carry a score and a raw value, and nothing else on screen says
     the order comes from the former — so the section title does.
 
-    The years are read from `LOOKBACK_YEARS`, which is what
+    The years are read from `SCORE_SAMPLE_YEARS`, which is what
     `SCORE_SAMPLE_DAYS` is derived from. A literal `5Y` in the
     caption would be free to drift from the sample the scorer standardizes
-    over, and a caption that misstates the basis is worse than none.
+    over, and a caption that misstates the basis is worse than none — and so
+    would `LOOKBACK_YEARS`, which the sample stopped following in v0.9.34
+    (#361).
     """
-    from src.config import SCORE_SAMPLE_DAYS, TRADING_DAYS_PER_YEAR
+    from src.config import SCORE_SAMPLE_DAYS, SCORE_SAMPLE_YEARS, TRADING_DAYS_PER_YEAR
 
     (panel,) = app.commentary_box.children[1].children[0].children
     title = panel.children[0].value
 
-    assert f"(Ranked By Normalized {LOOKBACK_YEARS}Y Z-Score)" in title
+    assert f"(Ranked By Normalized {SCORE_SAMPLE_YEARS}Y Z-Score)" in title
+    assert f"Normalized {LOOKBACK_YEARS}Y" not in title
     # The caption is only true while the sample really is that many years.
-    assert SCORE_SAMPLE_DAYS == LOOKBACK_YEARS * TRADING_DAYS_PER_YEAR
+    assert SCORE_SAMPLE_DAYS == SCORE_SAMPLE_YEARS * TRADING_DAYS_PER_YEAR
 
     # The Bulletin has no basis to explain, so it carries no caption.
     bulletin = app.commentary_box.children[1].children[1].children[0]
@@ -865,12 +868,12 @@ def test_the_block_is_two_sections_at_sixty_forty(app):
     assert pane_box.children == (app.commentary_pane.root,)
 
 
-# --- two horizons: fetch ten years, analyse five (#311, #322) --------------
+# --- two horizons: fetch fifteen years, analyse ten (#311, #322, #361) -----
 #
 # The fetch reaches back far enough that a score is never standardized against a
 # truncated sample: the longest window the catalog offers, plus the five years
-# behind it. That makes a missed slice a ten-year statistic under a `5Y` label —
-# which is why the boundary is one helper and why these tests exist.
+# behind it. That makes a missed slice a fifteen-year statistic under a `10Y`
+# label — which is why the boundary is one helper and why these tests exist.
 
 
 def test_the_fetch_reaches_further_back_than_the_analysis(app):
@@ -894,25 +897,61 @@ def test_the_fetch_covers_the_longest_window_plus_its_sample():
     `6` was the leaderboard's deepest case written as a literal; the catalog's
     is deeper, and a third consumer would have been a third literal. What is
     pinned here is that the fetch always clears the longest offered window plus
-    the `LOOKBACK_YEARS` standardized behind it.
+    the `SCORE_SAMPLE_YEARS` standardized behind it.
     """
-    from src.config import LOOKBACK_YEARS, score_history_years, stat_windows
+    from src.config import SCORE_SAMPLE_YEARS, score_history_years, stat_windows
 
     longest = max(years for _, years in stat_windows())
-    assert score_history_years() >= LOOKBACK_YEARS + longest
-    # Today: the 5Y window over a 5Y sample.
-    assert score_history_years() == 10
+    assert score_history_years() >= longest + SCORE_SAMPLE_YEARS
+    # Today: the 10Y window over a 5Y sample — the fifteen years #361 asked for.
+    assert score_history_years() == 15
 
 
 def test_the_fetch_horizon_follows_the_lookback(monkeypatch):
     """Widen the analysis window and the fetch widens with it, untouched."""
     import src.config as config
 
-    monkeypatch.setattr(config, "LOOKBACK_YEARS", 10)
-    # `stat_windows()` is capped by the lookback, so 10Y and 15Y come on offer
-    # together with it — the deepest case is now 10Y over a 10Y sample.
-    assert max(years for _, years in config.stat_windows()) == 10.0
+    monkeypatch.setattr(config, "LOOKBACK_YEARS", 15)
+    # `stat_windows()` is capped by the lookback, so 15Y comes on offer with
+    # it — the deepest case is now 15Y over the same 5Y sample.
+    assert max(years for _, years in config.stat_windows()) == 15.0
     assert config.score_history_years() == 20
+
+
+def test_the_fetch_horizon_follows_the_sample_too(monkeypatch):
+    """The other half of the sum. The sample was the lookback until v0.9.34
+    (#361) made it its own constant, which is a second number the fetch has
+    to follow — and the one a reader would forget, since nothing on screen
+    changes when it is wrong: the scorer standardizes against whatever it is
+    given and says nothing."""
+    import src.config as config
+
+    monkeypatch.setattr(config, "SCORE_SAMPLE_YEARS", 8)
+    assert max(years for _, years in config.stat_windows()) == 10.0
+    assert config.score_history_years() == 18
+
+
+def test_the_sample_is_not_the_lookback():
+    """Reading C of #361: widen the analysis, keep the scores comparable.
+
+    A 10-year sample is a different statistic from a 5-year one, and the
+    half-sample floor would then need ~22 years of history to rank at the
+    deepest window — more than any strategy in the catalog has. So the two
+    numbers are separate, and this is the test that fails if someone folds
+    them back together.
+    """
+    from src.config import (
+        CATALOG_SCORE_MIN_SAMPLE_DAYS,
+        LOOKBACK_YEARS,
+        SCORE_SAMPLE_DAYS,
+        SCORE_SAMPLE_YEARS,
+        TRADING_DAYS_PER_YEAR,
+    )
+
+    assert LOOKBACK_YEARS == 10
+    assert SCORE_SAMPLE_YEARS == 5
+    assert SCORE_SAMPLE_DAYS == SCORE_SAMPLE_YEARS * TRADING_DAYS_PER_YEAR
+    assert CATALOG_SCORE_MIN_SAMPLE_DAYS == SCORE_SAMPLE_DAYS // 2
 
 
 def test_a_fractional_window_rounds_the_fetch_up(monkeypatch):
@@ -925,12 +964,13 @@ def test_a_fractional_window_rounds_the_fetch_up(monkeypatch):
     assert horizon == 6  # ceil(5 + 0.5)
 
 
-def _decade_of_prices(tickers=("AAA Index", "BBB Index", "CCC Index")):
-    """~10 trading years of seeded daily prices — the new fetch horizon."""
+def _fifteen_years_of_prices(tickers=("AAA Index", "BBB Index", "CCC Index")):
+    """~15 trading years of seeded daily prices — the fetch horizon since
+    v0.9.34 (#361)."""
     import numpy as np
 
     rng = np.random.default_rng(7)
-    idx = pd.bdate_range(end="2026-09-18", periods=252 * 10)
+    idx = pd.bdate_range(end="2026-09-18", periods=252 * 15)
     drifts = np.linspace(-0.0002, 0.0005, len(tickers))
     return pd.DataFrame(
         {
@@ -945,16 +985,18 @@ def _decade_of_prices(tickers=("AAA Index", "BBB Index", "CCC Index")):
 def test_a_longer_fetch_moves_no_analytic():
     """The whole bet of the two horizons: more history in, same numbers out.
 
-    Every perf window slices its own tail, so handing `universe_perf` ten years
-    instead of six must be invisible. If it ever is not, the fetch stopped being
-    free and a `5Y` column quietly became a ten-year one.
+    Every perf window slices its own tail, so handing `universe_perf` fifteen
+    years instead of eleven must be invisible. If it ever is not, the fetch
+    stopped being free and a `10Y` column quietly became a fifteen-year one.
+    (Eleven, not six: the shorter frame still has to cover the deepest window
+    the table offers, or the `10Y` block is dashes on one side only.)
     """
     from src.stats import universe_perf
 
-    decade = _decade_of_prices()
-    six_years = decade.tail(252 * 6)
+    full = _fifteen_years_of_prices()
+    eleven_years = full.tail(252 * 11)
 
-    pd.testing.assert_frame_equal(universe_perf(decade), universe_perf(six_years))
+    pd.testing.assert_frame_equal(universe_perf(full), universe_perf(eleven_years))
 
 
 def test_a_longer_fetch_moves_no_leaderboard_score():
@@ -965,9 +1007,9 @@ def test_a_longer_fetch_moves_no_leaderboard_score():
     from src.commentary import build_leaderboard, window_returns
     from src.stats import daily_returns
 
-    decade = _decade_of_prices()
-    six_years = decade.tail(252 * 6)
-    meta = pd.DataFrame({"ticker": list(decade.columns), "name": list(decade.columns)})
+    full = _fifteen_years_of_prices()
+    six_years = full.tail(252 * 6)
+    meta = pd.DataFrame({"ticker": list(full.columns), "name": list(full.columns)})
 
     def board(prices):
         return build_leaderboard(
@@ -978,7 +1020,7 @@ def test_a_longer_fetch_moves_no_leaderboard_score():
             history_returns=daily_returns(prices),
         )
 
-    assert board(decade) == board(six_years)
+    assert board(full) == board(six_years)
 
 
 def test_no_call_site_computes_the_analytics_window_for_itself():
@@ -986,7 +1028,7 @@ def test_no_call_site_computes_the_analytics_window_for_itself():
 
     Four sites each carried their own copy of this expression. While the fetch
     and the analysis window were the same number a missed slice was harmless;
-    now it is a year of extra history under a `5Y` label.
+    now it is five years of extra history under a `10Y` label.
     """
     from pathlib import Path
 
@@ -1008,9 +1050,9 @@ def test_no_call_site_computes_the_analytics_window_for_itself():
 def test_a_benchmark_with_a_full_analysis_window_draws_no_caveat(app):
     """The caveat is about covering the *analysis*, not the fetch.
 
-    Measured against the six-year fetch start, a benchmark carrying a full five
-    years of history looks ~365 days late and would trip a warning it does not
-    deserve.
+    Measured against the fifteen-year fetch start, a benchmark carrying a full
+    ten years of history looks five years late and would trip a warning it
+    does not deserve.
     """
     analytics_start = app._analytics_window_start()
     full = pd.Series(

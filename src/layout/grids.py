@@ -38,8 +38,8 @@ from itables.widget import ITable
 
 from ..config import (
     CATALOG_GRID_FIELDS,
-    LOOKBACK_YEARS,
     PERF_GRID_FIELDS,
+    SCORE_SAMPLE_YEARS,
     field_label,
     stat_windows,
     universe_grid_default_window,
@@ -312,9 +312,12 @@ def zscore_column_name(metric_label: str, window_label: str) -> str:
     reads off a screen — and whose lookback was a control the user could move,
     so the same column meant three things.
 
-    The `5Y` is `LOOKBACK_YEARS`, not a literal, for the reason the
+    The `5Y` is `SCORE_SAMPLE_YEARS`, not a literal, for the reason the
     Leaderboard's title note is (#309): the sample and the number naming it
-    must not be free to drift apart.
+    must not be free to drift apart. **Not `LOOKBACK_YEARS`** — the two were
+    one number until v0.9.34 (#361) widened the analysis to ten years and
+    kept the sample at five, and a header reading `10Y Z-Score` over a
+    five-year sample would be the drift this docstring is about.
 
     Built in one place and never parsed back — `_window_of` has to keep
     returning None for this string even though a window label sits inside it,
@@ -323,7 +326,7 @@ def zscore_column_name(metric_label: str, window_label: str) -> str:
     """
     return (
         f"{ZSCORE_COLUMN_PREFIX} {window_label} {metric_label} "
-        f"({LOOKBACK_YEARS}Y {ZSCORE_SUPERCOL})"
+        f"({SCORE_SAMPLE_YEARS}Y {ZSCORE_SUPERCOL})"
     )
 
 
