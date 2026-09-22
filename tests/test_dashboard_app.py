@@ -149,64 +149,99 @@ def test_benchmark_window_note_flags_a_late_start(app):
     assert str(idx[0].date()) in note
 
 
-# --- a catalog-grid click steers the Single Strategy tab (#265) -------------
+# --- a catalog-grid click steers the Single Strategy tab (#265, #365) -------
 
 
-def _offered(app) -> list[str]:
-    return [
-        o[1] if isinstance(o, tuple) else o for o in app.single_strategy.picker.options
-    ]
+def _shown(app) -> list[str]:
+    """The tickers the Single Strategy table currently draws."""
+    return list(app.single_strategy.grid._tickers)
 
 
 def test_a_catalog_click_opens_that_strategy_in_single_strategy(app):
-    target = _offered(app)[-1]
+    target = _shown(app)[-1]
     app._show_in_single_strategy(target)
-    assert app.single_strategy.picker.value == target
+    assert app.single_strategy.pick.value == target
     # And the user is taken there, not left on Platform wondering what happened.
     assert app.top_tab_content.children == (app._top_panels["single"],)
 
 
-def test_the_catalog_click_goes_through_the_picker_not_around_it(app):
-    # Routing sets the picker's value and lets that picker's own observer
-    # render. If this ever renders directly instead, a click and a manual pick
-    # can diverge — the bug would be two code paths, not one wrong line.
+def test_the_catalog_click_goes_through_the_pick_not_around_it(app):
+    # Routing sets the `Pick` and lets its observers render. If this ever
+    # rendered directly instead, a click and a manual pick could diverge — the
+    # bug would be two code paths, not one wrong line.
     seen: list[object] = []
-    app.single_strategy.picker.observe(seen.append, names="value")
+    app.single_strategy.pick.observe(seen.append, names="value")
     try:
-        first, second = _offered(app)[0], _offered(app)[1]
+        first, second = _shown(app)[0], _shown(app)[1]
         app._show_in_single_strategy(first)
         app._show_in_single_strategy(second)
         assert [c["new"] for c in seen][-2:] == [first, second]
     finally:
-        app.single_strategy.picker.unobserve(seen.append, names="value")
+        app.single_strategy.pick.unobserve(seen.append, names="value")
 
 
-def test_a_filtered_out_strategy_clears_the_filters_and_says_so(app):
-    # The Single Strategy tab has its own filters, which can narrow the picker
-    # below the full catalog. Refusing the click would be a dead end — the user
-    # named the strategy they want — but silently discarding their filters is
-    # the surprising part, so it has to be reported.
-    everything = list(app.meta["ticker"])
-    target = everything[-1]
-    # Narrow the picker so `target` is not on offer.
-    app.single_strategy._suspend = True
-    try:
-        app.single_strategy.picker.options = _ticker_options_for(app, everything[:1])
-        app.single_strategy.picker.value = everything[0]
-    finally:
-        app.single_strategy._suspend = False
-    assert target not in _offered(app)
+def test_a_filtered_out_strategy_stays_picked_and_the_card_says_so(app):
+    """A pick the filters hide is still the pick (#363 dec. 2).
 
+    This is the behaviour that replaced clearing the user's filters to reach
+    the clicked index. That workaround existed because the pick *was* a
+    dropdown's value and a hidden ticker was not on offer; a `Pick` is not an
+    options list, so the strategy is drawn either way and the profile card is
+    the thing that explains the unlit table.
+    """
+    from src.layout.html import FILTERED_OUT_NOTE
+
+    target = list(app.meta["ticker"])[-1]
     app._show_in_single_strategy(target)
-    assert app.single_strategy.picker.value == target
-    assert target in _offered(app)
-    assert target in app.state.status_w.value
+    assert app.single_strategy.pick.value == target
+
+    # Narrow the table until the pick has no row.
+    group = app.single_strategy.filter_strip.groups["asset_class"]
+    hidden = app.meta.loc[app.meta["ticker"] == target, "asset_class"].iloc[0]
+    keep = [v for _, v in group.options if v != hidden]
+    assert keep, "the fixture needs more than one asset class"
+    group.value = tuple(keep)
+
+    assert target not in _shown(app), "the filter hides the picked row"
+    assert app.single_strategy.pick.value == target, "the pick survives it"
+    assert app.single_strategy.grid.widget.selected_rows == []
+    assert FILTERED_OUT_NOTE in app.single_strategy.profile_w.value
 
 
-def _ticker_options_for(app, tickers):
-    from src.layout.app import _ticker_options
+def test_the_picked_row_is_re_lit_after_a_rebuild(app):
+    """Positions are worthless across a rebuild; the pick is not (#365).
 
-    return _ticker_options(app.meta.loc[app.meta["ticker"].isin(tickers)])
+    itables destroys and re-news the table on every options change, so the
+    grid has to re-derive its lit row from the pick by *ticker*. A Group by
+    change is the cheapest way to force that rebuild.
+    """
+    grid = app.single_strategy.grid
+    target = _shown(app)[-1]
+    app._show_in_single_strategy(target)
+    before = grid.positions_of([target])
+    assert grid.widget.selected_rows == before
+
+    chips = app.single_strategy.group_chips
+    chips.value = tuple(v for _, v in chips.options)[:1]
+
+    assert app.single_strategy.pick.value == target
+    assert grid.tickers_at(grid.widget.selected_rows) == [target]
+
+
+def test_every_entry_point_into_single_strategy_writes_the_same_pick(app):
+    """The catalog row, the Leaderboard row, the points table and a basket
+    card all land on one object (#363 acceptance)."""
+    pick = app.single_strategy.pick
+    assert app.universe_grid._on_pick.__func__ is type(app)._show_in_single_strategy
+    assert app.leaderboard._on_pick.__func__ is type(app)._show_in_single_strategy
+    assert (
+        app.analytics._on_open_strategy.__func__ is type(app)._show_in_single_strategy
+    )
+    assert app.basket_cards._on_open.__func__ is type(app)._show_in_single_strategy
+
+    target = _shown(app)[0]
+    app._show_in_single_strategy(target)
+    assert pick.value == target
 
 
 # --- the grid's own controls: grouping and stats window (#266, #273) -------
@@ -660,7 +695,7 @@ def test_the_leaderboard_is_populated_after_the_initial_load(app):
 
 def test_every_leaderboard_row_names_an_index_in_the_catalog(app):
     # A row whose ticker is not in the catalog would route a click to a
-    # strategy the Single Strategy picker cannot offer.
+    # strategy the Single Strategy table cannot show.
     catalog = set(app.meta["ticker"])
     shown = _board_tickers(app)
     assert shown
@@ -677,7 +712,7 @@ def test_a_leaderboard_click_opens_that_strategy_in_single_strategy(app):
     )
     slot.ticker.click()
 
-    assert app.single_strategy.picker.value == target
+    assert app.single_strategy.pick.value == target
     assert app.top_tab_content.children == (app._top_panels["single"],)
 
 
@@ -709,12 +744,15 @@ def test_the_window_toggle_re_ranks_the_board_without_fetching(app, monkeypatch)
 
 
 def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app):
-    """#306 added 1Y to the board's chips. It is a list of its own, not an edit
-    to `SHORT_WINDOW_OPTIONS`, because that constant also drives the
-    Multi-Strategy Quantitative Z-Score window, which was not asked to grow a
-    year. This is the test that catches a future one-line edit to the shared
-    list. (The Platform card was its third consumer until #333 moved the card
-    onto `stat_windows()`.)"""
+    """#306 added 1Y to the board's chips. It is a list of its own, not an
+    edit to `SHORT_WINDOW_OPTIONS`, because that constant drove the
+    Quantitative Z-Score window too, which was not asked to grow a year. This
+    is the test that catches a future one-line edit to the shared list.
+
+    Both of the other consumers have since gone — the Platform card moved onto
+    `stat_windows()` in #333, and the last `QuantFilter` was retired by #365 —
+    so what the assertion guards now is the list itself, and the rule that a
+    board's options are the board's."""
     from src.config import (
         LEADERBOARD_WINDOW_OPTIONS,
         SHORT_WINDOW_OPTIONS,
@@ -732,18 +770,11 @@ def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app
     assert [label for label, _ in app.ranking_window.options] == [
         label for label, _ in LEADERBOARD_WINDOW_OPTIONS
     ]
-    # The shared list, and both controls built from it, stop at six months.
+    # The shared list stops at six months. Nothing builds a control from it
+    # any more — the Multi tab's thresholds went in #345 and Single Strategy's
+    # `QuantFilter` in #365 — so this pins the list itself, which is what the
+    # Leaderboard's own year-long options are deliberately kept apart from.
     assert [label for label, _ in SHORT_WINDOW_OPTIONS] == ["1W", "1M", "3M", "6M"]
-    # Single Strategy's panel: the Multi tab's was retired with its thresholds
-    # (#345), so this is the one `QuantFilter` left.
-    assert [
-        label for label, _ in app.single_strategy.filters.quant.z_window_dd.options
-    ] == [
-        "1W",
-        "1M",
-        "3M",
-        "6M",
-    ]
 
 
 def test_selecting_the_year_window_re_ranks_from_cache_without_fetching(

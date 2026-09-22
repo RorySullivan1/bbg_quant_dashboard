@@ -1,4 +1,4 @@
-"""The Multi-Strategy selection, as one object.
+"""The two tabs' selections, as objects: `Basket` and `Pick`.
 
 The tab's selection used to be a `CheckboxMultiSelect`'s `value` tuple, with
 the cap guarded in three places — the list widget rejected a toggle, the app
@@ -18,6 +18,13 @@ thing that decides what can be chosen is the table's frame.
 options change (`destroy()` then `new`), so a row *position* means nothing
 across a filter, a Group by change or a window switch. The basket is what
 survives those, and the grid re-derives its ticks from it after each rebuild.
+
+`Pick` is the same argument for one ticker (#363 dec. 2). Single Strategy's
+selection used to *be* a `W.Dropdown`'s value, with the options list doubling
+as the store — which is why a strategy the filters hid could not be picked at
+all, and why opening one from another tab had to clear the user's filters to
+reach it. A pick that is not a row position survives the rebuild, and survives
+being filtered out.
 """
 
 from __future__ import annotations
@@ -146,6 +153,32 @@ class Basket(traitlets.HasTraits):
     def clear(self) -> BasketResult:
         """Empty it — what *Clear all* means."""
         return self.replace(())
+
+
+class Pick(traitlets.HasTraits):
+    """The one strategy Single Strategy is looking at.
+
+    `Basket`'s single-ticker sibling, and deliberately much smaller: there is
+    no cap to check, so no write can be rejected and no `PickResult` is needed
+    — `pick.value = ticker` is the whole write path, and `None` is "nothing
+    picked yet".
+
+    It exists for the same reason `Basket` does. Every way into the tab — a
+    catalog row, a Leaderboard row, a points-table row, a basket card, the
+    load-time default and the tab's own grid — sets *this*, and the grid, the
+    profile card, the metrics table and both panes are views of it. While the
+    selection lived on the picker widget those six entry points were writing
+    to a control whose options list could refuse them.
+    """
+
+    value = traitlets.Unicode(allow_none=True, default_value=None)
+
+    def __contains__(self, ticker: str) -> bool:
+        return ticker == self.value
+
+    def clear(self) -> None:
+        """Nothing picked — what an empty catalog means."""
+        self.value = None
 
 
 def _as_tuple(tickers: str | Iterable[str]) -> tuple[str, ...]:

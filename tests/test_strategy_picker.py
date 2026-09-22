@@ -226,8 +226,8 @@ def test_switching_filter_dimension_keeps_every_dimension_s_ticks(app):
 
 def test_no_inline_filter_duplication_in_the_controller():
     """Regression guard for #155: the filter reducer stays out of the
-    controller. `apply_filters` is `FilterStrip`'s and `FilterPanel`'s to call;
-    `app.py` composes them."""
+    controller. `apply_filters` is `FilterStrip`'s to call; `app.py` composes
+    it. (`FilterPanel` was the other caller until #365 retired it.)"""
     from pathlib import Path
 
     src = Path("src/layout/app.py").read_text()

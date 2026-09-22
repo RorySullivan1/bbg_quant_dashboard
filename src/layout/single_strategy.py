@@ -2,30 +2,45 @@
 
 Four parts, top to bottom:
 
-- a **Filters** accordion (``make_filter_panel``) in a two-column panel: the
-  strategy picker, benchmark selector, and "Show benchmark" toggle on the left,
-  the criteria on the right, so they narrow the picker in the same pane;
+- the **Strategy** picker — the catalog table in single-select, under the
+  *Table view* bar (Group by · Window · Benchmark) and the *Filter* bar
+  (Dimension · Values), exactly the surface the Multi-Strategy tab picks its
+  basket from (#363 dec. 1). It replaced a `W.Dropdown` inside a *Filters*
+  accordion beside a 240px checkbox column — the last of the v0.8 idiom, and
+  the last caller of `FilterPanel`;
 - **Section 1**, a metadata card beside a cumulative chart and perf table;
-- **Section 2**, a 3-pill monthly-return calendar (Absolute / Outperformance /
-  Vol-adjusted) over one DataGrid;
+- **Section 2**, a 5-pill monthly-return calendar over one DataGrid;
 - **Section 3**, two analysis panes mirroring the Multi-Strategy tab, each with
   its own picker and benchmark dropdown. Weekly-returns β scatter, return
   distribution, factor-correlation scatter, drawdown, and factor scoring are
   functional; performance-ranking, PCA, and defensive scoring are stubs.
 
-The builder re-renders live on any filter change — there is no Refresh button —
-and auto-selects the first still-matching strategy when the picked one is
-filtered out. Prices come from the cached ``state.universe_prices``.
+**The pick is a `Pick`, not the grid's selected row** (#363 dec. 2). Five
+things write it — a row here, a catalog row, a Leaderboard row, a points-table
+row and a basket card — and everything below is a view of it. A pick the
+filters hide keeps its card, its numbers and its charts; the table simply has
+no row to light, and the profile card says so.
+
+Every control re-renders live off the cached ``state.universe_prices`` — there
+is no Refresh on this tab and nothing here issues BQL.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import ipywidgets as W
 import pandas as pd
 
-from ..config import LOOKBACK_YEARS
+from ..config import (
+    LOOKBACK_YEARS,
+    field_label,
+    stat_windows,
+    universe_grid_default_window,
+    universe_grid_group_fields,
+    universe_grid_groupable_fields,
+)
 from ..stats import (
     calendar_return_table,
     cum_perf,
@@ -43,20 +58,36 @@ from ..stats import (
     trend_returns,
     weekly_returns,
 )
-from ..style import Color
+from ..style import (
+    CATALOG_TABLE_HEIGHT,
+    FILTER_CHIPS_SHARE,
+    FILTER_VALUES_SHARE,
+)
+from .basket import Pick
 from .benchmarks import BenchmarkRegistry
 from .charts import (
     LineChart,
 )
 from .chrome import _make_tab_button, _style_tab_button
-from .filter_panel import make_filter_panel
-from .filters import _ticker_options
-from .grids import CalendarGrid, PerfGrid
+from .filter_strip import FilterStrip
+from .grids import CalendarGrid, PerfGrid, StrategyGrid
 from .html import STYLE_CTX, _render_profile_card, render_template
 from .panes import (
     SingleAnalysisPane,
     _make_benchmark_dropdown,
     _make_single_analysis_pane,
+)
+from .quant_columns import QuantColumns
+from .rails import (
+    FILTER_BAR_TITLE,
+    FILTER_DIMENSION_HEADING,
+    FILTER_VALUES_HEADING,
+    TABLE_BAR_TITLE,
+    ChipGroup,
+    MultiChipGroup,
+    RailSection,
+    control_bar,
+    section_panel,
 )
 
 if TYPE_CHECKING:
@@ -81,17 +112,19 @@ _CALENDAR_BENCHMARK_KINDS: frozenset[str] = frozenset(
 
 
 class SingleStrategyPanel:
-    """The Single Strategy tab: a per-strategy deep-dive in three sections.
+    """The Single Strategy tab: a per-strategy deep-dive in four parts.
 
-    Owns every widget the builder binds and re-renders — the strategy `picker`,
-    the shared `bench_dd` + `bench_chk` overlay toggle, the `profile_w` card,
-    the `line` cumulative chart, the compact `perf_grid`, the calendar
-    (`cal_grid` + `cal_pills`, with `cal_kind` the active mode), the filter
-    panel, and the two `SingleAnalysisPane`s — and renders into them.
+    Owns every widget the builder binds and re-renders — the `pick`, the
+    `grid` it is picked in and the two bars above it (`table_bar` /
+    `filter_bar`, with `filter_strip` holding the values), the shared
+    `bench_dd` + `bench_chk` overlay toggle, the `profile_w` card, the `line`
+    cumulative chart, the compact `perf_grid`, the calendar (`cal_grid` +
+    `cal_pills`, with `cal_kind` the active mode), and the two
+    `SingleAnalysisPane`s — and renders into them.
 
     Like `PlatformAnalytics` (#219), **`state` is held and `meta` stays a
     per-call argument**: `state` is one mutable object whose contents change in
-    place, while `build_app` re-points `meta` to the pruned catalog after each
+    place, while the app re-points `meta` to the pruned catalog after each
     load, so an attribute would go stale silently.
     """
 
@@ -101,6 +134,7 @@ class SingleStrategyPanel:
         state: DashboardState,
         *,
         registry: BenchmarkRegistry | None = None,
+        on_filter_change: Callable[[], None] | None = None,
     ) -> None:
         self.state = state
         #: The analytics window the panel last rendered at, kept for
@@ -108,57 +142,106 @@ class SingleStrategyPanel:
         #: fetched frame like every other consumer (#311). None until the first
         #: `render`, which is also before any strategy is picked.
         self._window_start: pd.Timestamp | None = None
+        #: The one strategy every section below draws. Constructed here rather
+        #: than injected: the panel is the only thing that has to exist for a
+        #: pick to mean anything, and the app reaches it as `panel.pick`.
+        self.pick = Pick()
+        #: The memo the grid's quant columns are computed through — the same
+        #: object the Multi tab holds, one per tab so a benchmark change on one
+        #: cannot evict the other's four windows.
+        self.quant_columns = QuantColumns()
+        self._on_filter_change = on_filter_change
+        #: The tickers the table currently draws. Not the catalog and not the
+        #: pick — `shows` reads it so the profile card can say when the two
+        #: have parted company. **None until the first `render_grid`**, which
+        #: is a different fact from an empty frame: a table that has not been
+        #: drawn is not hiding anything, and a card that said it was would be
+        #: claiming a filter nobody set.
+        self._shown: frozenset[str] | None = None
         self._build(meta, registry=registry)
 
     def _build(self, meta: pd.DataFrame, *, registry: BenchmarkRegistry | None) -> None:
-        # `build_root=False` so the two columns are composed here into one
-        # equal-height accordion; the builder wires the inputs for live re-render.
-        filters = make_filter_panel(
-            meta,
-            build_root=False,
-            registry=registry,
-            right_panel_layout=W.Layout(
-                width="62%", padding="8px", border=f"1px solid {Color.BORDER}"
-            ),
+        # --- the picker (#365) ------------------------------------------------
+        #
+        # The catalog table in single-select, under the two bars the
+        # Multi-Strategy tab picks its basket from. What this replaced was a
+        # `W.Dropdown` of ticker strings inside a *Filters* accordion, beside
+        # 240px of checkboxes and nine `≥ / ≤` threshold rows typed against
+        # numbers that appeared nowhere on screen — while the catalog those
+        # rows were narrowing sat one tab away, grouped, with every one of
+        # those numbers in a column.
+        #
+        # The tab's **own** chips over the same option lists the other two
+        # read, so the three tables can be looked at through different windows
+        # but cannot offer different things (#331 dec. 1).
+        self.grid = StrategyGrid(self.pick)
+        self.group_chips = MultiChipGroup(
+            [(field_label(key), key) for key in universe_grid_groupable_fields()],
+            value=universe_grid_group_fields(),
+            row=True,
         )
-
-        options = _ticker_options(meta)
-        picker = W.Dropdown(
-            options=options,
-            value=options[0][1] if options else None,
-            description="Strategy",
-            style={"description_width": "70px"},
-            layout=W.Layout(width="100%"),
+        self.window_chips = ChipGroup(
+            [label for label, _ in stat_windows()],
+            value=universe_grid_default_window(),
+            row=True,
         )
-        bench_dd = _make_benchmark_dropdown(width="100%", registry=registry)
+        # One benchmark for the whole tab: the quant columns' Beta and
+        # Treynor and the cumulative chart's overlay. A `BenchmarkSelect`
+        # through the one factory, never a bare `W.Dropdown` — every benchmark
+        # selector in the app is user-extensible (v0.9.14), and a control here
+        # that could not take a ticker off the list would be the one
+        # exception.
+        bench_dd = _make_benchmark_dropdown("", width="200px", registry=registry)
+        # The overlay toggle rides with the selector rather than sitting in a
+        # section of its own — it does not choose a benchmark, it says whether
+        # the cumulative chart draws the one already chosen.
         bench_chk = W.Checkbox(
             value=False,
             description="Show benchmark",
             indent=False,
-            layout=W.Layout(width="100%"),
+            layout=W.Layout(width="auto", margin="2px 0 0 0"),
         )
-        # Left column: the strategy selection + benchmark controls, bordered like the
-        # criteria panel and stretched to match its height.
-        strategy_panel = W.VBox(
-            [picker, bench_dd, bench_chk],
-            layout=W.Layout(
-                width="38%",
-                padding="8px",
-                border=f"1px solid {Color.BORDER}",
-                display="flex",
-                flex_flow="column",
+        self.table_bar = control_bar(
+            RailSection("Group by", self.group_chips),
+            RailSection("Window", self.window_chips),
+            RailSection(
+                "Benchmark",
+                W.VBox([bench_dd, bench_chk], layout=W.Layout(width="auto")),
             ),
+            title=TABLE_BAR_TITLE,
         )
-        filter_box = W.HBox(
-            [strategy_panel, filters.right_panel],
-            layout=W.Layout(width="100%", align_items="stretch"),
+        # Structure in the bar, text and numbers in the table (#341 dec. 8):
+        # a dimension chip names what is filtered, the strip beside it shows
+        # that dimension's values, and anything that is a *number* is a column
+        # with the comparison filter row under it. This is the same
+        # `FilterStrip` the Multi tab builds, on the same shares — the tab's
+        # own instance, so the two tabs' filters are independent.
+        self.filter_strip = FilterStrip(meta, on_change=self._filters_changed)
+        self.filter_dim_chips = ChipGroup(
+            [(self.filter_strip.chip_label(k), k) for k in self.filter_strip.keys],
+            value=self.filter_strip.keys[0],
+            row=True,
         )
-        filters_accordion = W.Accordion(
-            children=[filter_box],
-            titles=("Filters",),
-            selected_index=0,
-            layout=W.Layout(width="100%"),
+        self.filter_dim_chips.layout.width = "auto"
+        self.filter_dim_chips.observe(self._on_filter_dimension, names="value")
+        self.filter_bar = control_bar(
+            RailSection(
+                FILTER_DIMENSION_HEADING, self.filter_dim_chips, FILTER_CHIPS_SHARE
+            ),
+            RailSection(
+                FILTER_VALUES_HEADING, self.filter_strip.root, FILTER_VALUES_SHARE
+            ),
+            title=FILTER_BAR_TITLE,
         )
+        self.filter_bar.add_class("bbg-filter-bar")
+        self.picker_section = section_panel(
+            "Strategy",
+            W.VBox([self.table_bar, self.filter_bar]),
+            self.grid.widget,
+            height=CATALOG_TABLE_HEIGHT,
+        )
+        self.group_chips.observe(self._on_grouping, names="value")
+        self.window_chips.observe(self._on_window, names="value")
 
         profile_w = W.HTML()
         line = LineChart()
@@ -216,7 +299,7 @@ class SingleStrategyPanel:
             layout=W.Layout(width="100%", padding="8px 0 0 0"),
         )
         # Section 3: a two-pane analysis section mirroring the
-        # Multi-Strategy tab. The shared `picker` above feeds both panes; each pane
+        # Multi-Strategy tab. The shared `pick` above feeds both panes; each pane
         # picks which analysis + benchmark to draw, for side-by-side comparison.
         pane_left = _make_single_analysis_pane("left", registry=registry)
         pane_right = _make_single_analysis_pane("right", registry=registry)
@@ -233,13 +316,11 @@ class SingleStrategyPanel:
         )
 
         root = W.VBox(
-            [filters_accordion, section1, section2_slot, section3_slot],
+            [self.picker_section, section1, section2_slot, section3_slot],
             layout=W.Layout(width="100%", padding="4px 8px 12px 8px"),
         )
 
         self.root = root
-        self.filters = filters
-        self.picker = picker
         self.bench_dd = bench_dd
         self.bench_chk = bench_chk
         self.profile_w = profile_w
@@ -254,6 +335,104 @@ class SingleStrategyPanel:
         self.section2_slot = section2_slot
         self.section3_slot = section3_slot
 
+    # --- the picker's own controls (#365) -------------------------------------
+    #
+    # Every one of these re-slices the cache and redraws the table. **None of
+    # them fetches**: every price the tab can need is in `universe_prices`
+    # already, and the app's Refresh is the only thing that issues BQL.
+
+    def render_grid(self, meta: pd.DataFrame) -> None:
+        """Redraw the picker table from the cache, narrowed by the filter bar.
+
+        The search box and the per-column filter row narrow further, in the
+        browser — the kernel never guesses what they hold (#341), which is
+        also why the pick is re-derived from `self.pick` rather than from a
+        row position the last frame happened to use.
+        """
+        narrowed = self.filter_strip.apply(meta)
+        tickers = pd.Index(narrowed["ticker"])
+        self.grid.update(
+            narrowed,
+            self.state.universe_up,
+            quant=self.quant_columns.frame(
+                self.state.arp_universe_prices,
+                tickers,
+                benchmark=self.state.universe_prices.get(self.bench_dd.value),
+                benchmark_name=self.bench_dd.value,
+                returns=self.state.universe_rets,
+            ),
+        )
+        self._shown = frozenset(str(t) for t in tickers)
+
+    def shows(self, ticker: str | None) -> bool:
+        """Whether the table currently has a row for `ticker`.
+
+        The profile card's only question: a pick the filters hide is still the
+        pick, but nothing on screen would otherwise say why no row is lit.
+        True before the first `render_grid` — see `_shown`.
+        """
+        if ticker is None:
+            return False
+        return self._shown is None or ticker in self._shown
+
+    def _filters_changed(self, _change=None) -> None:
+        """A value chip moved: re-badge its dimension, then redraw."""
+        self._sync_filter_badges()
+        self._request_render()
+
+    def _on_filter_dimension(self, _change=None) -> None:
+        """A dimension chip moved: show that dimension's values.
+
+        No redraw — switching which values are *visible* changes nothing about
+        which rows are shown, and every dimension keeps its ticks (#345).
+        """
+        self.filter_strip.show(self.filter_dim_chips.value)
+
+    def _sync_filter_badges(self) -> None:
+        """Re-label the dimension chips with their active-value counts.
+
+        A dimension's values are off screen most of the time, so the badge is
+        the only place an active filter on another dimension is visible from.
+
+        `set_options` rebuilds the chips, so the current selection is carried
+        across explicitly — it is a relabel, not a change of what is on offer.
+        """
+        self.filter_dim_chips.set_options(
+            [(self.filter_strip.chip_label(k), k) for k in self.filter_strip.keys],
+            value=self.filter_dim_chips.value,
+        )
+
+    def _on_grouping(self, _change=None) -> None:
+        """Group by moved: the row *order* changes, so the table is rebuilt.
+
+        RowGroup only gathers adjacent rows, so there is no way to regroup
+        without reordering and no way to reorder without rebuilding (#261).
+        """
+        self.grid.set_group_fields(tuple(self.group_chips.value))
+        self._request_render()
+
+    def _on_window(self, _change=None) -> None:
+        """Window moved: switch which stats window the table shows.
+
+        The statistics themselves do not change — every window is measured
+        once, up front, and the table hides the columns not on show (#324).
+        There is no ranking column here, so unlike the Platform's table
+        (#324) this does not re-sort: the picker is a list to find a strategy
+        in, and the Platform tab is where the catalog is ranked.
+        """
+        self.grid.set_window(self.window_chips.value)
+        self._request_render()
+
+    def _request_render(self) -> None:
+        """Ask the controller to redraw, if one is wired.
+
+        The panel cannot redraw itself: `meta` is the app's, re-pointed to the
+        pruned catalog after every load, so it is a per-call argument here and
+        never an attribute (#242).
+        """
+        if self._on_filter_change is not None:
+            self._on_filter_change()
+
     def render(self, meta: pd.DataFrame, window_start: pd.Timestamp) -> None:
         """Render Section 1 for the currently-picked strategy.
 
@@ -267,13 +446,15 @@ class SingleStrategyPanel:
         back than the app analyses (#311), so every consumer here has to slice.
         """
         self._window_start = window_start
-        ticker = self.picker.value
+        ticker = self.pick.value
         prices = self.state.universe_prices
         row = (
             meta.loc[meta["ticker"] == ticker] if ticker is not None else meta.iloc[0:0]
         )
         self.profile_w.value = (
-            _render_profile_card(row.iloc[0]) if not row.empty else ""
+            _render_profile_card(row.iloc[0], shown=self.shows(ticker))
+            if not row.empty
+            else ""
         )
 
         if (
@@ -327,7 +508,7 @@ class SingleStrategyPanel:
         / beta / correlation) use the shared benchmark Dropdown; a missing ticker /
         benchmark clears the grid."""
         prices = self.state.universe_prices
-        ticker = self.picker.value
+        ticker = self.pick.value
         kind = self.cal_kind
         if (
             ticker is None
@@ -365,7 +546,7 @@ class SingleStrategyPanel:
         window_start: pd.Timestamp,
     ) -> None:
         """Render one analysis pane's currently-mounted view for the shared picked
-        strategy (`self.picker`) and the pane's own benchmark (no BQL).
+        strategy (`self.pick`) and the pane's own benchmark (no BQL).
 
         Benchmark-dependent views (weekly scatter / distribution / drawdown) use
         `pane.bench_dd`; the factor scatter / factor scoring use the cached factor
@@ -373,7 +554,7 @@ class SingleStrategyPanel:
         clear the affected figure without raising."""
         label = pane.picker.value
         prices = self.state.universe_prices
-        ticker = self.picker.value
+        ticker = self.pick.value
 
         # Stubs don't depend on the price cache.
         if label == "Performance Ranking":

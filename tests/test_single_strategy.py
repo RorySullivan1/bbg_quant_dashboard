@@ -75,7 +75,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     state = SimpleNamespace(universe_prices=universe)
     window_start = universe.index.min()
 
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     ss.state = state
     ss.render(meta, window_start)
     assert len(ss.line.fig.data) == 1  # strategy only, no overlay
@@ -90,7 +90,7 @@ def test_render_single_strategy_populates_chart_and_grid(multiyear_prices, bench
     assert len(ss.line.fig.data) == 2
 
 
-def test_render_single_strategy_reacts_to_picker(multiyear_prices, benchmark):
+def test_render_single_strategy_reacts_to_pick(multiyear_prices, benchmark):
     meta = _meta()
     ss = SingleStrategyPanel(meta, None)
     universe = multiyear_prices.copy()
@@ -98,11 +98,11 @@ def test_render_single_strategy_reacts_to_picker(multiyear_prices, benchmark):
     state = SimpleNamespace(universe_prices=universe)
     window_start = universe.index.min()
 
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     ss.state = state
     ss.render(meta, window_start)
     assert "Alpha" in ss.profile_w.value
-    ss.picker.value = "BBB Index"
+    ss.pick.value = "BBB Index"
     ss.state = state
     ss.render(meta, window_start)
     assert "Bravo" in ss.profile_w.value
@@ -146,7 +146,7 @@ def test_render_calendar_populates_year_month_grid(multiyear_prices, benchmark):
     universe = multiyear_prices.copy()
     universe["SPXFP Index"] = benchmark
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
 
     ss.state = state
     # The panel slices the fetched frame to the analytics window before drawing
@@ -169,7 +169,7 @@ def test_calendar_kind_switch_all_benchmark_kinds(multiyear_prices, benchmark):
     universe = multiyear_prices.copy()
     universe["SPXFP Index"] = benchmark
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     ss.bench_dd.value = "SPXFP Index"
     ss._window_start = universe.index.min()  # see the note above (#311)
 
@@ -222,7 +222,7 @@ def test_render_section3_renders_both_panes(multiyear_prices, benchmark):
     ss = SingleStrategyPanel(meta, None)
     universe = _universe_with_factors(multiyear_prices, benchmark)
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     # Left = weekly scatter (benchmark), right = factor scatter (factors).
     _set_pane(ss.pane_left, "Weekly Scatter")
     _set_pane(ss.pane_right, "Factor Scatter")
@@ -238,7 +238,7 @@ def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
     ss = SingleStrategyPanel(meta, None)
     universe = _universe_with_factors(multiyear_prices, benchmark)
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     pane = ss.pane_left
     _set_pane(pane, "Return Distribution")
 
@@ -253,7 +253,7 @@ def test_render_analysis_pane_drawdown(multiyear_prices, benchmark):
     ss = SingleStrategyPanel(meta, None)
     universe = _universe_with_factors(multiyear_prices, benchmark)
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     pane = ss.pane_left
     _set_pane(pane, "Drawdown")
 
@@ -269,7 +269,7 @@ def test_render_analysis_pane_factor_scoring(multiyear_prices, benchmark):
     universe = _universe_with_factors(multiyear_prices, benchmark)
     universe["BSLXAT Index"] = benchmark  # trend factor leg
     state = SimpleNamespace(universe_prices=universe)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     pane = ss.pane_left
     _set_pane(pane, "Factor Scoring")
 
@@ -312,7 +312,7 @@ def test_render_section3_missing_benchmark_keeps_histogram(multiyear_prices):
     ss = SingleStrategyPanel(meta, None)
     # No benchmark / factor columns in the cache — only the strategies.
     state = SimpleNamespace(universe_prices=multiyear_prices)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     _set_pane(ss.pane_left, "Weekly Scatter")  # benchmark absent → cleared
     _set_pane(ss.pane_right, "Return Distribution")
 
@@ -361,7 +361,7 @@ def test_two_panels_share_no_widgets():
     # panel's render overwrite the other's — the same trap #216 guarded for.
     a, b = SingleStrategyPanel(_meta(), None), SingleStrategyPanel(_meta(), None)
     assert a.line.fig is not b.line.fig
-    assert a.picker is not b.picker
+    assert a.pick is not b.pick
     assert a.pane_left.weekly.fig is not b.pane_left.weekly.fig
     a.set_calendar_kind("outperformance")
     assert b.cal_kind == _CALENDAR_TABS[0][1]
@@ -392,7 +392,7 @@ def test_set_calendar_kind_restyles_only_the_active_pill():
 def _panel_with(prices: pd.DataFrame) -> SingleStrategyPanel:
     ss = SingleStrategyPanel(_meta(), None)
     ss.state = SimpleNamespace(universe_prices=prices)
-    ss.picker.value = "AAA Index"
+    ss.pick.value = "AAA Index"
     return ss
 
 

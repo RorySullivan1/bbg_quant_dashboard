@@ -8,12 +8,11 @@ reaches **every** selector (including the Trend-regime source dropdown, which
 is shared with Rate-level and so can't simply register), and it never disturbs
 a selection the user has already made.
 
-The app-level tests drive the UI to reach each selector (only the Platform tab
-is mounted at build; Single Strategy's filter rows sit behind a
-"Quantitative" pill, while the Multi tab's one selector is in its bar), collect
-what they find, then assert every collected selector picked the addition up —
-so a new pane or filter row is covered automatically rather than needing the
-test updated.
+The app-level tests drive the UI to reach each selector — only the Platform tab
+is mounted at build, and the other two put theirs in a *Table view* bar that is
+visible as soon as the tab is — collect what they find, then assert every
+collected selector picked the addition up, so a new pane is covered
+automatically rather than needing the test updated.
 """
 
 from __future__ import annotations
@@ -136,8 +135,7 @@ def test_contains_and_options_shapes():
 # --------------------------------------------------------------------------
 #
 # `build_app` mounts only the Platform tab; the other tabs' widgets exist but
-# are swapped into the tree on demand, and Single Strategy's benchmark rows sit
-# behind its "Quantitative" pill. So the helpers below drive the UI to the
+# are swapped into the tree on demand. So the helpers below drive the UI to the
 # state a user would have to reach to see a given selector, and accumulate what
 # they find — the selectors are the same objects across mounts.
 
@@ -166,11 +164,9 @@ def _all_benchmark_selectors(app) -> list[BenchmarkSelect]:
     found: dict[int, W.Dropdown] = {}
     for tab in ("Multi-Strategy", "Single Strategy"):
         _click(app, tab)
-        # Only Single Strategy has a Quantitative pill since #345 — the Multi
-        # tab's thresholds became table columns, and its one Benchmark
-        # dropdown sits in the bar, visible the moment the tab is mounted.
-        if tab == "Single Strategy":
-            _click(app, "Quantitative")
+        # No pill to open on either tab since #365: both pick from the catalog
+        # table under a *Table view* bar whose one Benchmark dropdown is
+        # visible the moment the tab is mounted.
         for w in _walk(app):
             if isinstance(w, BenchmarkSelect) and DEFAULT_BENCHMARK in _option_values(
                 w
@@ -199,16 +195,16 @@ def test_added_benchmark_reaches_every_selector(captured_registry):
     (registry,) = captured_registry
 
     selectors = _all_benchmark_selectors(app)
-    # 4 per Multi-Strategy pane (x2), 1 per Single-Strategy pane (x2), the
-    # Single-Strategy shared selector, Beta/Treynor/Jensen in *its* filter
-    # panel, and the basket bar's one. Pinned as a floor so silent
+    # 4 per Multi-Strategy pane (x2), 1 per Single-Strategy pane (x2), and one
+    # in each tab's *Table view* bar. Pinned as a floor so silent
     # de-registration is caught without the test going stale when a pane is
     # added.
     #
-    # It was 17 until #345: the Multi tab had a filter panel of its own with
-    # three benchmark rows plus the Z-score's, and those four became one
-    # dropdown in the bar feeding Beta / Treynor / Jensen as table columns.
-    assert len(selectors) >= 15
+    # It was 17 until #345 and 15 until #365. Each drop is the same trade: a
+    # filter panel's three benchmark rows plus its Z-score's became **one**
+    # dropdown in the bar, feeding Beta and Treynor as table columns — the
+    # Multi tab's in #345, Single Strategy's in #365.
+    assert len(selectors) >= 11
 
     registry.add(NEW)
 

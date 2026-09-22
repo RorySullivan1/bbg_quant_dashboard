@@ -73,6 +73,8 @@ from ..style import (
     COMMENTARY_BOX_HEIGHT,
     COMMENTARY_BULLETIN_SHARE,
     COMMENTARY_LEADERBOARD_SHARE,
+    FILTER_CHIPS_SHARE,
+    FILTER_VALUES_SHARE,
     StatusTone,
 )
 from ..user_benchmarks import load_user_benchmarks, save_user_benchmarks
@@ -117,8 +119,12 @@ from .multi_strategy import (
 )
 from .panes import SingleAnalysisPane, _make_analysis_pane, _make_benchmark_dropdown
 from .platform import PlatformAnalytics
-from .quant_columns import QUANT_METRICS, QuantColumns, quant_column_name
+from .quant_columns import QuantColumns
 from .rails import (
+    FILTER_BAR_TITLE,
+    FILTER_DIMENSION_HEADING,
+    FILTER_VALUES_HEADING,
+    TABLE_BAR_TITLE,
     ChipGroup,
     MultiChipGroup,
     RailSection,
@@ -141,39 +147,11 @@ from .state import DashboardState
 # at least this long, or an instant refetch hides it in the same frame.
 _OVERLAY_PAINT_DELAY_S = 0.35
 
-#: The two Platform control containers' titles — the bar above the table and
-#: the rail beside it. Spelled once so the docs, the tests and the screen agree.
-TABLE_BAR_TITLE = "Table view"
-
 #: What the strip below the table is called. **Not "Basket"** (v0.9.30): a
 #: basket is something you build out of instruments and then hold, and nothing
 #: here is combined, weighted or traded. These are the strategies the analytics
 #: are run over — so that is what the heading says.
 SELECTION_TITLE = "Selected Strategies"
-
-#: The filter row's split: the dimension chips left, that dimension's values
-#: right. **Shares, not a pixel column** (v0.9.31) — the 280px basis this
-#: replaces gave the chips a third of a narrow screen and a tenth of a wide
-#: one, and the values are what need the room: a dimension can carry forty of
-#: them where the chip set is always the same seven. The `COMMENTARY_*_SHARE`
-#: pattern, applied as `flex: 1 1 <share>` with `min-width: 0` on both.
-FILTER_CHIPS_SHARE = "20%"
-FILTER_VALUES_SHARE = "80%"
-
-#: The filter row's own title and its two headings (v0.9.32). The row used to
-#: carry no words at all: two rows of chips in identical chrome, one of which
-#: chose *what* was being filtered and the other *to what* — and nothing on
-#: screen said which was which, or that either of them was a filter. So the row
-#: is now a bar like the one above it, titled, with each half headed.
-#:
-#: **Not "Group" and "Selection"**, which is how the behaviour reads in
-#: conversation. *Group by* is the heading one row up, where it means the
-#: table's row grouping, and *Category* is a classification tier — both words
-#: are already spoken for, and re-using either here would name two different
-#: things the same thing on one screen.
-FILTER_BAR_TITLE = "Filter"
-FILTER_DIMENSION_HEADING = "Dimension"
-FILTER_VALUES_HEADING = "Values"
 
 
 class DashboardApp:
@@ -285,11 +263,11 @@ class DashboardApp:
         # dropped stale/flat indices — a dead index makes a poor benchmark.
         self.benchmarks.set_catalog(_ticker_options(self.meta))
 
-        # **Single Strategy is `FilterPanel`'s only caller now** (#341 dec. 10).
-        # The Multi tab composed one with its own picker, Refresh button and
-        # date-range row; every one of those is gone, and what it wanted from
-        # the panel — a reducer over the catalog — is `FilterStrip.apply`, over
-        # values picked in the bar instead of in a 240px checkbox column.
+        # `FilterPanel` is gone (#365). The Multi tab stopped composing one in
+        # #345, and Single Strategy — its last caller, kept explicitly by
+        # #341 dec. 10 — now picks from the same table through its own
+        # `FilterStrip`. What either tab ever wanted from the panel was a
+        # reducer over the catalog, and that is `FilterStrip.apply`.
         self.status_w = _status_banner()
 
     def _build_basket_section(self) -> None:
@@ -554,38 +532,21 @@ class DashboardApp:
         self._render_basket_grid()
 
     def _basket_quant_frame(self, tickers: pd.Index) -> pd.DataFrame:
-        """The quant block for the basket table: seven metrics per window.
+        """The quant block for the basket table: four metrics per window.
 
-        Every window is computed up front and the Window chip hides the rest,
-        which is the catalog table's own rule (#324) — so switching windows
-        never recomputes and never issues BQL.
+        One line, because the loop it used to spell out is `QuantColumns`'
+        since #365 — Single Strategy's table needs the identical block, and a
+        second copy of a loop that has already been wrong twice (v0.9.30's two
+        silent bugs) is a second chance at exactly that.
         """
-        arp = self.state.arp_universe_prices
-        if arp.empty:
-            return pd.DataFrame(index=tickers)
         name = self.basket_benchmark_dd.value
-        series = self.state.universe_prices.get(name)
-        blocks: list[pd.DataFrame] = []
-        # `stat_windows()` yields (label, **years**) — 0.5, 1, 3, 5 — not days.
-        # This divided by `TRADING_DAYS_PER_YEAR` and asked for 1/252 of a
-        # year, which is why the columns read N/A on the short windows and,
-        # worse, returned numbers measured over three days on the long ones.
-        for label, years in stat_windows():
-            table = self.quant_columns.table(
-                arp,
-                years=years,
-                benchmark=series,
-                benchmark_name=name,
-                returns=self.state.universe_rets,
-            )
-            if table.empty:
-                continue
-            block = table.reindex(columns=list(QUANT_METRICS))
-            block.columns = [quant_column_name(label, m) for m in QUANT_METRICS]
-            blocks.append(block)
-        if not blocks:
-            return pd.DataFrame(index=tickers)
-        return pd.concat(blocks, axis=1).reindex(tickers)
+        return self.quant_columns.frame(
+            self.state.arp_universe_prices,
+            tickers,
+            benchmark=self.state.universe_prices.get(name),
+            benchmark_name=name,
+            returns=self.state.universe_rets,
+        )
 
     def _render_basket_grid(self) -> None:
         """Redraw the basket table from the cache. **No BQL** (#341).
@@ -875,10 +836,17 @@ class DashboardApp:
         )
 
         # The third top-level tab: a per-strategy deep-dive. Built here so
-        # the tab wiring below can swap it in; its picker options are rebuilt against
-        # the pruned `meta` once the cache loads.
+        # the tab wiring below can swap it in; its table is drawn against the
+        # pruned `meta` once the cache loads.
         self.single_strategy = SingleStrategyPanel(
-            self.meta, self.state, registry=self.benchmarks
+            self.meta,
+            self.state,
+            registry=self.benchmarks,
+            # The panel owns its controls; the app owns `meta`, which is
+            # re-pointed to the pruned catalog after every load (#242). So a
+            # chip asks the controller to redraw rather than holding a catalog
+            # that would go stale silently.
+            on_filter_change=self._render_single_grid,
         )
         self.state.single_strategy = self.single_strategy
         single_panel = self.single_strategy.root
@@ -979,12 +947,12 @@ class DashboardApp:
         bind_live_controls(self.state, self.meta, self.state.pane_right)
         bind_lazy_render(self.state, self.meta, self.state.pane_left)
         bind_lazy_render(self.state, self.meta, self.state.pane_right)
-        self.single_strategy.picker.observe(self._render_single, names="value")
-        self.single_strategy.bench_dd.observe(self._render_single, names="value")
+        self.single_strategy.pick.observe(self._render_single, names="value")
         self.single_strategy.bench_chk.observe(self._render_single, names="value")
-
-        for _w in self.single_strategy.filters.inputs:
-            _w.observe(self._on_single_filter_change, names="value")
+        # The shared benchmark feeds the table's Beta and Treynor columns as
+        # well as the chart's overlay, so it redraws the grid, which renders
+        # the sections below on its way out.
+        self.single_strategy.bench_dd.observe(self._render_single_grid, names="value")
 
         for pill, (_label, kind) in zip(
             self.single_strategy.cal_pills, _CALENDAR_TABS, strict=True
@@ -994,7 +962,7 @@ class DashboardApp:
         # Section 3 two-pane analysis: each pane re-renders its mounted view when its
         # analysis picker or benchmark dropdown changes (panes.py already swapped the
         # stack + benchmark visibility on the pick). The shared strategy / window
-        # come from `single_strategy.picker` and `today`; no BQL, the other pane
+        # come from `single_strategy.pick` and `today`; no BQL, the other pane
         # untouched.
 
         for pane in (self.single_strategy.pane_left, self.single_strategy.pane_right):
@@ -1093,31 +1061,39 @@ class DashboardApp:
         self.top_tab_content.children = (self._top_panels[which],)
 
     def _show_in_single_strategy(self, ticker: str) -> None:
-        """Route a click on the all-catalog grid into the Single Strategy tab.
+        """Route a click into the Single Strategy tab: set the pick, show it.
 
-        Sets the picker's value and lets that picker's own observer render,
-        rather than rendering here — a click and a manual pick then cannot
-        diverge, and this stays one line of routing instead of a second copy of
-        the render path.
+        Four things arrive here — a catalog row, a Leaderboard row, a
+        points-table row and a basket card — and they all take this one route,
+        so the ways into the tab cannot diverge (#286's rule, #363 dec. 2).
 
-        The Single Strategy tab has its own filter accordion, which can narrow
-        the picker below the full catalog, so a clicked index may not currently
-        be on offer. Refusing the click would be a dead end — the user named the
-        strategy they want — so the filters are cleared to reach it, and the
-        status says so: silently discarding someone's filters is the part that
-        would be surprising, not the widening itself.
+        **It no longer clears anyone's filters.** It had to while the pick was
+        a `W.Dropdown`'s value: the tab's accordion could narrow the options
+        below the full catalog, so a clicked index might simply not be on
+        offer, and refusing the click would have been a dead end. A `Pick` is
+        not an options list — a strategy the filters hide is picked and drawn
+        like any other, and the profile card says why the table lights no row.
+        Widening someone's filters to reach it was the workaround, not the
+        feature.
         """
-        panel = self.single_strategy
-        offered = {o[1] if isinstance(o, tuple) else o for o in panel.picker.options}
-        if ticker not in offered:
-            panel.filters.clear_all()
-            self._on_single_filter_change()
-            self._set_status(
-                f"Cleared the Single Strategy filters to show {ticker}.",
-                tone=StatusTone.INFO,
-            )
-        panel.picker.value = ticker
+        self.single_strategy.pick.value = ticker
         self._activate_tab("single")
+
+    def _seed_single_pick(self) -> None:
+        """Open Single Strategy on a strategy rather than on an empty card.
+
+        The first of the basket's own default — the catalog's top name by
+        z(1W Sharpe, 1Y) — so the two tabs agree about what is interesting,
+        and falling back to the catalog's first row when the z-score cannot be
+        computed. A pick the user has already made is left alone: this runs on
+        every load, and a Refresh must not move someone off the strategy they
+        are reading.
+        """
+        if self.single_strategy.pick.value is not None:
+            return
+        seed = self.state.basket.value or tuple(self.meta["ticker"])
+        if seed:
+            self.single_strategy.pick.value = str(seed[0])
 
     def _default_selection(self) -> tuple[str, ...]:
         """The startup strategy selection: the 5 indices with the highest
@@ -1433,41 +1409,31 @@ class DashboardApp:
         )
 
     def _render_single(self, _change=None) -> None:
-        """Re-render the Single Strategy tab's Section 1 from the cache. Bound to
-        the picker / benchmark controls and called on load + Refresh. Reads the
-        current (possibly re-pruned) `meta` and a 5Y window off `today`."""
-        # `_on_single_filter_change` sets the picker options+value in one shot;
-        # suppress the intermediate picker-observer renders and render once at
-        # the end there instead.
-        if getattr(self.single_strategy, "_suspend", False):
-            return
+        """Re-render the Single Strategy tab's sections below the picker.
+
+        Bound to the pick and the shared benchmark controls, and called on
+        load, on Refresh and after every grid redraw. Reads the current
+        (possibly re-pruned) `meta` and the analytics window off `today`.
+
+        The options-juggling guard this carried is gone with the dropdown
+        (#365): setting a `W.Dropdown`'s options fires an intermediate
+        `value=None`, so a filter change used to have to suspend the observer,
+        set options and value together, and render once by hand at the end. A
+        `Pick` is not an options list and a filter change does not touch it.
+        """
         self.single_strategy.render(self.meta, self._analytics_window_start())
 
-    def _on_single_filter_change(self, _change=None) -> None:
-        """Narrow the Single Strategy picker to the filter matches and re-render.
+    def _render_single_grid(self, _change=None) -> None:
+        """Redraw the Single Strategy picker table. **No BQL** (#365).
 
-        Live handler for the "Filters" accordion: on any filter input
-        change, recompute the matching tickers from the cache, reset the picker
-        options, keep the current pick when it still matches (else auto-select
-        the first match, or clear when nothing matches), then render once.
+        Every control on that tab's two bars lands here: a Group by chip, a
+        Window chip, a Filter dimension's values, and the load that first
+        populates the cache. The pick is untouched — the grid re-derives its
+        lit row from it — so this cannot change what the sections below draw,
+        only whether the picked row is among the ones on screen. The profile
+        card is re-rendered for that reason alone.
         """
-        matches = self.single_strategy.filters.matching(self.meta, self.state)
-        sub = self.meta.loc[self.meta["ticker"].isin(matches)]
-        options = _ticker_options(sub)
-        cur = self.single_strategy.picker.value
-        # Set options + value atomically without triggering the picker-observer
-        # render mid-flight (resetting options fires an intermediate value=None).
-        self.single_strategy._suspend = True
-        try:
-            self.single_strategy.picker.options = options
-            if cur in set(sub["ticker"]):
-                self.single_strategy.picker.value = cur
-            elif options:
-                self.single_strategy.picker.value = options[0][1]
-            else:
-                self.single_strategy.picker.value = None
-        finally:
-            self.single_strategy._suspend = False
+        self.single_strategy.render_grid(self.meta)
         self._render_single()
 
     def _make_cal_kind_handler(self, which: str):
@@ -1523,7 +1489,6 @@ class DashboardApp:
             self.meta = self.meta_all[self.meta_all["ticker"].isin(live)].reset_index(
                 drop=True
             )
-            self.single_strategy.picker.options = _ticker_options(self.meta)
             self.benchmarks.set_catalog(_ticker_options(self.meta))
             self._log(
                 f"pruned to {len(self.meta)} of {len(self.meta_all)} indices with recent "
@@ -1545,6 +1510,12 @@ class DashboardApp:
                 # After the perf table, so the stats columns are there, and
                 # after the basket is seeded, so the seeded rows tick.
                 self._render_basket_grid()
+                # Single Strategy's table is the same frame in single-select.
+                # Seeded with a pick, so the tab opens on a strategy rather
+                # than on an empty card — the row the catalog's own ranking
+                # puts first, which is what `universe_up` has just ordered.
+                self._seed_single_pick()
+                self.single_strategy.render_grid(self.meta)
                 # Only the visible analytics tab (Sunburst) computes on load; the
                 # hidden Regime / Factor tabs render on first pill click.
                 self.analytics.invalidate(self.meta)

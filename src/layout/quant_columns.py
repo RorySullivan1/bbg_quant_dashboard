@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from ..config import stat_windows
 from ..stats import (
     ann_beta,
     benchmark_returns,
@@ -115,3 +116,48 @@ class QuantColumns:
         """Drop everything, and the frame reference with it."""
         self._memo.clear()
         self._source = None
+
+    def frame(
+        self,
+        prices: pd.DataFrame,
+        tickers: pd.Index,
+        *,
+        benchmark: pd.Series | None,
+        benchmark_name: str | None,
+        returns: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
+        """The quant block a catalog table carries: every metric, every window.
+
+        Columns are `"<window> <metric>"`, which is what lets the Window chip
+        hide the ones not on show and the comparison filter row filter the
+        rest with no branch of its own (`quant_column_name`).
+
+        **Every window is computed up front**, the catalog table's own rule
+        (#324): switching windows hides columns, it never recomputes and never
+        issues BQL. The memo above is what keeps that cheap across the four.
+
+        Both tabs call this rather than each assembling the loop (#363 dec. 1).
+        The one that existed before was the Multi tab's, and it had already
+        been wrong twice — `stat_windows()` yields **years**, and dividing
+        them by `TRADING_DAYS_PER_YEAR` asked for 1/252 of a year (v0.9.30).
+        A second copy is a second chance at exactly that.
+        """
+        if prices.empty:
+            return pd.DataFrame(index=tickers)
+        blocks: list[pd.DataFrame] = []
+        for label, years in stat_windows():
+            table = self.table(
+                prices,
+                years=years,
+                benchmark=benchmark,
+                benchmark_name=benchmark_name,
+                returns=returns,
+            )
+            if table.empty:
+                continue
+            block = table.reindex(columns=list(QUANT_METRICS))
+            block.columns = [quant_column_name(label, m) for m in QUANT_METRICS]
+            blocks.append(block)
+        if not blocks:
+            return pd.DataFrame(index=tickers)
+        return pd.concat(blocks, axis=1).reindex(tickers)

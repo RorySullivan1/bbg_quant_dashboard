@@ -293,62 +293,83 @@ def test_startup_selects_top_zscore_and_populates_multi_strategy():
     assert sum(1 for f in figs if f.data) >= 1
 
 
-def test_quant_zscore_row_has_window_dropdown():
-    # v0.8.11: the Quantitative Z-Score row carries a window dropdown
-    # (1W/1M/3M/6M, default 1M) right after the base-metric dropdown — it sets the
-    # lookback the base metric is computed over for the cross-sectional z-score.
-    from src.config import MONTH_WINDOW
+def test_single_strategy_picks_from_the_catalog_table():
+    """The Single Strategy tab renders its picker, and the v0.8 idiom is gone.
 
-    z_metrics = [
-        "Sharpe",
-        "Sortino",
-        "Calmar",
-        "Beta",
-        "Treynor",
-        "Jensen",
-        "VaR",
-        "RSI",
-    ]
-    app = build_app(verbose=False)
-    # **Single Strategy**, not Multi: the Multi tab's thresholds became table
-    # columns and its cross-sectional Z threshold was retired outright (#345),
-    # so this row lives in the one `FilterPanel` that is left.
-    ms = next(
+    What this replaced was `test_quant_zscore_row_has_window_dropdown`, which
+    pinned the Quantitative filter's cross-sectional Z row — a `≥ / ≤`
+    threshold typed against a number that appeared nowhere on screen. #345
+    retired the Multi tab's copy and #365 the last one with `FilterPanel`
+    itself; the catalog's ranking column is where a ranking lives now.
+    """
+    from src.layout.builder import DashboardApp
+    from src.layout.rails import (
+        FILTER_BAR_TITLE,
+        FILTER_DIMENSION_HEADING,
+        FILTER_VALUES_HEADING,
+        TABLE_BAR_TITLE,
+    )
+
+    # The controller rather than `build_app`'s root: the assertions below are
+    # about the pick, which is an object on the panel and not a widget in the
+    # tree — that is the point of #363 dec. 2.
+    controller = DashboardApp(verbose=False)
+    app = controller.root
+    single = next(
         b
         for b in app.children[4].children
         if isinstance(b, W.Button) and "Single Strategy" in b.description
     )
-    ms.click()
+    single.click()
     panel = app.children[5].children[0]
-    # Activate the Quantitative filter pill so its metric rows mount.
-    quant_pill = next(
-        w
-        for w in _walk(panel)
-        if isinstance(w, W.Button) and w.description == "Quantitative"
-    )
-    quant_pill.click()
 
-    # The Z-Score row's trailing HBox holds: <"of"> label, base-metric dd, window dd.
-    trailing = next(
-        hb
-        for hb in _walk(panel)
-        if isinstance(hb, W.HBox)
-        and any(
-            isinstance(c, W.Dropdown) and list(c.options) == z_metrics
-            for c in hb.children
-        )
-        and any(
-            isinstance(c, W.Dropdown)
-            and [o[0] if isinstance(o, tuple) else o for o in c.options]
-            == ["1W", "1M", "3M", "6M"]
-            for c in hb.children
-        )
-    )
-    dds = [c for c in trailing.children if isinstance(c, W.Dropdown)]
-    metric_dd, window_dd = dds[0], dds[1]
-    assert list(metric_dd.options) == z_metrics  # base metric first
-    assert [o[0] for o in window_dd.options] == ["1W", "1M", "3M", "6M"]
-    assert window_dd.value == MONTH_WINDOW  # defaults to 1M
+    # No accordion anywhere on the tab — the last one in the app.
+    assert not [w for w in _walk(panel) if isinstance(w, W.Accordion)]
+
+    # The two bars, headed as the Multi-Strategy tab heads them. Read through
+    # the constants rather than spelled, so a relabel reaches both tabs.
+    headings = {w.value for w in _walk(panel) if isinstance(w, W.HTML) and w.value}
+    text = " ".join(headings)
+    for word in (
+        TABLE_BAR_TITLE,
+        FILTER_BAR_TITLE,
+        FILTER_DIMENSION_HEADING,
+        FILTER_VALUES_HEADING,
+        "Group by",
+        "Window",
+        "Benchmark",
+    ):
+        assert word in text, f"the picker's bars are missing {word!r}"
+
+    # And the picker is the catalog table, with a row for every index.
+    grid = controller.single_strategy.grid
+    assert set(grid._tickers) == set(controller.meta["ticker"])
+    # Opened on a strategy rather than on an empty card.
+    picked = controller.single_strategy.pick.value
+    assert picked in set(grid._tickers)
+    assert grid.tickers_at(grid.widget.selected_rows) == [picked]
+
+
+def test_the_retired_filter_panel_is_gone_from_src():
+    """#363 dec. 3 / #365: `FilterPanel` and its parts leave the tree.
+
+    A grep guard rather than an import check, because the failure this
+    prevents is a *reintroduction* — a second kernel-side categorical filter
+    growing back beside the Filter bar that replaced it.
+    """
+    from pathlib import Path
+
+    assert not Path("src/layout/filter_panel.py").exists()
+    sources = " ".join(p.read_text() for p in Path("src").rglob("*.py"))
+    for name in (
+        "class FilterPanel",
+        "class QuantFilter",
+        "class CategoricalFilter",
+        "def make_filter_panel",
+        "def _q_row",
+        "def _checkbox_group",
+    ):
+        assert name not in sources, f"{name} should have gone with #365"
 
 
 def _walk(widget):

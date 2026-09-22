@@ -46,7 +46,7 @@ from ..config import (
     universe_grid_group_fields,
 )
 from ..style import ANALYTICS_HEIGHT, CATALOG_TABLE_HEIGHT, Color
-from .basket import Basket
+from .basket import Basket, Pick
 from .theme import _palette_color
 
 
@@ -1570,6 +1570,80 @@ class UniverseGrid(CatalogTable):
         if picked is None or self._on_pick is None:
             return
         self._on_pick(self._tickers[picked])
+
+
+class StrategyGrid(CatalogTable):
+    """The catalog table as the Single Strategy picker (#363 dec. 1-2).
+
+    The same rows, grouping, search and per-column filter row as the other
+    two, in the base's own single-select style: a click **sets the pick**,
+    where the Platform's click *opens* a strategy in this tab and the basket's
+    *ticks* a row.
+
+    What it adds over `UniverseGrid` — which is otherwise the same single-
+    select table — is the other direction. The Platform's grid only ever
+    reports a click; this one is also a *view* of a selection that five other
+    things can write, so it has `BasketGrid`'s reconciliation problem with one
+    row instead of a set, and the same answer: **by ticker, never by
+    position**, re-derived after every rebuild, behind a `_pushing` guard so
+    the write is not read back as a user edit.
+
+    A pick the filters hide is simply not in the frame. `positions_of` skips
+    it, the table shows nothing selected, and the pick is untouched — the tab
+    keeps drawing it, and the profile card says why no row is lit.
+    """
+
+    def __init__(self, pick: Pick) -> None:
+        super().__init__()
+        self.pick = pick
+        self._pushing = False
+        self.pick.observe(self._on_pick_change, names="value")
+
+    def _on_selected_rows(self, change: dict) -> None:
+        """A clicked row is a new pick.
+
+        `picked_row` swallows the deselection and the out-of-frame position
+        for `UniverseGrid`'s reasons; unlike the basket, an empty list here is
+        never "nothing is picked" — clicking the lit row again would otherwise
+        blank the whole tab.
+        """
+        if self._pushing:
+            return
+        picked = picked_row(change, len(self._tickers))
+        if picked is None:
+            return
+        self.pick.value = self._tickers[picked]
+
+    def _on_pick_change(self, _change=None) -> None:
+        """Another entry point set the pick — light its row if we have one."""
+        if self._pushing:
+            return
+        self.push_selection()
+
+    def push_selection(self) -> None:
+        """Make the lit row say what the pick holds, for this frame."""
+        self._pushing = True
+        try:
+            held = [self.pick.value] if self.pick.value is not None else []
+            self.widget.selected_rows = self.positions_of(held)
+        finally:
+            self._pushing = False
+
+    def _set_data(self, frame: pd.DataFrame, *, zscore_col: str | None = None) -> None:
+        """Write the frame, then re-derive the lit row for it.
+
+        Cleared before the write for `BasketGrid`'s reason: itables validates
+        `selected_rows` against the incoming data and raises *Selected rows out
+        of range* whenever the new frame is shorter, which is every narrowing
+        filter.
+        """
+        self._pushing = True
+        try:
+            self.widget.selected_rows = []
+            super()._set_data(frame, zscore_col=zscore_col)
+        finally:
+            self._pushing = False
+        self.push_selection()
 
 
 class BasketGrid(CatalogTable):

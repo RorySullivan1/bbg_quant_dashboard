@@ -291,17 +291,35 @@ def _profile_meta_rows(row: pd.Series) -> str:
     return "\n    ".join(cells)
 
 
-def _render_profile_card(row: pd.Series) -> str:
+#: Said beside the ticker when the picked strategy has no row in the table
+#: above — the filters are hiding it, and the card is the only thing on screen
+#: that can say so (#363 dec. 2). The pick is deliberately *not* cleared: the
+#: user named the strategy they want, and the table narrowing underneath it is
+#: a separate act from choosing what to look at.
+FILTERED_OUT_NOTE: str = "not shown by the current filters"
+
+
+def _render_profile_card(row: pd.Series, *, shown: bool = True) -> str:
     """Render the Single Strategy metadata card from one ``meta`` row.
 
     Every field is `html.escape`'d and NA-safe (`_na` / `_fmt_date` → em dash), so
     a record missing a ``description`` / ``currency`` / ``live_date`` still
-    renders cleanly."""
+    renders cleanly.
+
+    ``shown`` is whether the picked strategy has a row in the table above.
+    False adds `FILTERED_OUT_NOTE` beside the ticker."""
+    note = (
+        ""
+        if shown
+        else f"<span style='color:{STYLE_CTX['text_muted']};font-family:"
+        f"{STYLE_CTX['sans']};'> · {html.escape(FILTERED_OUT_NOTE)}</span>"
+    )
     return render_template(
         "profile_card",
         **STYLE_CTX,
         name=html.escape(_na(row.get("name"))),
         ticker=html.escape(_na(row.get("ticker"))),
+        note=note,
         meta_rows=_profile_meta_rows(row),
         description=html.escape(_na(row.get("description"))),
     )

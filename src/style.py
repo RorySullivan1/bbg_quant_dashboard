@@ -223,6 +223,15 @@ BASKET_TAG_WIDTH: str = "10px"
 COMMENTARY_LEADERBOARD_SHARE: str = "60%"
 COMMENTARY_BULLETIN_SHARE: str = "40%"
 
+#: A filter bar's split: the dimension chips left, that dimension's values
+#: right. **Shares, not a pixel column** (v0.9.31) — the 280px basis this
+#: replaced gave the chips a third of a narrow screen and a tenth of a wide
+#: one, and the values are what need the room: a dimension can carry forty of
+#: them where the chip set is always the same seven. The `COMMENTARY_*_SHARE`
+#: pattern above, applied as `flex: 1 1 <share>` with `min-width: 0` on both.
+FILTER_CHIPS_SHARE: str = "20%"
+FILTER_VALUES_SHARE: str = "80%"
+
 
 class Font(StrEnum):
     """Font-family stacks. Use `Font.SANS` / `Font.MONO` in inline styles."""
