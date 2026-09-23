@@ -273,7 +273,7 @@ because a chart drawing every level at once has no single depth to select.
 
 **A group's hover says what it averaged** (v0.9.39, #388). All three charts
 route it through one `_members_note`, which reads
-`(Average over N strategies)` and is **empty for a leaf**. It said
+`(Average over N Strategies)` and is **empty for a leaf**. It said
 `· mean of 3`, which names the wrong noun — beside a number, "mean of 3"
 parses first as *the mean is 3* rather than as the mean of three things — and
 before that it was the bare integer, which rendered `1Y Sharpe 1.23 3`. The
@@ -586,7 +586,7 @@ precisions.
 
 ## Current version
 
-`v0.9.39` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.40` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

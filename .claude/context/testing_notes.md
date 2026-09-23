@@ -329,7 +329,7 @@ catalog is the real test of how the charts read.
   two, at every level.
 - Colour is the mean metric, red through neutral to green, and the colorbar is
   titled for the Metric and Window chips (e.g. `1Y Sharpe`). Hover shows the
-  label and the value, then *(Average over N strategies)* **only on a group**
+  label and the value, then *(Average over N Strategies)* **only on a group**
   (#388) — a leaf says nothing, where it used to read "1 strategies". On this
   catalog most root cells are one-member, so that is the case to look at.
 - Set Metric to **Return**: the numbers read as percentages, not 2dp ratios.
@@ -356,7 +356,7 @@ catalog is the real test of how the charts read.
   chips' choice). Y is the metric, X the term-premium β, Z the
   equity-risk-premium β, and the axis titles say so.
 - Hover is **three lines** and small enough to see the cloud past it; a group
-  says *(Average over N strategies)* and a strategy says nothing (#388). There
+  says *(Average over N Strategies)* and a strategy says nothing (#388). There
   is no way to anchor it beside the marker in a 3D scene, so if it still hides
   too much the fix is fewer characters.
 - **No translucent planes.** Each axis's zero line and wall edge are visible
@@ -380,7 +380,7 @@ catalog is the real test of how the charts read.
   columns** — check this on a Monday, when T-1 is the previous Friday.
 - Switch away and back: the cloud is in the **same arrangement**. A reshuffle
   would read as movement in the data.
-- Hover reads name, date and return, and says *(Average over N strategies)* on
+- Hover reads name, date and return, and says *(Average over N Strategies)* on
   a group — never a bare number after the value, and nothing at all on a
   strategy (#388).
 

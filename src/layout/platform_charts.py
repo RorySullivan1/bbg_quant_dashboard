@@ -768,7 +768,7 @@ def _is_leaf(flag) -> bool:
 
 
 def _members_note(count) -> str:
-    """ " (Average over N strategies)" for a group, nothing for a strategy.
+    """ " (Average over N Strategies)" for a group, nothing for a strategy.
 
     A group's value is the equal-weight mean of its members, and the hover has
     to say so or the number reads as the node's own. It was `%{customdata[1]}`
@@ -777,12 +777,17 @@ def _members_note(count) -> str:
 
     It then read `· mean of 3`, which **names the wrong noun** (#388): beside
     a number, "mean of 3" parses first as *the mean is 3*, not as *the mean of
-    three things*. Saying "average over N strategies" puts the count on the
+    three things*. Saying "Average over N Strategies" puts the count on the
     thing being counted, and the parentheses mark the whole clause as a note
-    about the number rather than part of it. "strategies" matches the
-    Icicle's own `N strategies`, which sits in the same card.
+    about the number rather than part of it.
+
+    **Title case is the desk's wording** (v0.9.40). It shipped lowercase in #388
+    to match the Icicle's separate `N strategies` line — but that same PR
+    routed the Icicle through this helper, so the one string it was matching
+    stopped existing and the reason went with it. Every hover reads this, so
+    the casing is one edit here.
 
     A leaf gets an empty string rather than "average over 1 strategy", which
     would be true and useless.
     """
-    return f" (Average over {int(count)} strategies)" if int(count) > 1 else ""
+    return f" (Average over {int(count)} Strategies)" if int(count) > 1 else ""
