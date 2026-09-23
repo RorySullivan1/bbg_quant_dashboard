@@ -38,9 +38,9 @@ from .config import (
     LEADERBOARD_ROWS,
     LEADERBOARD_WINDOW_DAYS,
     NEW_LAUNCH_DAYS,
-    RANKABLE_METRICS,
     SCORE_SAMPLE_DAYS,
     TRADING_DAYS_PER_YEAR,
+    leaderboard_metrics,
 )
 from .stats import (
     ann_sharpe,
@@ -284,6 +284,11 @@ def build_leaderboard(
     """Whole-catalog top / bottom `rows` on return, Sharpe, Calmar and Sortino,
     each **ranked by its z-score against its own history** (#310).
 
+    **Only the metrics the window can rank** — `leaderboard_metrics` decides,
+    and at 1D that is Return alone, since the three ratios have no value over a
+    single observation. The tuple is correspondingly shorter; the board hides
+    what it does not carry rather than blanking it.
+
     Every column is scoped to the trailing ``window_days``: the return is the
     simple window return (``period_return``, not annualized), and the three
     ratios take ``years = window_days / TRADING_DAYS_PER_YEAR``, so all four
@@ -321,11 +326,14 @@ def build_leaderboard(
         return f"{v:.2f}"
 
     years = window_days / TRADING_DAYS_PER_YEAR
-    series_by_metric: dict[str, tuple[pd.Series, Callable[[float], str]]] = {
-        "return": (period_return(prices, window_days=window_days), pct),
-        "sharpe": (ann_sharpe(returns, prices, years), num2),
-        "calmar": (calmar_ratio(prices, years), num2),
-        "sortino": (sortino_ratio(returns, prices, years), num2),
+    # Built lazily, per metric, because a window need not offer all four: at
+    # 1D only Return is defined (`leaderboard_metrics`), and computing a Sharpe
+    # over one observation would be work whose answer nobody is shown.
+    series_by_metric: dict[str, tuple[Callable[[], pd.Series], Callable]] = {
+        "return": (lambda: period_return(prices, window_days=window_days), pct),
+        "sharpe": (lambda: ann_sharpe(returns, prices, years), num2),
+        "calmar": (lambda: calmar_ratio(prices, years), num2),
+        "sortino": (lambda: sortino_ratio(returns, prices, years), num2),
     }
 
     def score_for(metric: str) -> pd.Series:
@@ -351,12 +359,12 @@ def build_leaderboard(
             metric,
             label,
             score_for(metric),
-            series_by_metric[metric][0],
+            series_by_metric[metric][0](),
             fmt=series_by_metric[metric][1],
             name_of=name_of,
             rows=rows,
         )
-        for metric, label in RANKABLE_METRICS
+        for metric, label in leaderboard_metrics(window_days)
     )
 
 

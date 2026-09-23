@@ -409,7 +409,7 @@ terminal's plotly (`showarrow` was not, and took the app down: see
 `run_instructions.md`). The Scatter's hover is therefore three short lines —
 name, the metric, then both betas side by side — where it was five.
 
-**A group's hover says `(Average over N strategies)`, never a bare count.**
+**A group's hover says `(Average over N Strategies)`, never a bare count.**
 It rendered `%{customdata[1]}` against the raw number, so a three-member
 category read `1Y Sharpe 1.23 3`. The value on these charts is an equal-weight
 mean of the node's members and the hover has to say so, or the number reads as

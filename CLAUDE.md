@@ -101,11 +101,21 @@ with the screen it was measured on.
 The **Leaderboard** is four columns — Return, Sharpe, Calmar, Sortino — each
 listing the catalog's top three and bottom three as
 **`rank · ticker · score (value)`** over the window its Window chips select
-(1W–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year does not
-reach the two controls built from `SHORT_WINDOW_OPTIONS`). The board **opens on 1W** (v0.9.37, #384), and the
+(**1D**–**1Y**, `LEADERBOARD_WINDOW_OPTIONS`, a list of its own so a year or a
+day does not reach the two controls built from `SHORT_WINDOW_OPTIONS`). The board **opens on 1W** (v0.9.37, #384), and the
 default is validated against the chips that offer it — a default outside the
 options would light no chip, so the first click on any of them would look like
-it had done nothing. **Ranking is by the
+it had done nothing. **At 1D the board is one column** (v0.9.40): Sharpe,
+Calmar and Sortino divide by a volatility, a drawdown or a downside deviation,
+and a single return has none of the three — which is why #306 dropped the day
+entirely. It is back ranking on **Return alone**, and the other three columns
+are **hidden, not blanked**, since three empty columns under their titles read
+as a board that failed to load. `leaderboard_metrics(window_days)` in
+`config.py` is the one rule: `build_leaderboard` computes only what it names,
+and the board shows only what it names. It is passed to the widget apart from
+the columns because the two mean different things — a metric a window offers
+can still come back with no scorable rows, and that column should stand empty
+under its title rather than vanish. **Ranking is by the
 score** (#310), which the section title says out loud
 (`(Ranked By Normalized 5Y Z-Score)`, built from `SCORE_SAMPLE_YEARS` rather
 than spelled) — each metric standardized against its *own* trailing history,
@@ -273,7 +283,7 @@ because a chart drawing every level at once has no single depth to select.
 
 **A group's hover says what it averaged** (v0.9.39, #388). All three charts
 route it through one `_members_note`, which reads
-`(Average over N strategies)` and is **empty for a leaf**. It said
+`(Average over N Strategies)` and is **empty for a leaf**. It said
 `· mean of 3`, which names the wrong noun — beside a number, "mean of 3"
 parses first as *the mean is 3* rather than as the mean of three things — and
 before that it was the bare integer, which rendered `1Y Sharpe 1.23 3`. The
@@ -586,7 +596,7 @@ precisions.
 
 ## Current version
 
-`v0.9.39` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.40` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

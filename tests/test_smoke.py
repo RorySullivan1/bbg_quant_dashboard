@@ -450,12 +450,12 @@ def test_the_commentary_block_is_the_leaderboard_beside_the_switchable_pane():
     # The window control lives with the leaderboard, as chips in the section's
     # bar since #306 — the same idiom as the Platform tab rather than a third
     # one. It gained 1Y when the board started scoring against five years of
-    # history (#310).
+    # history (#310), and 1D in v0.9.40.
     chips = next(
         w
         for w in widgets
         if isinstance(w, ChipGroup)
-        and [label for label, _ in w.options] == ["1W", "1M", "3M", "6M", "1Y"]
+        and [label for label, _ in w.options] == ["1D", "1W", "1M", "3M", "6M", "1Y"]
     )
     labels = [w.value for w in widgets if isinstance(w, W.HTML)]
     assert any("Leaderboard" in (v or "") for v in labels)

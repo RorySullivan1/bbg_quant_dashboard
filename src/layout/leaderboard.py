@@ -2,7 +2,8 @@
 
 Four columns — one per `RANKABLE_METRICS` entry — each listing the catalog's
 top and bottom few indices as `rank · ticker · value` rows over the window the
-board is titled with. Clicking a row hands its ticker to `on_pick`, the same
+board is titled with. **One at 1D** (v0.9.40): the window's metrics come from
+`config.leaderboard_metrics`, and the columns it does not offer are hidden. Clicking a row hands its ticker to `on_pick`, the same
 contract `UniverseGrid` uses to open a strategy in the Single Strategy tab: a
 click with no `on_pick` wired, or on a slot that is currently blank, does
 nothing.
@@ -241,18 +242,36 @@ class Leaderboard:
         if self._on_pick is not None:
             self._on_pick(ticker)
 
-    def update(self, columns: tuple[LeaderboardColumn, ...]) -> None:
-        """Rewrite every slot from `columns`.
+    def update(
+        self,
+        columns: tuple[LeaderboardColumn, ...],
+        *,
+        metrics: tuple[tuple[str, str], ...] = RANKABLE_METRICS,
+    ) -> None:
+        """Rewrite every slot from `columns`, showing only `metrics`.
 
         Columns are matched by `metric`, so a short or reordered tuple fills
         what it names and blanks the rest — an empty tuple (an empty universe)
         blanks the whole board rather than leaving the last window's rows on
         screen while the chips claim a different one.
+
+        **`metrics` is what the window offers, and the rest are hidden, not
+        blanked** (v0.9.40). At 1D only Return is defined; three empty columns
+        headed Sharpe, Calmar and Sortino would read as a board that failed to
+        load. It is passed separately from `columns` rather than inferred from
+        them because the two mean different things: a metric the window offers
+        can still come back with no scorable rows, and that column should show
+        its title over empty slots, not vanish.
         """
+        shown = {metric for metric, _label in metrics}
         by_metric = {column.metric: column for column in columns}
         for metric, column in self.columns.items():
+            column.root.layout.display = "" if metric in shown else "none"
             column.fill(by_metric.get(metric))
 
     def clear(self) -> None:
+        """Blank every column and show all four — an empty board is still the
+        four-metric board, not a one-day one."""
         for column in self.columns.values():
+            column.root.layout.display = ""
             column.blank()

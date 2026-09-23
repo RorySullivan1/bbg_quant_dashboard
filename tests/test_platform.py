@@ -435,7 +435,7 @@ def test_the_icicle_hover_never_says_one_strategies():
     from src.layout.platform_charts import _members_note
 
     assert _members_note(1) == "", "a leaf says nothing"
-    assert _members_note(2) == " (Average over 2 strategies)"
+    assert _members_note(2) == " (Average over 2 Strategies)"
 
     chart = IcicleChart()
     chart.update(_icicle_frame(), **_ICICLE_KW)
@@ -927,7 +927,7 @@ def test_the_scatter_hover_names_the_members_rather_than_a_bare_count():
         colors=ASSET_CLASS_COLORS,
     )
     by_name = {tr.name: tr for tr in chart.fig.data}
-    assert by_name["Equity"].customdata[0][1] == " (Average over 3 strategies)"
+    assert by_name["Equity"].customdata[0][1] == " (Average over 3 Strategies)"
     # A strategy says nothing: "average over 1 strategy" is true and useless.
     assert by_name["Fixed Income"].customdata[0][1] == ""
 
