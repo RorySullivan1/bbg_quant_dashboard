@@ -17,6 +17,8 @@ Because `bql_client` fetches only `px_last`, anything here described as a
 """
 
 import math
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -240,14 +242,37 @@ LEGAL_DISCLOSURE_PATH = REPO_ROOT / "data" / "legal_disclosure.html"
 TEMPLATES_DIR = REPO_ROOT / "data" / "templates"
 LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 
+#: Where the app's **regenerable** files live. **Outside the project folder**
+#: (v0.9.41): on a BQuant terminal the parquet price cache was written into the
+#: project, where it counts against the size limit — about 1.4 MB for the
+#: shipped catalog at the 15-year fetch (#361 took it from ~0.6 MB), which with
+#: ~0.9 MB of `src` bytecode is what put the project over. The cache is data
+#: nobody keeps: it expires in `CACHE_TTL_HOURS`. (Bytecode is handled in the
+#: notebook, by not writing it at all — see `housekeeping`.)
+#:
+#: The system temp directory rather than a dotfile under the home folder,
+#: because on a terminal the home folder can *be* the project. Override with
+#: `BBG_DASHBOARD_CACHE_DIR` where temp is unsuitable.
+RUNTIME_DIR = Path(
+    os.environ.get("BBG_DASHBOARD_CACHE_DIR")
+    or Path(tempfile.gettempdir()) / "bbg_quant_dashboard"
+)
+
 #: On-disk parquet tier of the price cache, one file per `end` date.
-CACHE_DIR = REPO_ROOT / "data" / ".cache"
+CACHE_DIR = RUNTIME_DIR / "prices"
+
+#: Where the price cache lived until v0.9.40 — inside the project. Named only
+#: so `housekeeping.clear_legacy_artifacts` can empty it once; nothing writes
+#: here any more.
+LEGACY_CACHE_DIR = REPO_ROOT / "data" / ".cache"
 #: How stale a same-day disk cache may be before it counts as a miss.
 CACHE_TTL_HOURS = 12
 
 #: Benchmarks the user added at runtime. A sibling of the catalog rather than a
 #: file under `CACHE_DIR`: the cache is semantically deletable at any time and
-#: user configuration is not. Gitignored, so one user's benchmarks are never
+#: user configuration is not — which is also why this one **stays** in the
+#: project when the cache moved out (v0.9.41). It is small, and it is the
+#: user's. Gitignored, so one user's benchmarks are never
 #: committed and shipped to everyone.
 USER_BENCHMARKS_PATH = REPO_ROOT / "data" / "user_benchmarks.json"
 

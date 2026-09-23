@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import ipywidgets as W
 
+from ..housekeeping import clear_legacy_artifacts
 from .app import DashboardApp
 
 __all__ = ["DashboardApp", "build_app"]
 
 
 def build_app(verbose: bool = False) -> W.VBox:
-    """Build and return the whole dashboard — the notebook's one-liner."""
+    """Build and return the whole dashboard — the notebook's one-liner.
+
+    Clears what older versions left in the project folder first (v0.9.41).
+    Here rather than in `DashboardApp`, because the app is also constructed by
+    tests, and a test run has no business deleting files from the checkout.
+    """
+    clear_legacy_artifacts()
     return DashboardApp(verbose=verbose).root

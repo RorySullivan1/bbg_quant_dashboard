@@ -4,7 +4,7 @@ Part of the `bbg_quant_dashboard` repo memory — split out of `CLAUDE.md`.
 
 ## Branching
 
-- **Current version**: `v0.9.40`.
+- **Current version**: `v0.9.41`.
 - **`main` is the trunk.** Work branches off `main` and lands back in `main`
   by PR. There is no standing integration branch.
 - **Branch naming**: `{MAJOR.MINOR.PATCH}-{short-description}`, prefixed with
@@ -100,7 +100,13 @@ CSS, style tokens — live in `style.md`.)
   (`src/price_cache.py`) holding an **in-memory session superset** — one
   growing frame plus the date interval it covers — checked **before** the
   **on-disk trading-day** parquet
-  `data/.cache/prices_{YYYY-MM-DD}.parquet`. Any request whose tickers ⊆ the
+  `<tmp>/bbg_quant_dashboard/prices/prices_{YYYY-MM-DD}.parquet`
+  (`config.CACHE_DIR`; overridable with `BBG_DASHBOARD_CACHE_DIR`). It lived
+  in `data/.cache/` until v0.9.40 — **inside the project**, where on a
+  terminal it counted against the project's size limit (~1.4 MB for the
+  shipped catalog at the 15-year fetch). `build_app` clears that old location
+  once via `housekeeping.clear_legacy_artifacts`, along with `src` bytecode,
+  which the notebook now stops being written (`sys.dont_write_bytecode`). Any request whose tickers ⊆ the
   superset's columns **and** whose `[start, end]` ⊆ the covered interval is
   served by *slicing* (`covers` → `serve`), no BQL. On a **miss**, only the
   missing rectangle is fetched — new tickers over the needed span, and/or the
