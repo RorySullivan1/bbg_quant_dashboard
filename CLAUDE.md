@@ -20,13 +20,25 @@ for the shipped catalog once #361 widened the fetch to fifteen years) and `src`
 bytecode (~0.9 MB of `__pycache__`). The cache now lives under the system temp
 folder (`config.RUNTIME_DIR`, overridable with `BBG_DASHBOARD_CACHE_DIR`), and
 the notebook sets `sys.dont_write_bytecode` before importing `src`. **Nothing
-clears the old location**, and nothing needs to: a terminal resets the project
-folder on every reload, so what an older version wrote there does not survive
-to be counted. **The flag, not `sys.pycache_prefix`**: a prefix redirects
+clears the old location, and the project folder is not reset on reload** —
+v0.9.41 assumed it was, and it is not: a terminal scan found ~30 files in
+`data/.cache/`, 3–12 MB each, dated from May to the day of the scan. Neither
+the TTL prune nor a reload had removed them. They are deleted by hand, once
+per project. **The flag, not `sys.pycache_prefix`**: a prefix redirects
 *reads* as well as writes, so every library imported after it recompiled into
 temp — 2.3 s and ~19 MB cold — where the flag leaves libraries reading their
 own bytecode and costs ~0.7 s of `src` compilation per launch. User benchmarks
 stay in the project: they are configuration, not cache.
+
+**And the price cache writes nothing to disk** (v0.9.42). Where a terminal's
+temp folder lives, and whether it is counted, is not something the app can
+see, and one real-catalog cache file runs 3–12 MB. So no location is safe
+enough to be the default. `PriceCache(None)` is memory-only, and that is
+what the app builds unless `config.PRICE_CACHE_ON_DISK` is set — the in-memory
+superset already serves every request a session makes, so all the disk tier
+bought was a same-day relaunch without a refetch. The tier is off, not deleted:
+set the flag (and `BBG_DASHBOARD_CACHE_DIR`, if temp is the wrong place) where
+disk is free.
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
@@ -611,7 +623,7 @@ precisions.
 
 ## Current version
 
-`v0.9.41` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.42` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context
