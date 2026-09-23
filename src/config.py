@@ -144,6 +144,9 @@ MAX_SELECTED_STRATEGIES = 25
 RESLICE_DEBOUNCE_S: float = 0.3
 
 # Short metric windows (trading days) for the Platform z-score views.
+#: One trading day. Offered on the Leaderboard alone (see
+#: `LEADERBOARD_WINDOW_OPTIONS`), never in `SHORT_WINDOW_OPTIONS`.
+DAY_WINDOW = 1
 WEEK_WINDOW = 5
 MONTH_WINDOW = 21
 QUARTER_WINDOW = 63
@@ -165,16 +168,44 @@ SHORT_WINDOW_OPTIONS: list[tuple[str, int]] = [
 
 #: The leaderboard's own window options (#306). A superset of the shared list
 #: rather than an edit to it: `SHORT_WINDOW_OPTIONS` also drives the Platform
-#: sunburst's z-control and the Quantitative Z-Score window, and a year on
-#: those is a change nobody asked for.
+#: sunburst's z-control and the Quantitative Z-Score window, and a year — or a
+#: day — on those is a change nobody asked for.
 #:
-#: 1D was considered and dropped — Sharpe, Calmar and Sortino have no defined
-#: value over a single observation, so three of the four columns would blank
-#: whenever it was selected.
+#: **1D is offered, and ranks on Return alone** (v0.9.40). It was considered
+#: and dropped in #306 because Sharpe, Calmar and Sortino have no defined value
+#: over a single observation, so three of the four columns would have blanked
+#: whenever it was selected. The answer is not to blank them but to **not draw
+#: them**: `leaderboard_metrics` says which metrics a window can rank, and the
+#: board hides the rest. A one-day return z-scored against its own five-year
+#: history is a well-defined reading, and the desk's most-asked question about
+#: yesterday.
 LEADERBOARD_WINDOW_OPTIONS: list[tuple[str, int]] = [
+    ("1D", DAY_WINDOW),
     *SHORT_WINDOW_OPTIONS,
     ("1Y", TRADING_DAYS_PER_YEAR),
 ]
+
+#: The Leaderboard metrics that are defined over a **single** observation.
+#: Return is a price ratio, so one day has one. Sharpe, Calmar and Sortino
+#: each divide by a volatility, a drawdown or a downside deviation, and a
+#: single return has none of the three.
+_SINGLE_OBSERVATION_METRICS: frozenset[str] = frozenset({"return"})
+
+
+def leaderboard_metrics(window_days: int) -> tuple[tuple[str, str], ...]:
+    """The `RANKABLE_METRICS` a Leaderboard window can rank, in their order.
+
+    One rule with two readers: `build_leaderboard` computes only these, and
+    the board hides every column not among them. Deciding it in one place is
+    what keeps the builder from computing a ratio the board will not show, or
+    the board from showing a column the builder never filled.
+    """
+    if window_days < 2:
+        return tuple(
+            pair for pair in RANKABLE_METRICS if pair[0] in _SINGLE_OBSERVATION_METRICS
+        )
+    return RANKABLE_METRICS
+
 
 #: Trailing window (trading days) the leaderboard ranks over on load, computed
 #: whole-catalog from the already-fetched prices. The Window chips move it

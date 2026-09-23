@@ -509,3 +509,38 @@ def test_an_index_without_both_numbers_does_not_reach_the_board(bdays):
         tickers = [r.ticker for r in col.top + col.bottom]
         assert "FLAT Index" not in tickers
         assert all(np.isfinite(r.score) and np.isfinite(r.value) for r in col.top)
+
+
+def test_the_day_board_computes_return_alone():
+    """v0.9.40. `build_leaderboard` reads `leaderboard_metrics`, so at 1D it
+    builds one column and never computes a Sharpe over a single observation —
+    work whose answer nobody would be shown."""
+    import numpy as np
+    import pandas as pd
+    from src.commentary import build_leaderboard, window_returns
+    from src.config import DAY_WINDOW
+
+    index = pd.bdate_range("2012-01-02", periods=2000)
+    rng = np.random.default_rng(40)
+    prices = pd.DataFrame(
+        {
+            f"S{i} Index": 100 * np.cumprod(1 + rng.normal(0.0003, 0.01, len(index)))
+            for i in range(8)
+        },
+        index=index,
+    )
+    meta = pd.DataFrame({"ticker": prices.columns, "name": prices.columns})
+    columns = build_leaderboard(
+        meta,
+        prices,
+        window_returns(prices, window_days=DAY_WINDOW),
+        history_returns=prices.pct_change(),
+        window_days=DAY_WINDOW,
+    )
+    assert [c.metric for c in columns] == ["return"]
+    (ret,) = columns
+    assert ret.top, "the one column it builds is ranked"
+    # The value shown is the day's return: the last daily change.
+    last = prices.pct_change().iloc[-1]
+    for row in (*ret.top, *ret.bottom):
+        assert row.value == pytest.approx(last[row.ticker])

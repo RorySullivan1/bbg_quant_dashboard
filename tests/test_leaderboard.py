@@ -250,3 +250,71 @@ def test_a_refilled_row_picks_its_new_ticker():
 
     assert picked == ["ZZZ Index"]
     assert first != "ZZZ Index"
+
+
+# --- the day window (v0.9.40) -------------------------------------------------
+
+
+def _hidden(board: Leaderboard) -> set[str]:
+    return {m for m, c in board.columns.items() if c.root.layout.display == "none"}
+
+
+def test_a_window_hides_the_columns_it_does_not_offer():
+    """At 1D only Return is defined. The other three are **hidden**, not
+    blanked — three empty columns under their titles would read as a board
+    that failed to load."""
+    from src.config import DAY_WINDOW, leaderboard_metrics
+
+    board = Leaderboard()
+    board.update(
+        (_column("return", "Return"),), metrics=leaderboard_metrics(DAY_WINDOW)
+    )
+    assert _hidden(board) == {"sharpe", "calmar", "sortino"}
+    # The one it does show is filled.
+    assert any(_visible(slot) for slot in board.columns["return"].slots)
+
+
+def test_the_hidden_columns_come_back_on_a_wider_window():
+    from src.config import DAY_WINDOW, WEEK_WINDOW, leaderboard_metrics
+
+    board = Leaderboard()
+    board.update(
+        (_column("return", "Return"),), metrics=leaderboard_metrics(DAY_WINDOW)
+    )
+    board.update(_full_board(), metrics=leaderboard_metrics(WEEK_WINDOW))
+    assert _hidden(board) == set()
+
+
+def test_an_offered_metric_with_no_rows_shows_its_title_rather_than_vanishing():
+    """Why `metrics` is passed rather than inferred from `columns`: a metric
+    the window offers can still come back with nothing scorable, and that
+    column should stand empty under its title, not disappear."""
+    board = Leaderboard()
+    board.update((_column("return", "Return"),))  # default: all four offered
+    assert _hidden(board) == set()
+    assert not any(_visible(slot) for slot in board.columns["sharpe"].slots)
+
+
+def test_clear_restores_all_four_columns():
+    """An empty board is still the four-metric board, not a one-day one."""
+    from src.config import DAY_WINDOW, leaderboard_metrics
+
+    board = Leaderboard()
+    board.update(
+        (_column("return", "Return"),), metrics=leaderboard_metrics(DAY_WINDOW)
+    )
+    board.clear()
+    assert _hidden(board) == set()
+
+
+def test_only_return_is_defined_over_a_single_observation():
+    """The rule, in config, that the builder and the board both read."""
+    from src.config import DAY_WINDOW, leaderboard_metrics
+
+    assert [m for m, _ in leaderboard_metrics(DAY_WINDOW)] == ["return"]
+    # Every wider window the board offers ranks all four, in their order.
+    from src.config import LEADERBOARD_WINDOW_OPTIONS
+
+    for _label, days in LEADERBOARD_WINDOW_OPTIONS:
+        if days > DAY_WINDOW:
+            assert leaderboard_metrics(days) == RANKABLE_METRICS

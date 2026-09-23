@@ -787,29 +787,35 @@ def test_the_boards_default_window_is_one_its_chips_offer():
         cfg.LEADERBOARD_WINDOW_DAYS = original
 
 
-def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app):
-    """#306 added 1Y to the board's chips. It is a list of its own, not an
-    edit to `SHORT_WINDOW_OPTIONS`, because that constant drove the
-    Quantitative Z-Score window too, which was not asked to grow a year. This
-    is the test that catches a future one-line edit to the shared list.
+def test_the_leaderboard_window_offers_a_day_and_a_year_without_lengthening_the_others(
+    app,
+):
+    """#306 added 1Y to the board's chips, and v0.9.40 added 1D. It is a list
+    of its own, not an edit to `SHORT_WINDOW_OPTIONS`, because that constant
+    drove the Quantitative Z-Score window too, which was not asked to grow a
+    year or shrink to a day. This is the test that catches a future one-line
+    edit to the shared list.
 
     Both of the other consumers have since gone — the Platform card moved onto
     `stat_windows()` in #333, and the last `QuantFilter` was retired by #365 —
     so what the assertion guards now is the list itself, and the rule that a
     board's options are the board's."""
     from src.config import (
+        DAY_WINDOW,
         LEADERBOARD_WINDOW_OPTIONS,
         SHORT_WINDOW_OPTIONS,
         TRADING_DAYS_PER_YEAR,
     )
 
     assert [label for label, _ in LEADERBOARD_WINDOW_OPTIONS] == [
+        "1D",
         "1W",
         "1M",
         "3M",
         "6M",
         "1Y",
     ]
+    assert LEADERBOARD_WINDOW_OPTIONS[0] == ("1D", DAY_WINDOW)
     assert LEADERBOARD_WINDOW_OPTIONS[-1] == ("1Y", TRADING_DAYS_PER_YEAR)
     assert [label for label, _ in app.ranking_window.options] == [
         label for label, _ in LEADERBOARD_WINDOW_OPTIONS
@@ -819,6 +825,59 @@ def test_the_leaderboard_window_offers_a_year_without_lengthening_the_others(app
     # `QuantFilter` in #365 — so this pins the list itself, which is what the
     # Leaderboard's own year-long options are deliberately kept apart from.
     assert [label for label, _ in SHORT_WINDOW_OPTIONS] == ["1W", "1M", "3M", "6M"]
+
+
+def test_the_day_window_ranks_on_return_alone_and_hides_the_ratios(app, monkeypatch):
+    """v0.9.40. Sharpe, Calmar and Sortino divide by a volatility, a drawdown
+    or a downside deviation, and a single return has none of the three — which
+    is why #306 dropped 1D. It is back, ranking on Return only, with the three
+    ratio columns **hidden** rather than blanked: three empty columns under
+    their titles would read as a board that failed to load.
+
+    And no BQL: the day's board is built from the cache like any other window.
+    """
+    from src.config import DAY_WINDOW, leaderboard_window_days
+    from src.layout import app as app_mod
+
+    def no_fetch(*a, **kw):  # pragma: no cover - the assert is that it is unused
+        raise AssertionError("a window change must not issue BQL")
+
+    monkeypatch.setattr(app_mod, "fetch_prices", no_fetch)
+    try:
+        app.ranking_window.value = DAY_WINDOW
+        shown = {
+            metric: column.root.layout.display != "none"
+            for metric, column in app.leaderboard.columns.items()
+        }
+        assert shown == {
+            "return": True,
+            "sharpe": False,
+            "calmar": False,
+            "sortino": False,
+        }
+        # The builder computed only what the board shows.
+        assert [c.metric for c in app.highlights_cache[DAY_WINDOW]] == ["return"]
+        # And the one column it did draw has rows in it.
+        assert _board_tickers(app)
+    finally:
+        app.ranking_window.value = leaderboard_window_days()
+
+    # Leaving the day brings all four columns back.
+    assert all(
+        column.root.layout.display != "none"
+        for column in app.leaderboard.columns.values()
+    )
+
+
+def test_the_board_still_opens_on_a_week_with_a_day_on_offer(app):
+    """The 1D chip is first in the row, but the board opens on 1W: a default
+    is what the board shows before anyone touches it, and a one-day board is
+    one column where the desk opens on four."""
+    from src.config import WEEK_WINDOW
+
+    assert app.ranking_window.labels[0] == "1D"
+    assert app.ranking_window.value == WEEK_WINDOW
+    assert app.ranking_window.label == "1W"
 
 
 def test_selecting_the_year_window_re_ranks_from_cache_without_fetching(

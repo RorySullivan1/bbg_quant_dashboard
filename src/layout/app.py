@@ -50,6 +50,7 @@ from ..config import (
     UNIVERSE_SOLUTION_VALUES,
     WEEK_WINDOW,
     field_label,
+    leaderboard_metrics,
     leaderboard_window_days,
     rankable_metric_chips,
     score_history_years,
@@ -1297,7 +1298,7 @@ class DashboardApp:
                     window_days=window_days,
                 )
                 self.highlights_cache[window_days] = columns
-            self.leaderboard.update(columns)
+            self.leaderboard.update(columns, metrics=leaderboard_metrics(window_days))
         except Exception:
             self.state.errors_w.value += _render_error(traceback.format_exc())
 

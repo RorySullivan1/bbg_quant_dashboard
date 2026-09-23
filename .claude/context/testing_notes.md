@@ -537,6 +537,11 @@ but not that the two sections *look* like one pair at a terminal's fonts.
   at a narrow width.
 - The board **opens on `1W`** (#384), with that chip lit — not `1M`. Clicking
   any other Window chip re-ranks it from the cache with no loading overlay.
+- **`1D` is the first chip**, and selecting it collapses the board to **one
+  column, Return** (v0.9.40): Sharpe, Calmar and Sortino disappear rather than
+  standing empty under their titles. The rows are yesterday's return, ranked by
+  its z-score against five years of daily returns. Pick `1W` again and all four
+  columns come back with the week's rows.
 - Four columns — **Return / Sharpe / Calmar / Sortino** — each with a top block
   and a bottom block separated by a divider, and **centred** column titles.
 - Every row reads `rank · ticker · score (value)`: the score carries the
