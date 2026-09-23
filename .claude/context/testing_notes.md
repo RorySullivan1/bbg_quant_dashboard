@@ -120,11 +120,9 @@ renders the full dashboard without a Bloomberg session. Verify by:
   toast reads `Loaded N indices · M trading days · fetched from mock prices in
   X.Ys`; a `prices_<today>.parquet` appears **in that temp folder, not in the
   project** (v0.9.41).
-- **Nothing regenerable is left in the project folder** after a launch from
-  the notebook: no `data/.cache/`, and no `__pycache__` under `src/`. A
-  project upgraded from v0.9.40 or earlier loses both on its first launch —
-  that is `housekeeping.clear_legacy_artifacts`, and it is what took the
-  project back under its size limit.
+- **Nothing regenerable is written into the project folder** by a launch from
+  the notebook: no `data/.cache/`, and no `__pycache__` under `src/`. That is
+  what took the project back under its size limit.
 - Warm start (within `CACHE_TTL_HOURS`) — the toast reads
   `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
   BQL/mock fetch happens.

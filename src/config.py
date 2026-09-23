@@ -248,7 +248,7 @@ LOGO_PATH = REPO_ROOT / "assets" / "logo.png"
 #: shipped catalog at the 15-year fetch (#361 took it from ~0.6 MB), which with
 #: ~0.9 MB of `src` bytecode is what put the project over. The cache is data
 #: nobody keeps: it expires in `CACHE_TTL_HOURS`. (Bytecode is handled in the
-#: notebook, by not writing it at all — see `housekeeping`.)
+#: notebook, by not writing it at all.)
 #:
 #: The system temp directory rather than a dotfile under the home folder,
 #: because on a terminal the home folder can *be* the project. Override with
@@ -260,11 +260,6 @@ RUNTIME_DIR = Path(
 
 #: On-disk parquet tier of the price cache, one file per `end` date.
 CACHE_DIR = RUNTIME_DIR / "prices"
-
-#: Where the price cache lived until v0.9.40 — inside the project. Named only
-#: so `housekeeping.clear_legacy_artifacts` can empty it once; nothing writes
-#: here any more.
-LEGACY_CACHE_DIR = REPO_ROOT / "data" / ".cache"
 #: How stale a same-day disk cache may be before it counts as a miss.
 CACHE_TTL_HOURS = 12
 

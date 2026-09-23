@@ -104,9 +104,9 @@ CSS, style tokens — live in `style.md`.)
   (`config.CACHE_DIR`; overridable with `BBG_DASHBOARD_CACHE_DIR`). It lived
   in `data/.cache/` until v0.9.40 — **inside the project**, where on a
   terminal it counted against the project's size limit (~1.4 MB for the
-  shipped catalog at the 15-year fetch). `build_app` clears that old location
-  once via `housekeeping.clear_legacy_artifacts`, along with `src` bytecode,
-  which the notebook now stops being written (`sys.dont_write_bytecode`). Any request whose tickers ⊆ the
+  shipped catalog at the 15-year fetch). `src` bytecode is kept out the same
+  way — the notebook sets `sys.dont_write_bytecode`. Nothing clears the old
+  location: a terminal resets the project folder on every reload. Any request whose tickers ⊆ the
   superset's columns **and** whose `[start, end]` ⊆ the covered interval is
   served by *slicing* (`covers` → `serve`), no BQL. On a **miss**, only the
   missing rectangle is fetched — new tickers over the needed span, and/or the

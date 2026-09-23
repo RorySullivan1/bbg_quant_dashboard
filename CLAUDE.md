@@ -18,17 +18,15 @@ project has a size limit, and the app was over it by writing two kinds of
 throwaway file into itself: the parquet price cache (`data/.cache/`, ~1.4 MB
 for the shipped catalog once #361 widened the fetch to fifteen years) and `src`
 bytecode (~0.9 MB of `__pycache__`). The cache now lives under the system temp
-folder (`config.RUNTIME_DIR`, overridable with `BBG_DASHBOARD_CACHE_DIR`); the
-notebook sets `sys.dont_write_bytecode` before importing `src`; and
-`build_app` clears what older versions left, once, through
-`housekeeping.clear_legacy_artifacts`. **The flag, not
-`sys.pycache_prefix`**: a prefix redirects *reads* as well as writes, so every
-library imported after it recompiled into temp — 2.3 s and ~19 MB cold —
-where the flag leaves libraries reading their own bytecode and costs ~0.7 s of
-`src` compilation per launch. The cleanup runs from `build_app` only, never
-`DashboardApp`, because tests construct the app and must not delete files from
-the checkout. User benchmarks stay in the project: they are configuration, not
-cache.
+folder (`config.RUNTIME_DIR`, overridable with `BBG_DASHBOARD_CACHE_DIR`), and
+the notebook sets `sys.dont_write_bytecode` before importing `src`. **Nothing
+clears the old location**, and nothing needs to: a terminal resets the project
+folder on every reload, so what an older version wrote there does not survive
+to be counted. **The flag, not `sys.pycache_prefix`**: a prefix redirects
+*reads* as well as writes, so every library imported after it recompiled into
+temp — 2.3 s and ~19 MB cold — where the flag leaves libraries reading their
+own bytecode and costs ~0.7 s of `src` compilation per launch. User benchmarks
+stay in the project: they are configuration, not cache.
 
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
