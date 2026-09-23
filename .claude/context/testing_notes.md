@@ -189,7 +189,10 @@ renders the full dashboard without a Bloomberg session. Verify by:
   third band through the middle, which read as a series the legend never
   named, #386.) Beneath it the per-ticker stats are an **HTML table**, tickers
   down and Mean · Std · Min · Max · Skew · Kurtosis across, every number at
-  two decimals with negatives red and nothing green. On Multi-Strategy the
+  two decimals with negatives red and nothing green. **Mean is headed
+  `Mean (bp)`** and reads in basis points (#388) — a daily mean is three
+  orders below the other percentages, and at `0.06%` two strategies a fifth
+  apart printed the same number. Check two rows actually differ. On Multi-Strategy the
   table has one row per basket member.
 - **Rolling** is one figure with a Correlation · Sharpe · Calmar · Beta chip.
   Stepping the chip moves the **title, the y-axis label and the reference
@@ -326,7 +329,9 @@ catalog is the real test of how the charts read.
   two, at every level.
 - Colour is the mean metric, red through neutral to green, and the colorbar is
   titled for the Metric and Window chips (e.g. `1Y Sharpe`). Hover shows the
-  label, the count and the value.
+  label and the value, then *(Average over N strategies)* **only on a group**
+  (#388) — a leaf says nothing, where it used to read "1 strategies". On this
+  catalog most root cells are one-member, so that is the case to look at.
 - Set Metric to **Return**: the numbers read as percentages, not 2dp ratios.
 - **Click a cell and it stays zoomed.** The chart, the breadcrumb and the
   points table all move together. If the chart snaps back to the whole catalog
@@ -351,8 +356,9 @@ catalog is the real test of how the charts read.
   chips' choice). Y is the metric, X the term-premium β, Z the
   equity-risk-premium β, and the axis titles say so.
 - Hover is **three lines** and small enough to see the cloud past it; a group
-  says *mean of N*. There is no way to anchor it beside the marker in a 3D
-  scene, so if it still hides too much the fix is fewer characters.
+  says *(Average over N strategies)* and a strategy says nothing (#388). There
+  is no way to anchor it beside the marker in a 3D scene, so if it still hides
+  too much the fix is fewer characters.
 - **No translucent planes.** Each axis's zero line and wall edge are visible
   at the default camera, and the box is a cube so a β of 0.2 is the same
   length on all three axes. Orbit the camera and check the zero lines still
@@ -374,8 +380,9 @@ catalog is the real test of how the charts read.
   columns** — check this on a Monday, when T-1 is the previous Friday.
 - Switch away and back: the cloud is in the **same arrangement**. A reshuffle
   would read as movement in the data.
-- Hover reads name, date and return, and says *mean of N* on a group — never
-  a bare number after the value.
+- Hover reads name, date and return, and says *(Average over N strategies)* on
+  a group — never a bare number after the value, and nothing at all on a
+  strategy (#388).
 
 **The drill and the points table**
 

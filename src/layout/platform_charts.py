@@ -267,13 +267,20 @@ class IcicleChart(Chart):
                 showscale=True,
                 colorbar=dict(title=dict(text=metric_label)),
             ),
-            customdata=[[c] for c in values],
+            # The note is built per node and carried, not formatted in the
+            # template (#388). A `hovertemplate` is one string for the whole
+            # trace, so `%{customdata[0]:.0f} strategies` had to render for
+            # every node — and read **"1 strategies"** on each leaf, which is
+            # the common case here: 16 of the shipped catalog's 17 root points
+            # are one-member. Routing it through `_members_note` also makes
+            # all three Platform charts say the same thing the same way.
+            customdata=[[_members_note(c)] for c in values],
             hovertemplate=(
                 "%{label}<br>"
                 + f"{metric_label} "
                 + "%{color:"
                 + value_format(metric)
-                + "}<br>%{customdata[0]:.0f} strategies<extra></extra>"
+                + "}%{customdata[0]}<extra></extra>"
             ),
         )
         with self.fig.batch_update():
@@ -761,12 +768,21 @@ def _is_leaf(flag) -> bool:
 
 
 def _members_note(count) -> str:
-    """ " · mean of N" for a group, and nothing at all for a strategy.
+    """ " (Average over N strategies)" for a group, nothing for a strategy.
 
     A group's value is the equal-weight mean of its members, and the hover has
     to say so or the number reads as the node's own. It was `%{customdata[1]}`
     against the raw count, which rendered "1Y Sharpe 1.23 3" — a bare integer
-    the reader has to guess at. A leaf gets an empty string rather than "mean
-    of 1", which would be true and useless.
+    the reader has to guess at.
+
+    It then read `· mean of 3`, which **names the wrong noun** (#388): beside
+    a number, "mean of 3" parses first as *the mean is 3*, not as *the mean of
+    three things*. Saying "average over N strategies" puts the count on the
+    thing being counted, and the parentheses mark the whole clause as a note
+    about the number rather than part of it. "strategies" matches the
+    Icicle's own `N strategies`, which sits in the same card.
+
+    A leaf gets an empty string rather than "average over 1 strategy", which
+    would be true and useless.
     """
-    return f" · mean of {int(count)}" if int(count) > 1 else ""
+    return f" (Average over {int(count)} strategies)" if int(count) > 1 else ""

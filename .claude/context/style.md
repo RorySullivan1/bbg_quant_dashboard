@@ -409,11 +409,24 @@ terminal's plotly (`showarrow` was not, and took the app down: see
 `run_instructions.md`). The Scatter's hover is therefore three short lines —
 name, the metric, then both betas side by side — where it was five.
 
-**A group's hover says "mean of N", never a bare count.** It rendered
-`%{customdata[1]}` against the raw number, so a three-member category read
-`1Y Sharpe 1.23 3`. The value on these charts is an equal-weight mean of the
-node's members and the hover has to say so, or the number reads as the node's
-own. A leaf says nothing at all: "mean of 1" is true and useless.
+**A group's hover says `(Average over N strategies)`, never a bare count.**
+It rendered `%{customdata[1]}` against the raw number, so a three-member
+category read `1Y Sharpe 1.23 3`. The value on these charts is an equal-weight
+mean of the node's members and the hover has to say so, or the number reads as
+the node's own.
+
+It then read `· mean of 3`, which **names the wrong noun** (v0.9.39, #388):
+beside a number, "mean of 3" parses first as *the mean is 3*. Putting the
+count on the thing being counted, inside parentheses that mark the clause as a
+note about the number rather than part of it, is what makes it read once. A
+leaf says nothing at all: "average over 1 strategy" is true and useless.
+
+**All three charts read one `_members_note`.** The Icicle did not, and was
+separately wrong for it: a `hovertemplate` is one string for the whole trace,
+so `%{customdata[0]:.0f} strategies` rendered on **every** node and said
+"1 strategies" on each leaf — the common case here, where 16 of the shipped
+catalog's 17 root points are one-member. A per-node string in `customdata` is
+the only way to say nothing on some nodes and something on others.
 
 ## The Basket strip and the filter strip (v0.9.29, epic #341)
 
@@ -578,6 +591,15 @@ there would hide it.
 statistics across. The metrics table has one strategy and many windows; this
 one has many series and a fixed six moments, and a basket can put five rows in
 it. Same type, same rules, same `mono` numerals — only the axis differs.
+
+**Mean reads in basis points**, and its heading says `Mean (bp)` (#388). A
+daily mean sits three orders below the other percentages in the table, so two
+decimals of a percentage gave it a single significant figure and printed the
+same `0.06%` for two strategies whose means differ by a fifth. This is the
+two-decimal rule's *answer*, not an exception to it: basis points move the
+decimal and keep the decimals. It is also why `RETURN_STAT_UNITS` carries a
+heading apart from the column name — a unit that is not the obvious one has to
+be on screen, or the number is worse than the one it replaced.
 
 It shares `_metric_cell` with the metrics table, so `.bbg-metrics-na` and
 `.bbg-metrics-neg` are styled for **both** tables from one declaration. That

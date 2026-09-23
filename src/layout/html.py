@@ -354,10 +354,22 @@ def _metric_cell(value: float, unit: str) -> str:
     itables renderer had been printing four of the quant metrics at full
     float precision in an 82px cell. The only thing that varies between
     metrics is the unit, which `STRATEGY_METRICS` declares once each.
+
+    `"bp"` is that rule's answer to a statistic whose natural scale is three
+    orders below the rest (#388), not an exception to it. A **daily** mean
+    return lives around 0.0001-0.0006, which two decimals of a percentage
+    render as `0.01%` / `0.06%` — one significant figure, and two series
+    whose means differ by a fifth print the same number. Basis points move
+    the decimal rather than moving the rule: the same two decimals, now
+    carrying the digits that vary. The column heading names the unit, so
+    nothing on screen has to infer it.
     """
     if value is None or pd.isna(value):
         return f"<span class='bbg-metrics-na'>{METRICS_NA}</span>"
-    text = html.escape(f"{value:.2%}" if unit == "percent" else f"{value:.2f}")
+    if unit == "bp":
+        text = html.escape(f"{value * 10_000:.2f}")
+    else:
+        text = html.escape(f"{value:.2%}" if unit == "percent" else f"{value:.2f}")
     # **Red for negative, and no green.** The Leaderboard puts sentiment on
     # its score because that board ranks, and a ranking has a direction. Half
     # of these rows do not: a high Vol is not good, and a negative Beta is a
@@ -478,18 +490,25 @@ def _calendar_cell(value: float, band: HeatBand | None, unit: str) -> str:
 _READOUT_LABEL_GAP: int = 2
 
 
-#: The return-distribution stats, and the unit each reads in (#386). The
+#: The return-distribution stats as `(column, heading, unit)` (#386). The
 #: same two-decimal rule `STRATEGY_METRICS` follows, declared here because
 #: these are *distribution* moments rather than the performance metrics that
 #: tuple names — and the order is the order they are read in, spread before
 #: shape.
-RETURN_STAT_UNITS: tuple[tuple[str, str], ...] = (
-    ("Mean", "percent"),
-    ("Std", "percent"),
-    ("Min", "percent"),
-    ("Max", "percent"),
-    ("Skew", "ratio"),
-    ("Kurtosis", "ratio"),
+#:
+#: The heading is carried apart from the column name because **Mean reads in
+#: basis points** (#388): a daily mean sits three orders below the other
+#: percentages here, so two decimals of a percentage gave it one significant
+#: figure and printed `0.06%` for two series a fifth apart. Basis points keep
+#: the two-decimal rule and move the decimal instead, which only works if the
+#: heading says so.
+RETURN_STAT_UNITS: tuple[tuple[str, str, str], ...] = (
+    ("Mean", "Mean (bp)", "bp"),
+    ("Std", "Std", "percent"),
+    ("Min", "Min", "percent"),
+    ("Max", "Max", "percent"),
+    ("Skew", "Skew", "ratio"),
+    ("Kurtosis", "Kurtosis", "ratio"),
 )
 
 
@@ -508,7 +527,9 @@ def _render_return_stats(stats: pd.DataFrame, meta: pd.DataFrame) -> str:
 
     Numbers reuse `_metric_cell`, so the two-decimal rule, the dash for a
     missing value and *red for negative, no green* are one implementation
-    across every HTML stats table rather than a second copy here.
+    across every HTML stats table rather than a second copy here. **Mean is
+    in basis points** and its heading says so (#388) — see
+    `RETURN_STAT_UNITS`.
     """
     if stats is None or stats.empty:
         return ""
@@ -518,11 +539,13 @@ def _render_return_stats(stats: pd.DataFrame, meta: pd.DataFrame) -> str:
         else pd.Series(index=stats.index, dtype=object)
     )
     present = [
-        (name, unit) for name, unit in RETURN_STAT_UNITS if name in stats.columns
+        (column, heading, unit)
+        for column, heading, unit in RETURN_STAT_UNITS
+        if column in stats.columns
     ]
 
     headers = "<th class='bbg-retstats-name'>Name</th>" + "".join(
-        f"<th>{html.escape(name)}</th>" for name, _unit in present
+        f"<th>{html.escape(heading)}</th>" for _column, heading, _unit in present
     )
     rows = []
     for ticker in stats.index:
@@ -530,8 +553,8 @@ def _render_return_stats(stats: pd.DataFrame, meta: pd.DataFrame) -> str:
         name = names.get(ticker)
         name_text = "" if name is None or pd.isna(name) else html.escape(str(name))
         cells = "".join(
-            f"<td>{_metric_cell(stats.loc[ticker, metric], unit)}</td>"
-            for metric, unit in present
+            f"<td>{_metric_cell(stats.loc[ticker, column], unit)}</td>"
+            for column, _heading, unit in present
         )
         rows.append(
             f"<tr><th>{html.escape(label)}</th>"

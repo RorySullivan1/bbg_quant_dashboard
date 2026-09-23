@@ -321,9 +321,10 @@ def test_the_return_stats_table_is_tickers_down_statistics_across():
     # One body row per ticker, short-form as the chart's legend writes them.
     assert out.count("<tr><th>") == 2
     assert "<th>AAA</th>" in out and "<th>SPTR</th>" in out
-    # Every statistic is a column, in the declared order.
-    for name in ("Mean", "Std", "Min", "Max", "Skew", "Kurtosis"):
-        assert f"<th>{name}</th>" in out
+    # Every statistic is a column, under the heading it declares — which is
+    # not always its column name: Mean reads in basis points (#388).
+    for heading in ("Mean (bp)", "Std", "Min", "Max", "Skew", "Kurtosis"):
+        assert f"<th>{heading}</th>" in out
 
 
 def test_the_return_stats_table_reads_the_same_units_and_two_decimals():
@@ -377,3 +378,48 @@ def test_a_ticker_the_catalog_does_not_name_still_renders():
     out = _render_return_stats(stats, meta[meta["ticker"] == "AAA Index"])
     assert "<th>SPTR</th>" in out
     assert "nan" not in out.lower()
+
+
+def test_the_mean_reads_in_basis_points_so_two_decimals_still_resolve_it():
+    """#388. A **daily** mean sits three orders below the other percentages in
+    this table. At two decimals of a percentage it rendered one significant
+    figure, and two strategies whose means differ by a fifth printed the same
+    number — `0.0577` and `0.0588` were both `0.06%`.
+
+    Basis points keep v0.9.32's two-decimal rule and move the decimal instead,
+    which is why this is not an exception to that rule.
+    """
+    from src.layout.html import _render_return_stats
+
+    stats = pd.DataFrame(
+        {"Mean": [0.0005774, 0.0005876], "Std": [0.0154, 0.0135]},
+        index=["AAA Index", "BBB Index"],
+    )
+    meta = pd.DataFrame({"ticker": stats.index, "name": ["A", "B"]})
+    out = _render_return_stats(stats, meta)
+
+    assert "<th>Mean (bp)</th>" in out, "the heading carries the unit"
+    assert "5.77" in out and "5.88" in out, "the two means are distinguishable"
+    assert "0.06%" not in out
+    # Its neighbour is untouched: only Mean changes unit.
+    assert "1.54%" in out
+
+
+def test_a_negative_mean_in_basis_points_is_still_red():
+    """The negative rule is `_metric_cell`'s and applies whatever the unit."""
+    from src.layout.html import _render_return_stats
+
+    stats = pd.DataFrame({"Mean": [-0.0002]}, index=["AAA Index"])
+    out = _render_return_stats(
+        stats, pd.DataFrame({"ticker": ["AAA Index"], "name": ["A"]})
+    )
+    assert "bbg-metrics-neg" in out
+    assert "-2.00" in out
+
+
+def test_the_metrics_table_is_untouched_by_the_basis_point_unit():
+    """`_metric_cell` is shared, so a new unit must not reach the table that
+    does not declare it — every `STRATEGY_METRICS` row is percent or ratio."""
+    from src.stats import STRATEGY_METRICS
+
+    assert {unit for _name, unit in STRATEGY_METRICS} == {"percent", "ratio"}
