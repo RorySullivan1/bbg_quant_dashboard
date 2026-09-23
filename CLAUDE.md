@@ -28,6 +28,15 @@ temp — 2.3 s and ~19 MB cold — where the flag leaves libraries reading their
 own bytecode and costs ~0.7 s of `src` compilation per launch. User benchmarks
 stay in the project: they are configuration, not cache.
 
+**And the price cache writes nothing to disk** (v0.9.42). The move to temp was
+not enough: on a terminal the temp folder is counted against the project too,
+and it held 7.55 MB of cache. `PriceCache(None)` is memory-only, and that is
+what the app builds unless `config.PRICE_CACHE_ON_DISK` is set — the in-memory
+superset already serves every request a session makes, so all the disk tier
+bought was a same-day relaunch without a refetch. The tier is off, not deleted:
+set the flag (and `BBG_DASHBOARD_CACHE_DIR`, if temp is the wrong place) where
+disk is free.
+
 The whole UI renders on a cohesive **dark technical chrome** (v0.6.5) and is
 organized as: masthead banner → an always-visible **all-catalog commentary
 block** (two sections at 60:40 — a ranked **Leaderboard** of four metric
@@ -611,7 +620,7 @@ precisions.
 
 ## Current version
 
-`v0.9.41` (see `.meta/VERSION` and the **Branching** section of
+`v0.9.42` (see `.meta/VERSION` and the **Branching** section of
 `.claude/context/conventions.md`).
 
 ## Detailed context

@@ -25,6 +25,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from .config import CACHE_DIR, PRICE_CACHE_ON_DISK
 from .price_cache import PriceCache
 from .price_source import (
     HAS_BQL,
@@ -50,7 +51,8 @@ __all__ = [
 
 #: The cache and source `fetch_prices` uses when a caller doesn't pass its own —
 #: the app only ever wants one of each per session. Tests construct their own.
-_DEFAULT_CACHE = PriceCache()
+#: Memory-only unless `PRICE_CACHE_ON_DISK` (v0.9.42).
+_DEFAULT_CACHE = PriceCache(CACHE_DIR if PRICE_CACHE_ON_DISK else None)
 _DEFAULT_SOURCE: PriceSource = default_price_source()
 
 

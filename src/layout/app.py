@@ -1050,13 +1050,12 @@ class DashboardApp:
         n_days = df.shape[0]
         if source == "cache":
             # An in-memory cache hit can report "cache" with no parquet on disk
-            # (e.g. a read-only filesystem), so the mtime stamp is best-effort.
-            try:
-                mtime = _DEFAULT_CACHE.path_for(self.today).stat().st_mtime
+            # (memory-only, or a read-only filesystem), so the stamp is optional.
+            mtime = _DEFAULT_CACHE.written_at(self.today)
+            suffix = ""
+            if mtime is not None:
                 stamp = time.strftime("%H:%M · %m-%d", time.localtime(mtime))
                 suffix = f" ({stamp})"
-            except OSError:
-                suffix = ""
             return (
                 f"Loaded {n_tickers} indices · {n_days} trading days "
                 f"from cache{suffix}",

@@ -118,14 +118,16 @@ renders the full dashboard without a Bloomberg session. Verify by:
 - Cold start (no cache under `<tmp>/bbg_quant_dashboard/prices/`) — the
   loading overlay advances through its stages then dismisses; the post-load
   toast reads `Loaded N indices · M trading days · fetched from mock prices in
-  X.Ys`; a `prices_<today>.parquet` appears **in that temp folder, not in the
-  project** (v0.9.41).
-- **Nothing regenerable is written into the project folder** by a launch from
-  the notebook: no `data/.cache/`, and no `__pycache__` under `src/`. That is
-  what took the project back under its size limit.
-- Warm start (within `CACHE_TTL_HOURS`) — the toast reads
+  X.Ys`; **no parquet is written anywhere** — not in the project, not in
+  temp (v0.9.42; set `PRICE_CACHE_ON_DISK` to get the v0.9.41 behaviour).
+- **Nothing regenerable is written by a launch from the notebook**: no
+  `data/.cache/`, no `prices/` under the temp folder, and no `__pycache__`
+  under `src/`. That is what takes the project back under its size limit.
+- Warm start — **only with `PRICE_CACHE_ON_DISK` on** (v0.9.42): within
+  `CACHE_TTL_HOURS` the toast reads
   `Loaded N indices · M trading days from cache (HH:MM · MM-DD)`; no
-  BQL/mock fetch happens.
+  BQL/mock fetch happens. With the default memory-only cache every launch is
+  a cold start.
 - **Nothing re-shows the overlay.** It runs once, on the initial load, and
   dismisses. If it appears again during a session, something still fetches —
   which nothing should since v0.9.30.

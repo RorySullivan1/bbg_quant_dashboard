@@ -13,11 +13,12 @@ as covered. A contained request is served by slicing; a miss fetches only the
 missing rectangle (`delta_specs`) and merges it in.
 
 **The parquet tier**, keyed by `end` date under `cache_dir` and honoured only
-within `ttl_hours`. Every disk operation is best-effort by contract: a
-read failure is a clean miss, and `disk_writable` is the same tri-state
-warn-once probe as before — `None` until tried, then `True`/`False`, and once
-`False` (a read-only BQuant terminal) writes stop for the rest of the session
-while the in-memory tier carries on serving.
+within `ttl_hours` — and **absent** when `cache_dir` is None, which is the
+app's default since v0.9.42 (`PRICE_CACHE_ON_DISK`). Every disk operation is
+best-effort by contract: a read failure is a clean miss, and `disk_writable`
+is the same tri-state warn-once probe as before — `None` until tried, then
+`True`/`False`, and once `False` (a read-only BQuant terminal) writes stop for
+the rest of the session while the in-memory tier carries on serving.
 """
 
 from __future__ import annotations
@@ -40,11 +41,12 @@ class PriceCache:
 
     def __init__(
         self,
-        cache_dir: Path | str = CACHE_DIR,
+        cache_dir: Path | str | None = CACHE_DIR,
         *,
         ttl_hours: float = CACHE_TTL_HOURS,
     ) -> None:
-        self.cache_dir = Path(cache_dir)
+        #: None is memory-only: nothing is read from or written to disk.
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.ttl_hours = ttl_hours
         self.superset: pd.DataFrame | None = None
         self.cover: tuple[date, date] | None = None
@@ -122,6 +124,15 @@ class PriceCache:
     def path_for(self, day: date) -> Path:
         return self.cache_dir / f"prices_{day.isoformat()}.parquet"
 
+    def written_at(self, day: date) -> float | None:
+        """The mtime of ``day``'s parquet, or None when there is none."""
+        if self.cache_dir is None:
+            return None
+        try:
+            return self.path_for(day).stat().st_mtime
+        except OSError:
+            return None
+
     def read_disk(
         self, day: date, tickers: list[str], start: date
     ) -> pd.DataFrame | None:
@@ -132,6 +143,8 @@ class PriceCache:
         is the filename day). A missing ticker or too-short a history is a clean
         miss.
         """
+        if self.cache_dir is None:
+            return None
         path = self.path_for(day)
         if not path.exists():
             return None
@@ -159,7 +172,12 @@ class PriceCache:
         read-only BQuant terminal) stops retrying and stops re-warning — the
         in-memory tier carries the session.
         """
-        if df is None or df.empty or self.disk_writable is False:
+        if (
+            self.cache_dir is None
+            or df is None
+            or df.empty
+            or self.disk_writable is False
+        ):
             return
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -181,6 +199,8 @@ class PriceCache:
         without bound. Never raises — a prune failure must not disturb the write
         that just succeeded.
         """
+        if self.cache_dir is None:
+            return
         try:
             cutoff = time.time() - self.ttl_hours * 3600
             for path in self.cache_dir.glob("prices_*.parquet"):

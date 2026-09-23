@@ -3,8 +3,10 @@
 On a BQuant terminal the project has a size limit, and the app was writing
 two kinds of throwaway file into it: the parquet price cache (~1.4 MB for the
 shipped catalog at the 15-year fetch) and `src` bytecode (~0.9 MB). Together
-they put the project over. These pin where the cache goes now and that the
-notebook stops bytecode being written.
+they put the project over. These pin where the cache goes, that the app's
+cache writes nothing to disk at all by default (v0.9.42 — the temp folder
+still counted on a terminal), and that the notebook stops bytecode being
+written.
 
 Nothing clears what older versions wrote, and nothing needs to: a terminal
 resets the project folder on every reload.
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from datetime import date
 from pathlib import Path
 
 from src.config import CACHE_DIR, REPO_ROOT, RUNTIME_DIR
@@ -40,12 +43,49 @@ def test_the_cache_root_can_be_overridden(monkeypatch):
         importlib.reload(cfg)
 
 
-def test_the_default_price_cache_writes_outside_the_project():
-    """The constant is only half of it: the cache the app actually uses must
-    be the one pointed there."""
+def test_the_default_price_cache_writes_nothing_to_disk():
+    """v0.9.42: the temp folder was still counted against the project on a
+    terminal, so the app's cache is memory-only unless the flag says so."""
     from src import bql_client as bc
+    from src.config import PRICE_CACHE_ON_DISK
 
-    assert bc._DEFAULT_CACHE.cache_dir == CACHE_DIR
+    assert PRICE_CACHE_ON_DISK is False
+    assert bc._DEFAULT_CACHE.cache_dir is None
+
+
+def test_a_memory_only_cache_serves_the_session_and_writes_nothing(tmp_path):
+    """The in-memory superset carries the session on its own: a second
+    request is a cache hit, and not a file is written anywhere."""
+    from src.bql_client import MockPriceSource, PriceCache, fetch_prices
+
+    cache = PriceCache(None)
+    source = MockPriceSource()
+    start, end = date(2024, 1, 2), date(2024, 6, 28)
+    tickers = ["SPX Index"]
+
+    _, first = fetch_prices(tickers, start, end, cache=cache, source=source)
+    df, second = fetch_prices(tickers, start, end, cache=cache, source=source)
+
+    assert first == "mock"
+    assert second == "cache"
+    assert not df.empty
+    assert cache.read_disk(end, tickers, start) is None
+    assert cache.written_at(end) is None
+    assert cache.disk_writable is None  # never even tried
+
+
+def test_the_disk_tier_still_works_when_asked_for(tmp_path):
+    """Off by default, not removed: a cache given a folder still writes one
+    parquet per `end` date there."""
+    from src.bql_client import MockPriceSource, PriceCache, fetch_prices
+
+    cache = PriceCache(tmp_path)
+    end = date(2024, 6, 28)
+    fetch_prices(
+        ["SPX Index"], date(2024, 1, 2), end, cache=cache, source=MockPriceSource()
+    )
+    assert cache.path_for(end).exists()
+    assert cache.written_at(end) is not None
 
 
 def test_user_benchmarks_stay_in_the_project():

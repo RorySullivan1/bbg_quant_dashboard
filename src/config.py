@@ -258,8 +258,16 @@ RUNTIME_DIR = Path(
     or Path(tempfile.gettempdir()) / "bbg_quant_dashboard"
 )
 
-#: On-disk parquet tier of the price cache, one file per `end` date.
+#: On-disk parquet tier of the price cache, one file per `end` date — used only
+#: when `PRICE_CACHE_ON_DISK` is set.
 CACHE_DIR = RUNTIME_DIR / "prices"
+#: Whether the price cache writes its parquet tier at all. **Off** (v0.9.42):
+#: moving the cache to the temp folder did not take it out of the project's
+#: size count on a terminal — the temp folder held 7.55 MB of it — and the
+#: in-memory superset already serves every request a session makes. What the
+#: disk tier bought was a same-day relaunch without a refetch, which is not
+#: worth a project that cannot be saved. Turn it back on where disk is free.
+PRICE_CACHE_ON_DISK = False
 #: How stale a same-day disk cache may be before it counts as a miss.
 CACHE_TTL_HOURS = 12
 
