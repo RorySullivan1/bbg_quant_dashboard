@@ -106,9 +106,11 @@ CSS, style tokens — live in `style.md`.)
   terminal it counted against the project's size limit (~1.4 MB for the
   shipped catalog at the 15-year fetch). `src` bytecode is kept out the same
   way — the notebook sets `sys.dont_write_bytecode`. Nothing clears the old
-  location: a terminal resets the project folder on every reload. **Since
-  v0.9.42 the app's cache has no disk tier at all** — the temp folder still
-  counted against the project on a terminal (7.55 MB of it) — so
+  location, and a reload does **not** reset the project folder: a terminal
+  scan found ~30 files in `data/.cache/`, 3–12 MB each, from May on, which
+  had to be deleted by hand. **Since v0.9.42 the app's cache has no disk tier
+  at all** — a real-catalog cache file is 3–12 MB, and no folder the app can
+  pick is certain to be outside the project's count — so
   `_DEFAULT_CACHE` is `PriceCache(None)` unless `config.PRICE_CACHE_ON_DISK`;
   everything below about the parquet describes that opt-in tier. Any request whose tickers ⊆ the
   superset's columns **and** whose `[start, end]` ⊆ the covered interval is

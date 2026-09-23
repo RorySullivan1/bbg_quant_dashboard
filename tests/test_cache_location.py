@@ -4,12 +4,11 @@ On a BQuant terminal the project has a size limit, and the app was writing
 two kinds of throwaway file into it: the parquet price cache (~1.4 MB for the
 shipped catalog at the 15-year fetch) and `src` bytecode (~0.9 MB). Together
 they put the project over. These pin where the cache goes, that the app's
-cache writes nothing to disk at all by default (v0.9.42 — the temp folder
-still counted on a terminal), and that the notebook stops bytecode being
-written.
+cache writes nothing to disk at all by default (v0.9.42), and that the
+notebook stops bytecode being written.
 
-Nothing clears what older versions wrote, and nothing needs to: a terminal
-resets the project folder on every reload.
+Nothing clears what older versions wrote to `data/.cache/`. A reload does not
+reset the project folder either, so it has to be deleted by hand, once.
 """
 
 from __future__ import annotations
@@ -44,8 +43,8 @@ def test_the_cache_root_can_be_overridden(monkeypatch):
 
 
 def test_the_default_price_cache_writes_nothing_to_disk():
-    """v0.9.42: the temp folder was still counted against the project on a
-    terminal, so the app's cache is memory-only unless the flag says so."""
+    """v0.9.42: no folder the app can pick is certain to sit outside the
+    project's size count, so the cache is memory-only unless the flag says so."""
     from src import bql_client as bc
     from src.config import PRICE_CACHE_ON_DISK
 
