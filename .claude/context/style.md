@@ -98,10 +98,13 @@ treatment — optionally followed on the same baseline by a **muted caption**,
 lighter and smaller so it qualifies the heading rather than competing with it
 — the section's `control_bar` of chips, then a `.bbg-section-box` —
 the same `{{chrome_bg}}` surface, 1px border and 6px radius the Platform
-table's box wears — at a fixed `COMMENTARY_BOX_HEIGHT` (300px), scrolling its
-body inside that height rather than growing the row. The height is a **token
-and not a literal** precisely so it is one edit to tune once it has been seen
-at a terminal's fonts, which is where it should be tuned.
+table's box wears — at a fixed height, scrolling its body inside that height
+rather than growing the row. The height is `leaderboard_box_height()`:
+`COMMENTARY_BOX_HEIGHT` (300px) as a floor, raised to fit `LEADERBOARD_ROWS`
+top and bottom rows, because a fixed 300px cut off the last two bottom rows
+once the board went to five a side. The floor is a **token and not a literal**
+precisely so it is one edit to tune once it has been seen at a terminal's
+fonts, which is where it should be tuned.
 
 **The split is shares, not pixels.** `COMMENTARY_LEADERBOARD_SHARE` (60%) and
 `COMMENTARY_BULLETIN_SHARE` (40%), applied as `flex: 1 1 <share>` with

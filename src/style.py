@@ -190,12 +190,16 @@ ANALYTICS_TABLE_SHARE: str = "40%"
 #: can set the row for the other (the `CATALOG_TABLE_HEIGHT` argument, one
 #: block up).
 #:
-#: Sized from the leaderboard, the taller of the two: a column is its title
-#: plus six 22px rows plus the divider, ~180px with the board's own padding.
-#: 300px clears that and leaves the bulletin about five launch cards before it
-#: scrolls. It is one number for both sections, so it is one edit to tune once
-#: it has been seen at a terminal's fonts — which is where it should be tuned.
+#: A **floor**, not the height: the leaderboard, the taller of the two, needs
+#: more as `LEADERBOARD_ROWS` grows, and `leaderboard_box_height` raises the
+#: box to fit it. At three rows a side the board needs ~240px, so 300px is what
+#: both sections stand at and leaves the bulletin about five launch cards
+#: before it scrolls. At five a side it needed ~350px, and the fixed 300px cut
+#: the last two bottom rows off. It is one number for both sections, so it is
+#: one edit to tune once it has been seen at a terminal's fonts — which is
+#: where it should be tuned.
 COMMENTARY_BOX_HEIGHT: str = "300px"
+COMMENTARY_BOX_HEIGHT_PX: int = int(COMMENTARY_BOX_HEIGHT.removesuffix("px"))
 
 #: How tall the Multi-Strategy Basket strip stands (#346).
 #:

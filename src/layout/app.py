@@ -71,7 +71,6 @@ from ..stats import (
 from ..style import (
     BASKET_STRIP_HEIGHT,
     CATALOG_TABLE_HEIGHT,
-    COMMENTARY_BOX_HEIGHT,
     COMMENTARY_BULLETIN_SHARE,
     COMMENTARY_LEADERBOARD_SHARE,
     FILTER_CHIPS_SHARE,
@@ -110,7 +109,7 @@ from .html import (
     _render_error,
     render_template,
 )
-from .leaderboard import Leaderboard
+from .leaderboard import Leaderboard, leaderboard_box_height
 from .multi_strategy import (
     RenderContext,
     bind_lazy_render,
@@ -743,13 +742,16 @@ class DashboardApp:
         # four columns would refuse to narrow and push the Bulletin off the row
         # instead of letting both shrink — the same pairing the catalog table
         # needs beside its rail (#276).
+        # One height for both, raised past `COMMENTARY_BOX_HEIGHT` when the
+        # board carries more rows than that fits.
+        box_height = leaderboard_box_height(self.leaderboard.rows)
         leaderboard_col = W.Box(
             [
                 section_panel(
                     "Leaderboard",
                     self.ranking_window_bar,
                     self.leaderboard.root,
-                    height=COMMENTARY_BOX_HEIGHT,
+                    height=box_height,
                     # The ranking basis, which the board cannot show: the rows
                     # carry a score and a raw value, and nothing on screen
                     # otherwise says the order comes from the former. Reads
@@ -770,7 +772,7 @@ class DashboardApp:
                     "QIS Bulletin",
                     self.commentary_pane.bar,
                     self.commentary_pane.root,
-                    height=COMMENTARY_BOX_HEIGHT,
+                    height=box_height,
                 )
             ],
             layout=W.Layout(

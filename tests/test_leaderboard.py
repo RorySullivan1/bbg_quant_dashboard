@@ -15,8 +15,8 @@ from __future__ import annotations
 import pytest
 from src.commentary import LeaderboardColumn, LeaderboardRow
 from src.config import LEADERBOARD_ROWS, RANKABLE_METRICS
-from src.layout.leaderboard import Leaderboard
-from src.style import Color, Sentiment
+from src.layout.leaderboard import Leaderboard, leaderboard_box_height
+from src.style import COMMENTARY_BOX_HEIGHT, Color, Sentiment
 
 
 def _row(
@@ -318,3 +318,14 @@ def test_only_return_is_defined_over_a_single_observation():
     for _label, days in LEADERBOARD_WINDOW_OPTIONS:
         if days > DAY_WINDOW:
             assert leaderboard_metrics(days) == RANKABLE_METRICS
+
+
+def test_box_height_grows_with_the_row_count_and_never_drops_below_the_token():
+    # The box has a fixed height and the slots are permanent, so a height that
+    # ignored `rows` cut the bottom block's last two rows off at five a side.
+    assert leaderboard_box_height(3) == COMMENTARY_BOX_HEIGHT
+    heights = [int(leaderboard_box_height(n).removesuffix("px")) for n in range(1, 9)]
+    assert heights == sorted(heights)
+    assert int(leaderboard_box_height(5).removesuffix("px")) > int(
+        COMMENTARY_BOX_HEIGHT.removesuffix("px")
+    )

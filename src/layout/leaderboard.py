@@ -38,7 +38,7 @@ import ipywidgets as W
 
 from ..commentary import LeaderboardColumn, LeaderboardRow
 from ..config import LEADERBOARD_ROWS, RANKABLE_METRICS
-from ..style import Color, Sentiment
+from ..style import COMMENTARY_BOX_HEIGHT_PX, Color, Sentiment
 from .html import STYLE_CTX, render_template
 
 
@@ -70,6 +70,26 @@ _RANK_WIDTH = "32px"
 _SCORE_WIDTH = "52px"
 _VALUE_WIDTH = "62px"
 _ROW_HEIGHT = "22px"
+
+#: One row's vertical pitch: `_ROW_HEIGHT` plus the 2px margin ipywidgets puts
+#: above and below every button.
+_ROW_PITCH_PX = 26
+#: Everything in the section box that is not a row: the box's and the board's
+#: padding, the column title and the divider. Measured at 86px in Chromium;
+#: the rest is headroom for a terminal's fonts.
+_BOARD_CHROME_PX = 110
+
+
+def leaderboard_box_height(rows: int = LEADERBOARD_ROWS) -> str:
+    """The commentary box height that shows `rows` top and `rows` bottom rows
+    without clipping, and never less than `COMMENTARY_BOX_HEIGHT`.
+
+    The board's slots are permanent and the box has a fixed height, so a
+    height that ignores `rows` cuts off the bottom block's last rows once the
+    count is raised.
+    """
+    needed = _BOARD_CHROME_PX + 2 * rows * _ROW_PITCH_PX
+    return f"{max(COMMENTARY_BOX_HEIGHT_PX, needed)}px"
 
 
 class _RowSlot:
