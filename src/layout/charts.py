@@ -828,7 +828,7 @@ class FactorCorrChart(Chart):
             with self.fig.batch_update():
                 self.fig.data = ()
             return
-        c = frame["c"].fillna(0.0)
+        c = pd.to_numeric(frame["c"], errors="coerce").fillna(0.0)
         cmax = max(0.5, float(c.abs().max()))
         denom = float(c.abs().max()) or 1.0
         sizes = (8 + 14 * (c.abs() / denom)).tolist()
