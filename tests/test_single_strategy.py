@@ -256,6 +256,36 @@ def test_render_section3_renders_both_panes(multiyear_prices, benchmark):
     assert len(ss.pane_right.factor.fig.data) == 1  # one monthly point cloud
 
 
+def test_factor_scatter_flat_month_keeps_risk_adj_numeric(multiyear_prices, benchmark):
+    """A zero-vol month must not turn the colour series into object dtype.
+
+    Guarding the divisor with `pd.NA` cast the whole series to object, and
+    object arithmetic on it hit a maximum recursion depth on the terminal's
+    pandas. `np.nan` keeps it float: the flat month is a NaN, drawn as 0.
+    """
+    import numpy as np
+    from src.layout.single_strategy import _render_factor_scatter
+
+    meta = _meta()
+    ss = SingleStrategyPanel(meta, None)
+    universe = _universe_with_factors(multiyear_prices, benchmark)
+    period = universe.index.to_period("M")
+    month = universe.index[period == period[40]]
+    # Pin the prior close too, so the month's first return is also zero.
+    prior = universe.index[universe.index.get_loc(month[0]) - 1]
+    universe.loc[month, "AAA Index"] = universe.loc[prior, "AAA Index"]
+    pane = ss.pane_right
+
+    seen = {}
+    pane.factor.update = lambda x, y, color: seen.update(color=color)
+
+    _render_factor_scatter(pane, universe, universe, "AAA Index")
+
+    color = seen["color"]
+    assert color.dtype == np.float64
+    assert color.isna().sum() == 1
+
+
 def test_render_analysis_pane_distribution(multiyear_prices, benchmark):
     meta = _meta()
     ss = SingleStrategyPanel(meta, None)

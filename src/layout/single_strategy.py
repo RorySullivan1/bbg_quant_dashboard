@@ -42,6 +42,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import ipywidgets as W
+import numpy as np
 import pandas as pd
 
 from ..config import (
@@ -927,7 +928,7 @@ def _render_factor_scatter(
     idx = erp_corr.index.intersection(tp_corr.index)
     m_ret = monthly_returns(win[[ticker]])[ticker]
     m_vol = monthly_realized_vol(daily_returns(win[[ticker]]))[ticker]
-    risk_adj = m_ret.divide(m_vol.replace(0, pd.NA))
+    risk_adj = m_ret.divide(m_vol.replace(0, np.nan))
     pane.factor.update(
         erp_corr.reindex(idx),
         tp_corr.reindex(idx),
