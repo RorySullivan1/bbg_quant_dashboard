@@ -359,7 +359,7 @@ catalog is the real test of how the charts read.
   in the theme.
 - One marker per **asset class** of the pinned solution at the root, coloured
   by asset class with a legend (v0.9.27 — the drill is based at the Solution
-  chips' choice). Y is the metric, X the term-premium β, Z the
+  chips' choice). Z (vertical) is the metric, X the term-premium β, Y the
   equity-risk-premium β, and the axis titles say so.
 - Hover is **three lines** and small enough to see the cloud past it; a group
   says *(Average over N Strategies)* and a strategy says nothing (#388). There

@@ -79,8 +79,8 @@ Strategy profile card; it is NA-safe when absent.
 
 **Universe membership (v0.8.9):** `build_app` keeps only records whose
 `solution` is in `UNIVERSE_SOLUTION_VALUES` (`src/config.py`) — **ARP**,
-**Smart Beta**, and **Risk Management** (case-insensitive; plain `Beta` is
-excluded) — as `meta_all`, then **prunes indices with no recent price movement**
+**Smart Beta** / **Smart-Beta & Factors**, and **Risk Management** / **Risk
+Mitigation** (case-insensitive; plain `Beta` is excluded) — as `meta_all`, then **prunes indices with no recent price movement**
 (stale / delisted / all-NaN over the trailing ~21 trading days, via
 `stats.active_columns`) into the displayed `meta`. `meta_all` still drives the
 single fetch, so a resumed ticker can re-enter on a later Refresh.

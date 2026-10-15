@@ -367,8 +367,9 @@ class RegimeFactorScatter(Chart):
 
     They were two charts answering halves of one question: both per-strategy
     scatters coloured by asset class, one with the regime filter and no factor
-    axes, the other with the axes and no filter. Here **Y is the metric over
-    the Window, X the term-premium β and Z the equity-risk-premium β**, all
+    axes, the other with the axes and no filter. Here **Z — the vertical axis
+    in a Plotly scene — is the metric over the Window, X the term-premium β and
+    Y the equity-risk-premium β**, all
     measured over the same sample — the Window's days restricted to the regime
     bucket (#331 decision 10).
 
@@ -404,8 +405,8 @@ class RegimeFactorScatter(Chart):
                 scene=dict(
                     aspectmode="cube",
                     xaxis=_scene_axis("Term-premium β"),
-                    yaxis=_scene_axis(""),
-                    zaxis=_scene_axis("Equity risk-premium β"),
+                    yaxis=_scene_axis("Equity risk-premium β"),
+                    zaxis=_scene_axis(""),
                 ),
             )
         )
@@ -452,8 +453,10 @@ class RegimeFactorScatter(Chart):
                     mode="markers",
                     name=str(key),
                     x=group["x"].to_numpy(),
-                    y=group["value"].to_numpy(),
-                    z=group["z"].to_numpy(),
+                    # The metric on Z, which is the scene's vertical axis
+                    # under the default camera; Y is depth.
+                    y=group["z"].to_numpy(),
+                    z=group["value"].to_numpy(),
                     marker=dict(
                         # A group's marker grows with how many strategies it
                         # stands for; a strategy is always the base size.
@@ -476,10 +479,10 @@ class RegimeFactorScatter(Chart):
                     hovertemplate=(
                         "<b>%{customdata[0]}</b>"
                         + f"<br>{metric_label} "
-                        + "%{y:"
+                        + "%{z:"
                         + fmt
                         + "}%{customdata[1]}"
-                        "<br>β term %{x:.2f} · equity %{z:.2f}<extra></extra>"
+                        "<br>β term %{x:.2f} · equity %{y:.2f}<extra></extra>"
                     ),
                 )
             )
@@ -487,8 +490,8 @@ class RegimeFactorScatter(Chart):
         with self.fig.batch_update():
             self.fig.data = ()
             self.fig.add_traces(traces)
-            self.fig.layout.scene.yaxis.title.text = metric_label
-            self.fig.layout.scene.yaxis.tickformat = fmt
+            self.fig.layout.scene.zaxis.title.text = metric_label
+            self.fig.layout.scene.zaxis.tickformat = fmt
         self._attach_clicks()
 
     def _attach_clicks(self) -> None:

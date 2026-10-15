@@ -658,10 +658,18 @@ def filter_dimensions() -> tuple[CatalogField, ...]:
 #: Solution values making up the dashboard universe, compared case-insensitively
 #: against the metadata `solution` column. Both spellings of Alternative Risk
 #: Premia are kept so the filter survives a future JSON rename, and "risk
-#: management" is forward-compatible (no records carry it yet). Plain "Beta"
-#: stays excluded.
+#: management" is forward-compatible (no records carry it yet). "smart-beta &
+#: factors" and "risk mitigation" are the deployed catalog's spellings of Smart
+#: Beta and Risk Management. Plain "Beta" stays excluded.
 UNIVERSE_SOLUTION_VALUES = frozenset(
-    {"arp", "alternative risk premia", "smart beta", "risk management"}
+    {
+        "arp",
+        "alternative risk premia",
+        "smart beta",
+        "smart-beta & factors",
+        "risk management",
+        "risk mitigation",
+    }
 )
 
 #: Curated benchmarks for the Rolling Correlation and Rolling Beta views.
