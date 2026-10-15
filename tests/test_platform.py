@@ -124,13 +124,14 @@ def test_the_scatter_puts_the_metric_on_y_and_the_betas_on_x_and_z():
     )
 
     (trace,) = chart.fig.data
-    assert trace.y[0] == points.loc["Equity", "value"]
+    # The metric stands on Z, the vertical axis of a Plotly scene.
+    assert trace.z[0] == points.loc["Equity", "value"]
     assert trace.x[0] == points.loc["Equity", "x"]  # term premium
-    assert trace.z[0] == points.loc["Equity", "z"]  # equity risk premium
+    assert trace.y[0] == points.loc["Equity", "z"]  # equity risk premium
     scene = chart.fig.layout.scene
     assert scene.xaxis.title.text == "Term-premium β"
-    assert scene.yaxis.title.text == "1Y Sharpe"
-    assert scene.zaxis.title.text == "Equity risk-premium β"
+    assert scene.yaxis.title.text == "Equity risk-premium β"
+    assert scene.zaxis.title.text == "1Y Sharpe"
 
 
 def test_the_origin_is_drawn_by_the_axes_and_the_planes_are_gone():

@@ -238,8 +238,8 @@ Three charts, each a `Chart` that also exposes **`points()`** — the frame it
 drew, as `path` / `label` / `name` / `value` / `count` / `leaf`. The **Icicle** draws
 the hierarchy sized by *strategy count* and coloured by mean metric on a ramp
 whose range comes from the data; the **Scatter** is the regime view and the
-factor view merged, Y the metric and X / Z the term- and equity-risk-premium
-betas over one sample — the Window's days, inside the regime bucket **when a
+factor view merged, the metric on Z — the scene's vertical axis — and X / Y
+the term- and equity-risk-premium betas over one sample — the Window's days, inside the regime bucket **when a
 regime is switched on**. The regime is opt-in (v0.9.33): a *Condition on
 regime* checkbox heads the section and the default is off, because every
 bucket is a subset of the window — an always-on regime opened the Scatter on

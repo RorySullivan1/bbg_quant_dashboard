@@ -238,6 +238,7 @@ def test_universe_includes_smart_beta_solution():
     from src.data import load_metadata
 
     assert {"smart beta", "risk management"} <= UNIVERSE_SOLUTION_VALUES
+    assert {"smart-beta & factors", "risk mitigation"} <= UNIVERSE_SOLUTION_VALUES
     meta = load_metadata()
     universe = meta[
         meta["solution"].astype(str).str.lower().isin(UNIVERSE_SOLUTION_VALUES)

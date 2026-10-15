@@ -635,8 +635,8 @@ class PlatformAnalytics:
 
         They were two charts answering halves of one question. Betas and the
         metric are now measured over the same sample — the Window's days
-        restricted to the regime bucket — so Y is the metric, X the
-        term-premium β and Z the equity-risk-premium β over one set of days.
+        restricted to the regime bucket — so Z (vertical) is the metric, X the
+        term-premium β and Y the equity-risk-premium β over one set of days.
 
         The mask is applied to the **leaves**, before the drill aggregates
         them, so a category's point is the mean of its members' bucket values
